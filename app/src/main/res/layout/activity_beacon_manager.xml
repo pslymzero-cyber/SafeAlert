@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="#F5F6F8">
+
+    <!-- 상단 바 -->
+    <LinearLayout android:layout_width="match_parent" android:layout_height="56dp"
+        android:orientation="horizontal" android:paddingStart="16dp" android:paddingEnd="8dp"
+        android:gravity="center_vertical" android:background="#FFFFFF">
+        <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+            android:layout_weight="1" android:text="📡 비콘 관리"
+            android:textSize="17sp" android:textStyle="bold" android:textColor="#111827"/>
+        <TextView android:id="@+id/tv_count"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:textSize="12sp" android:textColor="#9CA3AF" android:layout_marginEnd="8dp"/>
+    </LinearLayout>
+    <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#EAECF0"/>
+
+    <!-- 안내 배너 -->
+    <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:background="#EFF6FF" android:padding="10dp"
+        android:text="같은 UUID로 설정된 비콘은 전부 자동 감지됩니다.  iBeacon · Eddystone · 커스텀 UUID 지원"
+        android:textSize="12sp" android:textColor="#1D4ED8"/>
+
+    <!-- 버튼 영역 -->
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="horizontal" android:padding="12dp" android:gravity="center">
+        <Button android:id="@+id/btn_add_uuid"
+            android:layout_width="0dp" android:layout_height="46dp" android:layout_weight="1"
+            android:text="+ UUID"
+            style="@style/Widget.MaterialComponents.Button.UnelevatedButton"
+            app:cornerRadius="12dp"
+            android:backgroundTint="#EFF6FF" android:textColor="#2563EB"/>
+        <View android:layout_width="6dp" android:layout_height="1dp"/>
+        <Button android:id="@+id/btn_add_mac"
+            android:layout_width="0dp" android:layout_height="46dp" android:layout_weight="1"
+            android:text="+ MAC"
+            style="@style/Widget.MaterialComponents.Button.UnelevatedButton"
+            app:cornerRadius="12dp"
+            android:backgroundTint="#FFF7ED" android:textColor="#C2410C"/>
+        <View android:layout_width="6dp" android:layout_height="1dp"/>
+        <Button android:id="@+id/btn_scan"
+            android:layout_width="0dp" android:layout_height="46dp" android:layout_weight="1"
+            android:text="🔍 스캔"
+            style="@style/Widget.MaterialComponents.Button.UnelevatedButton"
+            app:cornerRadius="12dp"
+            android:backgroundTint="#F0FDF4" android:textColor="#15803D"/>
+    </LinearLayout>
+
+    <!-- 스캔 결과 섹션 (스캔 중 표시) -->
+    <LinearLayout android:id="@+id/layout_scan_result"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="horizontal" android:paddingStart="16dp" android:paddingEnd="16dp"
+            android:paddingTop="8dp" android:paddingBottom="4dp" android:gravity="center_vertical">
+            <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="주변 발견 기기 (탭하여 등록)"
+                android:textSize="11sp" android:textColor="#9CA3AF" android:textStyle="bold"/>
+            <TextView android:id="@+id/tv_scan_status"
+                android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:textSize="11sp" android:textColor="#6B7280"/>
+        </LinearLayout>
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/rv_nearby"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:background="#FFFFFF"
+            android:paddingStart="8dp" android:paddingEnd="8dp"/>
+
+        <View android:layout_width="match_parent" android:layout_height="1dp"
+            android:background="#EAECF0"/>
+    </LinearLayout>
+
+    <!-- 등록된 UUID 목록 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:orientation="vertical">
+
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:text="등록된 비콘 프로파일"
+            android:textSize="11sp" android:textColor="#9CA3AF" android:textStyle="bold"
+            android:paddingStart="16dp" android:paddingTop="8dp" android:paddingBottom="4dp"/>
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/rv_registered"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:background="#FFFFFF"
+            android:paddingStart="8dp" android:paddingEnd="8dp"/>
+
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:padding="12dp"
+            android:text="💡 비콘 설정: 제조사 앱에서 Proximity UUID(iBeacon) 또는 Service UUID로 설정하세요."
+            android:textSize="11sp" android:textColor="#9CA3AF"/>
+    </LinearLayout>
+
+</LinearLayout>

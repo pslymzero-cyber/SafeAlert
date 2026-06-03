@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- 빛 광선 (8방향) -->
+    <path android:fillColor="#80FFFFFF"
+        android:pathData="M54,18 L50,30 L58,30 Z"/>
+    <path android:fillColor="#80FFFFFF"
+        android:pathData="M76,22 L66,32 L72,38 Z"/>
+    <path android:fillColor="#80FFFFFF"
+        android:pathData="M90,44 L78,48 L78,56 Z"/>
+    <path android:fillColor="#80FFFFFF"
+        android:pathData="M76,76 L66,66 L72,60 Z"/>
+    <path android:fillColor="#80FFFFFF"
+        android:pathData="M54,90 L50,78 L58,78 Z"/>
+    <path android:fillColor="#80FFFFFF"
+        android:pathData="M32,76 L42,66 L36,60 Z"/>
+    <path android:fillColor="#80FFFFFF"
+        android:pathData="M18,44 L30,48 L30,56 Z"/>
+    <path android:fillColor="#80FFFFFF"
+        android:pathData="M32,22 L42,32 L36,38 Z"/>
+
+    <!-- 외부 링 (광채) -->
+    <path android:fillColor="#40FFFFFF"
+        android:pathData="M54,24 A30,30 0 1 1 53.99,24 Z"/>
+
+    <!-- 사이렌 몸체 베이스 -->
+    <path android:fillColor="#B71C1C"
+        android:pathData="M36,80 L72,80 Q76,80 76,76 L76,72 L32,72 L32,76 Q32,80 36,80 Z"/>
+
+    <!-- 사이렌 기둥 -->
+    <path android:fillColor="#D32F2F"
+        android:pathData="M42,72 L66,72 L66,62 Q66,48 54,42 Q42,48 42,62 Z"/>
+
+    <!-- 돔 (메인 라이트) 외곽 -->
+    <path android:fillColor="#FF1744"
+        android:pathData="M54,38 A18,18 0 1 1 53.99,38 Z"/>
+
+    <!-- 돔 내부 밝은 빛 -->
+    <path android:fillColor="#FF6D00"
+        android:pathData="M54,42 A14,14 0 1 1 53.99,42 Z"/>
+
+    <!-- 중심 하이라이트 -->
+    <path android:fillColor="#FFAB40"
+        android:pathData="M54,46 A8,8 0 1 1 53.99,46 Z"/>
+
+    <!-- 반짝임 포인트 -->
+    <path android:fillColor="#FFFFFF"
+        android:pathData="M50,44 A3,3 0 1 1 49.99,44 Z"
+        android:fillAlpha="0.8"/>
+    <path android:fillColor="#FFFFFF"
+        android:pathData="M57,50 A2,2 0 1 1 56.99,50 Z"
+        android:fillAlpha="0.5"/>
+
+    <!-- 기둥 나사/디테일 -->
+    <path android:fillColor="#C62828"
+        android:pathData="M48,65 L60,65 L60,63 L48,63 Z"/>
+    <path android:fillColor="#C62828"
+        android:pathData="M46,69 L62,69 L62,67 L46,67 Z"/>
+
+</vector>

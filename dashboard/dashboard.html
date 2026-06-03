@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>WF11 SafeAlert</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Segoe UI', 'Malgun Gothic', sans-serif;
+    background: #F4F5F7;
+    color: #1A1A2E;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  /* ── 상단 헤더 ── */
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 28px;
+    height: 56px;
+    background: #FFFFFF;
+    border-bottom: 1px solid #E8EAED;
+    flex-shrink: 0;
+  }
+  .header-left { display: flex; align-items: center; gap: 12px; }
+  .logo-dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: #3B82F6;
+    box-shadow: 0 0 0 3px rgba(59,130,246,0.15);
+  }
+  .app-title { font-size: 15px; font-weight: 600; letter-spacing: 0.3px; color: #111827; }
+  .app-sub   { font-size: 12px; color: #9CA3AF; margin-left: 4px; }
+  .header-right { display: flex; align-items: center; gap: 20px; }
+  #clock { font-size: 13px; font-weight: 500; color: #374151; font-variant-numeric: tabular-nums; }
+  .status-pill {
+    display: flex; align-items: center; gap: 6px;
+    padding: 4px 12px; border-radius: 20px;
+    background: #F0FDF4; border: 1px solid #BBF7D0;
+    font-size: 12px; color: #15803D; font-weight: 500;
+  }
+  .status-pill .dot { width: 7px; height: 7px; border-radius: 50%; background: #22C55E; animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:.4;} }
+
+  /* ── 메인 레이아웃 ── */
+  .main {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+  }
+
+  /* ── 맵 영역 ── */
+  .map-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    padding: 20px;
+    gap: 12px;
+  }
+  .map-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .map-title { font-size: 13px; font-weight: 600; color: #6B7280; letter-spacing: 0.5px; text-transform: uppercase; }
+  .stat-chips { display: flex; gap: 8px; }
+  .chip {
+    padding: 5px 14px; border-radius: 20px; font-size: 12px; font-weight: 500;
+    border: 1px solid transparent;
+  }
+  .chip-device { background: #EFF6FF; color: #2563EB; border-color: #BFDBFE; }
+  .chip-walker { background: #F0FDF4; color: #16A34A; border-color: #BBF7D0; }
+  .chip-alert  { background: #FFF7ED; color: #C2410C; border-color: #FED7AA; }
+
+  canvas {
+    flex: 1;
+    background: #FFFFFF;
+    border-radius: 12px;
+    border: 1px solid #E8EAED;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+    display: block;
+    width: 100%;
+  }
+
+  /* ── 사이드바 ── */
+  .sidebar {
+    width: 280px;
+    flex-shrink: 0;
+    background: #FFFFFF;
+    border-left: 1px solid #E8EAED;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* 탭 버튼 */
+  .tab-bar {
+    display: flex;
+    border-bottom: 1px solid #E8EAED;
+    flex-shrink: 0;
+  }
+  .tab-btn {
+    flex: 1;
+    padding: 14px 0;
+    font-size: 13px;
+    font-weight: 500;
+    color: #9CA3AF;
+    background: none;
+    border: none;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all .15s;
+    letter-spacing: 0.2px;
+  }
+  .tab-btn.active {
+    color: #111827;
+    border-bottom-color: #3B82F6;
+  }
+  .tab-btn:hover:not(.active) { color: #374151; background: #F9FAFB; }
+
+  /* 탭 콘텐츠 */
+  .tab-content { display: none; flex: 1; flex-direction: column; overflow: hidden; }
+  .tab-content.active { display: flex; }
+
+  .section-label {
+    padding: 16px 20px 8px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #9CA3AF;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+    flex-shrink: 0;
+  }
+
+  .item-list { flex: 1; overflow-y: auto; padding: 0 12px 12px; }
+  .item-list::-webkit-scrollbar { width: 4px; }
+  .item-list::-webkit-scrollbar-thumb { background: #E5E7EB; border-radius: 2px; }
+
+  .device-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 10px;
+    border-radius: 8px;
+    margin-bottom: 4px;
+    transition: background .1s;
+  }
+  .device-item:hover { background: #F9FAFB; }
+
+  .item-icon {
+    width: 36px; height: 36px; border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px; flex-shrink: 0;
+  }
+  .icon-device { background: #EFF6FF; }
+  .icon-walker { background: #F0FDF4; }
+
+  .item-info { flex: 1; min-width: 0; }
+  .item-name { font-size: 13px; font-weight: 600; color: #111827; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .item-sub  { font-size: 11px; color: #9CA3AF; margin-top: 1px; }
+
+  .item-badge {
+    padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600;
+    flex-shrink: 0;
+  }
+  .badge-safe    { background: #F0FDF4; color: #16A34A; }
+  .badge-warning { background: #FFFBEB; color: #D97706; }
+  .badge-danger  { background: #FFF1F2; color: #E11D48; }
+  .badge-off     { background: #F3F4F6; color: #9CA3AF; }
+
+  /* 경보 탭 */
+  .alert-item {
+    padding: 10px 10px;
+    border-radius: 8px;
+    margin-bottom: 4px;
+    border-left: 3px solid transparent;
+  }
+  .alert-item.danger  { background: #FFF1F2; border-color: #F43F5E; }
+  .alert-item.warning { background: #FFFBEB; border-color: #F59E0B; }
+  .alert-row1 { display: flex; justify-content: space-between; align-items: center; }
+  .alert-level { font-size: 11px; font-weight: 700; letter-spacing: 0.5px; }
+  .alert-level.danger  { color: #E11D48; }
+  .alert-level.warning { color: #D97706; }
+  .alert-time  { font-size: 11px; color: #9CA3AF; }
+  .alert-row2  { font-size: 12px; color: #374151; margin-top: 3px; }
+
+  .empty-state {
+    flex: 1; display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    color: #D1D5DB; gap: 8px;
+    padding: 40px 20px; text-align: center;
+  }
+  .empty-state .icon { font-size: 32px; }
+  .empty-state .text { font-size: 13px; }
+</style>
+</head>
+<body>
+
+<!-- 헤더 -->
+<header>
+  <div class="header-left">
+    <div class="logo-dot"></div>
+    <span class="app-title">WF11 SafeAlert</span>
+    <span class="app-sub">창고 동선 모니터링</span>
+  </div>
+  <div class="header-right">
+    <div class="stat-chips">
+      <span class="chip chip-device">🚛 장비 <span id="cnt-device">0</span></span>
+      <span class="chip chip-walker">🚶 보행자 <span id="cnt-walker">0</span></span>
+      <span class="chip chip-alert">⚠ 경보 <span id="cnt-alert">0</span></span>
+    </div>
+    <div id="clock">--:--:--</div>
+    <div class="status-pill"><div class="dot"></div> 연결됨</div>
+  </div>
+</header>
+
+<!-- 메인 -->
+<div class="main">
+
+  <!-- 맵 -->
+  <div class="map-area">
+    <div class="map-toolbar">
+      <span class="map-title">실시간 위치 맵</span>
+    </div>
+    <canvas id="canvas"></canvas>
+  </div>
+
+  <!-- 사이드바 -->
+  <div class="sidebar">
+    <div class="tab-bar">
+      <button class="tab-btn active" onclick="switchTab('device')">🚛 장비 작업자</button>
+      <button class="tab-btn"        onclick="switchTab('walker')">🚶 보행자</button>
+    </div>
+
+    <!-- 장비 작업자 탭 -->
+    <div class="tab-content active" id="tab-device">
+      <div class="section-label">활성 장비</div>
+      <div class="item-list" id="list-device">
+        <div class="empty-state"><div class="icon">📡</div><div class="text">감지된 장비 없음</div></div>
+      </div>
+    </div>
+
+    <!-- 보행자 탭 -->
+    <div class="tab-content" id="tab-walker">
+      <div class="section-label">활성 보행자</div>
+      <div class="item-list" id="list-walker">
+        <div class="empty-state"><div class="icon">🚶</div><div class="text">감지된 보행자 없음</div></div>
+      </div>
+      <div class="section-label" style="border-top:1px solid #F3F4F6; padding-top:14px;">오늘 경보</div>
+      <div class="item-list" style="max-height:220px;" id="list-alert">
+        <div class="empty-state"><div class="icon">✅</div><div class="text">경보 없음</div></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script type="module">
+// ── Firebase 설정 ─────────────────────────────────────────────
+const FIREBASE_CONFIG = {
+  apiKey:      "여기에_입력",
+  authDomain:  "여기에_입력",
+  databaseURL: "여기에_입력",
+  projectId:   "여기에_입력"
+};
+const DB_ROOT = "wf11";
+// ─────────────────────────────────────────────────────────────
+
+import { initializeApp }   from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+import { getDatabase, ref, onValue } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+
+const app = initializeApp(FIREBASE_CONFIG);
+const db  = getDatabase(app);
+
+// ── 시계 ──
+setInterval(() => {
+  document.getElementById("clock").textContent =
+    new Date().toLocaleTimeString("ko-KR");
+}, 1000);
+
+// ── 탭 전환 ──
+window.switchTab = (tab) => {
+  document.querySelectorAll(".tab-btn").forEach((b,i) =>
+    b.classList.toggle("active", (i===0&&tab==="device")||(i===1&&tab==="walker")));
+  document.getElementById("tab-device").classList.toggle("active", tab==="device");
+  document.getElementById("tab-walker").classList.toggle("active", tab==="walker");
+};
+
+// ── 캔버스 셋업 ──
+const canvas = document.getElementById("canvas");
+const ctx    = canvas.getContext("2d");
+
+function resizeCanvas() {
+  canvas.width  = canvas.offsetWidth;
+  canvas.height = canvas.offsetHeight;
+}
+resizeCanvas();
+window.addEventListener("resize", () => { resizeCanvas(); draw(); });
+
+// ── 데이터 ──
+let devices = {}, walkers = {}, alerts = [];
+let blinkState = true;
+setInterval(() => { blinkState = !blinkState; }, 600);
+
+// ── Firebase 리스너 ──
+onValue(ref(db, `${DB_ROOT}/devices`), snap => {
+  devices = snap.val() || {};
+  const active = Object.values(devices).filter(d=>d.isActive).length;
+  document.getElementById("cnt-device").textContent = active;
+  renderDeviceList();
+});
+
+onValue(ref(db, `${DB_ROOT}/walkers`), snap => {
+  walkers = snap.val() || {};
+  document.getElementById("cnt-walker").textContent = Object.keys(walkers).length;
+  renderWalkerList();
+});
+
+const today = new Date().toISOString().slice(0,10).replace(/-/g,"");
+onValue(ref(db, `${DB_ROOT}/alerts/${today}`), snap => {
+  alerts = [];
+  if (snap.exists()) snap.forEach(c => alerts.push({ id: c.key, ...c.val() }));
+  alerts.sort((a,b) => b.timestamp - a.timestamp);
+  document.getElementById("cnt-alert").textContent = alerts.length;
+  renderAlertList();
+});
+
+// ── 사이드바 렌더 ──
+function levelBadge(lv) {
+  if (lv===2) return '<span class="item-badge badge-danger">위험</span>';
+  if (lv===1) return '<span class="item-badge badge-warning">주의</span>';
+  return '<span class="item-badge badge-safe">안전</span>';
+}
+
+function renderDeviceList() {
+  const el = document.getElementById("list-device");
+  const entries = Object.entries(devices);
+  if (!entries.length) {
+    el.innerHTML = '<div class="empty-state"><div class="icon">📡</div><div class="text">감지된 장비 없음</div></div>';
+    return;
+  }
+  el.innerHTML = entries.map(([id, d]) => `
+    <div class="device-item">
+      <div class="item-icon icon-device">🚛</div>
+      <div class="item-info">
+        <div class="item-name">${id}</div>
+        <div class="item-sub">${d.isActive ? "송출 중" : "비활성"}</div>
+      </div>
+      ${d.isActive ? levelBadge(d.alertLevel||0) : '<span class="item-badge badge-off">OFF</span>'}
+    </div>`).join("");
+}
+
+function renderWalkerList() {
+  const el = document.getElementById("list-walker");
+  const entries = Object.entries(walkers);
+  if (!entries.length) {
+    el.innerHTML = '<div class="empty-state"><div class="icon">🚶</div><div class="text">감지된 보행자 없음</div></div>';
+    return;
+  }
+  el.innerHTML = entries.map(([id, w]) => `
+    <div class="device-item">
+      <div class="item-icon icon-walker">🚶</div>
+      <div class="item-info">
+        <div class="item-name">${id}</div>
+        <div class="item-sub">감지 장비: ${(w.nearbyDevices||[]).length}개</div>
+      </div>
+      <span class="item-badge badge-safe">활성</span>
+    </div>`).join("");
+}
+
+function renderAlertList() {
+  const el = document.getElementById("list-alert");
+  if (!alerts.length) {
+    el.innerHTML = '<div class="empty-state"><div class="icon">✅</div><div class="text">경보 없음</div></div>';
+    return;
+  }
+  el.innerHTML = alerts.slice(0,20).map(a => {
+    const t   = new Date(a.timestamp).toLocaleTimeString("ko-KR");
+    const cls = a.alertLevel === "DANGER" ? "danger" : "warning";
+    return `
+      <div class="alert-item ${cls}">
+        <div class="alert-row1">
+          <span class="alert-level ${cls}">${a.alertLevel==="DANGER"?"위험":"주의"}</span>
+          <span class="alert-time">${t}</span>
+        </div>
+        <div class="alert-row2">${a.deviceId} → ${a.walkerId}</div>
+      </div>`;
+  }).join("");
+}
+
+// ── 맵 그리기 ──
+const ANCHORS = () => {
+  const W = canvas.width, H = canvas.height, M = 40;
+  return [{x:M,y:M},{x:W-M,y:M},{x:M,y:H-M},{x:W-M,y:H-M}];
+};
+
+function drawGrid() {
+  ctx.strokeStyle = "#F0F0F0";
+  ctx.lineWidth   = 1;
+  for (let x=0; x<canvas.width; x+=50) {
+    ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,canvas.height); ctx.stroke();
+  }
+  for (let y=0; y<canvas.height; y+=50) {
+    ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(canvas.width,y); ctx.stroke();
+  }
+}
+
+function drawAnchors() {
+  ctx.fillStyle = "#D1D5DB";
+  ANCHORS().forEach(a => {
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y-8); ctx.lineTo(a.x+7, a.y+5); ctx.lineTo(a.x-7, a.y+5);
+    ctx.closePath(); ctx.fill();
+  });
+}
+
+function drawDevices() {
+  Object.entries(devices).forEach(([id, d], i) => {
+    if (!d.isActive) return;
+    const W = canvas.width, H = canvas.height;
+    const x = 120 + (i % 3) * Math.floor((W-200)/3);
+    const y = 110 + Math.floor(i / 3) * 120;
+
+    // 위험 시 점선 원 (깜빡임)
+    if (d.alertLevel === 2 && blinkState) {
+      ctx.save();
+      ctx.strokeStyle = "#F43F5E"; ctx.lineWidth = 1.5; ctx.setLineDash([5,4]);
+      ctx.beginPath(); ctx.arc(x, y, 36, 0, Math.PI*2); ctx.stroke();
+      ctx.restore();
+    } else if (d.alertLevel === 1) {
+      ctx.save();
+      ctx.strokeStyle = "#F59E0B"; ctx.lineWidth = 1.5; ctx.setLineDash([5,4]);
+      ctx.beginPath(); ctx.arc(x, y, 30, 0, Math.PI*2); ctx.stroke();
+      ctx.restore();
+    }
+
+    // 아이콘 배경
+    const bgColor = d.alertLevel===2 ? "#FFF1F2" : d.alertLevel===1 ? "#FFFBEB" : "#EFF6FF";
+    const dotColor= d.alertLevel===2 ? "#F43F5E" : d.alertLevel===1 ? "#F59E0B" : "#3B82F6";
+    ctx.fillStyle = bgColor;
+    ctx.beginPath(); ctx.roundRect(x-22, y-22, 44, 44, 12); ctx.fill();
+    ctx.strokeStyle = dotColor; ctx.lineWidth = 1.5; ctx.setLineDash([]);
+    ctx.beginPath(); ctx.roundRect(x-22, y-22, 44, 44, 12); ctx.stroke();
+
+    // 텍스트
+    ctx.fillStyle = "#374151"; ctx.font = "20px serif"; ctx.textAlign = "center";
+    ctx.fillText("🚛", x, y+7);
+
+    // ID 라벨
+    ctx.fillStyle = "#1F2937"; ctx.font = "600 11px 'Segoe UI', sans-serif";
+    ctx.fillText(id, x, y + 34);
+  });
+}
+
+function drawWalkers() {
+  Object.entries(walkers).forEach(([id, w], i) => {
+    const W = canvas.width, H = canvas.height;
+    const x = 160 + (i % 3) * Math.floor((W-240)/3);
+    const y = 260 + Math.floor(i/3) * 110;
+
+    ctx.fillStyle = "#F0FDF4";
+    ctx.beginPath(); ctx.roundRect(x-20, y-20, 40, 40, 10); ctx.fill();
+    ctx.strokeStyle = "#22C55E"; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.roundRect(x-20, y-20, 40, 40, 10); ctx.stroke();
+
+    ctx.fillStyle = "#374151"; ctx.font = "18px serif"; ctx.textAlign = "center";
+    ctx.fillText("🚶", x, y+6);
+
+    ctx.fillStyle = "#374151"; ctx.font = "600 11px 'Segoe UI', sans-serif";
+    ctx.fillText(id, x, y + 30);
+  });
+}
+
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  drawGrid();
+  drawAnchors();
+
+  // 구역 레이블
+  ctx.fillStyle = "#E5E7EB"; ctx.font = "11px 'Segoe UI', sans-serif"; ctx.textAlign = "left";
+  ctx.fillText("입출고 구역", 50, 30);
+  ctx.fillText("보관 구역 A", Math.floor(canvas.width/2)-30, 30);
+  ctx.fillText("작업 구역", 50, canvas.height - 16);
+
+  drawDevices();
+  drawWalkers();
+}
+
+// 루프
+function loop() { draw(); requestAnimationFrame(loop); }
+loop();
+</script>
+</body>
+</html>

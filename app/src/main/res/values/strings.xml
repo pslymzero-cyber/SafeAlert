@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">SafeAlert</string>
+    <string name="mode_select">모드를 선택하세요</string>
+    <string name="btn_device_mode">🚛 장비 모드 시작</string>
+    <string name="btn_walker_mode">🚶 보행자 모드 시작</string>
+    <string name="status_idle">대기 중</string>
+    <string name="hint_id_input">내 ID 입력 (예: DEVICE_001)</string>
+    <string name="channel_name">SafeAlert 실행 중</string>
+</resources>

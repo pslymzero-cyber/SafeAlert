@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:paddingStart="12dp" android:paddingEnd="12dp"
+    android:paddingTop="12dp" android:paddingBottom="12dp"
+    android:background="?attr/selectableItemBackground">
+
+    <!-- 기기 정보 행 -->
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="horizontal" android:gravity="center_vertical">
+        <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content"
+            android:layout_weight="1" android:orientation="vertical">
+            <TextView android:id="@+id/tv_device_name"
+                android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:textSize="14sp" android:textStyle="bold" android:textColor="#111827"/>
+            <!-- MAC 주소 -->
+            <TextView android:id="@+id/tv_mac_addr"
+                android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:textSize="12sp" android:textColor="#6B7280"
+                android:fontFamily="monospace"/>
+            <!-- UUID (있을 때만 표시) -->
+            <TextView android:id="@+id/tv_uuid"
+                android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:textSize="10sp" android:textColor="#9CA3AF"
+                android:fontFamily="monospace"
+                android:visibility="gone"/>
+        </LinearLayout>
+        <!-- RSSI -->
+        <TextView android:id="@+id/tv_rssi"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:textSize="12sp" android:textColor="#6B7280"/>
+    </LinearLayout>
+
+    <!-- 등록 버튼 행 -->
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="horizontal" android:layout_marginTop="8dp">
+        <Button android:id="@+id/btn_add_uuid"
+            android:layout_width="wrap_content" android:layout_height="34dp"
+            android:text="UUID 등록" android:textSize="12sp"
+            style="@style/Widget.MaterialComponents.Button.UnelevatedButton"
+            android:backgroundTint="#EFF6FF" android:textColor="#2563EB"
+            android:visibility="gone"/>
+        <View android:layout_width="8dp" android:layout_height="1dp"/>
+        <Button android:id="@+id/btn_add_mac"
+            android:layout_width="wrap_content" android:layout_height="34dp"
+            android:text="MAC 등록" android:textSize="12sp"
+            style="@style/Widget.MaterialComponents.Button.UnelevatedButton"
+            android:backgroundTint="#FFF7ED" android:textColor="#C2410C"/>
+    </LinearLayout>
+</LinearLayout>

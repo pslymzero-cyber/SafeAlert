@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string-array name="scan_period_labels">
+        <item>1초</item><item>2초</item><item>3초</item><item>5초</item>
+    </string-array>
+    <string-array name="advertise_labels">
+        <item>100ms</item><item>200ms</item><item>500ms</item><item>1000ms</item>
+    </string-array>
+    <string-array name="vib_warning_labels">
+        <item>300ms</item><item>500ms</item><item>1000ms</item>
+    </string-array>
+    <string-array name="vib_count_labels">
+        <item>1회</item><item>3회</item><item>5회</item>
+    </string-array>
+</resources>

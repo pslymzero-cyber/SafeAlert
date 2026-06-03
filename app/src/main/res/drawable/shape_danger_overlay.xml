@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 인앱 오버레이용 — 상단에서 투명으로 페이드하는 빨간 그라데이션 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <gradient
+        android:startColor="#CCF44336"
+        android:centerColor="#44F44336"
+        android:endColor="#00F44336"
+        android:angle="270"/>
+</shape>

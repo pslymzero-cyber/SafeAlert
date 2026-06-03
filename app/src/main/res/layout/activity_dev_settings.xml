@@ -1,0 +1,321 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <!-- 송수신 설정 -->
+        <TextView android:text="송수신 모드" android:textStyle="bold" android:textSize="16sp"
+            android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="8dp"/>
+        <androidx.cardview.widget.CardView
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginTop="8dp">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="vertical" android:padding="16dp">
+
+                <TextView android:text="🚛 장비 작업자" android:textStyle="bold"
+                    android:textSize="13sp" android:textColor="#374151"
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:layout_marginTop="10dp">
+                    <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:orientation="vertical">
+                        <TextView android:text="신호 송신 (TX)" android:textSize="13sp"
+                            android:textColor="#111827"
+                            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                        <TextView android:text="BLE 신호를 주변에 송출"
+                            android:textSize="11sp" android:textColor="#9CA3AF"
+                            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                    </LinearLayout>
+                    <Switch android:id="@+id/switch_device_tx"
+                        android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                </LinearLayout>
+
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:layout_marginTop="12dp">
+                    <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:orientation="vertical">
+                        <TextView android:text="신호 수신 (RX)" android:textSize="13sp"
+                            android:textColor="#111827"
+                            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                        <TextView android:text="주변 장비·보행자 감지"
+                            android:textSize="11sp" android:textColor="#9CA3AF"
+                            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                    </LinearLayout>
+                    <Switch android:id="@+id/switch_device_rx"
+                        android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                </LinearLayout>
+
+                <!-- 보행자끼리 경보 -->
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:layout_marginTop="12dp">
+                    <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:orientation="vertical">
+                        <TextView android:text="보행자끼리 경보" android:textSize="13sp"
+                            android:textColor="#111827"
+                            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                        <TextView android:text="보행자가 다른 보행자를 감지해도 경보 (기본: OFF)"
+                            android:textSize="11sp" android:textColor="#9CA3AF"
+                            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                    </LinearLayout>
+                    <Switch android:id="@+id/switch_walker_detects_walker"
+                        android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                </LinearLayout>
+
+                <View android:layout_width="match_parent" android:layout_height="1dp"
+                    android:background="#F3F4F6" android:layout_marginTop="16dp" android:layout_marginBottom="4dp"/>
+
+                <TextView android:text="🚶 보행자" android:textStyle="bold"
+                    android:textSize="13sp" android:textColor="#374151"
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"/>
+
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:layout_marginTop="10dp">
+                    <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:orientation="vertical">
+                        <TextView android:text="신호 송신 (TX)" android:textSize="13sp"
+                            android:textColor="#111827"
+                            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                        <TextView android:text="BLE 신호를 주변에 송출 (기본: OFF)"
+                            android:textSize="11sp" android:textColor="#9CA3AF"
+                            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                    </LinearLayout>
+                    <Switch android:id="@+id/switch_walker_tx"
+                        android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                </LinearLayout>
+
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:layout_marginTop="12dp">
+                    <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:orientation="vertical">
+                        <TextView android:text="신호 수신 (RX)" android:textSize="13sp"
+                            android:textColor="#111827"
+                            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                        <TextView android:text="주변 장비 감지"
+                            android:textSize="11sp" android:textColor="#9CA3AF"
+                            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                    </LinearLayout>
+                    <Switch android:id="@+id/switch_walker_rx"
+                        android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                </LinearLayout>
+
+            </LinearLayout>
+        </androidx.cardview.widget.CardView>
+
+        <!-- BLE 설정 -->
+        <TextView android:text="BLE 설정" android:textStyle="bold" android:textSize="16sp"
+            android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="8dp"/>
+        <androidx.cardview.widget.CardView
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginTop="8dp">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="vertical" android:padding="16dp">
+                <TextView android:text="경고 거리 (이 거리 이내 접근 시 경고)" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
+                    <SeekBar android:id="@+id/seek_rssi_warning" android:layout_width="0dp"
+                        android:layout_height="wrap_content" android:layout_weight="1" android:max="49"/>
+                    <TextView android:id="@+id/tv_rssi_warning_val" android:layout_width="64dp"
+                        android:layout_height="wrap_content" android:gravity="end"/>
+                </LinearLayout>
+                <TextView android:text="위험 거리 (이 거리 이내 접근 시 위험)" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="8dp"/>
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
+                    <SeekBar android:id="@+id/seek_rssi_danger" android:layout_width="0dp"
+                        android:layout_height="wrap_content" android:layout_weight="1" android:max="49"/>
+                    <TextView android:id="@+id/tv_rssi_danger_val" android:layout_width="64dp"
+                        android:layout_height="wrap_content" android:gravity="end"/>
+                </LinearLayout>
+                <TextView android:text="스캔 주기" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="8dp"/>
+                <Spinner android:id="@+id/spinner_scan_period" android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:entries="@array/scan_period_labels"/>
+                <TextView android:text="광고 간격" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="8dp"/>
+                <Spinner android:id="@+id/spinner_advertise" android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:entries="@array/advertise_labels"/>
+            </LinearLayout>
+        </androidx.cardview.widget.CardView>
+
+        <!-- 거리 교정 -->
+        <TextView android:text="거리 교정" android:textStyle="bold" android:textSize="16sp"
+            android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="16dp"/>
+        <androidx.cardview.widget.CardView
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginTop="8dp">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="vertical" android:padding="16dp">
+
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical">
+                    <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:orientation="vertical">
+                        <TextView android:text="내 폰 1m 기준 RSSI"
+                            android:layout_width="wrap_content" android:layout_height="wrap_content"
+                            android:textSize="13sp" android:textColor="#111827"/>
+                        <TextView android:id="@+id/tv_calib_hint"
+                            android:layout_width="wrap_content" android:layout_height="wrap_content"
+                            android:textSize="11sp" android:textColor="#9CA3AF"/>
+                    </LinearLayout>
+                    <TextView android:id="@+id/tv_calib_val"
+                        android:layout_width="60dp" android:layout_height="wrap_content"
+                        android:gravity="end" android:textSize="13sp" android:textColor="#374151"/>
+                </LinearLayout>
+
+                <SeekBar android:id="@+id/seek_calib"
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:max="60"/>
+
+                <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:background="#FFFBEB" android:padding="10dp"
+                    android:text="💡 교정 방법: 상태바의 RSSI값 확인 → 1m 거리에서의 값을 여기에 설정\n예) 1m에서 -50이 뜨면 이 값을 -50으로 설정"
+                    android:textSize="11sp" android:textColor="#92400E"/>
+
+            </LinearLayout>
+        </androidx.cardview.widget.CardView>
+
+        <!-- 경보 볼륨 -->
+        <TextView android:text="경보 볼륨" android:textStyle="bold" android:textSize="16sp"
+            android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="16dp"/>
+        <androidx.cardview.widget.CardView
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginTop="8dp">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="vertical" android:padding="16dp">
+
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical">
+                    <TextView android:text="알람 볼륨 게인"
+                        android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+                        android:textSize="13sp" android:textColor="#111827"/>
+                    <TextView android:id="@+id/tv_alarm_volume_val"
+                        android:layout_width="48dp" android:layout_height="wrap_content"
+                        android:gravity="end" android:textSize="13sp" android:textColor="#374151"/>
+                </LinearLayout>
+                <TextView android:text="진동/무음 모드에서도 알람 스트림으로 강제 출력됩니다"
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:textSize="11sp" android:textColor="#9CA3AF" android:layout_marginTop="2dp"/>
+                <SeekBar android:id="@+id/seek_alarm_volume"
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:max="100"/>
+
+            </LinearLayout>
+        </androidx.cardview.widget.CardView>
+
+        <!-- 경보 동작 -->
+        <TextView android:text="경보 동작" android:textStyle="bold" android:textSize="16sp"
+            android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="16dp"/>
+        <androidx.cardview.widget.CardView
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginTop="8dp">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="vertical" android:padding="16dp">
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
+                    <TextView android:text="진동 사용" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"/>
+                    <Switch android:id="@+id/switch_vibration" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                </LinearLayout>
+                <TextView android:text="경고 진동 시간" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="8dp"/>
+                <Spinner android:id="@+id/spinner_vib_warning" android:layout_width="match_parent"
+                    android:layout_height="wrap_content" android:entries="@array/vib_warning_labels"/>
+                <TextView android:text="위험 진동 반복 횟수" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="8dp"/>
+                <Spinner android:id="@+id/spinner_vib_count" android:layout_width="match_parent"
+                    android:layout_height="wrap_content" android:entries="@array/vib_count_labels"/>
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:layout_marginTop="8dp">
+                    <TextView android:text="경보음 사용" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"/>
+                    <Switch android:id="@+id/switch_sound" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                </LinearLayout>
+            </LinearLayout>
+        </androidx.cardview.widget.CardView>
+
+        <!-- Firebase -->
+        <TextView android:text="Firebase" android:textStyle="bold" android:textSize="16sp"
+            android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="16dp"/>
+        <androidx.cardview.widget.CardView
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginTop="8dp">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="vertical" android:padding="16dp">
+                <TextView android:text="DB 루트 경로" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                <EditText android:id="@+id/et_firebase_root" android:layout_width="match_parent"
+                    android:layout_height="wrap_content" android:inputType="text"/>
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:layout_marginTop="8dp">
+                    <TextView android:text="경보 자동 저장" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"/>
+                    <Switch android:id="@+id/switch_auto_save" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                </LinearLayout>
+            </LinearLayout>
+        </androidx.cardview.widget.CardView>
+
+        <!-- 디버그 -->
+        <TextView android:text="디버그" android:textStyle="bold" android:textSize="16sp"
+            android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="16dp"/>
+        <androidx.cardview.widget.CardView
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginTop="8dp">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="vertical" android:padding="16dp">
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
+                    <TextView android:text="디버그 모드" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"/>
+                    <Switch android:id="@+id/switch_debug" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                </LinearLayout>
+                <TextView android:text="테스트 시뮬레이션 거리" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="8dp"/>
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
+                    <SeekBar android:id="@+id/seek_sim_rssi" android:layout_width="0dp"
+                        android:layout_height="wrap_content" android:layout_weight="1" android:max="60"/>
+                    <TextView android:id="@+id/tv_sim_rssi_val" android:layout_width="64dp"
+                        android:layout_height="wrap_content" android:gravity="end"/>
+                </LinearLayout>
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:layout_marginTop="8dp">
+                    <TextView android:text="상세 로그" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"/>
+                    <Switch android:id="@+id/switch_verbose" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                </LinearLayout>
+            </LinearLayout>
+        </androidx.cardview.widget.CardView>
+
+        <!-- BLE 비콘 관리 -->
+        <TextView android:text="BLE 비콘 (앱 없는 사용자 지원)" android:textStyle="bold" android:textSize="16sp"
+            android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="16dp"/>
+        <androidx.cardview.widget.CardView
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginTop="8dp">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="vertical" android:padding="16dp">
+                <TextView android:id="@+id/tv_beacon_count"
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="등록된 비콘: 0개  (최대 200개)"
+                    android:textSize="13sp" android:textColor="#374151"/>
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="BLE 비콘 하드웨어를 착용한 보행자도 감지 가능"
+                    android:textSize="11sp" android:textColor="#9CA3AF"/>
+                <Button android:id="@+id/btn_beacon_manager"
+                    android:layout_width="match_parent" android:layout_height="44dp"
+                    android:layout_marginTop="12dp"
+                    android:text="📡  비콘 관리"
+                    style="@style/Widget.MaterialComponents.Button.UnelevatedButton"
+                    android:backgroundTint="#F0F1F3" android:textColor="#374151"/>
+            </LinearLayout>
+        </androidx.cardview.widget.CardView>
+
+        <!-- 버튼 -->
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="horizontal" android:layout_marginTop="24dp">
+            <Button android:id="@+id/btn_save" android:layout_width="0dp" android:layout_height="wrap_content"
+                android:layout_weight="1" android:text="저장" android:backgroundTint="@color/color_device_mode"/>
+            <Button android:id="@+id/btn_reset" android:layout_width="0dp" android:layout_height="wrap_content"
+                android:layout_weight="1" android:text="기본값으로 초기화" android:backgroundTint="#9E9E9E"
+                android:layout_marginStart="8dp"/>
+        </LinearLayout>
+
+    </LinearLayout>
+</ScrollView>
