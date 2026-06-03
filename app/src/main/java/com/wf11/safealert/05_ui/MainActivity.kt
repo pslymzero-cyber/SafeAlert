@@ -139,8 +139,11 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        binding.cardDevice.setOnClickListener    { onModeSelected("DEVICE") }
-        binding.cardWalker.setOnClickListener    { onModeSelected("WALKER") }
+        // 저장된 이름 복원
+        binding.etDisplayName.setText(prefs.getString("display_name", ""))
+
+        binding.cardDevice.setOnClickListener    { saveDisplayName(); onModeSelected("DEVICE") }
+        binding.cardWalker.setOnClickListener    { saveDisplayName(); onModeSelected("WALKER") }
         binding.btnStop.setOnClickListener       { stopServiceWithDelay() }
         binding.cardSettings.setOnClickListener  { showPinDialog() }
         binding.cardBeacon.setOnClickListener    {
@@ -386,6 +389,10 @@ class MainActivity : AppCompatActivity() {
         binding.layoutPermissionWarning.visibility = View.GONE
         binding.tvRunningMode.text  = if (mode == "DEVICE") "🚛 장비 작업자" else "🚶 보행자"
         binding.tvRunningSince.text = SimpleDateFormat("HH:mm 시작", Locale.KOREA).format(Date(since))
+        // 이름 또는 자동 ID 표시
+        val displayName = prefs.getString("display_name", "")?.trim()
+        val id = myId()
+        binding.tvRunningId.text = if (!displayName.isNullOrEmpty()) displayName else id
         val bgColor = if (mode == "DEVICE") 0xFFEFF6FF.toInt() else 0xFFF0FDF4.toInt()
         binding.cardRunning.setCardBackgroundColor(bgColor)
         // 블루투스 상태 즉시 표시
@@ -394,6 +401,11 @@ class MainActivity : AppCompatActivity() {
             btManager?.adapter?.isEnabled != true -> "⚠ 블루투스 꺼짐! 설정에서 켜주세요"
             else -> "✓ 블루투스 ON · BLE 시작 중..."
         }
+    }
+
+    private fun saveDisplayName() {
+        val name = binding.etDisplayName.text?.toString()?.trim() ?: ""
+        prefs.edit().putString("display_name", name).apply()
     }
 
     private fun myId(): String {

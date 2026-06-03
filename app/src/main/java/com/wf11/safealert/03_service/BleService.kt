@@ -62,6 +62,12 @@ class BleService : LifecycleService() {
     private val muteHandler = android.os.Handler(android.os.Looper.getMainLooper())
     @Volatile private var isMuted = false
 
+    // 현재 울리고 있는 최고 경보 레벨 (위험 > 경고 우선순위 관리)
+    @Volatile private var activeSoundLevel = BleConstants.LEVEL_SAFE
+
+    private fun getCurrentMaxLevel() =
+        alertState.values.maxOfOrNull { it.first } ?: BleConstants.LEVEL_SAFE
+
     // 우리가 직접 volAlarm 설정 중인지 플래그 (자체 설정이 mute 트리거 되는 것 방지)
     @Volatile private var ignoringVolumeChange = false
 
@@ -261,6 +267,7 @@ class BleService : LifecycleService() {
                                 AlertSoundPlayer.stopSound()
                                 VibrationHelper.stopVibration(this@BleService)
                                 OverlayManager.hideOverlay()
+                                activeSoundLevel = BleConstants.LEVEL_SAFE
                                 sendAlertBroadcast(deviceId, BleConstants.LEVEL_SAFE)
                                 sendStatusBroadcast("기기 이탈 감지 → 경보 중지")
                                 Log.d(TAG, "모든 기기 이탈 → 경보 중지")
@@ -338,7 +345,7 @@ class BleService : LifecycleService() {
             rapidApproachSet.add(deviceId)
             Log.w(TAG, "급접근 감지 (EMA): $deviceId diff=%.1f dBm → 선제 경고".format(emaDiff))
             forceAlarmVolume()
-            if (DevSettings.vibrationEnabled) VibrationHelper.vibrateOnce(this, DevSettings.vibrationWarningMs)
+            if (DevSettings.vibrationEnabled) VibrationHelper.vibrateRapidApproach(this)  // 빠른 연속 버즈
             if (DevSettings.soundEnabled)     AlertSoundPlayer.playWarning(this)
             OverlayManager.showDangerOverlay(this, danger = false)
             sendAlertBroadcast(deviceId, BleConstants.LEVEL_WARNING)
@@ -387,27 +394,36 @@ class BleService : LifecycleService() {
         // 알람 볼륨 강제 최대화
         forceAlarmVolume()
 
+        // ── 우선순위: 위험 > 경고, 낮은 레벨은 높은 레벨 진행 중에 무시 ──
+        val globalMax = getCurrentMaxLevel()
+        if (stableLevel < globalMax) {
+            // 더 높은 레벨이 이미 울리는 중 → 소리/진동은 건너뜀, 상태만 유지
+            Log.d(TAG, "우선순위 무시: $stableLevel < $globalMax (활성)")
+            return
+        }
+        // 레벨 상승 시 기존 소리 중지 후 업그레이드
+        if (stableLevel > activeSoundLevel) AlertSoundPlayer.stopSound()
+        activeSoundLevel = stableLevel
+
         when (stableLevel) {
             BleConstants.LEVEL_WARNING -> {
                 if (DevSettings.vibrationEnabled)
-                    VibrationHelper.vibrateOnce(this, DevSettings.vibrationWarningMs)
+                    VibrationHelper.vibrateWarning(this)          // 탐∙탐 2회
                 if (DevSettings.soundEnabled)
                     AlertSoundPlayer.playWarning(this)
                 if (DevSettings.autoSaveAlerts)
                     FirebaseManager.saveAlert(deviceId, myId, avgRssi, "WARNING")
-                // 시스템 오버레이 (경고 = 노란 테두리)
                 OverlayManager.showDangerOverlay(this, danger = false)
                 sendAlertBroadcast(deviceId, BleConstants.LEVEL_WARNING)
                 Log.d(TAG, "경고 발생: $deviceId avgRssi=$avgRssi")
             }
             BleConstants.LEVEL_DANGER -> {
                 if (DevSettings.vibrationEnabled)
-                    VibrationHelper.vibrateRepeat(this, DevSettings.vibrationDangerCount)
+                    VibrationHelper.vibrateDanger(this)           // 탕탕탕 3연타
                 if (DevSettings.soundEnabled)
                     AlertSoundPlayer.playDanger(this)
                 if (DevSettings.autoSaveAlerts)
                     FirebaseManager.saveAlert(deviceId, myId, avgRssi, "DANGER")
-                // 시스템 오버레이 (위험 = 빨간 테두리)
                 OverlayManager.showDangerOverlay(this, danger = true)
                 sendAlertBroadcast(deviceId, BleConstants.LEVEL_DANGER)
                 Log.d(TAG, "위험 발생: $deviceId avgRssi=$avgRssi")

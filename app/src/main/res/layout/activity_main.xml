@@ -96,6 +96,16 @@
                             android:textSize="11sp"
                             android:textColor="#5B8FA8" />
 
+                    <!-- 이름/ID 표시 -->
+                    <TextView
+                        android:id="@+id/tv_running_id"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:textSize="16sp"
+                        android:textStyle="bold"
+                        android:textColor="#0D1B2A" />
+
                         <TextView
                             android:id="@+id/tv_running_since"
                             android:layout_width="wrap_content"
@@ -194,6 +204,25 @@
                     android:text="역할에 맞는 모드를 선택하세요"
                     android:textSize="13sp"
                     android:textColor="#9CA3AF" />
+
+                <!-- 이름 입력 (선택) -->
+                <com.google.android.material.textfield.TextInputLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp"
+                    android:hint="이름 또는 직번 (선택, 예: 홍길동)"
+                    style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                    app:boxCornerRadiusTopStart="12dp" app:boxCornerRadiusTopEnd="12dp"
+                    app:boxCornerRadiusBottomStart="12dp" app:boxCornerRadiusBottomEnd="12dp"
+                    app:boxStrokeColor="#E5E7EB" app:hintTextColor="#9CA3AF">
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/et_display_name"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:inputType="textPersonName"
+                        android:textSize="15sp"
+                        android:imeOptions="actionDone"/>
+                </com.google.android.material.textfield.TextInputLayout>
 
                 <!-- 장비 작업자 카드 -->
                 <androidx.cardview.widget.CardView
