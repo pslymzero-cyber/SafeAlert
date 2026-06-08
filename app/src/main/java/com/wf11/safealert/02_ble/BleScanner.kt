@@ -20,7 +20,13 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
         private const val TAG = "BleScanner"
         // 30분 쓰로틀 방지: 45초마다 스캔 껐다 켜기 (OS의 30분 연속 스캔 차단 정책 우회)
         private const val SCAN_RESTART_MS   = 45_000L
-        private const val DEVICE_TIMEOUT_MS = 2000L
+        // [v1.0.28] 기기 소실 타임아웃 — 스캔 모드 연동(동적).
+        //  ACTIVE(LOW_LATENCY): 촘촘한 스캔 → 2초 미수신이면 소실 판정(빠른 반응).
+        //  REST(BALANCED):      OFF 듀티 구간이 길어 2초를 넘기는 정상 케이스가 있으므로
+        //                       6초로 연장 → 옆에 멀쩡히 있는 기기가 '감지 없음'으로
+        //                       오소실/깜빡임 되는 v1.0.27 휴식모드 회귀를 방지한다.
+        private const val DEVICE_TIMEOUT_ACTIVE_MS = 2000L
+        private const val DEVICE_TIMEOUT_REST_MS   = 6000L
 
         // ── 동적 스캔 모드 정책 (v1.0.27 배터리 최적화) ────────────────────
         // 기본은 SCAN_MODE_LOW_LATENCY(0초 지연, 안전 우선)로 100% 가동한다.
@@ -149,8 +155,12 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
     private val timeoutChecker = object : Runnable {
         override fun run() {
             val now = System.currentTimeMillis()
+            // [v1.0.28] BALANCED(휴식) 모드는 스캔 OFF 구간이 길어 타임아웃을 늘려야
+            //           정상 기기의 오소실('감지 없음' 깜빡임)을 막는다.
+            val timeoutMs = if (currentScanMode == REST_SCAN_MODE) DEVICE_TIMEOUT_REST_MS
+                            else DEVICE_TIMEOUT_ACTIVE_MS
             detectedDevices.entries
-                .filter { now - it.value > DEVICE_TIMEOUT_MS }
+                .filter { now - it.value > timeoutMs }
                 .map { it.key }
                 .forEach { id ->
                     detectedDevices.remove(id)
