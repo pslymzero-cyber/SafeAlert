@@ -43,6 +43,12 @@ object ImuFusion {
     // 연속 정지 프레임 카운터 (lock으로 보호)
     @Volatile private var stationaryFrameCount = 0
 
+    // [v1.0.27] 정지↔이동 상태 변화 통지 훅 — BleService 가 동적 스캔 모드 제어용으로 구독.
+    //   isStationary 판정식·임계값은 일절 불변. 상태가 '바뀌는 순간'만 콜백으로 알린다.
+    //   이동 감지 시 0프레임(진짜 0초) 지연으로 호출 → 즉시 LOW_LATENCY 복귀 보장.
+    @Volatile var onStationaryChanged: ((Boolean) -> Unit)? = null
+    @Volatile private var lastNotifiedStationary = false
+
     private val accelBuffer = ArrayDeque<Float>()
     private val lock = Any()
 
@@ -50,6 +56,7 @@ object ImuFusion {
         override fun onSensorChanged(event: SensorEvent) {
             val x = event.values[0]; val y = event.values[1]; val z = event.values[2]
             val mag = sqrt(x * x + y * y + z * z)
+            var transition: Boolean? = null   // [v1.0.27] null=변화없음 / true·false=새 상태
             synchronized(lock) {
                 if (accelBuffer.size >= WINDOW_SIZE) accelBuffer.removeFirst()
                 accelBuffer.addLast(mag)
@@ -59,7 +66,15 @@ object ImuFusion {
                 } else {
                     0   // 미세한 진동도 즉시 '이동 중'으로 전환
                 }
+                // [v1.0.27] 상태 변화 감지(판정식 그대로 재사용) — 바뀐 순간만 기록
+                val nowStationary = stationaryFrameCount >= STATIONARY_CONFIRM_FRAMES
+                if (nowStationary != lastNotifiedStationary) {
+                    lastNotifiedStationary = nowStationary
+                    transition = nowStationary
+                }
             }
+            // [v1.0.27] 콜백은 lock 밖에서 호출 — 구독자 코드가 lock 을 점유·지연시키지 않게
+            transition?.let { onStationaryChanged?.invoke(it) }
         }
         override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) {}
     }
@@ -81,6 +96,7 @@ object ImuFusion {
         synchronized(lock) {
             accelBuffer.clear()
             stationaryFrameCount = 0
+            lastNotifiedStationary = false   // [v1.0.27] 다음 init 시 첫 통지 정합성 보장
         }
         isRunning = false
         Log.d(TAG, "IMU 융합 중지")

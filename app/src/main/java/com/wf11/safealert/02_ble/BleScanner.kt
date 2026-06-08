@@ -22,14 +22,22 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
         private const val SCAN_RESTART_MS   = 45_000L
         private const val DEVICE_TIMEOUT_MS = 2000L
 
-        // ── 하드웨어 배칭 딜레이 (Always-On 정책 v1.0.24) ──────────────────
-        // 안테나는 항상 SCAN_MODE_LOW_LATENCY로 100% 가동 (안전 우선, 0초 지연).
-        // 배터리 방전 방지는 오직 Report Delay(하드웨어 FIFO 배칭)로만 처리한다.
+        // ── 동적 스캔 모드 정책 (v1.0.27 배터리 최적화) ────────────────────
+        // 기본은 SCAN_MODE_LOW_LATENCY(0초 지연, 안전 우선)로 100% 가동한다.
+        // 단 IMU 가 '정지 5초'를 확정하면 BleService 가 setEcoMode(true)를 호출해
+        // REST_SCAN_MODE(BALANCED)로 낮춰 라디오 듀티를 ~75% 줄인다(휴식 모드).
+        // 이동이 감지되는 즉시(0초) setEcoMode(false) → LOW_LATENCY 원복(전투 모드).
+        //
+        // 배칭 딜레이는 이와 직교 — 화면 꺼짐 시 CPU 웨이크업만 별도로 억제한다.
         //   화면 켜짐/활성: 0ms   — 즉시 전달, 경보 지연 0
-        //   화면 꺼짐:     500ms  — BLE 칩이 CPU를 깨우지 않고 독립 100% 스캔,
+        //   화면 꺼짐:     500ms  — BLE 칩이 CPU를 깨우지 않고 독립 스캔,
         //                          CPU는 0.5초마다 1회만 기상 → 최대 0.5초 지연 보장
         private const val BATCH_DELAY_ACTIVE_MS     = 0L
         private const val BATCH_DELAY_SCREEN_OFF_MS = 500L
+
+        // [v1.0.27] 스캔 모드 상수 — 전투(LOW_LATENCY) / 휴식(BALANCED)
+        private val ACTIVE_SCAN_MODE = ScanSettings.SCAN_MODE_LOW_LATENCY
+        private val REST_SCAN_MODE   = ScanSettings.SCAN_MODE_BALANCED
     }
 
     private var scanCallback: BleScanCallback? = null
@@ -40,8 +48,11 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
 
     private var totalBleCount = 0
 
-    // 화면 상태 — false 시 500ms 하드웨어 배칭 (LOW_LATENCY는 그대로 유지, CPU 웨이크업만 최소화)
+    // 화면 상태 — false 시 500ms 하드웨어 배칭 (스캔 모드와 직교, CPU 웨이크업만 최소화)
     @Volatile var isScreenOn: Boolean = true
+
+    // [v1.0.27] 현재 스캔 모드 — 기본 전투(LOW_LATENCY). IMU 정지 5초 확정 시에만 휴식(BALANCED).
+    @Volatile private var currentScanMode: Int = ACTIVE_SCAN_MODE
 
     private val bleScanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
@@ -150,6 +161,10 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
         }
     }
 
+    // [v1.0.27 Req1] 하드웨어 스캔 필터 의무 적용 — emptyList() 금지.
+    // SERVICE_UUID(우리 비콘 규격) 필터를 블루투스 칩셋에 오프로딩 → 무관한 BLE 잡음은
+    // 메인 CPU 를 깨우지 않고 칩셋 단에서 즉시 폐기된다(화면 꺼짐·절전 모드 배터리 절감 핵심).
+    // ※ BleAdvertiser 가 동일 SERVICE_UUID 를 광고하므로 우리 기기는 이 필터를 정상 통과한다.
     private fun buildFilters(): List<ScanFilter> {
         val filters = mutableListOf<ScanFilter>()
         filters.add(ScanFilter.Builder()
@@ -192,11 +207,12 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
     }
 
     private fun startScanInternal() {
-        // Always-On: 안테나는 화면 상태·역할·감지 여부와 무관하게 무조건 LOW_LATENCY로
-        // 100% 가동한다 (안전 우선, 0초 지연). 배터리 방전은 하드웨어 배칭으로만 억제.
+        // [v1.0.27] 스캔 모드는 currentScanMode(동적). 기본 LOW_LATENCY(0초 지연),
+        // IMU 정지 5초 확정 시에만 REST_SCAN_MODE(BALANCED)로 낮춘다. 이동 즉시 원복.
+        // 배칭 딜레이는 화면 상태로 별도 결정(스캔 모드와 직교).
         val batchDelay = if (!isScreenOn) BATCH_DELAY_SCREEN_OFF_MS else BATCH_DELAY_ACTIVE_MS
         val settings = ScanSettings.Builder()
-            .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+            .setScanMode(currentScanMode)
             .setReportDelay(batchDelay)
             // 단일 광고 패킷만으로도 즉시 보고 — 약한 신호 기기 조기 감지
             .setMatchMode(ScanSettings.MATCH_MODE_AGGRESSIVE)
@@ -206,7 +222,7 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
             .build()
         try {
             scanner.startScan(buildFilters(), settings, bleScanCallback)
-            Log.d(TAG, "스캔 시작 (LOW_LATENCY 고정 · batch=${batchDelay}ms)")
+            Log.d(TAG, "스캔 시작 (${scanModeName(currentScanMode)} · batch=${batchDelay}ms)")
         } catch (e: SecurityException) {
             Log.e(TAG, "스캔 권한 없음"); onStatusUpdate?.invoke("❌ 스캔 권한 없음")
         } catch (e: Exception) {
@@ -228,13 +244,32 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
         }
     }
 
-    /** 화면 켜짐 → 0ms 즉시 전달 복귀 (LOW_LATENCY 유지) */
+    /** 화면 켜짐 → 0ms 즉시 전달 복귀 (현재 스캔 모드 유지) */
     fun notifyScreenOn() {
         isScreenOn = true
         if (isScanning) {
-            Log.d(TAG, "화면 켜짐 → LOW_LATENCY + 0ms 즉시 전달 복귀")
+            Log.d(TAG, "화면 켜짐 → 0ms 즉시 전달 복귀")
             restartScanInternal()
         }
+    }
+
+    // [v1.0.27] 동적 절전 스캔 모드 전환 (BleService 가 IMU 상태에 따라 호출).
+    //  eco=true  → 휴식 모드: REST_SCAN_MODE(BALANCED). 정지 5초 확정 시.
+    //  eco=false → 전투 모드: ACTIVE_SCAN_MODE(LOW_LATENCY). 이동 즉시·경보 발생 시.
+    // 모드가 실제로 바뀔 때만 재시작(idempotent) → 불필요한 스캔 리셋 없음.
+    fun setEcoMode(eco: Boolean) {
+        val target = if (eco) REST_SCAN_MODE else ACTIVE_SCAN_MODE
+        if (currentScanMode == target) return        // 동일 모드 → no-op (안전·저비용)
+        currentScanMode = target
+        Log.d(TAG, "스캔 모드 → ${scanModeName(target)} (${if (eco) "휴식" else "전투"} 모드)")
+        if (isScanning) restartScanInternal()
+    }
+
+    private fun scanModeName(mode: Int): String = when (mode) {
+        ScanSettings.SCAN_MODE_LOW_LATENCY -> "LOW_LATENCY"
+        ScanSettings.SCAN_MODE_BALANCED    -> "BALANCED"
+        ScanSettings.SCAN_MODE_LOW_POWER   -> "LOW_POWER"
+        else                               -> "MODE_$mode"
     }
 
     fun stopScanning() {

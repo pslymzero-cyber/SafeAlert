@@ -143,6 +143,18 @@ class BleService : LifecycleService() {
     @Volatile private var lastScanResultMs = 0L
     private val healthCheckHandler = android.os.Handler(android.os.Looper.getMainLooper())
 
+    // ── [v1.0.27] IMU 연동 동적 스캔 모드 (휴식/전투) ───────────────────────
+    // 정지 5초 확정 → BALANCED 절전(휴식). 이동 즉시 → LOW_LATENCY 원복(전투).
+    private val STATIONARY_ECO_DELAY_MS = 5_000L
+    private val ecoHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val ecoDowngradeRunnable = Runnable {
+        // 5초 뒤에도 여전히 정지 + 활성 경보 없음일 때만 절전 진입 (위험 존재 시 전투 유지)
+        if (ImuFusion.isStationary && alertState.isEmpty()) {
+            bleScanner?.setEcoMode(true)
+            Log.d(TAG, "정지 5초 경과 + 경보 없음 → BALANCED 절전(휴식 모드)")
+        }
+    }
+
     // ── 2D 칼만 필터 맵 (v1.0.20: KalmanFilter, 거리+속도 동시 추적) ──
     private val kalmanFilters = mutableMapOf<String, KalmanFilter>()
 
@@ -203,6 +215,21 @@ class BleService : LifecycleService() {
         }
         registerReceiver(screenReceiver, screenFilter)
         ImuFusion.init(this)
+        // [v1.0.27] IMU 정지↔이동 전환 구독 → 동적 스캔 모드 제어 (DEVICE·WALKER 공통)
+        ImuFusion.onStationaryChanged = { stationary ->
+            // 센서 스레드 → 메인 핸들러로 위임(스캔 재시작은 메인 루퍼 기준)
+            ecoHandler.post {
+                ecoHandler.removeCallbacks(ecoDowngradeRunnable)
+                if (stationary) {
+                    // 정지 진입 → 5초 디바운스 후 절전(그 사이 이동하면 취소됨)
+                    ecoHandler.postDelayed(ecoDowngradeRunnable, STATIONARY_ECO_DELAY_MS)
+                } else {
+                    // 이동 감지 즉시(0초) → LOW_LATENCY 원복(전투 모드)
+                    bleScanner?.setEcoMode(false)
+                    Log.d(TAG, "IMU 이동 감지 → 즉시 LOW_LATENCY 복귀(전투 모드)")
+                }
+            }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -587,6 +614,9 @@ class BleService : LifecycleService() {
             }
             return
         }
+
+        // [v1.0.27] 여기 도달 = 비-SAFE(경보 상황). 정지 중이라도 즉시 전투모드(LOW_LATENCY) 보장.
+        bleScanner?.setEcoMode(false)
 
         // 무음 중 — 상태 추적만 유지 (전역 무음 또는 [v1.0.25] 해당 기기 Acknowledge 무음)
         if (isMuted || isDeviceMuted(deviceId)) {
@@ -979,6 +1009,9 @@ class BleService : LifecycleService() {
 
     private fun stopAll() {
         stopBle()
+        // [v1.0.27] IMU 동적 스캔 모드 정리 — 콜백 해제 + 디바운스 타이머 취소
+        ImuFusion.onStationaryChanged = null
+        ecoHandler.removeCallbacks(ecoDowngradeRunnable)
         ImuFusion.stop()
         uwbRanger?.stop(); uwbRanger = null
         AlertSoundPlayer.stopSound()
