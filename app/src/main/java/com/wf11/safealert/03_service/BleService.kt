@@ -80,9 +80,9 @@ class BleService : LifecycleService() {
 
     @Volatile private var ignoringVolumeChange = false
 
-    // ── RssiPreFilter: IQR → Max-Hold 전처리 파이프라인 ──────────────
-    // 칼만 필터 입력 전 다중경로 페이딩·신체 차폐 노이즈 제거
-    // 파라미터: windowSize=8, minSamples=4, maxHoldRatio=0.20, iqrMultiplier=1.5, bypass=6
+    // ── [v1.0.32] RssiPreFilter: 비대칭 비례제어(Asymmetric P-Control) EMA 전처리 ──
+    // 칼만 필터 입력 전 1차 LPF. S_t = S_{t-1} + α·(R_t − S_{t-1}).
+    //   비대칭 α: 강해짐(접근)=0.3 빠름 / 약해짐(난수)=0.05 느림 / D-Boost(prevVel>+2.0)=0.4 빗장개방.
     private val rssiPreFilter = RssiPreFilter()
 
     // ── Always-On 정책 (v1.0.24) ──────────────────────────────────────
@@ -547,8 +547,13 @@ class BleService : LifecycleService() {
         }
         kf.updatePreset(DevSettings.kalmanPreset)
 
-        // ── RssiPreFilter: 무조건 파이프라인 통과 (Approach Override 없음) ──
-        val preFiltered = rssiPreFilter.push(deviceId, inputRssi)
+        // ── [v1.0.32] RssiPreFilter: 비대칭 비례제어(Asymmetric P-Control) EMA 전처리 ──
+        // 직전 프레임 칼만 추정속도(estimatedVel)를 D-Boost 피드백으로 전달한다.
+        //   ※ kf.update()는 바로 아래에서 호출되므로, 지금 읽는 estimatedVel 은 '직전 프레임'
+        //     속도 = 1-step 미분 피드백. 강한 돌진(prevVel>+2.0)이면 α 빗장을 열어 지연을 없앤다.
+        //   정제 출력(smoothedRssi=preFiltered)만 칼만 입력으로 주입(raw 직접 입력 금지).
+        val prevVel     = kf.estimatedVel
+        val preFiltered = rssiPreFilter.push(deviceId, inputRssi, prevVel)
 
         // ── 2D 칼만 필터 업데이트 (RSSI 공간) ────────────────────────────
         // kfRssi: 추정 RSSI(dBm) / kfVel: 변화율(dBm/s), 양수=접근 / 음수=이탈
@@ -569,7 +574,10 @@ class BleService : LifecycleService() {
         // TTC·0x02 특수경보까지 전부 무시하고 즉시 정리 후 return 한다.
         // 이미 추적 중(alertState 존재)인 기기는 게이트를 통과시켜, 아래 이탈(receding) 페이드아웃
         // 로직이 부드럽게 해제하도록 맡긴다(급단절 방지).
-        val gateRssi = minOf(kalmanRssi, avg1sec)
+        //   ★ v1.0.32 3중 가드: 칼만(kalmanRssi)·raw1초평균(avg1sec)에 더해 전처리 EMA 출력
+        //     (smoothedRssi=preFiltered)까지 세 경로 중 가장 먼(가장 음수) 값을 기준으로 잡는다.
+        //     어느 한 경로라도 경고 임계보다 멀면 속도·TTC와 무관하게 신규 격상을 차단(SAFE).
+        val gateRssi = minOf(kalmanRssi, avg1sec, preFiltered)
         if (gateRssi < BleConstants.rssiWarning && !alertState.containsKey(deviceId)) {
             deviceRssiMap.remove(deviceId)
             suddenLabelMap.remove(deviceId)
@@ -577,17 +585,20 @@ class BleService : LifecycleService() {
             return
         }
 
-        // ── [v1.0.29 다이나믹 페이로드] 0x02 특수경보 (칼만 보존 · 최우선 분기) ──────────
-        // 상대 remoteState 가 0x02(급정거/급회전)이고 정제 칼만 RSSI 가 임계 이상(가까움)이면
+        // ── [v1.0.29 → v1.0.32] 0x02 특수경보 (최우선 분기) ──────────
+        // 상대 remoteState 가 0x02(급정거/급회전)이고 전처리 smoothedRssi 가 임계(-60) 이상(가까움)이면
         // TTC·속도·방향·절대거리 가드를 모두 무시하고 즉시 최고 DANGER 로 격상한다.
+        //   ★ v1.0.32: 거리 판정을 kfRssi(칼만) → smoothedRssi(=preFiltered, EMA 출력)로 변경.
+        //     칼만은 평활화 lag 로 실제보다 가깝게 떠 있을 수 있으나, EMA 출력은 raw 에 더 정직해
+        //     원거리 0x02 오발을 줄이고 지침(smoothedRssi 기준)을 준수한다.
         // 표시문자열을 "{이름}이(가) 급정거 또는 급회전 중입니다."로 덮어써 오버레이·목록에 출력.
         if (remoteState == BleConstants.MOTION_STATE_SUDDEN
-            && kfRssi >= BleConstants.SUDDEN_ALERT_RSSI_THRESHOLD) {
+            && preFiltered >= BleConstants.SUDDEN_ALERT_RSSI_THRESHOLD) {
             deviceRssiMap[deviceId]  = kalmanRssi
             suddenLabelMap[deviceId] = makeSuddenLabel(extractDisplayName(deviceId))
             alertState[deviceId]     = Pair(BleConstants.LEVEL_DANGER, now)
             bleScanner?.setEcoMode(false)   // 즉시 전투 모드(LOW_LATENCY)
-            Log.w(TAG, "특수경보(0x02 급정거/급회전): $deviceId kfRssi=%.1f".format(kfRssi))
+            Log.w(TAG, "특수경보(0x02 급정거/급회전): $deviceId smoothed=$preFiltered kfRssi=%.1f".format(kfRssi))
             // 무음(전역/개별)은 존중 — 상태·표시는 유지하되 소리/진동만 억제
             if (isMuted || isDeviceMuted(deviceId)) {
                 updateFloatingOverlay()

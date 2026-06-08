@@ -1,88 +1,72 @@
 package com.wf11.safealert.ble
 
-import android.util.Log
+import kotlin.math.roundToInt
 
 /**
- * RSSI 전처리 파이프라인 (v1.0.20)
+ * RSSI 전처리 — 비대칭 비례제어(Asymmetric P-Control) EMA LPF (v1.0.32)
  *
- * 모든 원시 데이터는 예외 없이 다음 3단계를 거친다:
- *   ① 슬라이딩 윈도우 — 기기별 독립 버퍼 (WINDOW_SIZE 샘플)
- *   ② IQR 필터       — [Q1-1.5×IQR, Q3+1.5×IQR] 범위 이탈 샘플 제거 (다중경로 노이즈)
- *   ③ Max-Hold 필터  — IQR 통과 샘플 중 상위 MAX_HOLD_RATIO 강신호 평균 (LoS 경로 추출)
+ * [설계 교체] v1.0.31 까지의 IQR → Max-Hold 통계 파이프라인을 폐기하고,
+ * 지수이동평균(EMA) 기반 1차 비례제어 저역통과 필터로 단일화한다.
+ *   공식:  S_t = S_{t-1} + α · (R_t − S_{t-1})   (현재추정 = 이전추정 + 비례상수 × 오차)
  *
- * ※ Approach Override(급접근 바이패스) 완전 삭제:
- *   신호가 순간 튀어도 필터를 우회하지 않는다.
- *   1~2초 누적·정제가 최우선이며, 정제된 데이터만 2D 칼만 필터로 전달한다.
+ * [비대칭 P-Gain] RSSI는 음수다(0에 가까울수록 강·근접).
+ *   ① R_t ≥ S_{t-1} (신호 강해짐 = 접근/위험 상황)       → α = ALPHA_RISE (0.3)  빠른 추종
+ *   ② R_t <  S_{t-1} (신호 약해짐 = 철제랙 간섭 등 난수)  → α = ALPHA_FALL (0.05) 매우 느린 추종(가짜 난수 무시)
+ *
+ * [미분(속도) 연동 D-Boost] 2D 칼만이 정제한 접근속도(prevVel, dBm/s)를 피드백 받아 α를 가변 조절.
+ *   ※ 부호 규칙(KalmanFilter): vel>0 = RSSI 증가 = 접근(돌진).
+ *      지침 원문의 'velocity < −2.0(거리 관념)'은 본 코드의 RSSI 공간과 부호가 반대이므로,
+ *      의도(돌진 시 빗장 개방)를 살려 코드 부호 관례 prevVel > +VEL_DBOOST_DBM 로 정정 구현한다.
+ *   prevVel > VEL_DBOOST_DBM(+2.0) (강한 돌진) → 신호가 일시적으로 감소(R<S)하더라도 난수 방어
+ *      하한선 α=0.05 를 무시하고 α = ALPHA_DBOOST(0.4) 로 필터 빗장을 완전히 열어
+ *      필터 지연을 최소화하고 생존 반응속도를 확보한다.
+ *
+ * 정제된 출력(smoothedRssi)만 2D 칼만 필터의 Measurement 로 주입된다(raw 직접 입력 금지).
  */
-class RssiPreFilter(
-    private val windowSize:    Int   = WINDOW_SIZE_DEFAULT,
-    private val minSamples:    Int   = MIN_SAMPLES_DEFAULT,
-    private val maxHoldRatio:  Float = MAX_HOLD_RATIO_DEFAULT,
-    private val iqrMultiplier: Float = IQR_MULTIPLIER_DEFAULT
-) {
-    companion object {
-        private const val TAG = "RssiPreFilter"
+class RssiPreFilter {
 
-        const val WINDOW_SIZE_DEFAULT    = 8
-        const val MIN_SAMPLES_DEFAULT    = 4
-        const val MAX_HOLD_RATIO_DEFAULT = 0.20f
-        const val IQR_MULTIPLIER_DEFAULT = 1.5f
+    companion object {
+        // 비대칭 비례상수(α)
+        const val ALPHA_RISE     = 0.3    // 신호 강해짐(접근/위험): 빠른 추종
+        const val ALPHA_FALL     = 0.05   // 신호 약해짐(난수 의심): 느린 추종
+        const val ALPHA_DBOOST   = 0.4    // 강한 돌진(D-Boost): 빗장 완전 개방
+        // D-Boost 임계: 칼만 추정 접근속도(dBm/s). RSSI 공간이라 양수(+)=접근.
+        const val VEL_DBOOST_DBM = 2.0
     }
 
-    private val windows = mutableMapOf<String, ArrayDeque<Int>>()
+    // 기기별 EMA 상태 S_{t-1} (Double 정밀도 유지, 출력만 Int 양자화)
+    private val emaState = mutableMapOf<String, Double>()
 
     /**
-     * 신규 RSSI 샘플을 추가하고 정제된 출력 반환.
+     * 신규 RSSI 샘플을 비대칭 EMA로 정제해 반환.
      *
-     * 어떠한 조건에서도 슬라이딩 윈도우 → IQR → Max-Hold 파이프라인을 거친다.
-     * 샘플 부족(< minSamples) 구간에는 원시 RSSI를 폴백으로 반환한다.
-     *
-     * @param deviceId 기기 식별자 (기기별 독립 윈도우)
+     * @param deviceId 기기 식별자 (기기별 독립 상태)
      * @param rssi     원시 RSSI (dBm, 음수)
-     * @return 2D 칼만 필터에 입력할 정제 RSSI
+     * @param prevVel  직전 프레임 칼만 추정속도(dBm/s). +접근/−이탈. 첫 프레임 0.0.
+     * @return 2D 칼만 필터에 입력할 정제 RSSI(smoothedRssi)
      */
-    fun push(deviceId: String, rssi: Int): Int {
-        val window = windows.getOrPut(deviceId) { ArrayDeque() }
-        window.addLast(rssi)
-        if (window.size > windowSize) window.removeFirst()
+    fun push(deviceId: String, rssi: Int, prevVel: Double = 0.0): Int {
+        // 첫 샘플: 상태 초기화(콜드스타트 지연 제거) — 원시값을 그대로 신뢰
+        val prev = emaState[deviceId] ?: run {
+            emaState[deviceId] = rssi.toDouble()
+            return rssi
+        }
 
-        // 샘플 부족 — 폴백: 원시 RSSI 그대로
-        if (window.size < minSamples) return rssi
+        val r = rssi.toDouble()
+        val alpha = when {
+            // D-Boost: 강한 돌진(접근속도 가파름) → 신호 일시감소(R<S)여도 빗장 개방
+            prevVel > VEL_DBOOST_DBM -> ALPHA_DBOOST
+            // 신호 강해짐(R ≥ S): 위험 방향 → 빠른 추종
+            r >= prev                -> ALPHA_RISE
+            // 신호 약해짐(R < S): 철제랙 간섭 등 난수 의심 → 매우 느린 추종
+            else                     -> ALPHA_FALL
+        }
 
-        // IQR 필터
-        val filtered = applyIqr(window.toList())
-        if (filtered.isEmpty()) return rssi
-
-        // Max-Hold
-        return applyMaxHold(filtered)
+        val s = prev + alpha * (r - prev)
+        emaState[deviceId] = s
+        return s.roundToInt()
     }
 
-    private fun applyIqr(samples: List<Int>): List<Int> {
-        val sorted = samples.sorted()
-        val q1  = percentile(sorted, 25.0)
-        val q3  = percentile(sorted, 75.0)
-        val iqr = q3 - q1
-        if (iqr < 1e-6) return samples
-        val lower = q1 - iqrMultiplier * iqr
-        val upper = q3 + iqrMultiplier * iqr
-        return samples.filter { it.toDouble() in lower..upper }
-    }
-
-    private fun percentile(sorted: List<Int>, pct: Double): Double {
-        if (sorted.size == 1) return sorted[0].toDouble()
-        val pos  = pct / 100.0 * (sorted.size - 1)
-        val lo   = pos.toInt()
-        val hi   = (lo + 1).coerceAtMost(sorted.size - 1)
-        val frac = pos - lo
-        return sorted[lo] + frac * (sorted[hi] - sorted[lo])
-    }
-
-    private fun applyMaxHold(samples: List<Int>): Int {
-        val sorted   = samples.sortedDescending()
-        val topCount = maxOf(1, (sorted.size * maxHoldRatio).toInt())
-        return sorted.take(topCount).average().toInt()
-    }
-
-    fun clear(deviceId: String) { windows.remove(deviceId) }
-    fun clearAll() { windows.clear() }
+    fun clear(deviceId: String) { emaState.remove(deviceId) }
+    fun clearAll() { emaState.clear() }
 }
