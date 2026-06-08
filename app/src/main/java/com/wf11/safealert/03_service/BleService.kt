@@ -201,6 +201,10 @@ class BleService : LifecycleService() {
     // [v1.0.25 Req4] 기기별 음소거(Acknowledge) — deviceId → 음소거 해제 시각(ms). 플로팅 터치 시 등록.
     private val mutedDevices      = mutableMapOf<String, Long>()
 
+    // [v1.0.29 다이나믹 페이로드] 0x02(급정거/급회전) 특수경보 기기의 표시문자열 덮어쓰기 맵.
+    //   값 = "{이름}이(가) 급정거 또는 급회전 중입니다." → 오버레이/목록에서 일반 이름 대신 출력.
+    private val suddenLabelMap    = mutableMapOf<String, String>()
+
     private val HYSTERESIS_DBM = 5
 
     override fun onCreate() {
@@ -229,6 +233,10 @@ class BleService : LifecycleService() {
                     Log.d(TAG, "IMU 이동 감지 → 즉시 LOW_LATENCY 복귀(전투 모드)")
                 }
             }
+        }
+        // [v1.0.29 다이나믹 페이로드] IMU 3-State 모션 변화 → 광고 ServiceData 상태 코드 갱신
+        ImuFusion.onMotionStateChanged = { code ->
+            bleAdvertiser?.updateState(code)
         }
     }
 
@@ -351,7 +359,7 @@ class BleService : LifecycleService() {
                 bleScanner = BleScanner(scanner).also { s ->
                     s.onStatusUpdate = { msg -> sendStatusBroadcast(msg) }
                     s.startScanning(object : BleScanCallback {
-                        override fun onDeviceDetected(deviceId: String, rssi: Int, alertLevel: Int) {
+                        override fun onDeviceDetected(deviceId: String, rssi: Int, alertLevel: Int, remoteState: Int) {
                             lastScanResultMs = System.currentTimeMillis()
 
                             if (myMode == "WALKER"
@@ -359,7 +367,7 @@ class BleService : LifecycleService() {
                                 && !DevSettings.walkerDetectsWalker) return
 
                             val effectiveRssi = if (DevSettings.debugMode) DevSettings.simulatedRssi else rssi
-                            processAlert(deviceId, effectiveRssi)
+                            processAlert(deviceId, effectiveRssi, remoteState)
                             // [v1.0.26 Req2] processAlert 가 alertState 를 어떻게 바꿨든(추가·격상·SAFE 제거·TTC 선발령)
                             // 그 직후 전체 스냅샷을 한 번에 송출 → 하단 목록이 플로팅·알람과 절대 어긋나지 않는다.
                             broadcastDeviceList()
@@ -378,6 +386,7 @@ class BleService : LifecycleService() {
                             peakAlertRssiMap.remove(deviceId)
                             deviceRssiMap.remove(deviceId)
                             mutedDevices.remove(deviceId)
+                            suddenLabelMap.remove(deviceId)
                             sendAlertBroadcast(deviceId, BleConstants.LEVEL_SAFE)
                             if (alertState.isEmpty()) {
                                 AlertSoundPlayer.stopSound()
@@ -510,7 +519,7 @@ class BleService : LifecycleService() {
         }
     }
 
-    private fun processAlert(deviceId: String, rssi: Int) {
+    private fun processAlert(deviceId: String, rssi: Int, remoteState: Int = BleConstants.MOTION_STATE_STATIONARY) {
         // UWB 거리 우선: ToF 거리를 RSSI 등가값으로 변환
         val inputRssi: Int = run {
             val uwbDist = uwbRanger?.uwbDistances?.get(deviceId)
@@ -538,6 +547,33 @@ class BleService : LifecycleService() {
         // kfRssi: 추정 RSSI(dBm) / kfVel: 변화율(dBm/s), 양수=접근 / 음수=이탈
         val (kfRssi, kfVel) = kf.update(preFiltered, ImuFusion.adaptiveQFactor)
         val kalmanRssi = kfRssi.toInt()
+
+        // ── [v1.0.29 다이나믹 페이로드] 0x02 특수경보 (칼만 보존 · 최우선 분기) ──────────
+        // 상대 remoteState 가 0x02(급정거/급회전)이고 정제 칼만 RSSI 가 임계 이상(가까움)이면
+        // TTC·속도·방향·절대거리 가드를 모두 무시하고 즉시 최고 DANGER 로 격상한다.
+        // 표시문자열을 "{이름}이(가) 급정거 또는 급회전 중입니다."로 덮어써 오버레이·목록에 출력.
+        if (remoteState == BleConstants.MOTION_STATE_SUDDEN
+            && kfRssi >= BleConstants.SUDDEN_ALERT_RSSI_THRESHOLD) {
+            deviceRssiMap[deviceId]  = kalmanRssi
+            suddenLabelMap[deviceId] = makeSuddenLabel(extractDisplayName(deviceId))
+            alertState[deviceId]     = Pair(BleConstants.LEVEL_DANGER, now)
+            bleScanner?.setEcoMode(false)   // 즉시 전투 모드(LOW_LATENCY)
+            Log.w(TAG, "특수경보(0x02 급정거/급회전): $deviceId kfRssi=%.1f".format(kfRssi))
+            // 무음(전역/개별)은 존중 — 상태·표시는 유지하되 소리/진동만 억제
+            if (isMuted || isDeviceMuted(deviceId)) {
+                updateFloatingOverlay()
+                return
+            }
+            forceAlarmVolume()
+            if (DevSettings.vibrationEnabled && !isScreenOn) VibrationHelper.vibrateDanger(this)
+            if (DevSettings.soundEnabled)     AlertSoundPlayer.playDanger(this)
+            updateFloatingOverlay()
+            sendAlertBroadcast(deviceId, BleConstants.LEVEL_DANGER)
+            sendStatusBroadcast("⚡ ${suddenLabelMap[deviceId]}")
+            return
+        }
+        // 0x02 해제(또는 미근접) → 특수 라벨 제거 후 일반 경보 로직 진행
+        suddenLabelMap.remove(deviceId)
 
         // ── 추적 상태 머신 갱신 (v1.0.20) ───────────────────────────────
         updateTrackingState(deviceId, kfVel, now)
@@ -602,6 +638,7 @@ class BleService : LifecycleService() {
                 peakAlertRssiMap.remove(deviceId)
                 deviceRssiMap.remove(deviceId)
                 mutedDevices.remove(deviceId)
+                suddenLabelMap.remove(deviceId)
                 sendAlertBroadcast(deviceId, BleConstants.LEVEL_SAFE)
                 if (alertState.isEmpty()) {
                     AlertSoundPlayer.stopSound()
@@ -844,7 +881,7 @@ class BleService : LifecycleService() {
         OverlayManager.showFloating(
             context  = this,
             deviceId = topId,
-            name     = "${extractDisplayName(topId)} ($type)",
+            name     = suddenLabelMap[topId] ?: "${extractDisplayName(topId)} ($type)",
             rssi     = rssi,
             danger   = level >= BleConstants.LEVEL_DANGER
         )
@@ -944,6 +981,21 @@ class BleService : LifecycleService() {
         }
     }
 
+    /**
+     * v1.0.29 0x02 특수경보용 표시문자열 생성.
+     * 예) "Ian이 급정거 또는 급회전 중입니다."
+     * 한글 이름은 받침 유무로 조사(이/가)를 고르고, 영문·숫자는 예시에 맞춰 "이"를 쓴다.
+     */
+    private fun makeSuddenLabel(name: String): String {
+        val last = name.trim().lastOrNull()
+        val josa = when {
+            last == null -> "이"
+            last.code in 0xAC00..0xD7A3 -> if ((last.code - 0xAC00) % 28 != 0) "이" else "가"
+            else -> "이"
+        }
+        return "$name$josa 급정거 또는 급회전 중입니다."
+    }
+
     private var lastDeviceListMs = 0L
 
     /**
@@ -977,7 +1029,7 @@ class BleService : LifecycleService() {
             val level = entry.value.first
             val rssi  = deviceRssiMap[id] ?: -99
             val type  = if (id.startsWith(BleConstants.DEVICE_PREFIX)) "장비" else "보행자"
-            val name  = "${extractDisplayName(id)} ($type)"
+            val name  = suddenLabelMap[id] ?: "${extractDisplayName(id)} ($type)"
             if (sb.isNotEmpty()) sb.append('\u001E')
             sb.append(level).append('\u001F').append(rssi).append('\u001F').append(name)
         }
@@ -1011,12 +1063,14 @@ class BleService : LifecycleService() {
         stopBle()
         // [v1.0.27] IMU 동적 스캔 모드 정리 — 콜백 해제 + 디바운스 타이머 취소
         ImuFusion.onStationaryChanged = null
+        ImuFusion.onMotionStateChanged = null   // [v1.0.29] 모션 상태 콜백 해제
         ecoHandler.removeCallbacks(ecoDowngradeRunnable)
         ImuFusion.stop()
         uwbRanger?.stop(); uwbRanger = null
         AlertSoundPlayer.stopSound()
         VibrationHelper.stopVibration(this)
         alertState.clear()
+        suddenLabelMap.clear()
         broadcastDeviceList(force = true)   // [v1.0.26 Req2] 서비스 중지 → 빈 목록 송출('감지 없음' 반영)
         rssiPreFilter.clearAll()
         kalmanFilters.clear()

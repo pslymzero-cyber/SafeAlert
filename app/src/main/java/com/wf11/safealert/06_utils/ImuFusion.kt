@@ -5,7 +5,9 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.os.SystemClock
 import android.util.Log
+import kotlin.math.abs
 import kotlin.math.sqrt
 
 /**
@@ -37,6 +39,19 @@ object ImuFusion {
      */
     private const val STATIONARY_CONFIRM_FRAMES = 25
 
+    // [v1.0.29 다이나믹 페이로드] 3-State 모션 감지 추가 레이어.
+    //   STATE_* 값은 BleConstants.MOTION_STATE_* 와 동일 — ServiceData 1Byte로 송신된다.
+    //   기존 정지판정(isStationary)·Q스케일(adaptiveQFactor)은 일절 불변, 위에 얹기만 한다.
+    private const val STATE_STATIONARY = 0x00
+    private const val STATE_NORMAL     = 0x01
+    private const val STATE_SUDDEN     = 0x02
+    // 급정거: 선형가속도 크기(m/s²)가 이 값 초과 (빠른 이동 FAST_THRESHOLD=2.5 보다 큰 충격)
+    private const val SUDDEN_ACCEL_THRESHOLD = 5.0f
+    // 급회전: 자이로 Z축 회전율(rad/s) 절댓값이 이 값 초과
+    private const val SUDDEN_GYRO_THRESHOLD  = 1.5f
+    // 0x02 진입 후 이 시간 동안 0x02 유지 → 잦은 깜빡임 방지(Hysteresis 디바운스)
+    private const val SUDDEN_HOLD_MS         = 1500L
+
     private var sensorManager: SensorManager? = null
     @Volatile private var isRunning = false
 
@@ -49,11 +64,28 @@ object ImuFusion {
     @Volatile var onStationaryChanged: ((Boolean) -> Unit)? = null
     @Volatile private var lastNotifiedStationary = false
 
+    // [v1.0.29] 3-State 모션 상태 변화 통지 훅 — BleService 가 구독해
+    //   BleAdvertiser.updateState() 로 ServiceData 상태 코드를 갱신한다.
+    @Volatile var onMotionStateChanged: ((Int) -> Unit)? = null
+    @Volatile private var lastNotifiedMotionState = STATE_STATIONARY
+    // 마지막 '급변(급정거/급회전)' 감지 시각(elapsedRealtime). HOLD 윈도 동안 0x02 유지.
+    @Volatile private var lastSuddenMs = 0L
+
     private val accelBuffer = ArrayDeque<Float>()
     private val lock = Any()
 
     private val listener = object : SensorEventListener {
         override fun onSensorChanged(event: SensorEvent) {
+            // [v1.0.29] 자이로: Z축 회전율 급증 → 급회전(0x02) 트리거
+            if (event.sensor.type == Sensor.TYPE_GYROSCOPE) {
+                if (abs(event.values[2]) > SUDDEN_GYRO_THRESHOLD) {
+                    lastSuddenMs = SystemClock.elapsedRealtime()
+                }
+                evaluateMotionState()
+                return
+            }
+
+            // ── 이하 선형 가속도 경로 (v1.0.27 로직 100% 보존) ──────────────
             val x = event.values[0]; val y = event.values[1]; val z = event.values[2]
             val mag = sqrt(x * x + y * y + z * z)
             var transition: Boolean? = null   // [v1.0.27] null=변화없음 / true·false=새 상태
@@ -75,8 +107,23 @@ object ImuFusion {
             }
             // [v1.0.27] 콜백은 lock 밖에서 호출 — 구독자 코드가 lock 을 점유·지연시키지 않게
             transition?.let { onStationaryChanged?.invoke(it) }
+
+            // [v1.0.29] 가속도 급변(급정거) → 0x02 트리거 후 모션 상태 재평가
+            if (mag > SUDDEN_ACCEL_THRESHOLD) {
+                lastSuddenMs = SystemClock.elapsedRealtime()
+            }
+            evaluateMotionState()
         }
         override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) {}
+    }
+
+    // [v1.0.29] 현재 모션 상태를 평가해 '바뀌는 순간'만 콜백으로 통지(가속도/자이로 공용).
+    private fun evaluateMotionState() {
+        val s = motionState
+        if (s != lastNotifiedMotionState) {
+            lastNotifiedMotionState = s
+            onMotionStateChanged?.invoke(s)
+        }
     }
 
     fun init(context: Context) {
@@ -87,6 +134,14 @@ object ImuFusion {
             return
         }
         sensorManager?.registerListener(listener, sensor, SensorManager.SENSOR_DELAY_GAME)
+        // [v1.0.29] 자이로스코프 추가 등록 — 급회전(0x02) 감지용. 없으면 가속도 급변만으로 판정.
+        val gyro = sensorManager?.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
+        if (gyro != null) {
+            sensorManager?.registerListener(listener, gyro, SensorManager.SENSOR_DELAY_GAME)
+            Log.d(TAG, "자이로스코프 등록 — 3-State 급정거/급회전 감지 활성")
+        } else {
+            Log.w(TAG, "자이로 센서 없음 — 가속도 급변만으로 0x02 판정")
+        }
         isRunning = true
         Log.d(TAG, "IMU 융합 초기화 (SENSOR_DELAY_GAME, ${WINDOW_SIZE}샘플 창)")
     }
@@ -98,6 +153,9 @@ object ImuFusion {
             stationaryFrameCount = 0
             lastNotifiedStationary = false   // [v1.0.27] 다음 init 시 첫 통지 정합성 보장
         }
+        // [v1.0.29] 3-State 상태 리셋
+        lastSuddenMs = 0L
+        lastNotifiedMotionState = STATE_STATIONARY
         isRunning = false
         Log.d(TAG, "IMU 융합 중지")
     }
@@ -138,6 +196,17 @@ object ImuFusion {
                 else -> 0.3 + (s - STATIONARY_THRESHOLD).toDouble() /
                               (FAST_THRESHOLD - STATIONARY_THRESHOLD) * 2.7
             }
+        }
+
+    /**
+     * v1.0.29 3-State 모션 상태 (0x00 정지 / 0x01 일반 이동 / 0x02 급정거·급회전).
+     * 급변 감지 후 SUDDEN_HOLD_MS 동안 0x02 유지(Hysteresis) → 잦은 깜빡임 방지.
+     * 그 외에는 기존 isStationary 판정을 그대로 따른다(정지=0x00, 이동=0x01).
+     */
+    val motionState: Int
+        get() {
+            if (SystemClock.elapsedRealtime() - lastSuddenMs < SUDDEN_HOLD_MS) return STATE_SUDDEN
+            return if (isStationary) STATE_STATIONARY else STATE_NORMAL
         }
 
     fun debugString(): String =

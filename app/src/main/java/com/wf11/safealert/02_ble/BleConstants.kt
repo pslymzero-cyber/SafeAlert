@@ -32,4 +32,14 @@ object BleConstants {
     const val LEVEL_SAFE    = 0
     const val LEVEL_WARNING = 1
     const val LEVEL_DANGER  = 2
+
+    // [v1.0.29 다이나믹 페이로드] IMU 모션 상태 코드 — ServiceData(1Byte)로 송수신
+    //   0x00 정지 / 0x01 일반 이동 / 0x02 급정거·급회전(특수경보 트리거)
+    const val MOTION_STATE_STATIONARY = 0x00
+    const val MOTION_STATE_NORMAL     = 0x01
+    const val MOTION_STATE_SUDDEN     = 0x02
+
+    // 상대가 0x02(급정거/급회전)이고 정제 칼만 RSSI가 이 값 이상(가까움)이면
+    // TTC·속도·방향 조건을 모두 무시하고 즉시 최고 DANGER로 격상한다.
+    const val SUDDEN_ALERT_RSSI_THRESHOLD = -60
 }

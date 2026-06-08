@@ -5,6 +5,7 @@ import android.bluetooth.le.AdvertiseData
 import android.bluetooth.le.AdvertiseSettings
 import android.bluetooth.le.BluetoothLeAdvertiser
 import android.os.ParcelUuid
+import android.os.SystemClock
 import android.util.Log
 import java.util.UUID
 
@@ -13,7 +14,13 @@ class BleAdvertiser(
     private val prefix: String = BleConstants.DEVICE_PREFIX,
     private val onStatusUpdate: ((String) -> Unit)? = null
 ) {
-    companion object { private const val TAG = "BleAdvertiser" }
+    companion object {
+        private const val TAG = "BleAdvertiser"
+        // [v1.0.29] 상태 갱신 최소 주기 — 안드로이드 OS Advertising Rate-Limit 회피
+        private const val MIN_STATE_UPDATE_INTERVAL_MS = 2000L
+        // 상태 변경 시 stopAdvertising 후 재시작까지 대기 (OS 정리 시간 확보)
+        private const val STATE_RESTART_DELAY_MS = 50L
+    }
 
     private val callback = object : AdvertiseCallback() {
         override fun onStartSuccess(settingsInEffect: AdvertiseSettings) {
@@ -38,11 +45,19 @@ class BleAdvertiser(
     // 현재 광고 중인 deviceId (UWB 재시작용)
     private var currentDeviceId = ""
 
+    // [v1.0.29 다이나믹 페이로드] 현재 IMU 모션 상태 코드 — ServiceData 1Byte 로 탑재
+    @Volatile private var currentState: Byte = BleConstants.MOTION_STATE_STATIONARY.toByte()
+    private var lastStateUpdateMs = 0L
+    // 재광고 시 UWB 주소 유지 (updateState / restartWithUwbAddress 공용)
+    private var lastUwbAddress: ByteArray? = null
+    private val stateHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
     /**
      * @param uwbLocalAddress 이 기기의 UWB 주소 2바이트 (null = UWB 미지원/미초기화)
      */
     fun startAdvertising(deviceId: String, uwbLocalAddress: ByteArray? = null) {
         currentDeviceId = deviceId
+        if (uwbLocalAddress != null) lastUwbAddress = uwbLocalAddress
         // 장비 작업자: LOW_LATENCY(100ms) — 포크리프트 충돌 방지 우선
         // 보행자: BALANCED(250ms) — 배터리 절약
         val advertiseMode = if (prefix == BleConstants.DEVICE_PREFIX)
@@ -65,6 +80,10 @@ class BleAdvertiser(
         // ── Primary 광고 패킷 (ServiceUUID 포함 → 화면 꺼짐에도 스캔 필터 작동) ──
         val advertiseData = AdvertiseData.Builder()
             .addServiceUuid(ParcelUuid(UUID.fromString(BleConstants.SERVICE_UUID)))
+            // [v1.0.29] 현재 모션 상태 코드(1Byte)를 ServiceData 로 탑재
+            //   SERVICE_UUID 가 16비트 short UUID(0x1234) 패턴 → ServiceData 약 5바이트.
+            //   전체 패킷 ≈ flags3 + svcUuid4 + svcData5 + mfg(4+N) ≤ 31바이트 유지(N≤14).
+            .addServiceData(ParcelUuid(UUID.fromString(BleConstants.SERVICE_UUID)), byteArrayOf(currentState))
             .addManufacturerData(companyId, idBytes)
             .setIncludeDeviceName(false)
             .setIncludeTxPowerLevel(false)
@@ -85,6 +104,29 @@ class BleAdvertiser(
             advertiser.startAdvertising(settings, advertiseData, callback)
             Log.d(TAG, "광고 시작: companyId=0x${companyId.toString(16).uppercase()} id=$deviceId")
         }
+    }
+
+    /**
+     * [v1.0.29 다이나믹 페이로드] IMU 모션 상태 코드 갱신.
+     * 변경이 있을 때만, 그리고 최소 2초 간격(OS Rate-Limit 회피)으로
+     * 기존 광고를 멈추고 약 50ms 뒤 새 상태 코드로 다시 켠다(stop→50ms→start).
+     */
+    fun updateState(newState: Int) {
+        val b = newState.toByte()
+        if (b == currentState) return
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastStateUpdateMs < MIN_STATE_UPDATE_INTERVAL_MS) {
+            // 2초 이내 재갱신 금지 — 다음 상태 변화 시점에 반영
+            Log.d(TAG, "상태 갱신 보류(Rate-Limit): 0x%02X".format(b))
+            return
+        }
+        lastStateUpdateMs = now
+        currentState = b
+        Log.d(TAG, "모션 상태 갱신 → 0x%02X 재광고".format(b))
+        try { advertiser.stopAdvertising(callback) } catch (_: Exception) {}
+        stateHandler.postDelayed({
+            startAdvertising(currentDeviceId, lastUwbAddress)
+        }, STATE_RESTART_DELAY_MS)
     }
 
     /** UWB 주소 준비 완료 후 광고 재시작 */
