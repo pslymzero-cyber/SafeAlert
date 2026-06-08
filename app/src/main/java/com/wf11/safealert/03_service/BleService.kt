@@ -205,6 +205,11 @@ class BleService : LifecycleService() {
     //   값 = "{이름}이(가) 급정거 또는 급회전 중입니다." → 오버레이/목록에서 일반 이름 대신 출력.
     private val suddenLabelMap    = mutableMapOf<String, String>()
 
+    // [v1.0.30 Req3] Firebase 경보 저장 모바일데이터 방어 — 기기별 마지막 저장 시각(ms).
+    //   같은 기기에 대해 FIREBASE_SAVE_THROTTLE_MS(1분) 안에는 재업로드하지 않는다.
+    private val firebaseLastSaveMap = mutableMapOf<String, Long>()
+    private val FIREBASE_SAVE_THROTTLE_MS = 60_000L
+
     private val HYSTERESIS_DBM = 5
 
     override fun onCreate() {
@@ -387,6 +392,7 @@ class BleService : LifecycleService() {
                             deviceRssiMap.remove(deviceId)
                             mutedDevices.remove(deviceId)
                             suddenLabelMap.remove(deviceId)
+                            firebaseLastSaveMap.remove(deviceId)
                             sendAlertBroadcast(deviceId, BleConstants.LEVEL_SAFE)
                             if (alertState.isEmpty()) {
                                 AlertSoundPlayer.stopSound()
@@ -548,6 +554,21 @@ class BleService : LifecycleService() {
         val (kfRssi, kfVel) = kf.update(preFiltered, ImuFusion.adaptiveQFactor)
         val kalmanRssi = kfRssi.toInt()
 
+        // ── [v1.0.30 Req1] 최상단 하드 게이트 (절대 거리 선차단 · 음수 부호 주의) ──────────
+        // RSSI는 음수다. 정제 칼만 RSSI(smoothedRssi = kalmanRssi)가 경고 임계(rssiWarning, 예 -65)
+        // 보다 '더 음수(더 멈)'이면 물리적으로 먼 기기다.   예) -74 < -65 → 멀다.
+        // 이때 '기존에 가까웠다가 멀어지는 중(쿨다운/Hysteresis = 이미 alertState 추적 중)'이
+        // 아니라면, 접근 속도·TTC·0x02 특수경보까지 전부 무시하고 즉시 정리 후 return 한다.
+        // → 멀리 있는 기기가 코너를 돌든(0x02) 빠르든 WARNING/DANGER로 절대 격상되지 않는다.
+        // 이미 추적 중(alertState 존재)인 기기는 게이트를 통과시켜, 아래 이탈(receding)
+        // 페이드아웃 로직이 부드럽게 해제하도록 맡긴다(급단절 방지).
+        if (kalmanRssi < BleConstants.rssiWarning && !alertState.containsKey(deviceId)) {
+            deviceRssiMap.remove(deviceId)
+            suddenLabelMap.remove(deviceId)
+            firebaseLastSaveMap.remove(deviceId)
+            return
+        }
+
         // ── [v1.0.29 다이나믹 페이로드] 0x02 특수경보 (칼만 보존 · 최우선 분기) ──────────
         // 상대 remoteState 가 0x02(급정거/급회전)이고 정제 칼만 RSSI 가 임계 이상(가까움)이면
         // TTC·속도·방향·절대거리 가드를 모두 무시하고 즉시 최고 DANGER 로 격상한다.
@@ -612,10 +633,11 @@ class BleService : LifecycleService() {
 
         deviceRssiMap[deviceId] = avgRssi      // 플로팅 위젯 최우선 기기 선정·정렬에 사용
 
-        // ── [v1.0.25 Req1] 절대 거리 가드 (최우선 차단 조건) ─────────────────────
-        // 정제된 RSSI(avgRssi)가 앱 설정 경고 임계(rssiWarning)보다 약하면(=거리가 멀면),
-        // 접근 속도·TTC가 아무리 빨라도 WARNING/DANGER로 절대 격상하지 않는다.
-        // stableLevel을 SAFE로 강제 → 아래 TTC 선발령(WARNING 요구)·WARNING 발령을 원천 차단.
+        // ── [v1.0.25 Req1 → v1.0.30 강화] 절대 거리 가드 (2차 방어선) ─────────────────────
+        // 1차 방어는 위 [v1.0.30 Req1] 하드게이트(칼만 정제값 기준 + return)가 담당한다.
+        // 여기는 '이미 추적 중이라 1차 게이트를 통과한 기기'가 blend RSSI(avgRssi)상으로도
+        // 경고 임계(rssiWarning)보다 약하면(=멀면) stableLevel을 SAFE로 강제 → 아래
+        // 이탈 페이드아웃/SAFE 처리로 흘려보낸다. 접근 속도·TTC로는 절대 격상 불가.
         if (avgRssi < BleConstants.rssiWarning) {
             stableLevel = BleConstants.LEVEL_SAFE
         }
@@ -639,6 +661,7 @@ class BleService : LifecycleService() {
                 deviceRssiMap.remove(deviceId)
                 mutedDevices.remove(deviceId)
                 suddenLabelMap.remove(deviceId)
+                firebaseLastSaveMap.remove(deviceId)
                 sendAlertBroadcast(deviceId, BleConstants.LEVEL_SAFE)
                 if (alertState.isEmpty()) {
                     AlertSoundPlayer.stopSound()
@@ -706,6 +729,7 @@ class BleService : LifecycleService() {
                 crossingStartMap.remove(deviceId)
                 departingStartMap.remove(deviceId)
                 deviceRssiMap.remove(deviceId)
+                firebaseLastSaveMap.remove(deviceId)
                 sendAlertBroadcast(deviceId, BleConstants.LEVEL_SAFE)
                 if (alertState.isEmpty()) {
                     AlertSoundPlayer.stopSound()
@@ -776,8 +800,14 @@ class BleService : LifecycleService() {
                     VibrationHelper.vibrateWarning(this)
                 if (DevSettings.soundEnabled)
                     AlertSoundPlayer.playWarning(this)
-                if (DevSettings.autoSaveAlerts)
-                    FirebaseManager.saveAlert(deviceId, myId, avgRssi, "WARNING")
+                // [v1.0.30 Req3] Firebase 경보 저장 쓰로틀 — 같은 기기 1분 1회로 제한(모바일데이터 방어)
+                if (DevSettings.autoSaveAlerts) {
+                    val lastFbSave = firebaseLastSaveMap[deviceId] ?: 0L
+                    if (now - lastFbSave >= FIREBASE_SAVE_THROTTLE_MS) {
+                        firebaseLastSaveMap[deviceId] = now
+                        FirebaseManager.saveAlert(deviceId, myId, avgRssi, "WARNING")
+                    }
+                }
                 val name = extractDisplayName(deviceId)
                 updateFloatingOverlay()
                 sendAlertBroadcast(deviceId, BleConstants.LEVEL_WARNING)
@@ -1083,6 +1113,7 @@ class BleService : LifecycleService() {
         peakAlertRssiMap.clear()
         deviceRssiMap.clear()
         mutedDevices.clear()
+        firebaseLastSaveMap.clear()
         testRunnable?.let { testHandler.removeCallbacks(it) }
         testRunnable = null
         muteHandler.removeCallbacksAndMessages(null)
