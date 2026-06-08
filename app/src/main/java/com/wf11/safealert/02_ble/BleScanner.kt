@@ -54,9 +54,8 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
             if (deviceData != null || walkerData != null) {
                 totalBleCount++
                 BleService.bleScanCount = totalBleCount
-                if (totalBleCount % 5 == 0) {
-                    onStatusUpdate?.invoke("RX 스캔 중 · SafeAlert ${totalBleCount}개")
-                }
+                // [v1.0.26 Req1] 주기적 'RX 스캔 중 · SafeAlert N개' 상태 송출 영구 삭제 —
+                // 이 로그가 하단 tv_ble_status(감지 기기 목록 영역)를 계속 점유하던 문제 제거.
 
                 val (idBytes, prefix) = when {
                     deviceData != null -> deviceData to BleConstants.DEVICE_PREFIX
@@ -189,8 +188,7 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
         startScanInternal()
         handler.post(timeoutChecker)
         handler.postDelayed(antiThrottleRunnable, SCAN_RESTART_MS)
-        val beaconCnt = runCatching { BeaconRegistry.count() }.getOrDefault(0)
-        onStatusUpdate?.invoke("RX 스캔 시작 (비콘 ${beaconCnt}개)")
+        // [v1.0.26 Req1] 'RX 스캔 시작' 상태 송출 제거 — tv_ble_status 는 감지 기기 목록 전용.
     }
 
     private fun startScanInternal() {
@@ -246,7 +244,7 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
         try { scanner.stopScan(bleScanCallback) } catch (_: Exception) {}
         detectedDevices.clear()
         scanCallback = null
-        onStatusUpdate?.invoke("RX 스캔 중지")
+        // [v1.0.26 Req1] 'RX 스캔 중지' 상태 송출 제거.
     }
 
     private fun calcAlertLevel(rssi: Int): Int = when {

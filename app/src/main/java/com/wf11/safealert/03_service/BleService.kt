@@ -46,6 +46,8 @@ class BleService : LifecycleService() {
         const val EXTRA_DISPLAY_NAME   = "extra_display_name"
         const val EXTRA_RSSI           = "extra_rssi"
         const val EXTRA_STATUS         = "extra_status"
+        const val EXTRA_DEVICE_LIST    = "extra_device_list"    // [v1.0.26 Req2] 직렬화된 감지 기기 목록(최대 10)
+        const val EXTRA_DEVICE_COUNT   = "extra_device_count"   // [v1.0.26 Req2] 목록 기기 수(0=감지 없음)
         const val BROADCAST_ALERT      = "com.wf11.safealert.ALERT"
         const val BROADCAST_DETECTED   = "com.wf11.safealert.DETECTED"
         const val BROADCAST_BLE_STATUS = "com.wf11.safealert.BLE_STATUS"
@@ -175,8 +177,6 @@ class BleService : LifecycleService() {
 
     private val ttcFeedbackMap = mutableMapOf<String, Pair<Double, Long>>()
     private val LEARN_RATE = 0.05f
-
-    private val detectedThrottleMap = mutableMapOf<String, Long>()
 
     private val recedingStartMap = mutableMapOf<String, Long>()
     private val RECEDING_CLEAR_MS = 2500L
@@ -333,6 +333,9 @@ class BleService : LifecycleService() {
 
                             val effectiveRssi = if (DevSettings.debugMode) DevSettings.simulatedRssi else rssi
                             processAlert(deviceId, effectiveRssi)
+                            // [v1.0.26 Req2] processAlert 가 alertState 를 어떻게 바꿨든(추가·격상·SAFE 제거·TTC 선발령)
+                            // 그 직후 전체 스냅샷을 한 번에 송출 → 하단 목록이 플로팅·알람과 절대 어긋나지 않는다.
+                            broadcastDeviceList()
                         }
                         override fun onDeviceLost(deviceId: String) {
                             Log.d(TAG, "신호 소실: $deviceId")
@@ -358,6 +361,8 @@ class BleService : LifecycleService() {
                             } else {
                                 updateFloatingOverlay()   // 다른 위험 기기로 플로팅 전환
                             }
+                            // [v1.0.26 Req2] 신호 소실 직후 목록 재송출(빈 목록도 강제 전송 → '감지 없음' 즉시 반영)
+                            broadcastDeviceList(force = true)
                         }
                         override fun onScanError(errorCode: Int) { Log.e(TAG, "스캔 오류: $errorCode") }
                         override fun onUwbAddressReceived(deviceId: String, uwbAddress: ByteArray) {
@@ -552,7 +557,8 @@ class BleService : LifecycleService() {
             stableLevel = BleConstants.LEVEL_SAFE
         }
 
-        sendDetectedBroadcast(deviceId, stableLevel, avgRssi)
+        // [v1.0.26 Req2] 개별 sendDetectedBroadcast 폐지 — 목록은 onDeviceDetected 처리 직후
+        // broadcastDeviceList() 가 alertState 전체를 한 번에 송출한다(단일 진실 공급원).
 
         // ── SAFE 처리 ───────────────────────────────────────────────────
         if (stableLevel == BleConstants.LEVEL_SAFE) {
@@ -663,7 +669,6 @@ class BleService : LifecycleService() {
                 if (DevSettings.vibrationEnabled && !isScreenOn) VibrationHelper.vibrateDanger(this)
                 if (DevSettings.soundEnabled)     AlertSoundPlayer.playDanger(this)
                 updateFloatingOverlay()
-                sendDetectedBroadcast(deviceId, BleConstants.LEVEL_DANGER, avgRssi)
                 sendAlertBroadcast(deviceId, BleConstants.LEVEL_DANGER)
                 sendStatusBroadcast("⚡ 충돌 예측 %.0f초: ${extractDisplayName(deviceId)}".format(ttc))
                 return
@@ -909,17 +914,47 @@ class BleService : LifecycleService() {
         }
     }
 
-    private fun sendDetectedBroadcast(deviceId: String, level: Int, rssi: Int) {
+    private var lastDeviceListMs = 0L
+
+    /**
+     * [v1.0.26 Req2] 단일 진실 공급원 — 현재 alertState(경보 중 기기) 전체를 '하나의' 직렬화 목록으로 브로드캐스트.
+     *
+     * 핵심: 화면 하단 목록과 플로팅 위젯이 둘 다 동일한 alertState 를 소스로 쓰게 하여
+     *       '알람은 울리는데 목록엔 감지 없음' 같은 상태 불일치(Sync)를 구조적으로 차단한다.
+     *
+     * 정렬 : 위험도(level) 내림차순 → 같은 위험도면 RSSI 강한(가까운) 순. 최대 10개.
+     * 직렬화: 레코드 = "level\u001Frssi\u001Fname", 레코드 구분 = "\u001E" (이름에 줄바꿈/구분자가 섞일 일 없음).
+     * 빈 목록(count=0)은 throttle 을 무시하고 즉시 전송 → 마지막 기기 이탈 시 '감지 없음'을 지체 없이 반영.
+     *
+     * 스레드: 스캔 콜백·타임아웃·리시버가 모두 메인 루퍼에서 동작하므로 alertState 접근은 단일 스레드 → race 없음.
+     */
+    private fun broadcastDeviceList(force: Boolean = false) {
         val now = System.currentTimeMillis()
-        if (now - (detectedThrottleMap[deviceId] ?: 0L) < 500L) return
-        detectedThrottleMap[deviceId] = now
-        val displayName = extractDisplayName(deviceId)
-        val type = if (deviceId.startsWith(BleConstants.DEVICE_PREFIX)) "장비" else "보행자"
+        val entries = alertState.entries.toList()
+        if (!force && entries.isNotEmpty() && now - lastDeviceListMs < 200L) return
+        lastDeviceListMs = now
+
+        val sorted = entries
+            .sortedWith(
+                compareByDescending<Map.Entry<String, Pair<Int, Long>>> { it.value.first }
+                    .thenByDescending { deviceRssiMap[it.key] ?: -100 }
+            )
+            .take(10)
+
+        val sb = StringBuilder()
+        sorted.forEach { entry ->
+            val id    = entry.key
+            val level = entry.value.first
+            val rssi  = deviceRssiMap[id] ?: -99
+            val type  = if (id.startsWith(BleConstants.DEVICE_PREFIX)) "장비" else "보행자"
+            val name  = "${extractDisplayName(id)} ($type)"
+            if (sb.isNotEmpty()) sb.append('\u001E')
+            sb.append(level).append('\u001F').append(rssi).append('\u001F').append(name)
+        }
+
         sendBroadcast(Intent(BROADCAST_DETECTED).apply {
-            putExtra(EXTRA_ID, deviceId)
-            putExtra(EXTRA_ALERT_LEVEL, level)
-            putExtra(EXTRA_DISPLAY_NAME, "$displayName ($type)")
-            putExtra(EXTRA_RSSI, rssi)
+            putExtra(EXTRA_DEVICE_LIST, sb.toString())
+            putExtra(EXTRA_DEVICE_COUNT, sorted.size)
         })
     }
 
@@ -949,6 +984,7 @@ class BleService : LifecycleService() {
         AlertSoundPlayer.stopSound()
         VibrationHelper.stopVibration(this)
         alertState.clear()
+        broadcastDeviceList(force = true)   // [v1.0.26 Req2] 서비스 중지 → 빈 목록 송출('감지 없음' 반영)
         rssiPreFilter.clearAll()
         kalmanFilters.clear()
         trackingStateMap.clear()
@@ -956,7 +992,6 @@ class BleService : LifecycleService() {
         departingStartMap.clear()
         wasStationaryMap.clear()
         oneSecBuffer.clear()
-        detectedThrottleMap.clear()
         recedingStartMap.clear()
         peakAlertRssiMap.clear()
         deviceRssiMap.clear()

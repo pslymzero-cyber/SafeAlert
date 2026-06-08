@@ -50,9 +50,9 @@ class MainActivity : AppCompatActivity() {
     private var currentMode: String? = null
     private var testAlertRunning = false
 
-    // 감지된 기기 목록: deviceId → (displayName, alertLevel, rssi)
-    // BROADCAST_DETECTED 로 갱신, BROADCAST_ALERT SAFE 로 제거
-    private val detectedDevices = mutableMapOf<String, Triple<String, Int, Int>>()
+    // [v1.0.26 Req2] 감지 기기 목록 — BleService.alertState 스냅샷을 통째로 받아 매번 교체.
+    // (displayName, alertLevel, rssi) 정렬 리스트. 단일 진실 공급원이라 부분 add/remove 없음 = 불일치 불가.
+    private val detectedDevices = mutableListOf<Triple<String, Int, Int>>()
 
     // 1초마다 서비스 상태 직접 폴링 (Broadcast 실패 대비)
     private val statusHandler = android.os.Handler(android.os.Looper.getMainLooper())
@@ -63,16 +63,21 @@ class MainActivity : AppCompatActivity() {
         private var lastMuted = false
         override fun run() {
             if (binding.cardRunning.visibility == View.VISIBLE) {
-                // BLE 상태 텍스트 — 기기 감지 중에는 tvBleStatus 덮어쓰지 않음
+                // [v1.0.26 Req2] tv_ble_status 는 '감지 기기 목록' 전용 영역으로 전환.
+                // 목록이 비었을 때만 그 자리에 '서비스 상태' 1줄을 임시로 표시한다.
                 val text = when {
                     !BleService.isRunning -> "서비스 시작 중..."
                     BleService.lastStatus.isNotEmpty() -> BleService.lastStatus
                     else -> "✓ 블루투스 ON · BLE 시작 중..."
                 }
-                // [v1.0.25 Req3] tv_ble_status 는 항상 '서비스 상태' 1줄만 — 기기 목록과 분리
-                if (text != lastText) {
-                    binding.tvBleStatus.text = text
-                    lastText = text
+                if (detectedDevices.isEmpty()) {
+                    if (text != lastText) {
+                        binding.tvBleStatus.text = text
+                        lastText = text
+                    }
+                } else {
+                    // 목록 표시 중 → 다음에 목록이 비면 무조건 상태로 되돌리도록 캐시 무효화
+                    lastText = ""
                 }
                 // 서비스가 완전히 종료되면 감지 목록 초기화
                 if (!BleService.isRunning && detectedDevices.isNotEmpty()) {
@@ -136,47 +141,33 @@ class MainActivity : AppCompatActivity() {
         override fun onReceive(context: Context, intent: Intent) {
             when (intent.action) {
 
-                // 기기 소실(SAFE) 또는 경보 레벨 확정 → 오버레이 관리
-                BleService.BROADCAST_ALERT -> {
-                    val level    = intent.getIntExtra(BleService.EXTRA_ALERT_LEVEL, BleConstants.LEVEL_SAFE)
-                    val deviceId = intent.getStringExtra(BleService.EXTRA_ID) ?: ""
-
-                    if (level == BleConstants.LEVEL_SAFE) {
-                        // 기기 이탈 → 목록에서 제거 (플로팅 위젯은 BleService가 직접 관리)
-                        detectedDevices.remove(deviceId)
-                        updateDetectedDisplay()
-                    } else {
-                        // TTC DANGER 발령 등 — 레벨 업데이트
-                        // null-safe: DETECTED가 throttle에 막혔을 때도 레벨 반영 보장
-                        val alertDisplayName = intent.getStringExtra(BleService.EXTRA_DISPLAY_NAME) ?: ""
-                        val existing = detectedDevices[deviceId]
-                        detectedDevices[deviceId] = if (existing != null)
-                            Triple(existing.first, level, existing.third)
-                        else
-                            Triple(alertDisplayName.ifEmpty { deviceId }, level, -99)
-                        updateDetectedDisplay()
-                    }
-                }
-
-                // 매 스캔 주기 감지 결과 (SAFE 포함) → 목록 갱신
+                // [v1.0.26 Req2/Req3] BleService 가 보낸 alertState 전체 스냅샷(직렬화 목록)을
+                // 통째로 수신 → detectedDevices 를 매번 새로 구성. 부분 add/remove 없음 = 불일치 불가.
                 BleService.BROADCAST_DETECTED -> {
-                    val deviceId    = intent.getStringExtra(BleService.EXTRA_ID) ?: return
-                    val level       = intent.getIntExtra(BleService.EXTRA_ALERT_LEVEL, BleConstants.LEVEL_SAFE)
-                    val displayName = intent.getStringExtra(BleService.EXTRA_DISPLAY_NAME) ?: return
-                    val rssi        = intent.getIntExtra(BleService.EXTRA_RSSI, -99)
-                    // SAFE 레벨이면 목록에서 제거 (경보 수준 미달 기기 영구 잔류 방지)
-                    if (level == BleConstants.LEVEL_SAFE) {
-                        detectedDevices.remove(deviceId)
-                    } else {
-                        detectedDevices[deviceId] = Triple(displayName, level, rssi)
+                    val raw = intent.getStringExtra(BleService.EXTRA_DEVICE_LIST) ?: ""
+                    detectedDevices.clear()
+                    if (raw.isNotEmpty()) {
+                        val recSep  = 30.toChar()   // U+001E 레코드 구분자 (BleService 출력과 동일)
+                        val unitSep = 31.toChar()   // U+001F 필드 구분자
+                        raw.split(recSep).forEach { rec ->
+                            val f = rec.split(unitSep)
+                            if (f.size >= 3) {
+                                val level = f[0].toIntOrNull() ?: BleConstants.LEVEL_SAFE
+                                val rssi  = f[1].toIntOrNull() ?: -99
+                                val name  = f[2]
+                                detectedDevices.add(Triple(name, level, rssi))
+                            }
+                        }
                     }
                     updateDetectedDisplay()
                 }
 
                 BleService.BROADCAST_BLE_STATUS -> {
                     val status = intent.getStringExtra(BleService.EXTRA_STATUS) ?: return
-                    // [v1.0.25 Req3] tv_ble_status 는 오직 서비스 상태 1줄만 — 항상 갱신
-                    binding.tvBleStatus.text = status
+                    // [v1.0.26 Req2] 목록이 비었을 때만 하단에 서비스 상태 표시(목록이 있으면 목록 유지).
+                    if (detectedDevices.isEmpty()) {
+                        binding.tvBleStatus.text = status
+                    }
                 }
             }
         }
@@ -213,7 +204,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         val filter = IntentFilter().apply {
-            addAction(BleService.BROADCAST_ALERT)
+            // [v1.0.26 Req2] BROADCAST_ALERT 구독 제거 — 목록·플로팅 모두 BleService(alertState)가 단일 관리.
             addAction(BleService.BROADCAST_DETECTED)
             addAction(BleService.BROADCAST_BLE_STATUS)
         }
@@ -250,20 +241,32 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * [v1.0.25 Req3] 감지 기기 목록을 tv_approaching 에 표시 (최대 10개).
-     * 정렬: 위험도(level) 내림차순 → 같은 위험도면 RSSI 강한(가까운) 순.
-     * 위험=빨강(1.22×·굵게), 경고=노랑(1.0×), 안전=연청(0.82×).
-     * tv_ble_status 는 절대 건드리지 않는다 — 그쪽은 '서비스 상태' 1줄 전용.
+     * [v1.0.26 Req2/Req3] 감지 기기 목록을 '화면 하단' tv_ble_status(파란 박스)에 직접 출력.
+     * - 기기 1대라도 있으면: 중앙 안내(tv_approaching)를 GONE 으로 숨기고(고스트 텍스트 제거),
+     *   하단 tv_ble_status 에 위험도 색상 Spannable 목록(최대 10)을 setText.
+     * - 비어 있으면: 중앙 안내를 다시 보이고, 하단은 밝은 배경의 '서비스 상태' 1줄로 복귀.
+     * detectedDevices 는 BleService 스냅샷 단일 소스라 알람과 목록이 절대 어긋나지 않는다.
      */
     private fun updateDetectedDisplay() {
         if (detectedDevices.isEmpty()) {
+            // 중앙 안내 복귀
+            binding.tvApproaching.visibility = View.VISIBLE
             binding.tvApproaching.setBackgroundColor(Color.TRANSPARENT)
             binding.tvApproaching.setTextColor(0xFF8AAFC4.toInt())
             binding.tvApproaching.text = "주변 감지 기기 없음 · 감시 중"
+            // 하단 목록 영역 → 밝은 파란 박스 + 서비스 상태 1줄로 복귀
+            binding.tvBleStatus.setBackgroundColor(0xFFDDE9F0.toInt())
+            binding.tvBleStatus.setTextColor(0xFF5B8FA8.toInt())
+            val status = BleService.lastStatus
+            binding.tvBleStatus.text = if (status.isNotEmpty()) status else "· 감시 중 ·"
             return
         }
+
+        // [Req3] 기기가 있으면 중앙 '감지 없음' 고스트 텍스트를 즉시 숨긴다.
+        binding.tvApproaching.visibility = View.GONE
+
         // 위험도 우선 → 같은 위험도면 RSSI 강한(가까운) 순, 최대 10개
-        val sorted = detectedDevices.values
+        val sorted = detectedDevices
             .sortedWith(
                 compareByDescending<Triple<String, Int, Int>> { it.second }
                     .thenByDescending { it.third }
@@ -298,15 +301,17 @@ class MainActivity : AppCompatActivity() {
                 sb.setSpan(StyleSpan(Typeface.BOLD),  start, end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
 
+        // [Req2] 목록을 하단 tv_ble_status 에 출력 — 밝은 기본 배경에선 노랑/연청이 묻히므로
+        // 위험도에 맞춰 어두운 배경을 동적으로 깔아 가독성 확보.
         val topLevel = sorted.first().second
         val bgColor = when {
             topLevel >= BleConstants.LEVEL_DANGER  -> 0xDD1A0000.toInt()  // 짙은 적
             topLevel == BleConstants.LEVEL_WARNING -> 0xDD1A1400.toInt()  // 짙은 황
             else                                   -> 0xDD051220.toInt()  // 짙은 남색
         }
-        binding.tvApproaching.setBackgroundColor(bgColor)
-        binding.tvApproaching.setTextColor(0xFFE0F0FF.toInt())
-        binding.tvApproaching.text = sb
+        binding.tvBleStatus.setBackgroundColor(bgColor)
+        binding.tvBleStatus.setTextColor(0xFFE0F0FF.toInt())
+        binding.tvBleStatus.text = sb
     }
 
     private fun onModeSelected(mode: String) {
@@ -473,7 +478,7 @@ class MainActivity : AppCompatActivity() {
     private fun showRunningUi(mode: String, since: Long) {
         binding.layoutSelect.visibility  = View.GONE
         binding.cardRunning.visibility   = View.VISIBLE
-        binding.tvApproaching.visibility = View.VISIBLE  // [v1.0.25 Req3] 감지 기기 목록 전용 영역
+        binding.tvApproaching.visibility = View.VISIBLE  // [v1.0.26 Req3] 중앙 안내(목록은 하단 tv_ble_status 로 이동)
         binding.layoutPermissionWarning.visibility = View.GONE
         updateDetectedDisplay()  // 초기 안내("감지 기기 없음") 표시
         binding.tvRunningMode.text  = if (mode == "DEVICE") "🚛 장비 작업자" else "🚶 보행자"
