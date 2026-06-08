@@ -390,6 +390,7 @@ class BleService : LifecycleService() {
                             recedingStartMap.remove(deviceId)
                             peakAlertRssiMap.remove(deviceId)
                             deviceRssiMap.remove(deviceId)
+                            oneSecBuffer.remove(deviceId)   // [v1.0.31] 게이트가 raw도 push → 신호소실 시 함께 정리
                             mutedDevices.remove(deviceId)
                             suddenLabelMap.remove(deviceId)
                             firebaseLastSaveMap.remove(deviceId)
@@ -554,15 +555,22 @@ class BleService : LifecycleService() {
         val (kfRssi, kfVel) = kf.update(preFiltered, ImuFusion.adaptiveQFactor)
         val kalmanRssi = kfRssi.toInt()
 
-        // ── [v1.0.30 Req1] 최상단 하드 게이트 (절대 거리 선차단 · 음수 부호 주의) ──────────
-        // RSSI는 음수다. 정제 칼만 RSSI(smoothedRssi = kalmanRssi)가 경고 임계(rssiWarning, 예 -65)
-        // 보다 '더 음수(더 멈)'이면 물리적으로 먼 기기다.   예) -74 < -65 → 멀다.
-        // 이때 '기존에 가까웠다가 멀어지는 중(쿨다운/Hysteresis = 이미 alertState 추적 중)'이
-        // 아니라면, 접근 속도·TTC·0x02 특수경보까지 전부 무시하고 즉시 정리 후 return 한다.
-        // → 멀리 있는 기기가 코너를 돌든(0x02) 빠르든 WARNING/DANGER로 절대 격상되지 않는다.
-        // 이미 추적 중(alertState 존재)인 기기는 게이트를 통과시켜, 아래 이탈(receding)
-        // 페이드아웃 로직이 부드럽게 해제하도록 맡긴다(급단절 방지).
-        if (kalmanRssi < BleConstants.rssiWarning && !alertState.containsKey(deviceId)) {
+        // [v1.0.31] raw 1초평균 — 하드게이트/2차게이트/TTC 교차검증용으로 게이트 '앞'에서 1회만 계산.
+        //   oneSecAvgRssi 는 호출마다 버퍼에 push(부작용) → 프레임당 1회 호출 후 변수 재사용한다.
+        val avg1sec = oneSecAvgRssi(deviceId, inputRssi)   // 1초 평균은 raw 기준 유지
+
+        // ── [v1.0.30 → v1.0.31 raw 이중가드] 최상단 하드 게이트 (절대 거리 선차단 · 음수 부호 주의) ─────
+        // RSSI는 음수다. '칼만 정제값(kalmanRssi)'과 'raw 1초평균(avg1sec)' 중 더 먼(더 음수) 쪽을
+        // 기준(gateRssi)으로 잡아, 둘 중 하나라도 경고 임계(rssiWarning, 예 -65)보다 멀면 차단한다.
+        //   ★ v1.0.30 버그: 게이트가 kalmanRssi 단독 → 칼만이 순간 반사(multipath spike)나 평활화
+        //     지연(lag)으로 실제보다 가깝게 떠 있으면 게이트가 같이 속아 원거리 오발을 통과시켰다.
+        //   → raw 실측(avg1sec)으로 교차검증: 칼만이 거짓으로 가까워도 raw가 멀면 차단된다.   예) -74 < -65.
+        // 이때 '기존에 가까웠다가 멀어지는 중(쿨다운 = 이미 alertState 추적 중)'이 아니라면, 접근 속도·
+        // TTC·0x02 특수경보까지 전부 무시하고 즉시 정리 후 return 한다.
+        // 이미 추적 중(alertState 존재)인 기기는 게이트를 통과시켜, 아래 이탈(receding) 페이드아웃
+        // 로직이 부드럽게 해제하도록 맡긴다(급단절 방지).
+        val gateRssi = minOf(kalmanRssi, avg1sec)
+        if (gateRssi < BleConstants.rssiWarning && !alertState.containsKey(deviceId)) {
             deviceRssiMap.remove(deviceId)
             suddenLabelMap.remove(deviceId)
             firebaseLastSaveMap.remove(deviceId)
@@ -601,7 +609,7 @@ class BleService : LifecycleService() {
         val newState    = trackingStateMap[deviceId] ?: TrackingState.APPROACHING
         val isNowDepart = newState == TrackingState.DEPARTING
 
-        val avg1sec = oneSecAvgRssi(deviceId, inputRssi)   // 1초 평균은 raw 기준 유지
+        // avg1sec(raw 1초평균)은 위 하드게이트 앞에서 이미 계산됨(프레임당 1회).
 
         var stableLevel: Int
         val avgRssi: Int
@@ -633,12 +641,13 @@ class BleService : LifecycleService() {
 
         deviceRssiMap[deviceId] = avgRssi      // 플로팅 위젯 최우선 기기 선정·정렬에 사용
 
-        // ── [v1.0.25 Req1 → v1.0.30 강화] 절대 거리 가드 (2차 방어선) ─────────────────────
-        // 1차 방어는 위 [v1.0.30 Req1] 하드게이트(칼만 정제값 기준 + return)가 담당한다.
-        // 여기는 '이미 추적 중이라 1차 게이트를 통과한 기기'가 blend RSSI(avgRssi)상으로도
-        // 경고 임계(rssiWarning)보다 약하면(=멀면) stableLevel을 SAFE로 강제 → 아래
+        // ── [v1.0.25 → v1.0.31 raw 이중가드] 절대 거리 가드 (2차 방어선) ─────────────────────
+        // 1차 방어는 위 하드게이트(min(칼만,raw) 기준 + return)가 담당한다.
+        // 여기는 '이미 추적 중이라 1차 게이트를 통과한 기기'가 blend(avgRssi) '또는' raw 1초평균
+        // (avg1sec) 중 하나라도 경고 임계(rssiWarning)보다 멀면 stableLevel을 SAFE로 강제 → 아래
         // 이탈 페이드아웃/SAFE 처리로 흘려보낸다. 접근 속도·TTC로는 절대 격상 불가.
-        if (avgRssi < BleConstants.rssiWarning) {
+        //   ★ blend는 칼만 비중 때문에 raw가 멀어도 임계 위로 떠 있을 수 있어 raw를 함께 본다.
+        if (avgRssi < BleConstants.rssiWarning || avg1sec < BleConstants.rssiWarning) {
             stableLevel = BleConstants.LEVEL_SAFE
         }
 
@@ -745,12 +754,16 @@ class BleService : LifecycleService() {
             recedingStartMap.remove(deviceId)
         }
 
-        // ── TTC 기반 선발령 (RSSI 공간 vel 직접 사용, v1.0.20) ──────────
+        // ── TTC 기반 선발령 (RSSI 공간 vel 직접 사용, v1.0.20 / v1.0.31 raw 가드) ──────────
         // DEPARTING/CROSSING 상태에서는 억제 (이탈 중 = 충돌 위험 없음)
         // isStationary 시에도 억제 (정지 중 TTC 선발령 오발 방지)
+        //   ★ v1.0.31: estimateTTC 는 kfRssi(칼만)로 계산 → 칼만이 spike/lag로 가깝게 떠 있으면
+        //     remaining<=0 이 되어 'TTC 0초' 오발이 났다. raw 실측(avg1sec)이 경고권(rssiWarning)
+        //     이상으로 실제 가까울 때만 선발령을 허용해, 원거리에서의 TTC 0초 오발을 차단한다.
         if (stableLevel == BleConstants.LEVEL_WARNING
             && newState == TrackingState.APPROACHING
-            && !ImuFusion.isStationary) {
+            && !ImuFusion.isStationary
+            && avg1sec >= BleConstants.rssiWarning) {
             val ttc = estimateTTC(kfRssi, kfVel)
             if (ttc != null && ttc <= TTC_THRESHOLD_SEC) {
                 ttcFeedbackMap[deviceId] = Pair(ttc, now)
