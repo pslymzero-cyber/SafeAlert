@@ -232,77 +232,12 @@
                         android:imeOptions="actionDone"/>
                 </com.google.android.material.textfield.TextInputLayout>
 
-                <!-- 장비 작업자 카드 -->
+                <!-- [v1.0.34] 보행자 역할 카드 -->
                 <androidx.cardview.widget.CardView
-                    android:id="@+id/card_device"
+                    android:id="@+id/card_role_walker"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="10dp"
-                    android:foreground="?attr/selectableItemBackground"
-                    android:clickable="true"
-                    android:focusable="true"
-                    app:cardCornerRadius="18dp"
-                    app:cardElevation="2dp"
-                    app:cardBackgroundColor="#FFFFFF">
-
-                    <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:orientation="horizontal"
-                        android:paddingHorizontal="16dp"
-                        android:paddingVertical="12dp"
-                        android:gravity="center_vertical">
-
-                        <LinearLayout
-                            android:layout_width="44dp"
-                            android:layout_height="44dp"
-                            android:gravity="center"
-                            android:background="@drawable/shape_icon_bg_blue"
-                            android:layout_marginEnd="14dp">
-                            <TextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="🚛"
-                                android:textSize="20sp" />
-                        </LinearLayout>
-
-                        <LinearLayout
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:orientation="vertical">
-                            <TextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="장비 작업자"
-                                android:textSize="15sp"
-                                android:textStyle="bold"
-                                android:textColor="#0D1B2A" />
-                            <TextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:layout_marginTop="2dp"
-                                android:text="리치 등 장비 운전자"
-                                android:textSize="12sp"
-                                android:textColor="#9CA3AF" />
-                        </LinearLayout>
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="›"
-                            android:textSize="22sp"
-                            android:textColor="#C8CBD2"
-                            android:layout_marginStart="8dp" />
-                    </LinearLayout>
-                </androidx.cardview.widget.CardView>
-
-                <!-- 보행자 카드 -->
-                <androidx.cardview.widget.CardView
-                    android:id="@+id/card_walker"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
                     android:foreground="?attr/selectableItemBackground"
                     android:clickable="true"
                     android:focusable="true"
@@ -348,6 +283,138 @@
                                 android:layout_height="wrap_content"
                                 android:layout_marginTop="2dp"
                                 android:text="도보 이동 작업자"
+                                android:textSize="12sp"
+                                android:textColor="#9CA3AF" />
+                        </LinearLayout>
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="›"
+                            android:textSize="22sp"
+                            android:textColor="#C8CBD2"
+                            android:layout_marginStart="8dp" />
+                    </LinearLayout>
+                </androidx.cardview.widget.CardView>
+
+                <!-- [v1.0.34] EPJ(전동 파레트 잭) 역할 카드 -->
+                <androidx.cardview.widget.CardView
+                    android:id="@+id/card_role_epj"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:foreground="?attr/selectableItemBackground"
+                    android:clickable="true"
+                    android:focusable="true"
+                    app:cardCornerRadius="18dp"
+                    app:cardElevation="2dp"
+                    app:cardBackgroundColor="#FFFFFF">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:paddingHorizontal="16dp"
+                        android:paddingVertical="12dp"
+                        android:gravity="center_vertical">
+
+                        <LinearLayout
+                            android:layout_width="44dp"
+                            android:layout_height="44dp"
+                            android:gravity="center"
+                            android:background="@drawable/shape_icon_bg_gray"
+                            android:layout_marginEnd="14dp">
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="EPJ"
+                                android:textStyle="bold"
+                                android:textColor="#4B5563"
+                                android:textSize="13sp" />
+                        </LinearLayout>
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="EPJ"
+                                android:textSize="15sp"
+                                android:textStyle="bold"
+                                android:textColor="#0D1B2A" />
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="2dp"
+                                android:text="전동 파레트 잭 운전자"
+                                android:textSize="12sp"
+                                android:textColor="#9CA3AF" />
+                        </LinearLayout>
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="›"
+                            android:textSize="22sp"
+                            android:textColor="#C8CBD2"
+                            android:layout_marginStart="8dp" />
+                    </LinearLayout>
+                </androidx.cardview.widget.CardView>
+
+                <!-- [v1.0.34] 지게차 역할 카드 -->
+                <androidx.cardview.widget.CardView
+                    android:id="@+id/card_role_forklift"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:foreground="?attr/selectableItemBackground"
+                    android:clickable="true"
+                    android:focusable="true"
+                    app:cardCornerRadius="18dp"
+                    app:cardElevation="2dp"
+                    app:cardBackgroundColor="#FFFFFF">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:paddingHorizontal="16dp"
+                        android:paddingVertical="12dp"
+                        android:gravity="center_vertical">
+
+                        <LinearLayout
+                            android:layout_width="44dp"
+                            android:layout_height="44dp"
+                            android:gravity="center"
+                            android:background="@drawable/shape_icon_bg_blue"
+                            android:layout_marginEnd="14dp">
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="🚛"
+                                android:textSize="20sp" />
+                        </LinearLayout>
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="지게차"
+                                android:textSize="15sp"
+                                android:textStyle="bold"
+                                android:textColor="#0D1B2A" />
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="2dp"
+                                android:text="지게차·리치 운전자"
                                 android:textSize="12sp"
                                 android:textColor="#9CA3AF" />
                         </LinearLayout>

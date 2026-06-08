@@ -33,13 +33,92 @@ object BleConstants {
     const val LEVEL_WARNING = 1
     const val LEVEL_DANGER  = 2
 
-    // [v1.0.29 다이나믹 페이로드] IMU 모션 상태 코드 — ServiceData(1Byte)로 송수신
-    //   0x00 정지 / 0x01 일반 이동 / 0x02 급정거·급회전(특수경보 트리거)
+    // [v1.0.29 다이나믹 페이로드] IMU 모션 상태 코드 (송신단 내부 표현 전용)
+    //   ImuFusion.motionState 가 반환하는 값과 1:1 일치한다.
+    //   0x00 정지 / 0x01 일반 이동 / 0x02 급정거·급회전
+    //   ※ v1.0.34 부터 '전파(wire)' 에는 이 값을 그대로 싣지 않고
+    //     아래 encodePayload() 로 2bit STATE 필드(PSTATE_*)에 매핑해 1바이트로 패킹한다.
     const val MOTION_STATE_STATIONARY = 0x00
     const val MOTION_STATE_NORMAL     = 0x01
     const val MOTION_STATE_SUDDEN     = 0x02
 
-    // 상대가 0x02(급정거/급회전)이고 정제 칼만 RSSI가 이 값 이상(가까움)이면
+    // 상대 STATE 가 급변(급정거/급회전 등)이고 정제 칼만 RSSI가 이 값 이상(가까움)이면
     // TTC·속도·방향 조건을 모두 무시하고 즉시 최고 DANGER로 격상한다.
     const val SUDDEN_ALERT_RSSI_THRESHOLD = -60
+
+    // ───────────────────────────────────────────────────────────────
+    // [v1.0.34 다이나믹 페이로드 — 1Byte 비트패킹 프로토콜 (2-2-4 Split)]
+    //   ServiceData 1바이트를 3개 필드로 분할 패킹/언패킹한다.
+    //
+    //   Bit:  7  6 | 5  4 | 3  2  1  0
+    //         [ CAT ]|[STATE]|[   SPEED   ]
+    //          2bit    2bit    4bit(0~15)
+    //
+    //   CAT  (Category, 송신자 역할 — bits 7:6):
+    //     00 보행자(WALKER) / 01 EPJ / 10 지게차·리치·오더피커(FORKLIFT) / 11 예약
+    //   STATE (송신자 동적 상태 — bits 5:4):
+    //     00 평상(NORMAL)
+    //     01 급정거·급회전(SUDDEN)   - 공통(특수경보 트리거)
+    //     11 비상(EMERGENCY)         - 공통 / 지게차는 '하역·오더피커 상승'
+    //     10 후진(REVERSE)           - 지게차 전용
+    //   SPEED (bits 3:0): 0~6 km/h 를 0.5km/h 단위로 양자화 → 코드 0~12.
+    //          공식: encode = (kmh / 0.5).toInt(),  decode = code * 0.5 (km/h).
+    //          v1.0.34 송신단은 실내 GPS 음영·IMU 드리프트로 미측정이라 0 고정 송출,
+    //          수신단 2D 칼만이 '상대 접근속도'를 별도 산출하므로 충돌 방지엔 영향 없음.
+    //
+    //   ※ 호환성: 보행자 평상(CAT=00,STATE=00,SPEED=0) = 0x00 →
+    //     페이로드를 싣지 않는 iBeacon/MAC 비콘의 기본 0x00 과 자연 일치(안전한 기본값).
+    // ───────────────────────────────────────────────────────────────
+
+    // Category (bits 7:6)
+    const val CAT_WALKER   = 0b00   // 보행자
+    const val CAT_EPJ      = 0b01   // EPJ (전동 파레트 잭)
+    const val CAT_FORKLIFT = 0b10   // 지게차·리치·오더피커
+    const val CAT_RESERVED = 0b11   // 예약
+
+    // State (bits 5:4)
+    const val PSTATE_NORMAL    = 0b00   // 평상
+    const val PSTATE_SUDDEN    = 0b01   // 급정거·급회전 (공통, 특수경보 트리거)
+    const val PSTATE_REVERSE   = 0b10   // 후진 (지게차 전용)
+    const val PSTATE_EMERGENCY = 0b11   // 비상(공통) / 지게차 하역·오더피커 상승
+
+    // Speed (bits 3:0) — 0.5km/h 단위 양자화
+    const val SPEED_UNIT_KMH = 0.5      // 1코드 = 0.5km/h
+    const val SPEED_MAX_KMH  = 6.0      // 송출 상한 (코드 12)
+
+    // 비트 필드 마스크/시프트  (2-2-4: CAT 상위 → SPEED 하위)
+    private const val CAT_SHIFT   = 6
+    private const val CAT_MASK    = 0b11
+    private const val STATE_SHIFT = 4
+    private const val STATE_MASK  = 0b11
+    private const val SPEED_SHIFT = 0
+    private const val SPEED_MASK  = 0b1111
+
+    /**
+     * 3개 필드(Category 2bit + State 2bit + Speed 4bit)를 1바이트로 패킹한다. (2-2-4 Split)
+     * 레이아웃: bits[7:6]=CAT, bits[5:4]=STATE, bits[3:0]=SPEED.
+     * @param category CAT_* (0~3) — 범위 밖 상위 비트는 마스킹돼 버려진다.
+     * @param state    PSTATE_* (0~3)
+     * @param speedKmh 0~6 km/h (범위 밖은 clamp). 0.5km/h 단위 양자화: (kmh / 0.5).toInt().
+     *                 v1.0.34 송신단은 0.0 고정 호출.
+     */
+    fun encodePayload(category: Int, state: Int, speedKmh: Double = 0.0): Byte {
+        val c = (category and CAT_MASK) shl CAT_SHIFT
+        val s = (state and STATE_MASK) shl STATE_SHIFT
+        val units = (speedKmh.coerceIn(0.0, SPEED_MAX_KMH) / SPEED_UNIT_KMH).toInt().coerceIn(0, SPEED_MASK)
+        val v = (units and SPEED_MASK) shl SPEED_SHIFT
+        return (c or s or v).toByte()
+    }
+
+    /** 패킹된 1바이트에서 Category(bits 7:6) 추출. */
+    fun decodeCategory(payload: Int): Int = ((payload and 0xFF) shr CAT_SHIFT) and CAT_MASK
+
+    /** 패킹된 1바이트에서 State(bits 5:4) 추출. */
+    fun decodeState(payload: Int): Int = ((payload and 0xFF) shr STATE_SHIFT) and STATE_MASK
+
+    /** 패킹된 1바이트에서 Speed 코드(bits 3:0, 0~15) 추출. */
+    fun decodeSpeed(payload: Int): Int = ((payload and 0xFF) shr SPEED_SHIFT) and SPEED_MASK
+
+    /** 패킹된 1바이트에서 Speed 를 km/h 실측값으로 환산 (코드 * 0.5). */
+    fun decodeSpeedKmh(payload: Int): Double = decodeSpeed(payload) * SPEED_UNIT_KMH
 }

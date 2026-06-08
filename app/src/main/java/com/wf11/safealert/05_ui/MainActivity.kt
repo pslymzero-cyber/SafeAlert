@@ -48,6 +48,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private val prefs by lazy { getSharedPreferences("safealert_prefs", MODE_PRIVATE) }
     private var currentMode: String? = null
+    // [v1.0.34] 선택된 역할(Category) — 1바이트 페이로드 bits[1:0] 로 BleService→BleAdvertiser 에 전달
+    private var currentCategory: Int = BleConstants.CAT_WALKER
     private var testAlertRunning = false
 
     // [v1.0.26 Req2] 감지 기기 목록 — BleService.alertState 스냅샷을 통째로 받아 매번 교체.
@@ -186,8 +188,10 @@ class MainActivity : AppCompatActivity() {
         // 저장된 이름 복원
         binding.etDisplayName.setText(prefs.getString("display_name", ""))
 
-        binding.cardDevice.setOnClickListener    { saveDisplayName(); onModeSelected("DEVICE") }
-        binding.cardWalker.setOnClickListener    { saveDisplayName(); onModeSelected("WALKER") }
+        // [v1.0.34] 3-Role 선택 — 보행자(WALKER) / EPJ·지게차(DEVICE) + Category 동시 지정
+        binding.cardRoleWalker.setOnClickListener   { saveDisplayName(); onRoleSelected("WALKER", BleConstants.CAT_WALKER) }
+        binding.cardRoleEpj.setOnClickListener      { saveDisplayName(); onRoleSelected("DEVICE", BleConstants.CAT_EPJ) }
+        binding.cardRoleForklift.setOnClickListener { saveDisplayName(); onRoleSelected("DEVICE", BleConstants.CAT_FORKLIFT) }
         binding.btnStop.setOnClickListener       { stopServiceWithDelay() }
         binding.cardSettings.setOnClickListener  { showPinDialog() }
         binding.cardBleSettings.setOnClickListener {
@@ -314,8 +318,11 @@ class MainActivity : AppCompatActivity() {
         binding.tvBleStatus.text = sb
     }
 
-    private fun onModeSelected(mode: String) {
+    private fun onRoleSelected(mode: String, category: Int) {
         currentMode = mode
+        currentCategory = category
+        // 역할(Category) 복원용 저장 — 서비스 START_STICKY 재시작·앱 재실행 시 라벨 일관성 확보
+        prefs.edit().putInt("running_category", category).apply()
         binding.layoutPermissionWarning.visibility = View.GONE
         if (hasAllPermissions()) requestBatteryOptimizationExclusion()
         else permissionLauncher.launch(blePermissions)
@@ -420,11 +427,16 @@ class MainActivity : AppCompatActivity() {
         val intent = Intent(this, BleService::class.java).apply {
             this.action = action
             putExtra(BleService.EXTRA_ID, id)
+            putExtra(BleService.EXTRA_CATEGORY, currentCategory)   // [v1.0.34] 역할 Category 전달
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent)
         else startService(intent)
 
-        prefs.edit().putString("running_mode", mode).putLong("running_since", since).apply()
+        prefs.edit()
+            .putString("running_mode", mode)
+            .putLong("running_since", since)
+            .putInt("running_category", currentCategory)
+            .apply()
         showRunningUi(mode, since)
     }
 
@@ -472,6 +484,7 @@ class MainActivity : AppCompatActivity() {
         val mode  = prefs.getString("running_mode", null) ?: return
         val since = prefs.getLong("running_since", 0L)
         currentMode = mode
+        currentCategory = prefs.getInt("running_category", BleConstants.CAT_WALKER)  // [v1.0.34] 역할 복원
         showRunningUi(mode, since)
     }
 
@@ -481,7 +494,7 @@ class MainActivity : AppCompatActivity() {
         binding.tvApproaching.visibility = View.VISIBLE  // [v1.0.26 Req3] 중앙 안내(목록은 하단 tv_ble_status 로 이동)
         binding.layoutPermissionWarning.visibility = View.GONE
         updateDetectedDisplay()  // 초기 안내("감지 기기 없음") 표시
-        binding.tvRunningMode.text  = if (mode == "DEVICE") "🚛 장비 작업자" else "🚶 보행자"
+        binding.tvRunningMode.text  = roleDisplayName(currentCategory)   // [v1.0.34] 3-Role 라벨
         binding.tvRunningSince.text = SimpleDateFormat("HH:mm 시작", Locale.KOREA).format(Date(since))
         // 이름 입력 시 이름, 없으면 자동 ID 표시
         val displayName = prefs.getString("display_name", "")?.trim()
@@ -494,6 +507,14 @@ class MainActivity : AppCompatActivity() {
             btManager?.adapter?.isEnabled != true -> "⚠ 블루투스 꺼짐! 설정에서 켜주세요"
             else -> "✓ 블루투스 ON · BLE 시작 중..."
         }
+    }
+
+    /** v1.0.34 Category(CAT_*) -> 실행 중 카드 역할명(이모지는 기존 자산 재사용, EPJ는 텍스트). */
+    private fun roleDisplayName(category: Int): String = when (category) {
+        BleConstants.CAT_EPJ      -> "EPJ 작업자"
+        BleConstants.CAT_FORKLIFT -> "🚛 지게차"
+        BleConstants.CAT_WALKER   -> "🚶 보행자"
+        else                      -> "🚶 보행자"
     }
 
     private fun saveDisplayName() {

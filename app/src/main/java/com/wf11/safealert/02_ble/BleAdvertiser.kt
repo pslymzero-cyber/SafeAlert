@@ -12,6 +12,9 @@ import java.util.UUID
 class BleAdvertiser(
     private val advertiser: BluetoothLeAdvertiser,
     private val prefix: String = BleConstants.DEVICE_PREFIX,
+    // [v1.0.34] 송신자 역할(Category) — 1바이트 페이로드 bits[1:0] 에 패킹된다.
+    //   보행자=CAT_WALKER / EPJ=CAT_EPJ / 지게차=CAT_FORKLIFT
+    private val category: Int = BleConstants.CAT_WALKER,
     private val onStatusUpdate: ((String) -> Unit)? = null
 ) {
     companion object {
@@ -45,8 +48,9 @@ class BleAdvertiser(
     // 현재 광고 중인 deviceId (UWB 재시작용)
     private var currentDeviceId = ""
 
-    // [v1.0.29 다이나믹 페이로드] 현재 IMU 모션 상태 코드 — ServiceData 1Byte 로 탑재
-    @Volatile private var currentState: Byte = BleConstants.MOTION_STATE_STATIONARY.toByte()
+    // [v1.0.34 다이나믹 페이로드] 현재 송신자 STATE(2bit, PSTATE_*) — Category·Speed 와 함께
+    //   encodePayload() 로 1바이트로 패킹되어 ServiceData 로 탑재된다. (Speed 는 0 고정)
+    @Volatile private var currentState: Int = BleConstants.PSTATE_NORMAL
     private var lastStateUpdateMs = 0L
     // 재광고 시 UWB 주소 유지 (updateState / restartWithUwbAddress 공용)
     private var lastUwbAddress: ByteArray? = null
@@ -80,10 +84,13 @@ class BleAdvertiser(
         // ── Primary 광고 패킷 (ServiceUUID 포함 → 화면 꺼짐에도 스캔 필터 작동) ──
         val advertiseData = AdvertiseData.Builder()
             .addServiceUuid(ParcelUuid(UUID.fromString(BleConstants.SERVICE_UUID)))
-            // [v1.0.29] 현재 모션 상태 코드(1Byte)를 ServiceData 로 탑재
+            // [v1.0.34] Category+State+Speed 를 1바이트로 패킹해 ServiceData 로 탑재
             //   SERVICE_UUID 가 16비트 short UUID(0x1234) 패턴 → ServiceData 약 5바이트.
             //   전체 패킷 ≈ flags3 + svcUuid4 + svcData5 + mfg(4+N) ≤ 31바이트 유지(N≤14).
-            .addServiceData(ParcelUuid(UUID.fromString(BleConstants.SERVICE_UUID)), byteArrayOf(currentState))
+            .addServiceData(
+                ParcelUuid(UUID.fromString(BleConstants.SERVICE_UUID)),
+                byteArrayOf(BleConstants.encodePayload(category, currentState))
+            )
             .addManufacturerData(companyId, idBytes)
             .setIncludeDeviceName(false)
             .setIncludeTxPowerLevel(false)
@@ -107,22 +114,23 @@ class BleAdvertiser(
     }
 
     /**
-     * [v1.0.29 다이나믹 페이로드] IMU 모션 상태 코드 갱신.
+     * [v1.0.34 다이나믹 페이로드] 송신자 STATE(2bit, PSTATE_*) 갱신.
      * 변경이 있을 때만, 그리고 최소 2초 간격(OS Rate-Limit 회피)으로
-     * 기존 광고를 멈추고 약 50ms 뒤 새 상태 코드로 다시 켠다(stop→50ms→start).
+     * 기존 광고를 멈추고 약 50ms 뒤 새 페이로드(Category+State+Speed)로 다시 켠다.
+     * Category 는 생성자에서 고정, Speed 는 0 고정 — 여기선 STATE 만 바뀐다.
      */
     fun updateState(newState: Int) {
-        val b = newState.toByte()
-        if (b == currentState) return
+        val s = newState and 0b11
+        if (s == currentState) return
         val now = SystemClock.elapsedRealtime()
         if (now - lastStateUpdateMs < MIN_STATE_UPDATE_INTERVAL_MS) {
             // 2초 이내 재갱신 금지 — 다음 상태 변화 시점에 반영
-            Log.d(TAG, "상태 갱신 보류(Rate-Limit): 0x%02X".format(b))
+            Log.d(TAG, "상태 갱신 보류(Rate-Limit): STATE=$s")
             return
         }
         lastStateUpdateMs = now
-        currentState = b
-        Log.d(TAG, "모션 상태 갱신 → 0x%02X 재광고".format(b))
+        currentState = s
+        Log.d(TAG, "STATE 갱신 → $s (CAT=$category) 재광고")
         try { advertiser.stopAdvertising(callback) } catch (_: Exception) {}
         stateHandler.postDelayed({
             startAdvertising(currentDeviceId, lastUwbAddress)

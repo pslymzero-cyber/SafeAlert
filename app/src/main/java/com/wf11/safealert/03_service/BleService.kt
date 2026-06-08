@@ -41,7 +41,10 @@ class BleService : LifecycleService() {
         const val ACTION_MUTE_TEMP     = "ACTION_MUTE_TEMP"
         const val ACTION_UNMUTE        = "ACTION_UNMUTE"
         const val ACTION_MUTE_DEVICE   = "ACTION_MUTE_DEVICE"   // v1.0.25: 플로팅 터치 → 특정 기기 10초 음소거
+        const val ACTION_TEST_STATE    = "ACTION_TEST_STATE"   // [v1.0.34] 개발자 수동 STATE 주입(후진/하역 예약비트 송신 테스트)
         const val EXTRA_ID             = "extra_id"
+        const val EXTRA_CATEGORY       = "extra_category"       // [v1.0.34] 송신자 역할 Category(CAT_*)
+        const val EXTRA_PSTATE         = "extra_pstate"         // [v1.0.34] ACTION_TEST_STATE 용 STATE 값(PSTATE_*)
         const val EXTRA_ALERT_LEVEL    = "extra_alert_level"
         const val EXTRA_DISPLAY_NAME   = "extra_display_name"
         const val EXTRA_RSSI           = "extra_rssi"
@@ -66,6 +69,8 @@ class BleService : LifecycleService() {
     private var uwbRanger: UwbRanger? = null
     private var myId   = ""
     private var myMode = ""
+    // [v1.0.34] 내 역할(Category) — 광고 페이로드 bits[1:0] 에 패킹된다. 기본 보행자.
+    private var myCategory = BleConstants.CAT_WALKER
     private var testRunnable: Runnable? = null
     private val testHandler = android.os.Handler(android.os.Looper.getMainLooper())
 
@@ -205,6 +210,11 @@ class BleService : LifecycleService() {
     //   값 = "{이름}이(가) 급정거 또는 급회전 중입니다." → 오버레이/목록에서 일반 이름 대신 출력.
     private val suddenLabelMap    = mutableMapOf<String, String>()
 
+    // [v1.0.34] 수신한 상대 기기의 Category(역할) 캐시 — 디코드된 CAT_* 보관.
+    //   접두어(prefix)만으론 EPJ(01)·지게차(10)가 둘 다 DEVICE 라 구분 불가하므로,
+    //   1바이트 페이로드에서 언패킹한 Category 로 표시 라벨(보행자/EPJ/지게차)을 판별한다.
+    private val deviceCategoryMap = mutableMapOf<String, Int>()
+
     // [v1.0.30 Req3] Firebase 경보 저장 모바일데이터 방어 — 기기별 마지막 저장 시각(ms).
     //   같은 기기에 대해 FIREBASE_SAVE_THROTTLE_MS(1분) 안에는 재업로드하지 않는다.
     private val firebaseLastSaveMap = mutableMapOf<String, Long>()
@@ -239,9 +249,13 @@ class BleService : LifecycleService() {
                 }
             }
         }
-        // [v1.0.29 다이나믹 페이로드] IMU 3-State 모션 변화 → 광고 ServiceData 상태 코드 갱신
+        // [v1.0.34 다이나믹 페이로드] IMU 3-State 모션 변화 → 송신 STATE(PSTATE_*) 매핑 후 광고 갱신.
+        //   v1.0.34 는 급변(0x02)만 PSTATE_SUDDEN 으로 싣고, 정지(0x00)·일반이동(0x01)은 PSTATE_NORMAL 로 통합.
+        //   (후진 PSTATE_REVERSE / 하역 PSTATE_EMERGENCY 는 예약 — ACTION_TEST_STATE 로만 수동 주입)
         ImuFusion.onMotionStateChanged = { code ->
-            bleAdvertiser?.updateState(code)
+            val pState = if (code == BleConstants.MOTION_STATE_SUDDEN)
+                BleConstants.PSTATE_SUDDEN else BleConstants.PSTATE_NORMAL
+            bleAdvertiser?.updateState(pState)
         }
     }
 
@@ -255,7 +269,9 @@ class BleService : LifecycleService() {
             if (savedMode != null) {
                 myId   = prefs.getString("device_id", "SA-DEFAULT") ?: "SA-DEFAULT"
                 myMode = savedMode
-                val title = if (savedMode == "DEVICE") "장비 작업자 실행 중" else "보행자 실행 중"
+                myCategory = prefs.getInt("running_category",
+                    if (savedMode == "DEVICE") BleConstants.CAT_FORKLIFT else BleConstants.CAT_WALKER)
+                val title = "${categoryRoleName(myCategory)} 실행 중"
                 startForeground(NOTIF_ID, buildNotification(title, "재시작됨"))
                 applyMode()
             }
@@ -266,10 +282,12 @@ class BleService : LifecycleService() {
             ACTION_START_DEVICE -> {
                 myId   = intent.getStringExtra(EXTRA_ID) ?: "DEVICE_001"
                 myMode = "DEVICE"
+                // [v1.0.34] DEVICE 모드는 EPJ(01) 또는 지게차(10) — Category EXTRA 로 구분(기본 지게차)
+                myCategory = intent.getIntExtra(EXTRA_CATEGORY, BleConstants.CAT_FORKLIFT)
                 // 모드 저장: START_STICKY 재시작 시 onStartCommand 복원에 사용
-                saveRunningMode(myMode, myId)
+                saveRunningMode(myMode, myId, myCategory)
                 startForeground(NOTIF_ID, buildNotification(
-                    "장비 작업자 실행 중",
+                    "${categoryRoleName(myCategory)} 실행 중",
                     buildSubText(DevSettings.deviceTx, DevSettings.deviceRx)
                 ))
                 applyMode()
@@ -277,7 +295,8 @@ class BleService : LifecycleService() {
             ACTION_START_WALKER -> {
                 myId   = intent.getStringExtra(EXTRA_ID) ?: "WALKER_001"
                 myMode = "WALKER"
-                saveRunningMode(myMode, myId)
+                myCategory = BleConstants.CAT_WALKER   // [v1.0.34] 보행자 고정
+                saveRunningMode(myMode, myId, myCategory)
                 startForeground(NOTIF_ID, buildNotification(
                     "보행자 실행 중",
                     buildSubText(DevSettings.walkerTx, DevSettings.walkerRx)
@@ -290,15 +309,24 @@ class BleService : LifecycleService() {
             ACTION_MUTE_TEMP   -> muteTemporarily("화면 터치")
             ACTION_UNMUTE      -> unmuteImmediately()
             ACTION_MUTE_DEVICE -> muteDevice(intent.getStringExtra(EXTRA_ID))
+            // [v1.0.34] 개발자 수동 STATE 주입 — 후진(PSTATE_REVERSE)/하역(PSTATE_EMERGENCY) 예약비트
+            //   송신 무결성을 2-기기 현장 테스트로 검증하기 위한 훅(평상 복귀=PSTATE_NORMAL).
+            //   예) adb shell am startservice -n .../BleService -a ACTION_TEST_STATE --ei extra_pstate 2
+            ACTION_TEST_STATE -> {
+                val s = intent.getIntExtra(EXTRA_PSTATE, BleConstants.PSTATE_NORMAL)
+                bleAdvertiser?.updateState(s)
+                sendStatusBroadcast("수동 STATE 주입: $s")
+            }
         }
         return START_STICKY
     }
 
     /** 모드와 ID를 SharedPrefs에 저장 (START_STICKY 재시작 복원용) */
-    private fun saveRunningMode(mode: String, id: String) {
+    private fun saveRunningMode(mode: String, id: String, category: Int) {
         getSharedPreferences("safealert_prefs", MODE_PRIVATE).edit()
             .putString("running_mode", mode)
             .putString("device_id", id)
+            .putInt("running_category", category)   // [v1.0.34] 역할 복원용
             .apply()
     }
 
@@ -329,7 +357,8 @@ class BleService : LifecycleService() {
             val advertiser = btAdapter.bluetoothLeAdvertiser
             if (advertiser != null) {
                 val prefix = if (myMode == "DEVICE") BleConstants.DEVICE_PREFIX else BleConstants.WALKER_PREFIX
-                val bleAdv = BleAdvertiser(advertiser, prefix,
+                // [v1.0.34] 역할(Category)을 광고자에 전달 → 1바이트 페이로드 bits[1:0] 패킹
+                val bleAdv = BleAdvertiser(advertiser, prefix, myCategory,
                     onStatusUpdate = { msg -> sendStatusBroadcast(msg) }
                 )
                 bleAdvertiser = bleAdv
@@ -393,6 +422,7 @@ class BleService : LifecycleService() {
                             oneSecBuffer.remove(deviceId)   // [v1.0.31] 게이트가 raw도 push → 신호소실 시 함께 정리
                             mutedDevices.remove(deviceId)
                             suddenLabelMap.remove(deviceId)
+                            deviceCategoryMap.remove(deviceId)
                             firebaseLastSaveMap.remove(deviceId)
                             sendAlertBroadcast(deviceId, BleConstants.LEVEL_SAFE)
                             if (alertState.isEmpty()) {
@@ -526,7 +556,13 @@ class BleService : LifecycleService() {
         }
     }
 
-    private fun processAlert(deviceId: String, rssi: Int, remoteState: Int = BleConstants.MOTION_STATE_STATIONARY) {
+    private fun processAlert(deviceId: String, rssi: Int, remoteState: Int = 0x00) {
+        // [v1.0.34] 수신 1바이트 페이로드 언패킹 → Category / State (Speed 는 v1.0.34 미사용)
+        //   remoteState 는 BleScanner 가 ServiceData 1바이트를 0~255 로 그대로 넘긴 값.
+        val rCategory = BleConstants.decodeCategory(remoteState)
+        val rState    = BleConstants.decodeState(remoteState)
+        deviceCategoryMap[deviceId] = rCategory   // 표시 라벨(보행자/EPJ/지게차) 판별용 캐시
+
         // UWB 거리 우선: ToF 거리를 RSSI 등가값으로 변환
         val inputRssi: Int = run {
             val uwbDist = uwbRanger?.uwbDistances?.get(deviceId)
@@ -581,6 +617,7 @@ class BleService : LifecycleService() {
         if (gateRssi < BleConstants.rssiWarning && !alertState.containsKey(deviceId)) {
             deviceRssiMap.remove(deviceId)
             suddenLabelMap.remove(deviceId)
+            deviceCategoryMap.remove(deviceId)
             firebaseLastSaveMap.remove(deviceId)
             return
         }
@@ -595,14 +632,14 @@ class BleService : LifecycleService() {
         //     (Ghost Danger)'을 낼 수 있는데, 반응이 빠른 raw 1초평균이 이미 멀어졌으면(−60 미만)
         //     즉시 차단해 이탈 기기의 과경보 잔상을 완전히 제거한다.
         // 표시문자열을 "{이름}이(가) 급정거 또는 급회전 중입니다."로 덮어써 오버레이·목록에 출력.
-        if (remoteState == BleConstants.MOTION_STATE_SUDDEN
+        if (rState != BleConstants.PSTATE_NORMAL
             && preFiltered >= BleConstants.SUDDEN_ALERT_RSSI_THRESHOLD
             && avg1sec     >= BleConstants.SUDDEN_ALERT_RSSI_THRESHOLD) {
             deviceRssiMap[deviceId]  = kalmanRssi
-            suddenLabelMap[deviceId] = makeSuddenLabel(extractDisplayName(deviceId))
+            suddenLabelMap[deviceId] = makeStateLabel(extractDisplayName(deviceId), rCategory, rState)
             alertState[deviceId]     = Pair(BleConstants.LEVEL_DANGER, now)
             bleScanner?.setEcoMode(false)   // 즉시 전투 모드(LOW_LATENCY)
-            Log.w(TAG, "특수경보(0x02 급정거/급회전): $deviceId smoothed=$preFiltered kfRssi=%.1f".format(kfRssi))
+            Log.w(TAG, "특수경보(STATE=$rState CAT=$rCategory): $deviceId smoothed=$preFiltered kfRssi=%.1f".format(kfRssi))
             // 무음(전역/개별)은 존중 — 상태·표시는 유지하되 소리/진동만 억제
             if (isMuted || isDeviceMuted(deviceId)) {
                 updateFloatingOverlay()
@@ -685,6 +722,7 @@ class BleService : LifecycleService() {
                 deviceRssiMap.remove(deviceId)
                 mutedDevices.remove(deviceId)
                 suddenLabelMap.remove(deviceId)
+                deviceCategoryMap.remove(deviceId)
                 firebaseLastSaveMap.remove(deviceId)
                 sendAlertBroadcast(deviceId, BleConstants.LEVEL_SAFE)
                 if (alertState.isEmpty()) {
@@ -935,11 +973,10 @@ class BleService : LifecycleService() {
         }
         val level = alertState[topId]?.first ?: BleConstants.LEVEL_SAFE
         val rssi  = deviceRssiMap[topId] ?: -99
-        val type  = if (topId.startsWith(BleConstants.DEVICE_PREFIX)) "장비" else "보행자"
         OverlayManager.showFloating(
             context  = this,
             deviceId = topId,
-            name     = suddenLabelMap[topId] ?: "${extractDisplayName(topId)} ($type)",
+            name     = suddenLabelMap[topId] ?: makeApproachLabel(topId),
             rssi     = rssi,
             danger   = level >= BleConstants.LEVEL_DANGER
         )
@@ -1054,6 +1091,58 @@ class BleService : LifecycleService() {
         return "$name$josa 급정거 또는 급회전 중입니다."
     }
 
+    /** v1.0.34 Category(CAT_*) -> 표시용 역할명. */
+    private fun categoryRoleName(category: Int): String = when (category) {
+        BleConstants.CAT_EPJ      -> "EPJ"
+        BleConstants.CAT_FORKLIFT -> "지게차"
+        BleConstants.CAT_WALKER   -> "보행자"
+        else                      -> "보행자"
+    }
+
+    /**
+     * v1.0.34 기기 표시용 역할 라벨.
+     * 디코드된 Category 캐시가 있으면 보행자/EPJ/지게차로 구분하고,
+     * 없으면(비콘 등 페이로드 없는 기기) 접두어 기반 기존 규칙(장비/보행자)으로 폴백한다.
+     */
+    private fun typeLabelOf(deviceId: String): String {
+        val cat = deviceCategoryMap[deviceId]
+        return if (cat != null) categoryRoleName(cat)
+               else if (deviceId.startsWith(BleConstants.DEVICE_PREFIX)) "장비" else "보행자"
+    }
+
+    /**
+     * v1.0.34 평상(NORMAL) 접근 표시문자열 - Category 기반 분화 (directive 4).
+     *   EPJ 는 스펙 지정 문구 "{이름} EPJ가 접근 중!", 그 외는 "{이름} ({역할})" 간결 표기.
+     *   ※ 특수상태(STATE!=평상)는 suddenLabelMap(makeStateLabel)이 우선하며, 이 함수는 그 폴백.
+     */
+    private fun makeApproachLabel(deviceId: String): String {
+        val name = extractDisplayName(deviceId)
+        return if (deviceCategoryMap[deviceId] == BleConstants.CAT_EPJ)
+            "$name EPJ가 접근 중!"
+        else
+            "$name (${typeLabelOf(deviceId)})"
+    }
+
+    /**
+     * v1.0.34 특수상태(STATE!=평상) 경보 표시문자열 - Category/State 조합 (directive 4).
+     *   급정거(SUDDEN, 공통): 보행자는 기존 문장, EPJ·지게차는 "{이름} {역할} 급정거·급회전 중! 주의!"
+     *   후진(REVERSE, 지게차): "{이름} 지게차 후진 중! 주의!"
+     *   비상(EMERGENCY): 지게차는 "{이름} 상부 고소 작업 중! 낙하물 주의!", 그 외 공통 "{이름} {역할} 비상 상황!"
+     */
+    private fun makeStateLabel(name: String, category: Int, state: Int): String {
+        val role = categoryRoleName(category)
+        return when (state) {
+            BleConstants.PSTATE_SUDDEN ->
+                if (category == BleConstants.CAT_WALKER) makeSuddenLabel(name)
+                else "$name $role 급정거·급회전 중! 주의!"
+            BleConstants.PSTATE_REVERSE   -> "$name 지게차 후진 중! 주의!"
+            BleConstants.PSTATE_EMERGENCY ->
+                if (category == BleConstants.CAT_FORKLIFT) "$name 상부 고소 작업 중! 낙하물 주의!"
+                else "$name $role 비상 상황!"
+            else                          -> makeSuddenLabel(name)
+        }
+    }
+
     private var lastDeviceListMs = 0L
 
     /**
@@ -1086,8 +1175,7 @@ class BleService : LifecycleService() {
             val id    = entry.key
             val level = entry.value.first
             val rssi  = deviceRssiMap[id] ?: -99
-            val type  = if (id.startsWith(BleConstants.DEVICE_PREFIX)) "장비" else "보행자"
-            val name  = suddenLabelMap[id] ?: "${extractDisplayName(id)} ($type)"
+            val name  = suddenLabelMap[id] ?: makeApproachLabel(id)
             if (sb.isNotEmpty()) sb.append('\u001E')
             sb.append(level).append('\u001F').append(rssi).append('\u001F').append(name)
         }
@@ -1100,10 +1188,7 @@ class BleService : LifecycleService() {
 
     private fun sendAlertBroadcast(deviceId: String, level: Int) {
         val displayName = if (level == BleConstants.LEVEL_SAFE) "" else extractDisplayName(deviceId)
-        val type = when {
-            deviceId.startsWith(BleConstants.DEVICE_PREFIX) -> "장비"
-            else -> "보행자"
-        }
+        val type = typeLabelOf(deviceId)
         sendBroadcast(Intent(BROADCAST_ALERT).apply {
             putExtra(EXTRA_ID, deviceId)
             putExtra(EXTRA_ALERT_LEVEL, level)
@@ -1129,6 +1214,7 @@ class BleService : LifecycleService() {
         VibrationHelper.stopVibration(this)
         alertState.clear()
         suddenLabelMap.clear()
+        deviceCategoryMap.clear()
         broadcastDeviceList(force = true)   // [v1.0.26 Req2] 서비스 중지 → 빈 목록 송출('감지 없음' 반영)
         rssiPreFilter.clearAll()
         kalmanFilters.clear()
