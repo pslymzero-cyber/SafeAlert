@@ -585,15 +585,19 @@ class BleService : LifecycleService() {
             return
         }
 
-        // ── [v1.0.29 → v1.0.32] 0x02 특수경보 (최우선 분기) ──────────
-        // 상대 remoteState 가 0x02(급정거/급회전)이고 전처리 smoothedRssi 가 임계(-60) 이상(가까움)이면
-        // TTC·속도·방향·절대거리 가드를 모두 무시하고 즉시 최고 DANGER 로 격상한다.
+        // ── [v1.0.29 → v1.0.33] 0x02 특수경보 (최우선 분기 · 하이브리드 교차검증) ──────────
+        // 상대 remoteState 가 0x02(급정거/급회전)이고 'smoothedRssi(EMA)와 avg1sec(raw 1초평균)'이
+        // 둘 다 임계(-60) 이상(가까움)일 때만 TTC·속도·방향·절대거리 가드를 무시하고 즉시 DANGER 격상.
         //   ★ v1.0.32: 거리 판정을 kfRssi(칼만) → smoothedRssi(=preFiltered, EMA 출력)로 변경.
-        //     칼만은 평활화 lag 로 실제보다 가깝게 떠 있을 수 있으나, EMA 출력은 raw 에 더 정직해
-        //     원거리 0x02 오발을 줄이고 지침(smoothedRssi 기준)을 준수한다.
+        //     칼만 lag 로 실제보다 가깝게 떠 있는 원거리 오발을 줄이고 지침(smoothedRssi 기준)을 준수.
+        //   ★ v1.0.33: smoothedRssi 에 avg1sec(raw) 를 논리곱으로 결합(하이브리드). 이탈 중 기기는
+        //     fall α=0.05 의 EMA 지연(lag)으로 smoothedRssi 가 한동안 −60 위로 떠 있어 'DANGER 잔상
+        //     (Ghost Danger)'을 낼 수 있는데, 반응이 빠른 raw 1초평균이 이미 멀어졌으면(−60 미만)
+        //     즉시 차단해 이탈 기기의 과경보 잔상을 완전히 제거한다.
         // 표시문자열을 "{이름}이(가) 급정거 또는 급회전 중입니다."로 덮어써 오버레이·목록에 출력.
         if (remoteState == BleConstants.MOTION_STATE_SUDDEN
-            && preFiltered >= BleConstants.SUDDEN_ALERT_RSSI_THRESHOLD) {
+            && preFiltered >= BleConstants.SUDDEN_ALERT_RSSI_THRESHOLD
+            && avg1sec     >= BleConstants.SUDDEN_ALERT_RSSI_THRESHOLD) {
             deviceRssiMap[deviceId]  = kalmanRssi
             suddenLabelMap[deviceId] = makeSuddenLabel(extractDisplayName(deviceId))
             alertState[deviceId]     = Pair(BleConstants.LEVEL_DANGER, now)
