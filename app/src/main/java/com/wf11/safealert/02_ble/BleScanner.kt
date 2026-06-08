@@ -86,12 +86,11 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
             if (iBeaconData != null) {
                 val uuid = BeaconRegistry.parseIBeaconUuid(iBeaconData)
                 if (uuid != null && BeaconRegistry.containsUuid(uuid)) {
-                    val label  = BeaconRegistry.getLabelByUuid(uuid)
+                    // [v1.0.25 Req3] 상태줄(tv_ble_status) 오염 방지 — 비콘 정보를 status로 보내지 않는다.
                     val fullId = BleConstants.WALKER_PREFIX + "BEA_${uuid.take(8)}"
                     val rssi   = result.rssi
                     detectedDevices[fullId] = System.currentTimeMillis()
                     scanCallback?.onDeviceDetected(fullId, rssi, calcAlertLevel(rssi))
-                    onStatusUpdate?.invoke("📡 비콘: $label  rssi=$rssi")
                     return
                 }
             }
@@ -100,7 +99,6 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
             record.serviceUuids?.forEach { parcelUuid ->
                 val uuidStr = parcelUuid.uuid.toString().uppercase()
                 if (BeaconRegistry.containsUuid(uuidStr)) {
-                    val label  = BeaconRegistry.getLabelByUuid(uuidStr)
                     val fullId = BleConstants.WALKER_PREFIX + "BEA_${uuidStr.take(8)}"
                     detectedDevices[fullId] = System.currentTimeMillis()
                     scanCallback?.onDeviceDetected(fullId, result.rssi, calcAlertLevel(result.rssi))
@@ -111,7 +109,6 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
             // MAC 기반 비콘
             val mac = result.device.address ?: return
             if (BeaconRegistry.containsMac(mac)) {
-                val label  = BeaconRegistry.getLabelByMac(mac)
                 val fullId = BleConstants.WALKER_PREFIX + "BEA_${mac.replace(":", "")}"
                 detectedDevices[fullId] = System.currentTimeMillis()
                 scanCallback?.onDeviceDetected(fullId, result.rssi, calcAlertLevel(result.rssi))

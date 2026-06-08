@@ -28,12 +28,6 @@ import com.wf11.safealert.utils.OverlayManager
 import com.wf11.safealert.utils.UwbRanger
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
-import android.graphics.Color
-import android.graphics.Typeface
-import android.text.Spannable
-import android.text.SpannableStringBuilder
-import android.text.style.ForegroundColorSpan
-import android.text.style.StyleSpan
 
 class BleService : LifecycleService() {
 
@@ -46,6 +40,7 @@ class BleService : LifecycleService() {
         const val ACTION_TEST_STOP     = "ACTION_TEST_STOP"
         const val ACTION_MUTE_TEMP     = "ACTION_MUTE_TEMP"
         const val ACTION_UNMUTE        = "ACTION_UNMUTE"
+        const val ACTION_MUTE_DEVICE   = "ACTION_MUTE_DEVICE"   // v1.0.25: 플로팅 터치 → 특정 기기 10초 음소거
         const val EXTRA_ID             = "extra_id"
         const val EXTRA_ALERT_LEVEL    = "extra_alert_level"
         const val EXTRA_DISPLAY_NAME   = "extra_display_name"
@@ -150,7 +145,8 @@ class BleService : LifecycleService() {
     private val kalmanFilters = mutableMapOf<String, KalmanFilter>()
 
     // ── TTC 파라미터 ──────────────────────────────────────────────────
-    private val TTC_THRESHOLD_SEC      = 8.0
+    // [v1.0.25 Req2] 현장 초민감 오발령 해결 — 8.0초 → 3.0초로 대폭 강화 (충돌 임박 시에만 선발령)
+    private val TTC_THRESHOLD_SEC      = 3.0
     // ★ RSSI 공간 부호 규칙: vel > 0 = RSSI 증가 = 접근 / vel < 0 = RSSI 감소 = 이탈
     private val MIN_APPROACH_VEL_DBM   = 0.5  // TTC 계산 최소 접근 속도 (dBm/s)
 
@@ -187,8 +183,11 @@ class BleService : LifecycleService() {
 
     private val peakAlertRssiMap  = mutableMapOf<String, Int>()
     private val RECEDING_DBM_DROP = 5
-    // 기기별 마지막 avgRssi 보관 — buildDeviceListSpannable() 용
+    // 기기별 마지막 avgRssi 보관 — 플로팅 위젯 최우선 기기 선정·정렬에 사용
     private val deviceRssiMap     = mutableMapOf<String, Int>()
+
+    // [v1.0.25 Req4] 기기별 음소거(Acknowledge) — deviceId → 음소거 해제 시각(ms). 플로팅 터치 시 등록.
+    private val mutedDevices      = mutableMapOf<String, Long>()
 
     private val HYSTERESIS_DBM = 5
 
@@ -248,8 +247,9 @@ class BleService : LifecycleService() {
             ACTION_STOP       -> stopAll()
             ACTION_TEST_START -> startTestAlert()
             ACTION_TEST_STOP  -> stopTestAlert()
-            ACTION_MUTE_TEMP  -> muteTemporarily("화면 터치")
-            ACTION_UNMUTE     -> unmuteImmediately()
+            ACTION_MUTE_TEMP   -> muteTemporarily("화면 터치")
+            ACTION_UNMUTE      -> unmuteImmediately()
+            ACTION_MUTE_DEVICE -> muteDevice(intent.getStringExtra(EXTRA_ID))
         }
         return START_STICKY
     }
@@ -347,6 +347,7 @@ class BleService : LifecycleService() {
                             recedingStartMap.remove(deviceId)
                             peakAlertRssiMap.remove(deviceId)
                             deviceRssiMap.remove(deviceId)
+                            mutedDevices.remove(deviceId)
                             sendAlertBroadcast(deviceId, BleConstants.LEVEL_SAFE)
                             if (alertState.isEmpty()) {
                                 AlertSoundPlayer.stopSound()
@@ -354,6 +355,8 @@ class BleService : LifecycleService() {
                                 OverlayManager.hideOverlay()
                                 activeSoundLevel = BleConstants.LEVEL_SAFE
                                 sendStatusBroadcast("기기 이탈 → 경보 중지")
+                            } else {
+                                updateFloatingOverlay()   // 다른 위험 기기로 플로팅 전환
                             }
                         }
                         override fun onScanError(errorCode: Int) { Log.e(TAG, "스캔 오류: $errorCode") }
@@ -511,7 +514,7 @@ class BleService : LifecycleService() {
 
         val avg1sec = oneSecAvgRssi(deviceId, inputRssi)   // 1초 평균은 raw 기준 유지
 
-        val stableLevel: Int
+        var stableLevel: Int
         val avgRssi: Int
 
         if (mode == DevSettings.MODE_FIXED_AVG) {
@@ -539,7 +542,16 @@ class BleService : LifecycleService() {
                 BleConstants.LEVEL_WARNING else afterHysteresis
         }
 
-        deviceRssiMap[deviceId] = avgRssi      // 오버레이 기기 목록 구성에 사용
+        deviceRssiMap[deviceId] = avgRssi      // 플로팅 위젯 최우선 기기 선정·정렬에 사용
+
+        // ── [v1.0.25 Req1] 절대 거리 가드 (최우선 차단 조건) ─────────────────────
+        // 정제된 RSSI(avgRssi)가 앱 설정 경고 임계(rssiWarning)보다 약하면(=거리가 멀면),
+        // 접근 속도·TTC가 아무리 빨라도 WARNING/DANGER로 절대 격상하지 않는다.
+        // stableLevel을 SAFE로 강제 → 아래 TTC 선발령(WARNING 요구)·WARNING 발령을 원천 차단.
+        if (avgRssi < BleConstants.rssiWarning) {
+            stableLevel = BleConstants.LEVEL_SAFE
+        }
+
         sendDetectedBroadcast(deviceId, stableLevel, avgRssi)
 
         // ── SAFE 처리 ───────────────────────────────────────────────────
@@ -556,19 +568,22 @@ class BleService : LifecycleService() {
                 recedingStartMap.remove(deviceId)
                 peakAlertRssiMap.remove(deviceId)
                 deviceRssiMap.remove(deviceId)
+                mutedDevices.remove(deviceId)
                 sendAlertBroadcast(deviceId, BleConstants.LEVEL_SAFE)
                 if (alertState.isEmpty()) {
                     AlertSoundPlayer.stopSound()
                     activeSoundLevel = BleConstants.LEVEL_SAFE
                     VibrationHelper.stopVibration(this)
                     OverlayManager.hideOverlay()
+                } else {
+                    updateFloatingOverlay()   // 다른 위험 기기로 플로팅 전환
                 }
             }
             return
         }
 
-        // 무음 중 — 상태 추적만 유지
-        if (isMuted) {
+        // 무음 중 — 상태 추적만 유지 (전역 무음 또는 [v1.0.25] 해당 기기 Acknowledge 무음)
+        if (isMuted || isDeviceMuted(deviceId)) {
             alertState[deviceId] = Pair(stableLevel, alertState[deviceId]?.second ?: now)
             return
         }
@@ -647,7 +662,7 @@ class BleService : LifecycleService() {
                 forceAlarmVolume()
                 if (DevSettings.vibrationEnabled && !isScreenOn) VibrationHelper.vibrateDanger(this)
                 if (DevSettings.soundEnabled)     AlertSoundPlayer.playDanger(this)
-                OverlayManager.showDangerOverlay(this, danger = true, deviceList = buildDeviceListSpannable())
+                updateFloatingOverlay()
                 sendDetectedBroadcast(deviceId, BleConstants.LEVEL_DANGER, avgRssi)
                 sendAlertBroadcast(deviceId, BleConstants.LEVEL_DANGER)
                 sendStatusBroadcast("⚡ 충돌 예측 %.0f초: ${extractDisplayName(deviceId)}".format(ttc))
@@ -692,7 +707,7 @@ class BleService : LifecycleService() {
                 if (DevSettings.autoSaveAlerts)
                     FirebaseManager.saveAlert(deviceId, myId, avgRssi, "WARNING")
                 val name = extractDisplayName(deviceId)
-                OverlayManager.showDangerOverlay(this, danger = false, deviceList = buildDeviceListSpannable())
+                updateFloatingOverlay()
                 sendAlertBroadcast(deviceId, BleConstants.LEVEL_WARNING)
                 Log.d(TAG, "경고 발생: $deviceId ($name) avgRssi=$avgRssi state=$newState vel=%.2fdBm/s".format(kfVel))
             }
@@ -742,6 +757,62 @@ class BleService : LifecycleService() {
         isMutedPublic = false
         sendStatusBroadcast("즉시 재개됨")
         Log.d(TAG, "즉시 무음 해제")
+    }
+
+    // ── [v1.0.25 Req4] 기기별 Acknowledge 무음 + 플로팅 위젯 최우선 기기 ──────────
+    /** 플로팅 위젯을 터치한 운전자가 육안 확인 → 해당 기기 알림(사이렌·플로팅)을 10초간 중지. */
+    private fun muteDevice(deviceId: String?) {
+        if (deviceId.isNullOrEmpty()) return
+        mutedDevices[deviceId] = System.currentTimeMillis() + MUTE_DURATION_MS
+        // 현재 울리는 소리·진동 즉시 정지 (다른 위험 기기가 남아있으면 다음 스캔에서 재발령됨)
+        AlertSoundPlayer.stopSound()
+        VibrationHelper.stopVibration(this)
+        activeSoundLevel = BleConstants.LEVEL_SAFE
+        // 이 기기를 제외한 최우선 기기로 플로팅 갱신(없으면 숨김)
+        updateFloatingOverlay()
+        sendStatusBroadcast("✋ ${extractDisplayName(deviceId)} 확인됨 — 10초 무음")
+        Log.d(TAG, "기기 음소거(Acknowledge): $deviceId (10초)")
+    }
+
+    /** 해당 기기가 현재 Acknowledge 무음 중인지. 만료 시 자동 정리 후 false. */
+    private fun isDeviceMuted(deviceId: String): Boolean {
+        val until = mutedDevices[deviceId] ?: return false
+        if (System.currentTimeMillis() >= until) {
+            mutedDevices.remove(deviceId)
+            return false
+        }
+        return true
+    }
+
+    /**
+     * 현재 경보 중(WARNING 이상)이며 Acknowledge 무음이 아닌 기기 중,
+     * 위험도 → RSSI(가까운 순) 우선의 단 1대 최우선 기기 id 반환. 없으면 null.
+     */
+    private fun topPriorityDevice(): String? =
+        alertState.entries
+            .filter { it.value.first >= BleConstants.LEVEL_WARNING && !isDeviceMuted(it.key) }
+            .maxWithOrNull(
+                compareBy<Map.Entry<String, Pair<Int, Long>>> { it.value.first }
+                    .thenBy { deviceRssiMap[it.key] ?: -100 }
+            )?.key
+
+    /** 최우선 기기 1대만 플로팅 위젯에 표시. 대상이 없으면 위젯을 숨긴다. */
+    private fun updateFloatingOverlay() {
+        val topId = topPriorityDevice()
+        if (topId == null) {
+            OverlayManager.hideOverlay()
+            return
+        }
+        val level = alertState[topId]?.first ?: BleConstants.LEVEL_SAFE
+        val rssi  = deviceRssiMap[topId] ?: -99
+        val type  = if (topId.startsWith(BleConstants.DEVICE_PREFIX)) "장비" else "보행자"
+        OverlayManager.showFloating(
+            context  = this,
+            deviceId = topId,
+            name     = "${extractDisplayName(topId)} ($type)",
+            rssi     = rssi,
+            danger   = level >= BleConstants.LEVEL_DANGER
+        )
     }
 
     private fun startScanHealthCheck() {
@@ -818,44 +889,6 @@ class BleService : LifecycleService() {
         }
     }
 
-    /**
-     * alertState 기준 다중 기기 목록 Spannable 생성.
-     * RSSI 강한 순(가까운 순) 정렬, 최대 10개, 색상·볼드 포함.
-     * OverlayManager.showDangerOverlay() deviceList 파라미터로 전달.
-     */
-    private fun buildDeviceListSpannable(): CharSequence {
-        if (alertState.isEmpty()) return ""
-        val sb = SpannableStringBuilder()
-        alertState.entries
-            .sortedByDescending { deviceRssiMap[it.key] ?: -100 }
-            .take(10)
-            .forEachIndexed { idx, (deviceId, pair) ->
-                val level = pair.first
-                val rssi  = deviceRssiMap[deviceId] ?: -99
-                val name  = extractDisplayName(deviceId)
-                val type  = if (deviceId.startsWith(BleConstants.DEVICE_PREFIX)) "장비" else "보행자"
-                if (idx > 0) sb.append("\n")
-                val prefix = when (level) {
-                    BleConstants.LEVEL_DANGER  -> "🚨"
-                    BleConstants.LEVEL_WARNING -> "⚠"
-                    else                       -> "📡"
-                }
-                val line  = "$prefix  $name ($type)  ${rssi}dBm"
-                val start = sb.length
-                sb.append(line)
-                val end   = sb.length
-                val color = when (level) {
-                    BleConstants.LEVEL_DANGER  -> Color.rgb(255, 100,  80)
-                    BleConstants.LEVEL_WARNING -> Color.rgb(255, 180,  40)
-                    else                       -> Color.rgb(170, 210, 230)
-                }
-                sb.setSpan(ForegroundColorSpan(color), start, end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
-                if (level >= BleConstants.LEVEL_DANGER)
-                    sb.setSpan(StyleSpan(Typeface.BOLD), start, end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
-            }
-        return sb
-    }
-
     private fun extractDisplayName(deviceId: String): String {
         val suffix = when {
             deviceId.startsWith(BleConstants.DEVICE_PREFIX) ->
@@ -927,6 +960,7 @@ class BleService : LifecycleService() {
         recedingStartMap.clear()
         peakAlertRssiMap.clear()
         deviceRssiMap.clear()
+        mutedDevices.clear()
         testRunnable?.let { testHandler.removeCallbacks(it) }
         testRunnable = null
         muteHandler.removeCallbacksAndMessages(null)

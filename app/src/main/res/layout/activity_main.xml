@@ -125,8 +125,7 @@
                         android:textColor="#E0F0FF"
                         android:gravity="start"
                         android:lineSpacingMultiplier="1.4"
-                        android:fontFamily="monospace"
-                        android:visibility="gone"/>
+                        android:fontFamily="monospace"/>
 
                     <!-- 무음 인디케이터 -->
                     <TextView
@@ -584,15 +583,5 @@
         android:background="#FFFFFF" />
 
 </LinearLayout>
-
-<!-- 경보 테두리 오버레이 (터치 통과) -->
-<View
-    android:id="@+id/alert_overlay"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:background="@drawable/shape_danger_border"
-    android:clickable="false"
-    android:focusable="false"
-    android:visibility="gone" />
 
 </FrameLayout>

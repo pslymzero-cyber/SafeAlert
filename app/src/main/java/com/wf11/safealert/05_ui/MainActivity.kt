@@ -48,7 +48,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private val prefs by lazy { getSharedPreferences("safealert_prefs", MODE_PRIVATE) }
     private var currentMode: String? = null
-    private var overlayAnimator: ObjectAnimator? = null
     private var testAlertRunning = false
 
     // 감지된 기기 목록: deviceId → (displayName, alertLevel, rssi)
@@ -70,7 +69,8 @@ class MainActivity : AppCompatActivity() {
                     BleService.lastStatus.isNotEmpty() -> BleService.lastStatus
                     else -> "✓ 블루투스 ON · BLE 시작 중..."
                 }
-                if (text != lastText && detectedDevices.isEmpty()) {
+                // [v1.0.25 Req3] tv_ble_status 는 항상 '서비스 상태' 1줄만 — 기기 목록과 분리
+                if (text != lastText) {
                     binding.tvBleStatus.text = text
                     lastText = text
                 }
@@ -142,18 +142,9 @@ class MainActivity : AppCompatActivity() {
                     val deviceId = intent.getStringExtra(BleService.EXTRA_ID) ?: ""
 
                     if (level == BleConstants.LEVEL_SAFE) {
-                        // 기기 이탈 → 목록에서 제거
+                        // 기기 이탈 → 목록에서 제거 (플로팅 위젯은 BleService가 직접 관리)
                         detectedDevices.remove(deviceId)
                         updateDetectedDisplay()
-                        if (detectedDevices.isEmpty()) hideAlertOverlay()
-                        else {
-                            val maxLevel = detectedDevices.values.maxOf { it.second }
-                            when {
-                                maxLevel >= BleConstants.LEVEL_DANGER  -> showAlertOverlay(danger = true)
-                                maxLevel == BleConstants.LEVEL_WARNING -> showAlertOverlay(danger = false)
-                                else -> hideAlertOverlay()
-                            }
-                        }
                     } else {
                         // TTC DANGER 발령 등 — 레벨 업데이트
                         // null-safe: DETECTED가 throttle에 막혔을 때도 레벨 반영 보장
@@ -164,10 +155,6 @@ class MainActivity : AppCompatActivity() {
                         else
                             Triple(alertDisplayName.ifEmpty { deviceId }, level, -99)
                         updateDetectedDisplay()
-                        when (level) {
-                            BleConstants.LEVEL_DANGER  -> showAlertOverlay(danger = true)
-                            BleConstants.LEVEL_WARNING -> showAlertOverlay(danger = false)
-                        }
                     }
                 }
 
@@ -184,18 +171,12 @@ class MainActivity : AppCompatActivity() {
                         detectedDevices[deviceId] = Triple(displayName, level, rssi)
                     }
                     updateDetectedDisplay()
-                    // WARNING/DANGER 오버레이도 갱신
-                    when (level) {
-                        BleConstants.LEVEL_DANGER  -> showAlertOverlay(danger = true)
-                        BleConstants.LEVEL_WARNING -> if (detectedDevices.values.none { it.second >= BleConstants.LEVEL_DANGER })
-                            showAlertOverlay(danger = false)
-                    }
                 }
 
                 BleService.BROADCAST_BLE_STATUS -> {
                     val status = intent.getStringExtra(BleService.EXTRA_STATUS) ?: return
-                    // 기기 감지 중에는 tvBleStatus(목록 창)를 상태 문자열로 덮어쓰지 않음
-                    if (detectedDevices.isEmpty()) binding.tvBleStatus.text = status
+                    // [v1.0.25 Req3] tv_ble_status 는 오직 서비스 상태 1줄만 — 항상 갱신
+                    binding.tvBleStatus.text = status
                 }
             }
         }
@@ -265,49 +246,28 @@ class MainActivity : AppCompatActivity() {
         super.onDestroy()
         statusHandler.removeCallbacks(statusRunnable)
         try { unregisterReceiver(alertReceiver) } catch (_: Exception) {}
-        overlayAnimator?.cancel()
         muteAnimator?.cancel()
     }
 
-    private fun showAlertOverlay(danger: Boolean) {
-        overlayAnimator?.cancel()
-        binding.alertOverlay.visibility = View.VISIBLE
-        binding.alertOverlay.setBackgroundResource(
-            if (danger) R.drawable.shape_danger_border else R.drawable.shape_warning_border
-        )
-        overlayAnimator = ObjectAnimator.ofFloat(binding.alertOverlay, "alpha", 0.2f, 1.0f).apply {
-            duration = if (danger) 400 else 700
-            repeatMode = ObjectAnimator.REVERSE
-            repeatCount = ObjectAnimator.INFINITE
-            start()
-        }
-        // 인앱 오버레이 터치 → 10초 무음
-        binding.alertOverlay.isClickable = true
-        binding.alertOverlay.isFocusable = false
-        binding.alertOverlay.setOnClickListener {
-            startService(Intent(this, BleService::class.java).apply {
-                action = BleService.ACTION_MUTE_TEMP
-            })
-            hideAlertOverlay()
-        }
-    }
-
     /**
-     * 감지 기기 목록을 tvBleStatus 에 표시 (최대 10개, RSSI 강한 순 정렬).
-     * 위험=빨강(1.25×), 경고=주황(1.0×), 안전=연청(0.82×).
-     * 기기 없을 때는 배경 초기화 후 BLE 상태 문자열로 복원.
+     * [v1.0.25 Req3] 감지 기기 목록을 tv_approaching 에 표시 (최대 10개).
+     * 정렬: 위험도(level) 내림차순 → 같은 위험도면 RSSI 강한(가까운) 순.
+     * 위험=빨강(1.22×·굵게), 경고=노랑(1.0×), 안전=연청(0.82×).
+     * tv_ble_status 는 절대 건드리지 않는다 — 그쪽은 '서비스 상태' 1줄 전용.
      */
     private fun updateDetectedDisplay() {
         if (detectedDevices.isEmpty()) {
-            // 배경 초기화 + 상태 텍스트 즉시 복원
-            binding.tvBleStatus.setBackgroundColor(Color.TRANSPARENT)
-            binding.tvBleStatus.text = BleService.lastStatus.takeIf { it.isNotEmpty() }
-                ?: "✓ BLE 감시 중..."
+            binding.tvApproaching.setBackgroundColor(Color.TRANSPARENT)
+            binding.tvApproaching.setTextColor(0xFF8AAFC4.toInt())
+            binding.tvApproaching.text = "주변 감지 기기 없음 · 감시 중"
             return
         }
-        // RSSI 내림차순 (신호 강할수록 = 가까울수록 위), 최대 10개
+        // 위험도 우선 → 같은 위험도면 RSSI 강한(가까운) 순, 최대 10개
         val sorted = detectedDevices.values
-            .sortedByDescending { it.third }
+            .sortedWith(
+                compareByDescending<Triple<String, Int, Int>> { it.second }
+                    .thenByDescending { it.third }
+            )
             .take(10)
 
         val sb = SpannableStringBuilder()
@@ -323,12 +283,12 @@ class MainActivity : AppCompatActivity() {
             sb.append(line)
             val end = sb.length
             val color = when (level) {
-                BleConstants.LEVEL_DANGER  -> Color.rgb(255, 100,  80)   // 선명한 적색
-                BleConstants.LEVEL_WARNING -> Color.rgb(255, 180,  40)   // 황등색
-                else                       -> Color.rgb(170, 210, 230)   // 연회색-청
+                BleConstants.LEVEL_DANGER  -> Color.rgb(255,  80,  70)   // 위험 = 빨강
+                BleConstants.LEVEL_WARNING -> Color.rgb(255, 200,  40)   // 경고 = 노랑
+                else                       -> Color.rgb(170, 210, 230)   // 안전 = 연청
             }
             val sizeMul = when (level) {
-                BleConstants.LEVEL_DANGER  -> 1.25f
+                BleConstants.LEVEL_DANGER  -> 1.22f
                 BleConstants.LEVEL_WARNING -> 1.0f
                 else                       -> 0.82f
             }
@@ -341,16 +301,12 @@ class MainActivity : AppCompatActivity() {
         val topLevel = sorted.first().second
         val bgColor = when {
             topLevel >= BleConstants.LEVEL_DANGER  -> 0xDD1A0000.toInt()  // 짙은 적
-            topLevel == BleConstants.LEVEL_WARNING -> 0xDD1A0D00.toInt()  // 짙은 황갈
+            topLevel == BleConstants.LEVEL_WARNING -> 0xDD1A1400.toInt()  // 짙은 황
             else                                   -> 0xDD051220.toInt()  // 짙은 남색
         }
-        binding.tvBleStatus.setBackgroundColor(bgColor)
-        binding.tvBleStatus.text = sb
-    }
-
-    private fun hideAlertOverlay() {
-        overlayAnimator?.cancel()
-        binding.alertOverlay.visibility = View.GONE
+        binding.tvApproaching.setBackgroundColor(bgColor)
+        binding.tvApproaching.setTextColor(0xFFE0F0FF.toInt())
+        binding.tvApproaching.text = sb
     }
 
     private fun onModeSelected(mode: String) {
@@ -479,7 +435,8 @@ class MainActivity : AppCompatActivity() {
         com.wf11.safealert.service.VibrationHelper.stopVibration(this)
         com.wf11.safealert.utils.OverlayManager.hideOverlay()
 
-        hideAlertOverlay()
+        // 감지 목록 비우기
+        detectedDevices.clear()
 
         // 테스트 경보 실행 중이었으면 버튼 상태 초기화
         if (testAlertRunning) {
@@ -516,8 +473,9 @@ class MainActivity : AppCompatActivity() {
     private fun showRunningUi(mode: String, since: Long) {
         binding.layoutSelect.visibility  = View.GONE
         binding.cardRunning.visibility   = View.VISIBLE
-        binding.tvApproaching.visibility = View.GONE  // tvBleStatus 로 통합됨
+        binding.tvApproaching.visibility = View.VISIBLE  // [v1.0.25 Req3] 감지 기기 목록 전용 영역
         binding.layoutPermissionWarning.visibility = View.GONE
+        updateDetectedDisplay()  // 초기 안내("감지 기기 없음") 표시
         binding.tvRunningMode.text  = if (mode == "DEVICE") "🚛 장비 작업자" else "🚶 보행자"
         binding.tvRunningSince.text = SimpleDateFormat("HH:mm 시작", Locale.KOREA).format(Date(since))
         // 이름 입력 시 이름, 없으면 자동 ID 표시
@@ -557,7 +515,7 @@ class MainActivity : AppCompatActivity() {
         if (!OverlayManager.canDrawOverlays(this)) {
             AlertDialog.Builder(this)
                 .setTitle("화면 표시 권한 필요")
-                .setMessage("다른 앱 사용 중에도 경보 테두리를 표시하려면\n'다른 앱 위에 표시' 권한이 필요합니다.")
+                .setMessage("다른 앱 사용 중에도 경보 위젯을 띄우려면\n'다른 앱 위에 표시' 권한이 필요합니다.")
                 .setPositiveButton("권한 설정") { _, _ ->
                     startActivity(Intent(
                         Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
