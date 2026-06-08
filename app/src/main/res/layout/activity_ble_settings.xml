@@ -1,0 +1,222 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="#F5F6F8">
+
+    <!-- 헤더 -->
+    <LinearLayout android:layout_width="match_parent" android:layout_height="56dp"
+        android:orientation="horizontal" android:paddingStart="16dp" android:paddingEnd="8dp"
+        android:gravity="center_vertical" android:background="#FFFFFF">
+        <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+            android:layout_weight="1" android:text="BLE 감지 설정"
+            android:textSize="17sp" android:textStyle="bold" android:textColor="#111827"/>
+    </LinearLayout>
+    <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#EAECF0"/>
+
+    <ScrollView android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1">
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="vertical" android:padding="16dp">
+
+            <!-- 감지 모드 선택 -->
+            <TextView android:text="감지 방식" android:textStyle="bold" android:textSize="15sp"
+                android:textColor="#111827" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:layout_marginBottom="8dp"/>
+
+            <!-- 칼만 필터 모드 -->
+            <androidx.cardview.widget.CardView
+                android:id="@+id/card_kalman"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginBottom="10dp"
+                android:foreground="?attr/selectableItemBackground"
+                android:clickable="true" android:focusable="true"
+                app:cardCornerRadius="14dp" app:cardElevation="2dp"
+                app:cardBackgroundColor="#FFFFFF">
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:padding="16dp" android:gravity="center_vertical">
+                    <RadioButton android:id="@+id/rb_kalman"
+                        android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:layout_marginEnd="12dp" android:clickable="false" android:focusable="false"/>
+                    <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:orientation="vertical">
+                        <TextView android:text="칼만 필터 (거리 기반)"
+                            android:textSize="15sp" android:textStyle="bold" android:textColor="#111827"
+                            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                        <TextView android:text="거리(m)를 직접 설정 · 노이즈 자동 억제"
+                            android:textSize="12sp" android:textColor="#9CA3AF"
+                            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                    </LinearLayout>
+                </LinearLayout>
+            </androidx.cardview.widget.CardView>
+
+            <!-- 칼만 모드 설정 -->
+            <androidx.cardview.widget.CardView android:id="@+id/card_kalman_config"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginBottom="16dp"
+                app:cardCornerRadius="14dp" app:cardElevation="0dp"
+                app:cardBackgroundColor="#F0F4FF">
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="vertical" android:padding="16dp">
+
+                    <!-- 칼만 필터 강도 (프리셋 선택) -->
+                    <TextView android:text="필터 강도"
+                        android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:textSize="13sp" android:textColor="#374151"
+                        android:layout_marginBottom="6dp"/>
+                    <RadioGroup android:id="@+id/rg_kalman_preset"
+                        android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:layout_marginBottom="14dp">
+                        <RadioButton android:id="@+id/rb_kf_fast"
+                            android:layout_width="0dp" android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="빠른 반응"
+                            android:textSize="12sp" android:textColor="#374151"/>
+                        <RadioButton android:id="@+id/rb_kf_normal"
+                            android:layout_width="0dp" android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="균형"
+                            android:textSize="12sp" android:textColor="#374151"/>
+                        <RadioButton android:id="@+id/rb_kf_smooth"
+                            android:layout_width="0dp" android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="강한 평활"
+                            android:textSize="12sp" android:textColor="#374151"/>
+                    </RadioGroup>
+
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:orientation="horizontal" android:gravity="center_vertical">
+                        <TextView android:text="경고 거리" android:layout_width="0dp"
+                            android:layout_height="wrap_content" android:layout_weight="1"
+                            android:textSize="13sp" android:textColor="#374151"/>
+                        <TextView android:id="@+id/tv_warn_dist"
+                            android:layout_width="wrap_content" android:layout_height="wrap_content"
+                            android:textSize="14sp" android:textStyle="bold" android:textColor="#F59E0B"/>
+                    </LinearLayout>
+                    <SeekBar android:id="@+id/seek_warn_dist" android:layout_width="match_parent"
+                        android:layout_height="wrap_content" android:layout_marginTop="4dp" android:max="49"/>
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="12dp">
+                        <TextView android:text="위험 거리" android:layout_width="0dp"
+                            android:layout_height="wrap_content" android:layout_weight="1"
+                            android:textSize="13sp" android:textColor="#374151"/>
+                        <TextView android:id="@+id/tv_dang_dist"
+                            android:layout_width="wrap_content" android:layout_height="wrap_content"
+                            android:textSize="14sp" android:textStyle="bold" android:textColor="#EF4444"/>
+                    </LinearLayout>
+                    <SeekBar android:id="@+id/seek_dang_dist" android:layout_width="match_parent"
+                        android:layout_height="wrap_content" android:layout_marginTop="4dp" android:max="49"/>
+                </LinearLayout>
+            </androidx.cardview.widget.CardView>
+
+            <!-- 고정값 모드 -->
+            <androidx.cardview.widget.CardView
+                android:id="@+id/card_fixed"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginBottom="10dp"
+                android:foreground="?attr/selectableItemBackground"
+                android:clickable="true" android:focusable="true"
+                app:cardCornerRadius="14dp" app:cardElevation="2dp"
+                app:cardBackgroundColor="#FFFFFF">
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:padding="16dp" android:gravity="center_vertical">
+                    <RadioButton android:id="@+id/rb_fixed"
+                        android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:layout_marginEnd="12dp" android:clickable="false" android:focusable="false"/>
+                    <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:orientation="vertical">
+                        <TextView android:text="1초 평균 고정값"
+                            android:textSize="15sp" android:textStyle="bold" android:textColor="#111827"
+                            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                        <TextView android:text="1초 동안의 평균 신호 세기로 판단 · 단순 명확"
+                            android:textSize="12sp" android:textColor="#9CA3AF"
+                            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                    </LinearLayout>
+                </LinearLayout>
+            </androidx.cardview.widget.CardView>
+
+            <!-- 고정값 모드 설정 -->
+            <androidx.cardview.widget.CardView android:id="@+id/card_fixed_config"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginBottom="16dp"
+                app:cardCornerRadius="14dp" app:cardElevation="0dp"
+                app:cardBackgroundColor="#FFF5F5">
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="vertical" android:padding="16dp">
+                    <TextView android:text="숫자가 작을수록 더 가까운 거리에서만 감지합니다"
+                        android:textSize="11sp" android:textColor="#9CA3AF"
+                        android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:layout_marginBottom="12dp"/>
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:orientation="horizontal" android:gravity="center_vertical">
+                        <TextView android:text="위험 임계값" android:layout_width="0dp"
+                            android:layout_height="wrap_content" android:layout_weight="1"
+                            android:textSize="13sp" android:textColor="#374151"/>
+                        <TextView android:id="@+id/tv_danger_abs"
+                            android:layout_width="wrap_content" android:layout_height="wrap_content"
+                            android:textSize="16sp" android:textStyle="bold" android:textColor="#EF4444"/>
+                    </LinearLayout>
+                    <SeekBar android:id="@+id/seek_danger_abs" android:layout_width="match_parent"
+                        android:layout_height="wrap_content" android:layout_marginTop="4dp"
+                        android:min="30" android:max="100"/>
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="12dp">
+                        <TextView android:text="경고 임계값" android:layout_width="0dp"
+                            android:layout_height="wrap_content" android:layout_weight="1"
+                            android:textSize="13sp" android:textColor="#374151"/>
+                        <TextView android:id="@+id/tv_warning_abs"
+                            android:layout_width="wrap_content" android:layout_height="wrap_content"
+                            android:textSize="16sp" android:textStyle="bold" android:textColor="#F59E0B"/>
+                    </LinearLayout>
+                    <SeekBar android:id="@+id/seek_warning_abs" android:layout_width="match_parent"
+                        android:layout_height="wrap_content" android:layout_marginTop="4dp"
+                        android:min="30" android:max="100"/>
+                </LinearLayout>
+            </androidx.cardview.widget.CardView>
+
+            <!-- 보조 모드 기여도 -->
+            <TextView android:text="모드 혼합" android:textStyle="bold" android:textSize="15sp"
+                android:textColor="#111827" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:layout_marginTop="8dp" android:layout_marginBottom="8dp"/>
+
+            <androidx.cardview.widget.CardView
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginBottom="16dp"
+                app:cardCornerRadius="14dp" app:cardElevation="2dp"
+                app:cardBackgroundColor="#FFFFFF">
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="vertical" android:padding="16dp">
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:orientation="horizontal" android:gravity="center_vertical">
+                        <TextView android:text="보조 모드 기여도" android:layout_width="0dp"
+                            android:layout_height="wrap_content" android:layout_weight="1"
+                            android:textSize="13sp" android:textColor="#374151"/>
+                        <TextView android:id="@+id/tv_blend_val"
+                            android:layout_width="wrap_content" android:layout_height="wrap_content"
+                            android:textSize="16sp" android:textStyle="bold" android:textColor="#2563EB"/>
+                    </LinearLayout>
+                    <SeekBar android:id="@+id/seek_blend_ratio"
+                        android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp" android:max="50"/>
+                    <TextView android:id="@+id/tv_blend_hint"
+                        android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:textSize="12sp" android:textColor="#9CA3AF"/>
+                </LinearLayout>
+            </androidx.cardview.widget.CardView>
+
+        </LinearLayout>
+    </ScrollView>
+
+    <!-- 저장 버튼 -->
+    <Button android:id="@+id/btn_save"
+        android:layout_width="match_parent" android:layout_height="52dp"
+        android:layout_marginStart="16dp" android:layout_marginEnd="16dp" android:layout_marginBottom="16dp"
+        android:text="저장" android:textSize="15sp" android:textColor="#FFFFFF"
+        android:backgroundTint="#2563EB" android:stateListAnimator="@null"
+        style="@style/Widget.MaterialComponents.Button.UnelevatedButton"
+        app:cornerRadius="14dp"/>
+
+</LinearLayout>

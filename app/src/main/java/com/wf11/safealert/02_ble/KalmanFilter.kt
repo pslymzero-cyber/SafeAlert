@@ -1,146 +1,132 @@
 package com.wf11.safealert.ble
 
 import com.wf11.safealert.utils.DevSettings
-import kotlin.math.log10
 import kotlin.math.pow
 
 /**
- * 2D 칼만 필터 — 거리(m) + 속도(m/s) 동시 추적 (v1.0.20)
+ * 2D 칼만 필터 — RSSI(dBm) + RSSI 변화율(dBm/s) 동시 추적 (v1.0.20)
  *
- * 상태 벡터: x = [d, v]^T
- *   d : 추정 거리 (m, 양수)
- *   v : 추정 상대 속도 (m/s, 음수=접근 / 양수=이탈)
+ * 상태 벡터: x = [rssi, vel]^T
+ *   rssi : 추정 RSSI (dBm)
+ *   vel  : RSSI 변화율 (dBm/s)
+ *          ★ 부호 규칙: 양수(+) = RSSI 증가 = 보행자 접근
+ *                       음수(-) = RSSI 감소 = 보행자 이탈
+ *          RSSI는 0에 가까울수록 강한 신호(-80 → -40)이므로
+ *          vel > 0 이면 신호가 강해지는 중 = 다가옴이다.
  *
- * 관측값: RSSI(dBm) → 경로손실 모델로 거리(m) 변환 후 입력.
+ * 입력: RssiPreFilter를 거친 정제 RSSI (raw 데이터 직접 입력 금지)
  * 전이 모델(등속): F = [[1, dt], [0, 1]]
  * 관측 모델: H = [1, 0]
  * 과정 노이즈: Q = q × [[dt⁴/4, dt³/2], [dt³/2, dt²]]
  *
  * 프리셋별 파라미터:
- *   FAST   — q=0.50, R=0.50  빠른 반응, 속도 추정 노이즈 큼
- *   NORMAL — q=0.15, R=1.50  균형 (기본값)
- *   SMOOTH — q=0.05, R=4.00  느린 반응, 속도 추정 안정
- *
- * @param preset DevSettings.KALMAN_PRESET_* 값
+ *   FAST   — q=0.50, R=2.0   빠른 반응, 속도 추정 노이즈 큼
+ *   NORMAL — q=0.15, R=5.0   균형 (기본값)
+ *   SMOOTH — q=0.05, R=10.0  느린 반응, 속도 추정 안정
  */
 class KalmanFilter(private var preset: Int = DevSettings.KALMAN_PRESET_NORMAL) {
 
     // ── 상태 변수 ─────────────────────────────────────────────────────
-    private var dist: Double = 0.0          // 추정 거리 (m)
-    private var vel:  Double = 0.0          // 추정 속도 (m/s)
-    // 2×2 공분산 행렬 (대칭: pDv == pVd 이므로 3값으로 표현)
-    private var pDd: Double = 100.0
-    private var pDv: Double = 0.0
-    private var pVv: Double = 100.0
+    private var rssi: Double = 0.0    // 추정 RSSI (dBm)
+    private var vel:  Double = 0.0    // RSSI 변화율 (dBm/s), 양수=접근 / 음수=이탈
+    // 2×2 공분산 행렬 (대칭: pRV == pVR 이므로 3값으로 표현)
+    private var pRR: Double = 100.0   // 분산: rssi-rssi
+    private var pRV: Double = 0.0     // 공분산: rssi-vel
+    private var pVV: Double = 100.0   // 분산: vel-vel
     private var initialized: Boolean = false
     private var lastTsMs:    Long    = 0L
 
     // ── 프리셋별 파라미터 ─────────────────────────────────────────────
-    /** 과정 노이즈 q ((m/s²)²) */
+    /** 과정 노이즈 q ((dBm/s²)²) */
     private val processNoise: Double
         get() = when (preset) {
             DevSettings.KALMAN_PRESET_FAST   -> 0.50
             DevSettings.KALMAN_PRESET_NORMAL -> 0.15
             else                             -> 0.05
         }
-    /** 관측 노이즈 R (m²) */
+    /** 관측 노이즈 R (dBm²) */
     private val measureNoise: Double
         get() = when (preset) {
-            DevSettings.KALMAN_PRESET_FAST   -> 0.50
-            DevSettings.KALMAN_PRESET_NORMAL -> 1.50
-            else                             -> 4.00
+            DevSettings.KALMAN_PRESET_FAST   -> 2.0
+            DevSettings.KALMAN_PRESET_NORMAL -> 5.0
+            else                             -> 10.0
         }
 
     fun updatePreset(p: Int) { preset = p }
 
     // ── 공개 상태 읽기 ────────────────────────────────────────────────
-    val estimatedDist:  Double  get() = if (initialized) dist.coerceAtLeast(0.1) else 0.0
+    /** 추정 RSSI (dBm). 미초기화 시 0.0 */
+    val estimatedRssi:  Double  get() = if (initialized) rssi else 0.0
+    /** 추정 변화율 (dBm/s). 양수=접근 / 음수=이탈. 미초기화 시 0.0 */
     val estimatedVel:   Double  get() = if (initialized) vel  else 0.0
     val isInitialized:  Boolean get() = initialized
 
     /**
-     * 현재 추정 거리를 RSSI(dBm)로 역변환.
-     * calcLevelWithHysteresis() 등 기존 RSSI 기반 로직과 호환.
-     */
-    fun estimatedRssi(): Int {
-        if (!initialized) return -99
-        val calib = DevSettings.calibRssiAt1m.toDouble()
-        val n     = DevSettings.pathLossExp.toDouble()
-        return (calib - 10.0 * n * log10(dist.coerceAtLeast(0.1))).toInt()
-    }
-
-    /**
-     * 새 RSSI 측정값으로 필터 업데이트.
+     * 새 정제 RSSI 샘플로 필터 업데이트.
      *
-     * @param rssi      전처리된 RSSI (dBm)
-     * @param imuQScale IMU 어댑티브 Q 배율 (ImuFusion.adaptiveQFactor)
-     *                  정지≈0.3 / 보통≈1.0 / 빠른이동≈2.0
-     * @return Pair(추정 거리 m, 추정 속도 m/s)
+     * @param filteredRssi RssiPreFilter 출력값 (정제 RSSI, dBm)
+     * @param imuQScale    IMU 어댑티브 Q 배율 (ImuFusion.adaptiveQFactor)
+     *                     정지≈0.3 / 보통≈1.0 / 빠른이동≈2.0
+     * @return Pair(추정 RSSI dBm, 추정 변화율 dBm/s)
+     *         vel > 0 = 접근 / vel < 0 = 이탈
      */
-    fun update(rssi: Int, imuQScale: Double = 1.0): Pair<Double, Double> {
-        val calib    = DevSettings.calibRssiAt1m.toDouble()
-        val n        = DevSettings.pathLossExp.toDouble()
-        val measDist = 10.0.pow((calib - rssi) / (10.0 * n)).coerceIn(0.1, 200.0)
-        val nowMs    = System.currentTimeMillis()
+    fun update(filteredRssi: Int, imuQScale: Double = 1.0): Pair<Double, Double> {
+        val meas  = filteredRssi.toDouble()
+        val nowMs = System.currentTimeMillis()
 
         if (!initialized) {
-            dist        = measDist
+            rssi        = meas
             vel         = 0.0
-            pDd         = 5.0
-            pDv         = 0.0
-            pVv         = 5.0
+            pRR         = 5.0
+            pRV         = 0.0
+            pVV         = 5.0
             initialized = true
             lastTsMs    = nowMs
-            return Pair(measDist, 0.0)
+            return Pair(rssi, vel)
         }
 
         val dt = ((nowMs - lastTsMs) / 1000.0).coerceIn(0.05, 2.0)
         lastTsMs = nowMs
 
         // ── 예측 단계 ─────────────────────────────────────────────────
-        // x' = F·x
-        val predDist = dist + vel * dt
+        val predRssi = rssi + vel * dt
         val predVel  = vel
 
-        // P' = F·P·F^T + Q   (Q = q·qMatrix)
         val qs   = processNoise * imuQScale
-        val qDd  = qs * dt.pow(4) / 4.0
-        val qDv  = qs * dt.pow(3) / 2.0
-        val qVv  = qs * dt.pow(2)
+        val qRR  = qs * dt.pow(4) / 4.0
+        val qRV  = qs * dt.pow(3) / 2.0
+        val qVV  = qs * dt.pow(2)
 
-        val pDdP = pDd + 2 * pDv * dt + pVv * dt * dt + qDd
-        val pDvP = pDv + pVv * dt + qDv
-        val pVvP = pVv + qVv
+        val pRRP = pRR + 2.0 * pRV * dt + pVV * dt * dt + qRR
+        val pRVP = pRV + pVV * dt + qRV
+        val pVVP = pVV + qVV
 
         // ── 갱신 단계 (H = [1, 0]) ────────────────────────────────────
-        val s  = pDdP + measureNoise    // S = H·P'·H^T + R
-        val kD = pDdP / s               // 거리 칼만 게인
-        val kV = pDvP / s               // 속도 칼만 게인
-        val innov = measDist - predDist
+        val s     = pRRP + measureNoise   // S = H·P'·H^T + R
+        val kR    = pRRP / s              // RSSI 칼만 게인
+        val kV    = pRVP / s              // 속도 칼만 게인
+        val innov = meas - predRssi
 
-        dist = predDist + kD * innov
+        rssi = predRssi + kR * innov
         vel  = predVel  + kV * innov
-        pDd  = (1 - kD) * pDdP
-        pDv  = (1 - kD) * pDvP
-        pVv  = pVvP - kV * pDvP
+        pRR  = (1.0 - kR) * pRRP
+        pRV  = (1.0 - kR) * pRVP
+        pVV  = pVVP - kV * pRVP
 
-        dist = dist.coerceIn(0.1, 200.0)
-        return Pair(dist, vel)
+        return Pair(rssi, vel)
     }
 
     /**
      * Cold-Start 웜업 주입.
-     * BleDetectedReceiver → injectInitialSample() 경로에서 사용.
-     * errorCovariance를 낮게 설정 → 초기값 신뢰도 높음 (Cold Start 딜레이 제거).
+     * 초기 RSSI를 즉시 신뢰하도록 공분산을 낮게 설정해 Cold Start 딜레이를 제거한다.
+     * (현재 호출처 없음 — 향후 즉시 웜업이 필요할 때 사용할 공개 API로 유지)
      */
-    fun injectWarmup(rssi: Int) {
-        val calib    = DevSettings.calibRssiAt1m.toDouble()
-        val n        = DevSettings.pathLossExp.toDouble()
-        dist        = 10.0.pow((calib - rssi) / (10.0 * n)).coerceIn(0.1, 200.0)
+    fun injectWarmup(rssiVal: Int) {
+        rssi        = rssiVal.toDouble()
         vel         = 0.0
-        pDd         = 1.0
-        pDv         = 0.0
-        pVv         = 1.0
+        pRR         = 1.0
+        pRV         = 0.0
+        pVV         = 1.0
         initialized = true
         lastTsMs    = System.currentTimeMillis()
     }
@@ -148,6 +134,6 @@ class KalmanFilter(private var preset: Int = DevSettings.KALMAN_PRESET_NORMAL) {
     /** 상태 초기화 (기기 소실 / SAFE 전환 시) */
     fun reset() {
         initialized = false
-        vel = 0.0
+        vel         = 0.0
     }
 }

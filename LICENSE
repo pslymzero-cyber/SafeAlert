@@ -1,0 +1,37 @@
+SafeAlert — BLE-based Proximity Alert System
+Copyright 2024-2026 WF11 Team. All Rights Reserved.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PROPRIETARY SOFTWARE NOTICE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+이 소프트웨어와 관련 문서 파일("소프트웨어")은 WF11 Team의
+독점 재산입니다. 다음 조건 없이는 소프트웨어의 복사, 수정,
+배포, 판매, 서브라이선스 부여가 금지됩니다.
+
+1. WF11 Team의 서면 동의 없이 소스 코드를 외부에 공개하거나
+   배포할 수 없습니다.
+2. 이 소프트웨어를 기반으로 한 파생 저작물 생성은
+   WF11 Team의 사전 승인이 필요합니다.
+3. 산업용 현장 배포 및 설치는 WF11 Team 또는
+   공인 파트너를 통해서만 가능합니다.
+
+무단 복제 및 무단 배포는 관련 법령에 따라 처벌받을 수 있습니다.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+THIRD-PARTY OPEN SOURCE NOTICES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+이 소프트웨어는 다음 오픈소스 라이브러리를 포함합니다.
+각 라이브러리는 해당 라이선스 조건에 따라 사용됩니다.
+상세 내역은 앱 내 [설정 > 앱 정보 > 오픈소스] 또는
+THIRD_PARTY_NOTICES.txt를 참조하십시오.
+
+- Android Jetpack (core-ktx, appcompat, material, lifecycle 등)
+  Copyright 2024 Google LLC  —  Apache License 2.0
+- Kotlin, Kotlin Coroutines
+  Copyright 2024 JetBrains s.r.o.  —  Apache License 2.0
+- Firebase SDK (Realtime Database, Analytics)
+  Copyright 2024 Google LLC  —  Apache License 2.0
+
+Apache License 2.0 전문: https://www.apache.org/licenses/LICENSE-2.0

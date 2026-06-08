@@ -1,0 +1,130 @@
+================================================================================
+SafeAlert — 오픈소스 라이브러리 고지 및 변경 이력
+================================================================================
+프로젝트  : SafeAlert (BLE 근접 경보 시스템)
+팀        : WF11 Team
+문서 작성 : 2026-06-03
+현재 버전 : 1.0.7
+================================================================================
+
+
+1. 오픈소스 라이브러리 목록
+────────────────────────────────────────────────────────────────────────────────
+이 앱은 아래 오픈소스 라이브러리를 사용합니다.
+모든 라이브러리는 Apache License 2.0 하에 배포됩니다.
+Apache License 2.0 전문: https://www.apache.org/licenses/LICENSE-2.0
+
+[Android Jetpack — Google LLC]
+  • AndroidX Core KTX          v1.12.0    Apache 2.0
+  • AndroidX AppCompat         v1.6.1     Apache 2.0
+  • Material Components        v1.11.0    Apache 2.0
+  • ConstraintLayout           v2.1.4     Apache 2.0
+  • RecyclerView               v1.3.2     Apache 2.0
+  • Lifecycle Service          v2.7.0     Apache 2.0
+  • Lifecycle Runtime KTX      v2.7.0     Apache 2.0
+
+[Kotlin — JetBrains s.r.o.]
+  • Kotlin                     v1.9.22    Apache 2.0
+  • Kotlinx Coroutines Android v1.7.3     Apache 2.0
+
+[Firebase — Google LLC]
+  • Firebase Realtime Database BOM 32.7.2  Apache 2.0
+  • Firebase Analytics         BOM 32.7.2  Apache 2.0
+
+참고: Firebase 버전은 BOM(Bill of Materials) 32.7.2 기준. 각 SDK 개별 버전은
+Gradle sync 시 자동 결정됩니다.
+
+
+================================================================================
+2. 주요 변경 이력 (팀원 공유용)
+================================================================================
+
+────────────────────────────────────────────────────────
+v1.0.5  (2026-06-xx)  핵심 알고리즘 안정화
+────────────────────────────────────────────────────────
+  [BleService] velocityHistory 제거 → medianBuffer + distanceHistory 분리
+    - 기존: velocityHistory(5) → 중앙값을 속도로 혼용 (개념 오류)
+    - 변경: medianBuffer(5) = RSSI 충격 제거용 메디안 필터 전처리
+             distanceHistory(10) = 거리 기반 TTC 선형 회귀 전용 버퍼
+    - 영향 범위: processAlert() SAFE블록, onDeviceLost(), stopAll()
+    - 효과: 오경보율 감소, 속도 추정 정확도 향상
+
+────────────────────────────────────────────────────────
+v1.0.6  (2026-06-xx)  3종 성능 개선
+────────────────────────────────────────────────────────
+
+  [1] DeviceProfileManager (신규) — 기기 모델별 RSSI 오프셋 자동 주입
+    - 스마트폰과 산업용 PDA 간 안테나 수신 편차(최대 8 dBm) 자동 보정
+    - 최초 실행 시 Build.MODEL 확인 → DevSettings.calibRssiAt1m 자동 설정
+    - 사용자가 수동 교정(CalibrationWizard) 완료 시 덮어쓰기 안 함
+    - 지원 기기 프로파일:
+        Galaxy S/Note (SM-S/G/N)  →  기준값 (오프셋 0 dBm)
+        Galaxy A (SM-A)            →  -2 dBm
+        Zebra PDA (TC5x/MC9x 등)  →  -8 dBm
+        Honeywell PDA (EDA52/CK65) →  -7~-8 dBm
+        Point Mobile (PM85/PM75)   →  -6 dBm
+        Xiaomi/Redmi/POCO          →  -3 dBm
+    - 새 파일: 06_utils/DeviceProfileManager.kt
+    - DevSettings 추가: DEFAULT_CALIB 상수, appliedProfileModel 프로퍼티
+
+  [2] ImuFusion 개선 — Ghost Alarm(오경보) 원천 차단
+    - 문제: 작업자 정지 시 다중경로 페이딩으로 RSSI 출렁임 → 가짜 TTC 경보
+    - 해결 3단계:
+        ① 정지 확인 히스테리시스: 25프레임(≈0.5초) 연속 가속도 < 0.15 m/s²
+           이어야 isStationary = true (즉각 전환 방지)
+        ② 확정 정지 시 칼만 Q = 0.01× (거의 동결)
+        ③ 정지 상태에서 TTC 계산 완전 차단
+    - 정지→이동 전환 시 distanceHistory 초기화 (stale 경사도 제거)
+    - wasStationaryMap: 기기별 이전 정지 상태 추적
+    - 수정 파일: 06_utils/ImuFusion.kt, 03_service/BleService.kt
+
+  [3] BleScanner 개선 — Doze 모드 스캔 유지
+    - 문제: OS의 공격적 배터리 최적화로 백그라운드 BLE 스캔 중단 빈번
+    - 해결: ScanSettings 강화
+        setReportDelay(500L)        IDLE 모드: BLE 칩 하드웨어 배칭 활성화
+                                    → CPU 미개입으로 Doze 내에서도 스캔 유지
+        setReportDelay(0L)          ACTIVE 모드: 즉시 콜백 (전방 위험 감지)
+        MATCH_MODE_AGGRESSIVE       약한 신호도 포착
+        MATCH_NUM_MAX_ADVERTISEMENT 최대 개수 매칭
+    - 수정 파일: 02_ble/BleScanner.kt
+
+────────────────────────────────────────────────────────
+v1.0.7  (2026-06-03)  오픈소스 고지 화면 추가
+────────────────────────────────────────────────────────
+  [OpenSourceLicensesActivity] 앱 내 오픈소스 라이선스 고지 화면
+    - 접근 경로: 설정(DevSettings) → 앱 정보 → 오픈소스 라이선스
+    - 표시 내용: 11개 라이브러리 명칭·버전·라이선스, Apache 2.0 요약
+    - 법적 근거: Apache License 2.0 §4(d) 고지 의무 이행
+    - 신규 파일:
+        05_ui/OpenSourceLicensesActivity.kt
+        res/layout/activity_open_source_licenses.xml
+        res/layout/item_oss_entry.xml
+        res/drawable/bg_license_badge.xml
+    - 수정 파일:
+        res/layout/activity_dev_settings.xml (앱 정보 카드 추가)
+        05_ui/DevSettingsActivity.kt         (버전 텍스트 + 버튼 바인딩)
+        AndroidManifest.xml                  (Activity 등록)
+  [프로젝트 루트]
+    - LICENSE 추가 (독점 소프트웨어 고지 + 3rd-party 요약)
+    - THIRD_PARTY_NOTICES.txt 추가 (이 파일)
+
+
+================================================================================
+3. Apache License 2.0 요약 (참고용)
+================================================================================
+  - 소스 배포 시 라이선스 사본 포함 필수
+  - 파생 저작물에 변경 내역 명시 필수
+  - 저작권 고지 유지 필수
+  - 특허 라이선스 포함 (기여자로부터 자동 부여)
+  - 상표 사용은 별도 허가 필요
+
+전문: https://www.apache.org/licenses/LICENSE-2.0
+
+
+================================================================================
+4. 문의
+================================================================================
+  라이선스 관련 문의: WF11 Team 내부 채널
+  기술 문의: 개발팀 담당자에게 직접 연락
+
+================================================================================

@@ -14,27 +14,24 @@
     <!-- 상단 바 (액션바 없이 자체 구성) -->
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="56dp"
+        android:layout_height="64dp"
         android:orientation="horizontal"
-        android:paddingStart="22dp"
-        android:paddingEnd="16dp"
-        android:gravity="center_vertical"
+        android:gravity="center"
         android:background="#FFFFFF">
 
         <View
-            android:layout_width="7dp"
-            android:layout_height="7dp"
+            android:layout_width="8dp"
+            android:layout_height="8dp"
             android:background="@drawable/shape_dot_green"
-            android:layout_marginEnd="10dp" />
+            android:layout_marginEnd="8dp" />
 
         <TextView
-            android:layout_width="0dp"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
             android:text="SafeAlert"
-            android:textSize="17sp"
+            android:textSize="22sp"
             android:textStyle="bold"
-            android:letterSpacing="0.02"
+            android:letterSpacing="0.04"
             android:textColor="#111827" />
     </LinearLayout>
 
@@ -56,8 +53,8 @@
             android:orientation="vertical"
             android:paddingStart="20dp"
             android:paddingEnd="20dp"
-            android:paddingTop="32dp"
-            android:paddingBottom="36dp">
+            android:paddingTop="16dp"
+            android:paddingBottom="16dp">
 
             <!-- ── 실행 중 카드 ── -->
             <androidx.cardview.widget.CardView
@@ -74,56 +71,64 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="vertical"
-                    android:padding="22dp">
+                    android:padding="20dp">
 
+                    <!-- 상태 + 시작 시각 (한 줄) -->
                     <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:orientation="horizontal"
                         android:gravity="center_vertical">
-
                         <View
-                            android:layout_width="7dp"
-                            android:layout_height="7dp"
+                            android:layout_width="7dp" android:layout_height="7dp"
                             android:background="@drawable/shape_dot_green"
-                            android:layout_marginEnd="8dp" />
-
+                            android:layout_marginEnd="8dp"/>
                         <TextView
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
+                            android:layout_width="0dp" android:layout_height="wrap_content"
                             android:layout_weight="1"
                             android:text="백그라운드 실행 중"
-                            android:textSize="11sp"
-                            android:textColor="#5B8FA8" />
-
-                    <!-- 이름/ID 표시 -->
-                    <TextView
-                        android:id="@+id/tv_running_id"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="12dp"
-                        android:textSize="16sp"
-                        android:textStyle="bold"
-                        android:textColor="#0D1B2A" />
-
+                            android:textSize="11sp" android:textColor="#5B8FA8"/>
                         <TextView
                             android:id="@+id/tv_running_since"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:textSize="11sp"
-                            android:textColor="#8AAFC4" />
+                            android:layout_width="wrap_content" android:layout_height="wrap_content"
+                            android:textSize="11sp" android:textColor="#8AAFC4"/>
                     </LinearLayout>
 
+                    <!-- 이름 / ID (별도 줄, 굵게) -->
+                    <TextView
+                        android:id="@+id/tv_running_id"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="10dp"
+                        android:textSize="18sp"
+                        android:textStyle="bold"
+                        android:textColor="#0D1B2A"/>
+
+                    <!-- 모드 -->
                     <TextView
                         android:id="@+id/tv_running_mode"
-                        android:layout_width="wrap_content"
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="14dp"
-                        android:textSize="24sp"
+                        android:layout_marginTop="4dp"
+                        android:textSize="22sp"
                         android:textStyle="bold"
-                        android:textColor="#0D1B2A" />
+                        android:textColor="#0D1B2A"/>
 
-                    <!-- 무음 상태 표시 (탭하면 즉시 재개) -->
+                    <!-- 감지 신호 목록 (RSSI 강한 순, 최대 10개) -->
+                    <TextView
+                        android:id="@+id/tv_approaching"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="10dp"
+                        android:padding="14dp"
+                        android:textSize="14sp"
+                        android:textColor="#E0F0FF"
+                        android:gravity="start"
+                        android:lineSpacingMultiplier="1.4"
+                        android:fontFamily="monospace"
+                        android:visibility="gone"/>
+
+                    <!-- 무음 인디케이터 -->
                     <TextView
                         android:id="@+id/tv_muted_indicator"
                         android:layout_width="match_parent"
@@ -133,52 +138,47 @@
                         android:padding="10dp"
                         android:gravity="center"
                         android:text="🔇  일시 무음 중  —  탭하여 즉시 재개"
-                        android:textSize="13sp"
-                        android:textStyle="bold"
+                        android:textSize="13sp" android:textStyle="bold"
                         android:textColor="#92400E"
-                        android:clickable="true"
-                        android:focusable="true"
+                        android:clickable="true" android:focusable="true"
                         android:foreground="?attr/selectableItemBackground"
-                        android:visibility="gone" />
+                        android:visibility="gone"/>
 
-                    <!-- BLE 상태 표시 -->
+                    <!-- 테스트 경보 버튼 -->
+                    <Button
+                        android:id="@+id/btn_test_alert"
+                        android:layout_width="match_parent" android:layout_height="44dp"
+                        android:layout_marginTop="14dp"
+                        android:text="🔔 테스트 경보" android:textSize="13sp"
+                        android:textColor="#B45309" android:backgroundTint="#FEF3C7"
+                        android:stateListAnimator="@null"
+                        style="@style/Widget.MaterialComponents.Button.UnelevatedButton"
+                        app:cornerRadius="10dp"/>
+
+                    <!-- 중지 버튼 -->
+                    <Button
+                        android:id="@+id/btn_stop"
+                        android:layout_width="match_parent" android:layout_height="46dp"
+                        android:layout_marginTop="8dp"
+                        android:text="중지" android:textSize="14sp"
+                        android:textColor="#374151" android:backgroundTint="#DDE6ED"
+                        android:stateListAnimator="@null"
+                        style="@style/Widget.MaterialComponents.Button.UnelevatedButton"
+                        app:cornerRadius="12dp"/>
+
+                    <!-- BLE 상태 로그 (중지 버튼 아래, 작은 글씨) -->
                     <TextView
                         android:id="@+id/tv_ble_status"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="10dp"
                         android:text="서비스 시작 중..."
-                        android:textSize="11sp"
-                        android:textColor="#5B8FA8"
+                        android:textSize="13sp" android:textColor="#5B8FA8"
                         android:background="#DDE9F0"
-                        android:padding="8dp"
-                        android:fontFamily="monospace" />
+                        android:padding="12dp"
+                        android:lineSpacingMultiplier="1.3"
+                        android:fontFamily="monospace"/>
 
-                    <Button
-                        android:id="@+id/btn_test_alert"
-                        android:layout_width="match_parent"
-                        android:layout_height="44dp"
-                        android:layout_marginTop="8dp"
-                        android:text="🔔 테스트 경보"
-                        android:textSize="13sp"
-                        android:textColor="#B45309"
-                        android:backgroundTint="#FEF3C7"
-                        android:stateListAnimator="@null"
-                        style="@style/Widget.MaterialComponents.Button.UnelevatedButton"
-                        app:cornerRadius="10dp" />
-
-                    <Button
-                        android:id="@+id/btn_stop"
-                        android:layout_width="match_parent"
-                        android:layout_height="46dp"
-                        android:layout_marginTop="8dp"
-                        android:text="중지"
-                        android:textSize="14sp"
-                        android:textColor="#374151"
-                        android:backgroundTint="#DDE6ED"
-                        android:stateListAnimator="@null"
-                        style="@style/Widget.MaterialComponents.Button.UnelevatedButton"
-                        app:cornerRadius="12dp" />
                 </LinearLayout>
             </androidx.cardview.widget.CardView>
 
@@ -189,27 +189,36 @@
                 android:layout_height="wrap_content"
                 android:orientation="vertical">
 
-                <TextView
-                    android:layout_width="wrap_content"
+                <!-- 모드 선택 타이틀 + 설명 한 줄 -->
+                <LinearLayout
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="모드 선택"
-                    android:textSize="22sp"
-                    android:textStyle="bold"
-                    android:textColor="#0D1B2A" />
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
 
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="5dp"
-                    android:text="역할에 맞는 모드를 선택하세요"
-                    android:textSize="13sp"
-                    android:textColor="#9CA3AF" />
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="모드 선택"
+                        android:textSize="17sp"
+                        android:textStyle="bold"
+                        android:textColor="#0D1B2A" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:text="· 역할에 맞는 모드를 선택하세요"
+                        android:textSize="12sp"
+                        android:textColor="#9CA3AF" />
+
+                </LinearLayout>
 
                 <!-- 이름 입력 (선택) -->
                 <com.google.android.material.textfield.TextInputLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="16dp"
+                    android:layout_marginTop="10dp"
                     android:hint="이름 또는 직번 (선택, 예: 홍길동)"
                     style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
                     app:boxCornerRadiusTopStart="12dp" app:boxCornerRadiusTopEnd="12dp"
@@ -229,7 +238,7 @@
                     android:id="@+id/card_device"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="28dp"
+                    android:layout_marginTop="10dp"
                     android:foreground="?attr/selectableItemBackground"
                     android:clickable="true"
                     android:focusable="true"
@@ -241,20 +250,21 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:orientation="horizontal"
-                        android:padding="20dp"
+                        android:paddingHorizontal="16dp"
+                        android:paddingVertical="12dp"
                         android:gravity="center_vertical">
 
                         <LinearLayout
-                            android:layout_width="54dp"
-                            android:layout_height="54dp"
+                            android:layout_width="44dp"
+                            android:layout_height="44dp"
                             android:gravity="center"
                             android:background="@drawable/shape_icon_bg_blue"
-                            android:layout_marginEnd="18dp">
+                            android:layout_marginEnd="14dp">
                             <TextView
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:text="🚛"
-                                android:textSize="24sp" />
+                                android:textSize="20sp" />
                         </LinearLayout>
 
                         <LinearLayout
@@ -266,13 +276,13 @@
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:text="장비 작업자"
-                                android:textSize="16sp"
+                                android:textSize="15sp"
                                 android:textStyle="bold"
                                 android:textColor="#0D1B2A" />
                             <TextView
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                android:layout_marginTop="3dp"
+                                android:layout_marginTop="2dp"
                                 android:text="리치 등 장비 운전자"
                                 android:textSize="12sp"
                                 android:textColor="#9CA3AF" />
@@ -293,7 +303,7 @@
                     android:id="@+id/card_walker"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
+                    android:layout_marginTop="8dp"
                     android:foreground="?attr/selectableItemBackground"
                     android:clickable="true"
                     android:focusable="true"
@@ -305,20 +315,21 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:orientation="horizontal"
-                        android:padding="20dp"
+                        android:paddingHorizontal="16dp"
+                        android:paddingVertical="12dp"
                         android:gravity="center_vertical">
 
                         <LinearLayout
-                            android:layout_width="54dp"
-                            android:layout_height="54dp"
+                            android:layout_width="44dp"
+                            android:layout_height="44dp"
                             android:gravity="center"
                             android:background="@drawable/shape_icon_bg_green"
-                            android:layout_marginEnd="18dp">
+                            android:layout_marginEnd="14dp">
                             <TextView
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:text="🚶"
-                                android:textSize="24sp" />
+                                android:textSize="20sp" />
                         </LinearLayout>
 
                         <LinearLayout
@@ -330,13 +341,13 @@
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:text="보행자"
-                                android:textSize="16sp"
+                                android:textSize="15sp"
                                 android:textStyle="bold"
                                 android:textColor="#0D1B2A" />
                             <TextView
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                android:layout_marginTop="3dp"
+                                android:layout_marginTop="2dp"
                                 android:text="도보 이동 작업자"
                                 android:textSize="12sp"
                                 android:textColor="#9CA3AF" />
@@ -357,7 +368,7 @@
                     android:id="@+id/card_beacon"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
+                    android:layout_marginTop="8dp"
                     android:foreground="?attr/selectableItemBackground"
                     android:clickable="true"
                     android:focusable="true"
@@ -369,20 +380,21 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:orientation="horizontal"
-                        android:padding="20dp"
+                        android:paddingHorizontal="16dp"
+                        android:paddingVertical="12dp"
                         android:gravity="center_vertical">
 
                         <LinearLayout
-                            android:layout_width="54dp"
-                            android:layout_height="54dp"
+                            android:layout_width="44dp"
+                            android:layout_height="44dp"
                             android:gravity="center"
                             android:background="@drawable/shape_icon_bg_gray"
-                            android:layout_marginEnd="18dp">
+                            android:layout_marginEnd="14dp">
                             <TextView
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:text="📡"
-                                android:textSize="24sp" />
+                                android:textSize="20sp" />
                         </LinearLayout>
 
                         <LinearLayout
@@ -394,14 +406,14 @@
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:text="비콘 관리"
-                                android:textSize="16sp"
+                                android:textSize="15sp"
                                 android:textStyle="bold"
                                 android:textColor="#0D1B2A" />
                             <TextView
                                 android:id="@+id/tv_beacon_summary"
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                android:layout_marginTop="3dp"
+                                android:layout_marginTop="2dp"
                                 android:text="iOS·앱 없는 보행자 감지 설정"
                                 android:textSize="12sp"
                                 android:textColor="#9CA3AF" />
@@ -417,12 +429,46 @@
                     </LinearLayout>
                 </androidx.cardview.widget.CardView>
 
-                <!-- Settings 카드 (보행자 아래) -->
+                <!-- BLE 설정 카드 (비콘 아래) -->
+                <androidx.cardview.widget.CardView
+                    android:id="@+id/card_ble_settings"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:foreground="?attr/selectableItemBackground"
+                    android:clickable="true" android:focusable="true"
+                    app:cardCornerRadius="18dp" app:cardElevation="2dp"
+                    app:cardBackgroundColor="#FFFFFF">
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:orientation="horizontal" android:paddingHorizontal="16dp"
+                        android:paddingVertical="12dp" android:gravity="center_vertical">
+                        <LinearLayout android:layout_width="44dp" android:layout_height="44dp"
+                            android:gravity="center" android:background="@drawable/shape_icon_bg_blue"
+                            android:layout_marginEnd="14dp">
+                            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                                android:text="📶" android:textSize="20sp"/>
+                        </LinearLayout>
+                        <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content"
+                            android:layout_weight="1" android:orientation="vertical">
+                            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                                android:text="BLE 설정" android:textSize="15sp"
+                                android:textStyle="bold" android:textColor="#0D1B2A"/>
+                            <TextView android:id="@+id/tv_ble_mode_summary"
+                                android:layout_width="wrap_content" android:layout_height="wrap_content"
+                                android:layout_marginTop="2dp" android:textSize="12sp" android:textColor="#9CA3AF"/>
+                        </LinearLayout>
+                        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                            android:text="›" android:textSize="22sp" android:textColor="#C8CBD2"
+                            android:layout_marginStart="8dp"/>
+                    </LinearLayout>
+                </androidx.cardview.widget.CardView>
+
+                <!-- Settings 카드 (PIN 전용) -->
                 <androidx.cardview.widget.CardView
                     android:id="@+id/card_settings"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
+                    android:layout_marginTop="8dp"
                     android:foreground="?attr/selectableItemBackground"
                     android:clickable="true"
                     android:focusable="true"
@@ -434,18 +480,19 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:orientation="horizontal"
-                        android:padding="20dp"
+                        android:paddingHorizontal="16dp"
+                        android:paddingVertical="12dp"
                         android:gravity="center_vertical">
 
                         <LinearLayout
-                            android:layout_width="54dp"
-                            android:layout_height="54dp"
+                            android:layout_width="44dp"
+                            android:layout_height="44dp"
                             android:gravity="center"
                             android:background="@drawable/shape_icon_bg_gray"
-                            android:layout_marginEnd="18dp">
+                            android:layout_marginEnd="14dp">
                             <ImageView
-                                android:layout_width="24dp"
-                                android:layout_height="24dp"
+                                android:layout_width="22dp"
+                                android:layout_height="22dp"
                                 android:src="@android:drawable/ic_menu_preferences"
                                 android:contentDescription="Settings"
                                 android:tint="#6B7280" />
@@ -459,15 +506,15 @@
                             <TextView
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                android:text="Settings"
-                                android:textSize="16sp"
+                                android:text="개발자 설정"
+                                android:textSize="15sp"
                                 android:textStyle="bold"
                                 android:textColor="#4B5563" />
                             <TextView
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                android:layout_marginTop="3dp"
-                                android:text="Developer options"
+                                android:layout_marginTop="2dp"
+                                android:text="PIN 입력 필요"
                                 android:textSize="12sp"
                                 android:textColor="#9CA3AF" />
                         </LinearLayout>
@@ -522,8 +569,9 @@
         </LinearLayout>
     </ScrollView>
 
-    <!-- 하단 고정: 버전 + 크레딧 -->
+    <!-- 하단 고정: 버전 + 크레딧 (코드에서 BuildConfig.VERSION_NAME으로 동적 설정) -->
     <TextView
+        android:id="@+id/tv_version_footer"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:paddingTop="10dp"

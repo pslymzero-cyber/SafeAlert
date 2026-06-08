@@ -3,70 +3,57 @@ package com.wf11.safealert.ble
 import android.util.Log
 
 /**
- * RSSI 전처리 파이프라인: raw RSSI → IQR 필터 → Max-Hold 필터 → 칼만 입력
+ * RSSI 전처리 파이프라인 (v1.0.20)
  *
- * 처리 순서:
- *   ① Approach Override  — 급접근(≥ APPROACH_BYPASS_DBM dBm) 시 윈도우 바이패스, 즉시 통과
- *                          단, isStationary=true(지게차 정지) 또는 isDeparting=true(이탈 방향)이면 억제 (v1.0.20)
- *   ② 슬라이딩 윈도우   — 기기별 독립 버퍼 (WINDOW_SIZE 샘플)
- *   ③ IQR 필터          — [Q1-1.5×IQR, Q3+1.5×IQR] 범위 이탈 샘플 제거 (다중경로 노이즈)
- *   ④ Max-Hold 필터     — IQR 통과 샘플 중 상위 MAX_HOLD_RATIO 강신호 평균 (LoS 경로 추출)
- *   ⑤ 폴백 보존         — 필터 결과 없으면 원본 RSSI 그대로 반환
+ * 모든 원시 데이터는 예외 없이 다음 3단계를 거친다:
+ *   ① 슬라이딩 윈도우 — 기기별 독립 버퍼 (WINDOW_SIZE 샘플)
+ *   ② IQR 필터       — [Q1-1.5×IQR, Q3+1.5×IQR] 범위 이탈 샘플 제거 (다중경로 노이즈)
+ *   ③ Max-Hold 필터  — IQR 통과 샘플 중 상위 MAX_HOLD_RATIO 강신호 평균 (LoS 경로 추출)
+ *
+ * ※ Approach Override(급접근 바이패스) 완전 삭제:
+ *   신호가 순간 튀어도 필터를 우회하지 않는다.
+ *   1~2초 누적·정제가 최우선이며, 정제된 데이터만 2D 칼만 필터로 전달한다.
  */
 class RssiPreFilter(
-    private val windowSize: Int      = WINDOW_SIZE_DEFAULT,
-    private val minSamples: Int      = MIN_SAMPLES_DEFAULT,
-    private val maxHoldRatio: Float  = MAX_HOLD_RATIO_DEFAULT,
-    private val iqrMultiplier: Float = IQR_MULTIPLIER_DEFAULT,
-    val approachBypassDbm: Int       = APPROACH_BYPASS_DBM_DEFAULT
+    private val windowSize:    Int   = WINDOW_SIZE_DEFAULT,
+    private val minSamples:    Int   = MIN_SAMPLES_DEFAULT,
+    private val maxHoldRatio:  Float = MAX_HOLD_RATIO_DEFAULT,
+    private val iqrMultiplier: Float = IQR_MULTIPLIER_DEFAULT
 ) {
     companion object {
         private const val TAG = "RssiPreFilter"
 
-        const val WINDOW_SIZE_DEFAULT         = 8
-        const val MIN_SAMPLES_DEFAULT         = 4
-        const val MAX_HOLD_RATIO_DEFAULT      = 0.20f
-        const val IQR_MULTIPLIER_DEFAULT      = 1.5f
-        const val APPROACH_BYPASS_DBM_DEFAULT = 6
+        const val WINDOW_SIZE_DEFAULT    = 8
+        const val MIN_SAMPLES_DEFAULT    = 4
+        const val MAX_HOLD_RATIO_DEFAULT = 0.20f
+        const val IQR_MULTIPLIER_DEFAULT = 1.5f
     }
 
     private val windows = mutableMapOf<String, ArrayDeque<Int>>()
 
     /**
-     * 신규 RSSI 샘플을 추가하고 전처리 출력 반환.
+     * 신규 RSSI 샘플을 추가하고 정제된 출력 반환.
      *
-     * @param deviceId     기기 식별자 (기기별 독립 윈도우)
-     * @param rssi         원시 RSSI (dBm, 음수)
-     * @param kalmanEst    현재 칼만 추정 RSSI dBm (0.0 = 미초기화)
-     * @param isStationary ImuFusion.isStationary — true이면 급접근 바이패스 억제 (v1.0.20)
-     * @param isDeparting  TrackingState.DEPARTING — true이면 급접근 바이패스 억제 (v1.0.20)
-     * @return 칼만 필터에 입력할 전처리 RSSI
+     * 어떠한 조건에서도 슬라이딩 윈도우 → IQR → Max-Hold 파이프라인을 거친다.
+     * 샘플 부족(< minSamples) 구간에는 원시 RSSI를 폴백으로 반환한다.
+     *
+     * @param deviceId 기기 식별자 (기기별 독립 윈도우)
+     * @param rssi     원시 RSSI (dBm, 음수)
+     * @return 2D 칼만 필터에 입력할 정제 RSSI
      */
-    fun push(deviceId: String, rssi: Int, kalmanEst: Double,
-             isStationary: Boolean = false, isDeparting: Boolean = false): Int {
+    fun push(deviceId: String, rssi: Int): Int {
         val window = windows.getOrPut(deviceId) { ArrayDeque() }
         window.addLast(rssi)
         if (window.size > windowSize) window.removeFirst()
 
-        // ① Approach Override: 지게차 정지 중이거나 이탈 방향이면 바이패스 억제 (v1.0.20)
-        //    kalmanEst == 0.0 은 초기화 전 → 바이패스 건너뜀
-        val suppressBypass = isStationary || isDeparting
-        if (!suppressBypass && kalmanEst != 0.0 && (rssi - kalmanEst) >= approachBypassDbm) {
-            Log.d(TAG, "[$deviceId] 급접근 Override: rssi=$rssi est=${"%.1f".format(kalmanEst)} " +
-                "Δ=${"%.1f".format(rssi - kalmanEst)} dBm")
-            return rssi
-        }
-
-        // ② 샘플 부족 — 폴백: 원시 RSSI 그대로
+        // 샘플 부족 — 폴백: 원시 RSSI 그대로
         if (window.size < minSamples) return rssi
 
-        // ③ IQR 필터
+        // IQR 필터
         val filtered = applyIqr(window.toList())
-
-        // ④ IQR 결과 없음 — 폴백
         if (filtered.isEmpty()) return rssi
 
-        // ⑤ Max-Hold
+        // Max-Hold
         return applyMaxHold(filtered)
     }
 

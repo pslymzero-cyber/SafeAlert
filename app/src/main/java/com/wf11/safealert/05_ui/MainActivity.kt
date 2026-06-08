@@ -11,6 +11,12 @@ import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
+import android.text.Spannable
+import android.text.SpannableStringBuilder
+import android.text.style.ForegroundColorSpan
+import android.text.style.RelativeSizeSpan
+import android.text.style.StyleSpan
+import android.graphics.Typeface
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -22,9 +28,11 @@ import android.view.WindowManager
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import com.wf11.safealert.BuildConfig
 import com.wf11.safealert.R
 import com.wf11.safealert.ble.BleConstants
 import com.wf11.safealert.utils.BeaconRegistry
+import com.wf11.safealert.utils.DevSettings
 import com.wf11.safealert.utils.OverlayManager
 import com.wf11.safealert.databinding.ActivityMainBinding
 import com.wf11.safealert.databinding.DialogPinBinding
@@ -43,6 +51,10 @@ class MainActivity : AppCompatActivity() {
     private var overlayAnimator: ObjectAnimator? = null
     private var testAlertRunning = false
 
+    // 감지된 기기 목록: deviceId → (displayName, alertLevel, rssi)
+    // BROADCAST_DETECTED 로 갱신, BROADCAST_ALERT SAFE 로 제거
+    private val detectedDevices = mutableMapOf<String, Triple<String, Int, Int>>()
+
     // 1초마다 서비스 상태 직접 폴링 (Broadcast 실패 대비)
     private val statusHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private var muteAnimator: ObjectAnimator? = null
@@ -52,13 +64,21 @@ class MainActivity : AppCompatActivity() {
         private var lastMuted = false
         override fun run() {
             if (binding.cardRunning.visibility == View.VISIBLE) {
-                // BLE 상태 텍스트
+                // BLE 상태 텍스트 — 기기 감지 중에는 tvBleStatus 덮어쓰지 않음
                 val text = when {
                     !BleService.isRunning -> "서비스 시작 중..."
                     BleService.lastStatus.isNotEmpty() -> BleService.lastStatus
                     else -> "✓ 블루투스 ON · BLE 시작 중..."
                 }
-                if (text != lastText) { binding.tvBleStatus.text = text; lastText = text }
+                if (text != lastText && detectedDevices.isEmpty()) {
+                    binding.tvBleStatus.text = text
+                    lastText = text
+                }
+                // 서비스가 완전히 종료되면 감지 목록 초기화
+                if (!BleService.isRunning && detectedDevices.isNotEmpty()) {
+                    detectedDevices.clear()
+                    updateDetectedDisplay()
+                }
 
                 // 무음 인디케이터 (깜빡이는 배너)
                 val muted = BleService.isMutedPublic
@@ -111,21 +131,71 @@ class MainActivity : AppCompatActivity() {
         ActivityResultContracts.StartActivityForResult()
     ) { startServiceWithCurrentMode() }
 
-    // 경보 브로드캐스트 수신 → 화면 테두리 라이팅
+    // 경보 / 감지 브로드캐스트 수신
     private val alertReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             when (intent.action) {
+
+                // 기기 소실(SAFE) 또는 경보 레벨 확정 → 오버레이 관리
                 BleService.BROADCAST_ALERT -> {
-                    val level = intent.getIntExtra(BleService.EXTRA_ALERT_LEVEL, BleConstants.LEVEL_SAFE)
-                    when (level) {
-                        BleConstants.LEVEL_DANGER  -> showAlertOverlay(danger = true)
-                        BleConstants.LEVEL_WARNING -> showAlertOverlay(danger = false)
-                        BleConstants.LEVEL_SAFE    -> hideAlertOverlay()
+                    val level    = intent.getIntExtra(BleService.EXTRA_ALERT_LEVEL, BleConstants.LEVEL_SAFE)
+                    val deviceId = intent.getStringExtra(BleService.EXTRA_ID) ?: ""
+
+                    if (level == BleConstants.LEVEL_SAFE) {
+                        // 기기 이탈 → 목록에서 제거
+                        detectedDevices.remove(deviceId)
+                        updateDetectedDisplay()
+                        if (detectedDevices.isEmpty()) hideAlertOverlay()
+                        else {
+                            val maxLevel = detectedDevices.values.maxOf { it.second }
+                            when {
+                                maxLevel >= BleConstants.LEVEL_DANGER  -> showAlertOverlay(danger = true)
+                                maxLevel == BleConstants.LEVEL_WARNING -> showAlertOverlay(danger = false)
+                                else -> hideAlertOverlay()
+                            }
+                        }
+                    } else {
+                        // TTC DANGER 발령 등 — 레벨 업데이트
+                        // null-safe: DETECTED가 throttle에 막혔을 때도 레벨 반영 보장
+                        val alertDisplayName = intent.getStringExtra(BleService.EXTRA_DISPLAY_NAME) ?: ""
+                        val existing = detectedDevices[deviceId]
+                        detectedDevices[deviceId] = if (existing != null)
+                            Triple(existing.first, level, existing.third)
+                        else
+                            Triple(alertDisplayName.ifEmpty { deviceId }, level, -99)
+                        updateDetectedDisplay()
+                        when (level) {
+                            BleConstants.LEVEL_DANGER  -> showAlertOverlay(danger = true)
+                            BleConstants.LEVEL_WARNING -> showAlertOverlay(danger = false)
+                        }
                     }
                 }
+
+                // 매 스캔 주기 감지 결과 (SAFE 포함) → 목록 갱신
+                BleService.BROADCAST_DETECTED -> {
+                    val deviceId    = intent.getStringExtra(BleService.EXTRA_ID) ?: return
+                    val level       = intent.getIntExtra(BleService.EXTRA_ALERT_LEVEL, BleConstants.LEVEL_SAFE)
+                    val displayName = intent.getStringExtra(BleService.EXTRA_DISPLAY_NAME) ?: return
+                    val rssi        = intent.getIntExtra(BleService.EXTRA_RSSI, -99)
+                    // SAFE 레벨이면 목록에서 제거 (경보 수준 미달 기기 영구 잔류 방지)
+                    if (level == BleConstants.LEVEL_SAFE) {
+                        detectedDevices.remove(deviceId)
+                    } else {
+                        detectedDevices[deviceId] = Triple(displayName, level, rssi)
+                    }
+                    updateDetectedDisplay()
+                    // WARNING/DANGER 오버레이도 갱신
+                    when (level) {
+                        BleConstants.LEVEL_DANGER  -> showAlertOverlay(danger = true)
+                        BleConstants.LEVEL_WARNING -> if (detectedDevices.values.none { it.second >= BleConstants.LEVEL_DANGER })
+                            showAlertOverlay(danger = false)
+                    }
+                }
+
                 BleService.BROADCAST_BLE_STATUS -> {
                     val status = intent.getStringExtra(BleService.EXTRA_STATUS) ?: return
-                    binding.tvBleStatus.text = status
+                    // 기기 감지 중에는 tvBleStatus(목록 창)를 상태 문자열로 덮어쓰지 않음
+                    if (detectedDevices.isEmpty()) binding.tvBleStatus.text = status
                 }
             }
         }
@@ -139,6 +209,8 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
+        // 하단 버전 표시 — BuildConfig에서 읽어 항상 최신값 반영
+        binding.tvVersionFooter.text = "v${BuildConfig.VERSION_NAME}  ·  Created by Ian"
         // 저장된 이름 복원
         binding.etDisplayName.setText(prefs.getString("display_name", ""))
 
@@ -146,6 +218,9 @@ class MainActivity : AppCompatActivity() {
         binding.cardWalker.setOnClickListener    { saveDisplayName(); onModeSelected("WALKER") }
         binding.btnStop.setOnClickListener       { stopServiceWithDelay() }
         binding.cardSettings.setOnClickListener  { showPinDialog() }
+        binding.cardBleSettings.setOnClickListener {
+            startActivity(Intent(this, BleSettingsActivity::class.java))
+        }
         binding.cardBeacon.setOnClickListener    {
             startActivity(Intent(this, BeaconManagerActivity::class.java))
         }
@@ -158,6 +233,7 @@ class MainActivity : AppCompatActivity() {
 
         val filter = IntentFilter().apply {
             addAction(BleService.BROADCAST_ALERT)
+            addAction(BleService.BROADCAST_DETECTED)
             addAction(BleService.BROADCAST_BLE_STATUS)
         }
         registerReceiver(alertReceiver, filter, RECEIVER_NOT_EXPORTED)
@@ -171,6 +247,13 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        // BLE 설정 요약 업데이트
+        binding.tvBleModeSummary.text = when (DevSettings.detectionMode) {
+            DevSettings.MODE_FIXED_AVG ->
+                "1초 평균 고정값 · 위험 ${DevSettings.fixedDangerAbs} / 경고 ${DevSettings.fixedWarningAbs}"
+            else ->
+                "칼만 필터 · 위험 ${DevSettings.dangerDistM.toInt()}m / 경고 ${DevSettings.warningDistM.toInt()}m"
+        }
         val beaconCount = BeaconRegistry.count()
         binding.tvBeaconSummary.text = if (beaconCount > 0)
             "UUID ${beaconCount}개 등록됨 · iOS/앱 없는 보행자 감지 중"
@@ -186,7 +269,6 @@ class MainActivity : AppCompatActivity() {
         muteAnimator?.cancel()
     }
 
-    // ── 경보 오버레이 ──────────────────────────────────────────
     private fun showAlertOverlay(danger: Boolean) {
         overlayAnimator?.cancel()
         binding.alertOverlay.visibility = View.VISIBLE
@@ -208,6 +290,62 @@ class MainActivity : AppCompatActivity() {
             })
             hideAlertOverlay()
         }
+    }
+
+    /**
+     * 감지 기기 목록을 tvBleStatus 에 표시 (최대 10개, RSSI 강한 순 정렬).
+     * 위험=빨강(1.25×), 경고=주황(1.0×), 안전=연청(0.82×).
+     * 기기 없을 때는 배경 초기화 후 BLE 상태 문자열로 복원.
+     */
+    private fun updateDetectedDisplay() {
+        if (detectedDevices.isEmpty()) {
+            // 배경 초기화 + 상태 텍스트 즉시 복원
+            binding.tvBleStatus.setBackgroundColor(Color.TRANSPARENT)
+            binding.tvBleStatus.text = BleService.lastStatus.takeIf { it.isNotEmpty() }
+                ?: "✓ BLE 감시 중..."
+            return
+        }
+        // RSSI 내림차순 (신호 강할수록 = 가까울수록 위), 최대 10개
+        val sorted = detectedDevices.values
+            .sortedByDescending { it.third }
+            .take(10)
+
+        val sb = SpannableStringBuilder()
+        sorted.forEachIndexed { idx, (name, level, rssi) ->
+            if (idx > 0) sb.append("\n")
+            val prefix = when (level) {
+                BleConstants.LEVEL_DANGER  -> "🚨"
+                BleConstants.LEVEL_WARNING -> "⚠"
+                else                       -> "📡"
+            }
+            val line = "$prefix  $name   ${rssi}dBm"
+            val start = sb.length
+            sb.append(line)
+            val end = sb.length
+            val color = when (level) {
+                BleConstants.LEVEL_DANGER  -> Color.rgb(255, 100,  80)   // 선명한 적색
+                BleConstants.LEVEL_WARNING -> Color.rgb(255, 180,  40)   // 황등색
+                else                       -> Color.rgb(170, 210, 230)   // 연회색-청
+            }
+            val sizeMul = when (level) {
+                BleConstants.LEVEL_DANGER  -> 1.25f
+                BleConstants.LEVEL_WARNING -> 1.0f
+                else                       -> 0.82f
+            }
+            sb.setSpan(ForegroundColorSpan(color),   start, end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+            sb.setSpan(RelativeSizeSpan(sizeMul),     start, end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+            if (level == BleConstants.LEVEL_DANGER)
+                sb.setSpan(StyleSpan(Typeface.BOLD),  start, end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+
+        val topLevel = sorted.first().second
+        val bgColor = when {
+            topLevel >= BleConstants.LEVEL_DANGER  -> 0xDD1A0000.toInt()  // 짙은 적
+            topLevel == BleConstants.LEVEL_WARNING -> 0xDD1A0D00.toInt()  // 짙은 황갈
+            else                                   -> 0xDD051220.toInt()  // 짙은 남색
+        }
+        binding.tvBleStatus.setBackgroundColor(bgColor)
+        binding.tvBleStatus.text = sb
     }
 
     private fun hideAlertOverlay() {
@@ -312,7 +450,9 @@ class MainActivity : AppCompatActivity() {
         pendingStopRunnable?.let { pendingStopHandler.removeCallbacks(it) }
         pendingStopRunnable = null
         val mode  = currentMode ?: return
-        val id    = myId()
+        // 이름 입력 시 그 이름을 BLE 송출 ID로 사용 (상대방 화면에 표시됨)
+        val displayName = prefs.getString("display_name", "")?.trim()
+        val id = if (!displayName.isNullOrEmpty()) displayName else myId()
         val since = System.currentTimeMillis()
         val action = if (mode == "DEVICE") BleService.ACTION_START_DEVICE else BleService.ACTION_START_WALKER
 
@@ -366,16 +506,6 @@ class MainActivity : AppCompatActivity() {
         pendingStopHandler.postDelayed(r, 500)
     }
 
-    private fun stopService() {
-        startService(Intent(this, BleService::class.java).apply { action = BleService.ACTION_STOP })
-        prefs.edit().remove("running_mode").remove("running_since").apply()
-        currentMode = null
-        hideAlertOverlay()
-        binding.cardRunning.visibility  = View.GONE
-        binding.layoutSelect.visibility = View.VISIBLE
-        binding.layoutPermissionWarning.visibility = View.GONE
-    }
-
     private fun restoreRunningState() {
         val mode  = prefs.getString("running_mode", null) ?: return
         val since = prefs.getLong("running_since", 0L)
@@ -384,15 +514,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showRunningUi(mode: String, since: Long) {
-        binding.layoutSelect.visibility = View.GONE
-        binding.cardRunning.visibility  = View.VISIBLE
+        binding.layoutSelect.visibility  = View.GONE
+        binding.cardRunning.visibility   = View.VISIBLE
+        binding.tvApproaching.visibility = View.GONE  // tvBleStatus 로 통합됨
         binding.layoutPermissionWarning.visibility = View.GONE
         binding.tvRunningMode.text  = if (mode == "DEVICE") "🚛 장비 작업자" else "🚶 보행자"
         binding.tvRunningSince.text = SimpleDateFormat("HH:mm 시작", Locale.KOREA).format(Date(since))
-        // 이름 또는 자동 ID 표시
+        // 이름 입력 시 이름, 없으면 자동 ID 표시
         val displayName = prefs.getString("display_name", "")?.trim()
-        val id = myId()
-        binding.tvRunningId.text = if (!displayName.isNullOrEmpty()) displayName else id
+        binding.tvRunningId.text = if (!displayName.isNullOrEmpty()) displayName else myId()
         val bgColor = if (mode == "DEVICE") 0xFFEFF6FF.toInt() else 0xFFF0FDF4.toInt()
         binding.cardRunning.setCardBackgroundColor(bgColor)
         // 블루투스 상태 즉시 표시

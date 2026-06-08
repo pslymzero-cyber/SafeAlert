@@ -1,8 +1,10 @@
 ﻿package com.wf11.safealert.ui
 
+import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import com.wf11.safealert.BuildConfig
 import com.wf11.safealert.utils.BeaconRegistry
 import com.wf11.safealert.utils.DevSettings
 import com.wf11.safealert.databinding.ActivityDevSettingsBinding
@@ -24,6 +26,94 @@ class DevSettingsActivity : AppCompatActivity() {
         }
     }
 
+    private fun updateCalibSummary() {
+        val txp = DevSettings.calibRssiAt1m
+        val n   = DevSettings.pathLossExp
+        binding.tvCalibSummary.text = "1m RSSI: ${txp} dBm  ·  n = %.2f".format(n)
+    }
+
+    private fun updatePathLossLabel() {
+        val n = DevSettings.pathLossExp
+        binding.tvPathLossVal.text = "%.2f".format(n)
+        binding.tvPathLossHint.text = when {
+            n < 2.2f -> "자유공간 수준 (개활지)"
+            n < 2.8f -> "일반 실내"
+            n < 3.5f -> "창고 / 금속 구조물"
+            else     -> "복잡한 산업 환경"
+        }
+    }
+
+    private fun showCalibrateWizard() {
+        startActivity(android.content.Intent(this, CalibrationWizardActivity::class.java))
+    }
+
+    @Suppress("UNUSED")
+    private fun showCalibrateWizardOld() {
+        val distances = floatArrayOf(1f, 3f, 6f)
+        val rssiMeasured = mutableListOf<Pair<Float, Int>>()  // (거리, rssi)
+        var step = 0
+
+        fun nextStep() {
+            if (step >= distances.size) {
+                // 최소제곱 회귀: rssi = A + B * log10(d)  →  A=txPower, B=-10n
+                val n = distances.size.toFloat()
+                val logDs = distances.map { Math.log10(it.toDouble()).toFloat() }
+                val rssis  = rssiMeasured.map { it.second.toFloat() }
+                val sumX  = logDs.sum();  val sumY  = rssis.sum()
+                val sumXY = logDs.zip(rssis).sumOf { (x, y) -> (x * y).toDouble() }.toFloat()
+                val sumX2 = logDs.sumOf { (it * it).toDouble() }.toFloat()
+                val B = (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX)  // = -10n
+                val A = (sumY - B * sumX) / n                                    // = txPower
+
+                val learnedN   = (-B / 10.0f).coerceIn(1.5f, 4.5f)
+                val learnedTxP = A.toInt().coerceIn(-90, -30)
+                DevSettings.pathLossExp  = learnedN
+                DevSettings.calibRssiAt1m = learnedTxP
+                updatePathLossLabel()
+                updateCalibLabel(learnedTxP)
+                updateCalibSummary()
+                binding.seekCalib.progress = (learnedTxP + 90).coerceIn(0, 60)
+
+                android.app.AlertDialog.Builder(this)
+                    .setTitle("교정 완료")
+                    .setMessage("1m RSSI: ${learnedTxP} dBm\n경로손실지수 n: %.2f\n\n실제 환경에 맞게 학습되었습니다.".format(learnedN))
+                    .setPositiveButton("확인", null)
+                    .show()
+                return
+            }
+            val dist = distances[step]
+            android.app.AlertDialog.Builder(this)
+                .setTitle("교정 측정 ${step + 1}/3")
+                .setMessage("상대방 폰을 정확히 ${dist.toInt()}m 거리에 두고\n'측정' 버튼을 탭하세요.")
+                .setPositiveButton("측정") { _, _ ->
+                    // 현재 상태바의 RSSI값이 없으므로 실시간 측정 안내
+                    val input = android.widget.EditText(this).apply {
+                        hint = "현재 RSSI 값 입력 (상태바에서 확인, 예: -65)"
+                        inputType = android.text.InputType.TYPE_CLASS_NUMBER or
+                                android.text.InputType.TYPE_NUMBER_FLAG_SIGNED
+                        setPadding(48, 20, 48, 8)
+                    }
+                    android.app.AlertDialog.Builder(this)
+                        .setTitle("${dist.toInt()}m RSSI 입력")
+                        .setMessage("상태바에 표시된 RSSI 값을 입력하세요.\n(장비를 가동 중이어야 합니다)")
+                        .setView(input)
+                        .setPositiveButton("확인") { _, _ ->
+                            val rssi = input.text.toString().toIntOrNull()
+                            if (rssi != null) {
+                                rssiMeasured.add(Pair(dist, rssi))
+                                step++
+                                nextStep()
+                            }
+                        }
+                        .setNegativeButton("취소", null)
+                        .show()
+                }
+                .setNegativeButton("취소", null)
+                .show()
+        }
+        nextStep()
+    }
+
     private fun updateCalibLabel(rssi: Int) {
         binding.tvCalibVal.text = "$rssi dBm"
         val hint = when {
@@ -33,21 +123,6 @@ class DevSettingsActivity : AppCompatActivity() {
             else        -> "구형/저가 폰"
         }
         binding.tvCalibHint.text = hint
-        // 교정값 변경 시 거리 표시 즉시 갱신 (미터는 그대로, 실제 RSSI 참고용 표시)
-        updateDistLabels()
-    }
-
-    // 미터 → "Xm (RSSI ~Y)" 표시
-    private fun distLabel(distM: Float): String {
-        val rssi = (DevSettings.calibRssiAt1m.toDouble() - 20.0 * Math.log10(distM.toDouble())).toInt()
-        return "${distM.toInt()}m  (RSSI ≈ ${rssi} dBm)"
-    }
-
-    private fun updateDistLabels() {
-        val warnM = (binding.seekRssiWarning.progress + 1).toFloat()
-        val dangM = (binding.seekRssiDanger.progress  + 1).toFloat()
-        binding.tvRssiWarningVal.text = distLabel(warnM)
-        binding.tvRssiDangerVal.text  = distLabel(dangM)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -60,10 +135,11 @@ class DevSettingsActivity : AppCompatActivity() {
     }
 
     private fun loadValues() {
-        // 거리 교정 (seekCalib: 0=-90, 60=-30, default -65 → progress=25)
-        val calibProgress = DevSettings.calibRssiAt1m + 90  // -90→0, -65→25, -30→60
+        // 거리 교정
+        val calibProgress = DevSettings.calibRssiAt1m + 90
         binding.seekCalib.progress  = calibProgress.coerceIn(0, 60)
         updateCalibLabel(DevSettings.calibRssiAt1m)
+        updatePathLossLabel()
         // 경보 볼륨
         binding.seekAlarmVolume.progress = DevSettings.alarmVolume
         binding.tvAlarmVolumeVal.text    = "${DevSettings.alarmVolume}%"
@@ -73,10 +149,6 @@ class DevSettingsActivity : AppCompatActivity() {
         binding.switchDeviceRx.isChecked = DevSettings.deviceRx
         binding.switchWalkerTx.isChecked = DevSettings.walkerTx
         binding.switchWalkerRx.isChecked = DevSettings.walkerRx
-        // BLE 거리 (미터 단위, progress = distM - 1)
-        binding.seekRssiWarning.progress = (DevSettings.warningDistM.toInt() - 1).coerceIn(0, 49)
-        binding.seekRssiDanger.progress  = (DevSettings.dangerDistM.toInt()  - 1).coerceIn(0, 49)
-        updateDistLabels()
         binding.spinnerScanPeriod.setSelection(scanPeriodIndex(DevSettings.scanPeriodMs))
         binding.spinnerAdvertise.setSelection(advertiseIndex(DevSettings.advertiseInterval))
         // 경보
@@ -99,15 +171,10 @@ class DevSettingsActivity : AppCompatActivity() {
     private fun setupListeners() {
         binding.seekCalib.setOnSeekBarChangeListener(seekListener { v ->
             updateCalibLabel(v - 90)
-            // 교정값 바뀌면 경고/위험 거리 표시도 즉시 갱신
-            binding.tvRssiWarningVal.text = rssiToDistance(binding.seekRssiWarning.progress - 100)
-            binding.tvRssiDangerVal.text  = rssiToDistance(binding.seekRssiDanger.progress  - 100)
         })
         binding.seekAlarmVolume.setOnSeekBarChangeListener(seekListener { v ->
             binding.tvAlarmVolumeVal.text = "$v%"
         })
-        binding.seekRssiWarning.setOnSeekBarChangeListener(seekListener { _ -> updateDistLabels() })
-        binding.seekRssiDanger.setOnSeekBarChangeListener(seekListener  { _ -> updateDistLabels() })
         binding.seekSimRssi.setOnSeekBarChangeListener(seekListener { v ->
             binding.tvSimRssiVal.text = rssiToDistance(v - 100)
         })
@@ -116,23 +183,38 @@ class DevSettingsActivity : AppCompatActivity() {
         }
         binding.btnSave.setOnClickListener { saveValues() }
         binding.btnReset.setOnClickListener { resetValues() }
+        binding.btnCalibrateWizard.setOnClickListener    { showCalibrateWizard() }
+        binding.btnCalibrateWizardTop.setOnClickListener { showCalibrateWizard() }
+
+        // 앱 정보 — 버전 표시 + 오픈소스 라이선스 이동
+        binding.tvAppVersion.text = "SafeAlert v${BuildConfig.VERSION_NAME}"
+        binding.btnOpenSourceLicenses.setOnClickListener {
+            startActivity(Intent(this, OpenSourceLicensesActivity::class.java))
+        }
+
+        // 교정 초기화 (잘못된 교정값 복구용)
+        binding.tvCalibSummary.setOnLongClickListener {
+            android.app.AlertDialog.Builder(this)
+                .setTitle("교정값 초기화")
+                .setMessage("교정값을 기본값으로 되돌립니다.\n(n=2.5, 1m RSSI=-65 dBm)\n\n잘못된 교정으로 오경보가 발생할 때 사용하세요.")
+                .setPositiveButton("초기화") { _, _ ->
+                    DevSettings.resetCalibration()
+                    updateCalibLabel(-65)
+                    updatePathLossLabel()
+                    updateCalibSummary()
+                    binding.seekCalib.progress = 25  // -65+90=25
+                    Toast.makeText(this, "교정값 초기화됨 (기본값)", Toast.LENGTH_SHORT).show()
+                }
+                .setNegativeButton("취소", null)
+                .show()
+            true
+        }
+        updateCalibSummary()
         // 비콘 관리는 메인 화면으로 이동됨
     }
 
     private fun saveValues() {
         DevSettings.calibRssiAt1m = binding.seekCalib.progress - 90
-
-        // 미터 단위 저장 (progress + 1 = 거리 m)
-        var warnM = (binding.seekRssiWarning.progress + 1).toFloat()
-        var dangM = (binding.seekRssiDanger.progress  + 1).toFloat()
-
-        // 경고가 위험보다 가까우면 자동 교정 (경고 = 더 멀어야 함)
-        if (warnM < dangM) {
-            val tmp = warnM; warnM = dangM + 1f; dangM = tmp
-        }
-
-        DevSettings.warningDistM = warnM
-        DevSettings.dangerDistM  = dangM
         DevSettings.alarmVolume          = binding.seekAlarmVolume.progress
         DevSettings.walkerDetectsWalker  = binding.switchWalkerDetectsWalker.isChecked
         DevSettings.deviceTx             = binding.switchDeviceTx.isChecked

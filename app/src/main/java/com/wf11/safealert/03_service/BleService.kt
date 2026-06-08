@@ -18,7 +18,6 @@ import com.wf11.safealert.ble.BleAdvertiser
 import com.wf11.safealert.ble.BleConstants
 import com.wf11.safealert.ble.BleScanner
 import com.wf11.safealert.ble.BleScanCallback
-import com.wf11.safealert.ble.BlePendingScanner
 import com.wf11.safealert.ble.KalmanFilter
 import com.wf11.safealert.ble.RssiPreFilter
 import com.wf11.safealert.firebase.FirebaseManager
@@ -29,6 +28,12 @@ import com.wf11.safealert.utils.OverlayManager
 import com.wf11.safealert.utils.UwbRanger
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
+import android.graphics.Color
+import android.graphics.Typeface
+import android.text.Spannable
+import android.text.SpannableStringBuilder
+import android.text.style.ForegroundColorSpan
+import android.text.style.StyleSpan
 
 class BleService : LifecycleService() {
 
@@ -46,9 +51,6 @@ class BleService : LifecycleService() {
         const val EXTRA_DISPLAY_NAME   = "extra_display_name"
         const val EXTRA_RSSI           = "extra_rssi"
         const val EXTRA_STATUS         = "extra_status"
-        const val EXTRA_FROM_PENDING        = "extra_from_pending"         // PendingIntent에서 기동됨 표시
-        const val EXTRA_INITIAL_DEVICE_IDS = "extra_initial_device_ids"  // 기상 원인 기기 로컬 네임 목록
-        const val EXTRA_INITIAL_RSSIS      = "extra_initial_rssis"       // 기상 원인 RSSI 목록 (IntArray)
         const val BROADCAST_ALERT      = "com.wf11.safealert.ALERT"
         const val BROADCAST_DETECTED   = "com.wf11.safealert.DETECTED"
         const val BROADCAST_BLE_STATUS = "com.wf11.safealert.BLE_STATUS"
@@ -86,12 +88,10 @@ class BleService : LifecycleService() {
     // 파라미터: windowSize=8, minSamples=4, maxHoldRatio=0.20, iqrMultiplier=1.5, bypass=6
     private val rssiPreFilter = RssiPreFilter()
 
-    // ── 대기 모드 전환: IDLE_TO_PENDING_MS 경과 시 PendingIntent 스캔으로 전환 ──
-    // 기기 소실 후 30초 무감지 → BleService 자동 정지 + BlePendingScanner 기동
-    // 목적: 8시간 교대 중 휴식·이동 구간에서 ForegroundService 자원 완전 해방
-    private val IDLE_TO_PENDING_MS = 30_000L
-    private val idleHandler = android.os.Handler(android.os.Looper.getMainLooper())
-    private val idleRunnable = Runnable { handleIdleTransition() }
+    // ── Always-On 정책 (v1.0.24) ──────────────────────────────────────
+    // PendingIntent 대기 모드 완전 폐기: 주변 기기 유무(SAFE 상태 포함)와 무관하게
+    // 서비스는 사용자가 직접 '중지'를 누르기 전까지 절대 자동 종료(stopAll())하지 않고
+    // 살아서 100% LOW_LATENCY 스캔을 유지한다. (현장 5초 기상 지연 → 0초 보장)
 
     private val volumeReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -151,7 +151,8 @@ class BleService : LifecycleService() {
 
     // ── TTC 파라미터 ──────────────────────────────────────────────────
     private val TTC_THRESHOLD_SEC      = 8.0
-    private val MIN_APPROACH_SPEED_MS  = 0.3   // TTC 계산 최소 접근 속도 (m/s)
+    // ★ RSSI 공간 부호 규칙: vel > 0 = RSSI 증가 = 접근 / vel < 0 = RSSI 감소 = 이탈
+    private val MIN_APPROACH_VEL_DBM   = 0.5  // TTC 계산 최소 접근 속도 (dBm/s)
 
     // ── 기기별 추적 상태 머신 (v1.0.20) ──────────────────────────────
     enum class TrackingState { APPROACHING, CROSSING, DEPARTING }
@@ -159,8 +160,8 @@ class BleService : LifecycleService() {
     private val crossingStartMap   = mutableMapOf<String, Long>()    // CROSSING 진입 시각
     private val departingStartMap  = mutableMapOf<String, Long>()    // DEPARTING 진입 시각
 
-    // 상태 전환 파라미터
-    private val CPA_VEL_THRESHOLD             = 0.2   // CPA 판정 속도 임계 (m/s)
+    // 상태 전환 파라미터 (RSSI 공간 기준)
+    private val CPA_VEL_THRESHOLD             = 0.5   // CPA 판정 속도 임계 (dBm/s)
     private val CROSSING_CONFIRM_MS           = 1500L // CROSSING → DEPARTING 확정 대기
     private val DEPARTING_REENTRY_COOLDOWN_MS = 5000L // DEPARTING 후 재진입 최소 대기
     private val DEPARTING_HYSTERESIS_DBM      = 8     // DEPARTING 중 재경보 추가 마진 (dBm)
@@ -186,6 +187,8 @@ class BleService : LifecycleService() {
 
     private val peakAlertRssiMap  = mutableMapOf<String, Int>()
     private val RECEDING_DBM_DROP = 5
+    // 기기별 마지막 avgRssi 보관 — buildDeviceListSpannable() 용
+    private val deviceRssiMap     = mutableMapOf<String, Int>()
 
     private val HYSTERESIS_DBM = 5
 
@@ -224,13 +227,12 @@ class BleService : LifecycleService() {
             ACTION_START_DEVICE -> {
                 myId   = intent.getStringExtra(EXTRA_ID) ?: "DEVICE_001"
                 myMode = "DEVICE"
-                // 모드 저장: 대기 전환 후 재기동 시 BleDetectedReceiver가 복원에 사용
+                // 모드 저장: START_STICKY 재시작 시 onStartCommand 복원에 사용
                 saveRunningMode(myMode, myId)
                 startForeground(NOTIF_ID, buildNotification(
                     "장비 작업자 실행 중",
                     buildSubText(DevSettings.deviceTx, DevSettings.deviceRx)
                 ))
-                injectFromPendingIntent(intent)  // Cold Start 딜레이 제거: 필터 즉시 웜업
                 applyMode()
             }
             ACTION_START_WALKER -> {
@@ -241,7 +243,6 @@ class BleService : LifecycleService() {
                     "보행자 실행 중",
                     buildSubText(DevSettings.walkerTx, DevSettings.walkerRx)
                 ))
-                injectFromPendingIntent(intent)  // Cold Start 딜레이 제거: 필터 즉시 웜업
                 applyMode()
             }
             ACTION_STOP       -> stopAll()
@@ -253,7 +254,7 @@ class BleService : LifecycleService() {
         return START_STICKY
     }
 
-    /** 모드와 ID를 SharedPrefs에 저장 (BleDetectedReceiver 복원용) */
+    /** 모드와 ID를 SharedPrefs에 저장 (START_STICKY 재시작 복원용) */
     private fun saveRunningMode(mode: String, id: String) {
         getSharedPreferences("safealert_prefs", MODE_PRIVATE).edit()
             .putString("running_mode", mode)
@@ -261,41 +262,7 @@ class BleService : LifecycleService() {
             .apply()
     }
 
-    /**
-     * PendingIntent 기상 시 BleDetectedReceiver가 전달한 초기 스캔 데이터를 필터에 즉시 주입.
-     * Cold Start 딜레이 제거: 콜백 스캐너의 첫 수신 결과가 도착하기 전에
-     * RssiPreFilter 윈도우와 KalmanFilter를 미리 웜업 → 서비스 기동 즉시 경보 판단 가능.
-     */
-    private fun injectFromPendingIntent(intent: Intent) {
-        val ids   = intent.getStringArrayListExtra(EXTRA_INITIAL_DEVICE_IDS) ?: return
-        val rssis = intent.getIntArrayExtra(EXTRA_INITIAL_RSSIS)              ?: return
-        if (ids.size != rssis.size) return
-        Log.d(TAG, "필터 웜업 주입 시작: ${ids.size}개 기기")
-        ids.forEachIndexed { i, deviceId -> injectInitialSample(deviceId, rssis[i]) }
-    }
-
-    /**
-     * 단일 기기의 초기 RSSI 샘플을 RssiPreFilter와 KalmanFilter에 직접 주입.
-     *
-     * RssiPreFilter: MIN_SAMPLES_DEFAULT(4)개 동일 값으로 채움 → 샘플 부족 폴백 없이 즉시 IQR 통과.
-     * KalmanFilter: errorCovariance=5.0으로 초기화 → 기본값(100.0) 대비 초기값 신뢰도 높음.
-     */
-    private fun injectInitialSample(deviceId: String, rssi: Int) {
-        repeat(RssiPreFilter.MIN_SAMPLES_DEFAULT) {
-            rssiPreFilter.push(deviceId, rssi, 0.0)
-        }
-        val kf = KalmanFilter(DevSettings.kalmanPreset)
-        kf.injectWarmup(rssi)
-        kalmanFilters[deviceId] = kf
-        trackingStateMap[deviceId] = TrackingState.APPROACHING
-        Log.d(TAG, "  웜업 완료 [$deviceId] rssi=$rssi")
-    }
-
     private fun applyMode() {
-        // 오버랩 스캔: stopPendingScanner()는 콜백 스캐너 startScanning() 직후에 호출
-        // → PendingIntent와 콜백 스캔이 순간 동시 활성 → 블라인드 타임 = 0
-        // 오류 경로(BT null/꺼짐)에서는 즉시 중지
-
         val btManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
         val btAdapter = btManager.adapter
 
@@ -307,12 +274,10 @@ class BleService : LifecycleService() {
         sendStatusBroadcast("설정: $modeStr")
 
         if (btAdapter == null) {
-            stopPendingScanner()
             sendStatusBroadcast("❌ 블루투스 미지원 기기")
             return
         }
         if (!btAdapter.isEnabled) {
-            stopPendingScanner()
             sendStatusBroadcast("❌ 블루투스 꺼짐 — 켜주세요")
             return
         }
@@ -358,21 +323,15 @@ class BleService : LifecycleService() {
                 startScanHealthCheck()
                 bleScanner = BleScanner(scanner).also { s ->
                     s.onStatusUpdate = { msg -> sendStatusBroadcast(msg) }
-                    s.roleIsWalker = (myMode == "WALKER")
                     s.startScanning(object : BleScanCallback {
                         override fun onDeviceDetected(deviceId: String, rssi: Int, alertLevel: Int) {
                             lastScanResultMs = System.currentTimeMillis()
-                            cancelIdleTimer()  // 기기 감지 → 대기 전환 타이머 취소
 
                             if (myMode == "WALKER"
                                 && deviceId.startsWith(BleConstants.WALKER_PREFIX)
                                 && !DevSettings.walkerDetectsWalker) return
 
                             val effectiveRssi = if (DevSettings.debugMode) DevSettings.simulatedRssi else rssi
-                            val shortId = deviceId
-                                .replace(BleConstants.DEVICE_PREFIX, "D:")
-                                .replace(BleConstants.WALKER_PREFIX, "W:")
-                            sendStatusBroadcast("감지 $shortId  RSSI $effectiveRssi dBm")
                             processAlert(deviceId, effectiveRssi)
                         }
                         override fun onDeviceLost(deviceId: String) {
@@ -387,6 +346,7 @@ class BleService : LifecycleService() {
                             wasStationaryMap.remove(deviceId)
                             recedingStartMap.remove(deviceId)
                             peakAlertRssiMap.remove(deviceId)
+                            deviceRssiMap.remove(deviceId)
                             sendAlertBroadcast(deviceId, BleConstants.LEVEL_SAFE)
                             if (alertState.isEmpty()) {
                                 AlertSoundPlayer.stopSound()
@@ -394,7 +354,6 @@ class BleService : LifecycleService() {
                                 OverlayManager.hideOverlay()
                                 activeSoundLevel = BleConstants.LEVEL_SAFE
                                 sendStatusBroadcast("기기 이탈 → 경보 중지")
-                                scheduleIdleTransition()  // 30초 후 PendingIntent 전환
                             }
                         }
                         override fun onScanError(errorCode: Int) { Log.e(TAG, "스캔 오류: $errorCode") }
@@ -403,18 +362,12 @@ class BleService : LifecycleService() {
                         }
                     })
                 }
-                // 오버랩 스캔: 콜백 스캐너 start 직후 PendingIntent 중지
-                // → 두 스캐너가 순간 동시 활성 → 블라인드 타임 0
-                stopPendingScanner()
                 sendStatusBroadcast("RX 스캔 시작")
                 Log.d(TAG, "RX 시작")
             } else {
-                stopPendingScanner()  // 콜백 스캐너 기동 실패 시에도 PendingIntent 정리
                 sendStatusBroadcast("❌ RX 오류: BluetoothLeScanner null")
                 Log.e(TAG, "RX: bluetoothLeScanner null")
             }
-        } else {
-            stopPendingScanner()  // RX 비활성 시에도 PendingIntent 정리
         }
     }
 
@@ -431,44 +384,55 @@ class BleService : LifecycleService() {
     private val wasStationaryMap  = mutableMapOf<String, Boolean>()
 
     /**
-     * TTC 추정 — 2D 칼만 속도(m/s) 직접 사용 (v1.0.20)
-     * 10샘플 선형 회귀 방식 대체.
-     * @param kfDist 추정 거리 (m)
-     * @param kfVel  추정 속도 (m/s, 음수=접근)
+     * TTC 추정 — RSSI 공간 2D 칼만 vel 직접 사용 (v1.0.20)
+     *
+     * ★ RSSI 부호 규칙: vel > 0 = RSSI 증가 = 접근
+     * remaining = (위험 임계 RSSI) - (현재 추정 RSSI)
+     * TTC = remaining / vel  (vel > MIN_APPROACH_VEL_DBM 일 때만)
+     *
+     * @param kfRssi 추정 RSSI (dBm)
+     * @param kfVel  추정 변화율 (dBm/s, 양수=접근)
      */
-    private fun estimateTTC(kfDist: Double, kfVel: Double): Double? {
-        if (kfVel >= -MIN_APPROACH_SPEED_MS) return null  // 접근 중 아님 or 속도 미달
-        val calib      = DevSettings.calibRssiAt1m.toDouble()
-        val n          = DevSettings.pathLossExp.toDouble()
-        val dangerDist = Math.pow(10.0, (calib - BleConstants.rssiDanger) / (10.0 * n))
-        val remaining  = kfDist - dangerDist
-        if (remaining <= 0) return 0.0
-        val ttc = remaining / (-kfVel)
-        Log.d(TAG, "TTC: dist=%.1fm vel=%.2fm/s TTC=%.1fs".format(kfDist, kfVel, ttc))
+    private fun estimateTTC(kfRssi: Double, kfVel: Double): Double? {
+        if (kfVel <= MIN_APPROACH_VEL_DBM) return null  // 접근 중 아님 or 속도 미달
+        val remaining = BleConstants.rssiDanger.toDouble() - kfRssi
+        if (remaining <= 0) return 0.0                  // 이미 위험 구역
+        val ttc = remaining / kfVel
+        Log.d(TAG, "TTC: kfRssi=%.1f rssiDanger=%d vel=%.2fdBm/s TTC=%.1fs"
+            .format(kfRssi, BleConstants.rssiDanger, kfVel, ttc))
         return ttc
     }
 
-    /** 추적 상태 머신 갱신 (v1.0.20) */
+    /**
+     * 추적 상태 머신 갱신 (v1.0.20 — RSSI 공간)
+     *
+     * ★ RSSI vel 부호 규칙:
+     *   vel > 0 = RSSI 증가 = 보행자 접근 (APPROACHING)
+     *   vel < 0 = RSSI 감소 = 보행자 이탈 (CPA 통과 → DEPARTING)
+     *
+     * CPA 감지: vel이 양수(+)에서 음수(-)로 꺾이는 순간
+     */
     private fun updateTrackingState(deviceId: String, kfVel: Double, now: Long) {
         val current = trackingStateMap[deviceId] ?: TrackingState.APPROACHING
         when (current) {
             TrackingState.APPROACHING -> {
-                if (kfVel > CPA_VEL_THRESHOLD) {
+                // vel이 음수 임계 이하로 꺾이면 → CPA 후보 (CROSSING 진입)
+                if (kfVel < -CPA_VEL_THRESHOLD) {
                     crossingStartMap[deviceId] = now
                     trackingStateMap[deviceId] = TrackingState.CROSSING
-                    Log.d(TAG, "[$deviceId] APPROACHING → CROSSING (vel=%.2fm/s)".format(kfVel))
+                    Log.d(TAG, "[$deviceId] APPROACHING → CROSSING (vel=%.2fdBm/s)".format(kfVel))
                 }
             }
             TrackingState.CROSSING -> {
                 when {
-                    kfVel <= 0.0 -> {
-                        // 속도 다시 음수 → CPA 오판, APPROACHING 복귀
+                    kfVel >= 0.0 -> {
+                        // vel 다시 양수 → CPA 오판, APPROACHING 복귀
                         crossingStartMap.remove(deviceId)
                         trackingStateMap[deviceId] = TrackingState.APPROACHING
-                        Log.d(TAG, "[$deviceId] CROSSING → APPROACHING (vel=%.2fm/s)".format(kfVel))
+                        Log.d(TAG, "[$deviceId] CROSSING → APPROACHING 복귀 (vel=%.2fdBm/s)".format(kfVel))
                     }
                     now - (crossingStartMap[deviceId] ?: now) >= CROSSING_CONFIRM_MS -> {
-                        // 양수 속도 지속 확인 → DEPARTING 확정
+                        // 음수 vel 지속 확인 → DEPARTING 확정
                         crossingStartMap.remove(deviceId)
                         departingStartMap[deviceId] = now
                         trackingStateMap[deviceId] = TrackingState.DEPARTING
@@ -479,11 +443,12 @@ class BleService : LifecycleService() {
             }
             TrackingState.DEPARTING -> {
                 val timeDep = now - (departingStartMap[deviceId] ?: now)
-                // 쿨다운 경과 후 강한 재접근 속도 지속 → APPROACHING 복귀
-                if (timeDep >= DEPARTING_REENTRY_COOLDOWN_MS && kfVel < -(CPA_VEL_THRESHOLD * 3)) {
+                // 쿨다운 경과 후 vel이 강한 양수로 복귀 → 재접근
+                if (timeDep >= DEPARTING_REENTRY_COOLDOWN_MS
+                    && kfVel > (CPA_VEL_THRESHOLD * 3)) {
                     departingStartMap.remove(deviceId)
                     trackingStateMap[deviceId] = TrackingState.APPROACHING
-                    Log.d(TAG, "[$deviceId] DEPARTING → APPROACHING (재진입 vel=%.2fm/s)".format(kfVel))
+                    Log.d(TAG, "[$deviceId] DEPARTING → APPROACHING 재진입 (vel=%.2fdBm/s)".format(kfVel))
                 }
             }
         }
@@ -525,27 +490,19 @@ class BleService : LifecycleService() {
         val auxRatio = DevSettings.blendRatio / 100.0
         val now      = System.currentTimeMillis()
 
-        // ── 현재 추적 상태 (RssiPreFilter 억제 판단용) ─────────────────
-        val currentState = trackingStateMap[deviceId] ?: TrackingState.APPROACHING
-        val isDeparting  = currentState == TrackingState.DEPARTING
-
         // ── 2D 칼만 필터 가져오기 또는 생성 ──────────────────────────────
         val kf = kalmanFilters.getOrPut(deviceId) {
             KalmanFilter(DevSettings.kalmanPreset)
         }
         kf.updatePreset(DevSettings.kalmanPreset)
 
-        // ── RssiPreFilter: isStationary + isDeparting 전달 (v1.0.20) ────
-        // 지게차 정지 중 or 이탈 방향이면 급접근 바이패스 억제
-        val kalmanEstRssi = if (kf.isInitialized) kf.estimatedRssi().toDouble() else 0.0
-        val preFiltered = rssiPreFilter.push(
-            deviceId, inputRssi, kalmanEstRssi,
-            ImuFusion.isStationary, isDeparting
-        )
+        // ── RssiPreFilter: 무조건 파이프라인 통과 (Approach Override 없음) ──
+        val preFiltered = rssiPreFilter.push(deviceId, inputRssi)
 
-        // ── 2D 칼만 필터 업데이트 ────────────────────────────────────────
-        val (kfDist, kfVel) = kf.update(preFiltered, ImuFusion.adaptiveQFactor)
-        val kalmanRssi = kf.estimatedRssi()
+        // ── 2D 칼만 필터 업데이트 (RSSI 공간) ────────────────────────────
+        // kfRssi: 추정 RSSI(dBm) / kfVel: 변화율(dBm/s), 양수=접근 / 음수=이탈
+        val (kfRssi, kfVel) = kf.update(preFiltered, ImuFusion.adaptiveQFactor)
+        val kalmanRssi = kfRssi.toInt()
 
         // ── 추적 상태 머신 갱신 (v1.0.20) ───────────────────────────────
         updateTrackingState(deviceId, kfVel, now)
@@ -567,15 +524,22 @@ class BleService : LifecycleService() {
                 if (timeDep < DEPARTING_REENTRY_COOLDOWN_MS) Int.MIN_VALUE
                 else warningThresh - DEPARTING_HYSTERESIS_DBM
             } else warningThresh
-            stableLevel = if (blended >= effectiveThresh) BleConstants.LEVEL_WARNING else BleConstants.LEVEL_SAFE
+            val rawLevel = if (blended >= effectiveThresh) BleConstants.LEVEL_WARNING else BleConstants.LEVEL_SAFE
+            // ── isStationary 방어: 지게차 정지 중 DANGER 억제 ──────────────
+            stableLevel = if (ImuFusion.isStationary && rawLevel >= BleConstants.LEVEL_DANGER)
+                BleConstants.LEVEL_WARNING else rawLevel
         } else {
             val blended = (kalmanRssi * (1.0 - auxRatio) + avg1sec * auxRatio).toInt()
             avgRssi = blended
             val beaconOffset = runCatching { BeaconRegistry.getRssiOffsetForFullId(deviceId) }.getOrDefault(0)
             val rawLevel = calcLevelWithHysteresis(deviceId, blended, beaconOffset)
-            stableLevel = applyDepartingHysteresis(deviceId, rawLevel, blended, beaconOffset, now)
+            val afterHysteresis = applyDepartingHysteresis(deviceId, rawLevel, blended, beaconOffset, now)
+            // ── isStationary 방어: 지게차 정지 중 DANGER 억제 ──────────────
+            stableLevel = if (ImuFusion.isStationary && afterHysteresis >= BleConstants.LEVEL_DANGER)
+                BleConstants.LEVEL_WARNING else afterHysteresis
         }
 
+        deviceRssiMap[deviceId] = avgRssi      // 오버레이 기기 목록 구성에 사용
         sendDetectedBroadcast(deviceId, stableLevel, avgRssi)
 
         // ── SAFE 처리 ───────────────────────────────────────────────────
@@ -591,13 +555,13 @@ class BleService : LifecycleService() {
                 wasStationaryMap.remove(deviceId)
                 recedingStartMap.remove(deviceId)
                 peakAlertRssiMap.remove(deviceId)
+                deviceRssiMap.remove(deviceId)
                 sendAlertBroadcast(deviceId, BleConstants.LEVEL_SAFE)
                 if (alertState.isEmpty()) {
                     AlertSoundPlayer.stopSound()
                     activeSoundLevel = BleConstants.LEVEL_SAFE
                     VibrationHelper.stopVibration(this)
                     OverlayManager.hideOverlay()
-                    scheduleIdleTransition()
                 }
             }
             return
@@ -644,18 +608,22 @@ class BleService : LifecycleService() {
             val recedingMs = now - (recedingStartMap[deviceId] ?: now)
             if (recedingMs >= RECEDING_CLEAR_MS && alertState.containsKey(deviceId)) {
                 alertState.remove(deviceId)
+                rssiPreFilter.clear(deviceId)
+                kalmanFilters[deviceId]?.reset()
+                kalmanFilters.remove(deviceId)
+                wasStationaryMap.remove(deviceId)
                 recedingStartMap.remove(deviceId)
                 peakAlertRssiMap.remove(deviceId)
                 trackingStateMap.remove(deviceId)
                 crossingStartMap.remove(deviceId)
                 departingStartMap.remove(deviceId)
+                deviceRssiMap.remove(deviceId)
                 sendAlertBroadcast(deviceId, BleConstants.LEVEL_SAFE)
                 if (alertState.isEmpty()) {
                     AlertSoundPlayer.stopSound()
                     VibrationHelper.stopVibration(this)
                     OverlayManager.hideOverlay()
                     activeSoundLevel = BleConstants.LEVEL_SAFE
-                    scheduleIdleTransition()
                 }
                 sendStatusBroadcast("↗ 이탈 확인 → 경보 해제: ${extractDisplayName(deviceId)}")
                 Log.d(TAG, "이탈 경보 해제: $deviceId (${recedingMs}ms 연속 이탈)")
@@ -665,30 +633,30 @@ class BleService : LifecycleService() {
             recedingStartMap.remove(deviceId)
         }
 
-        // ── TTC 기반 선발령 (KF2D velocity 직접 사용, v1.0.20) ────────────
-        // DEPARTING/CROSSING 상태에서는 억제 (이탈 중 = 충돌 없음)
+        // ── TTC 기반 선발령 (RSSI 공간 vel 직접 사용, v1.0.20) ──────────
+        // DEPARTING/CROSSING 상태에서는 억제 (이탈 중 = 충돌 위험 없음)
+        // isStationary 시에도 억제 (정지 중 TTC 선발령 오발 방지)
         if (stableLevel == BleConstants.LEVEL_WARNING
-            && newState == TrackingState.APPROACHING) {
-            val ttc = estimateTTC(kfDist, kfVel)
+            && newState == TrackingState.APPROACHING
+            && !ImuFusion.isStationary) {
+            val ttc = estimateTTC(kfRssi, kfVel)
             if (ttc != null && ttc <= TTC_THRESHOLD_SEC) {
-                val speedKmh = (-kfVel) * 3.6
                 ttcFeedbackMap[deviceId] = Pair(ttc, now)
-                Log.w(TAG, "TTC 위험 선발령: $deviceId TTC=%.1fs speed=%.1fkm/h (KF2D)".format(ttc, speedKmh))
+                alertState[deviceId] = Pair(BleConstants.LEVEL_DANGER, now)  // ★ 먼저 업데이트 → 목록에 DANGER 반영
+                Log.w(TAG, "TTC 선발령: $deviceId TTC=%.1fs kfVel=%.2fdBm/s".format(ttc, kfVel))
                 forceAlarmVolume()
                 if (DevSettings.vibrationEnabled && !isScreenOn) VibrationHelper.vibrateDanger(this)
                 if (DevSettings.soundEnabled)     AlertSoundPlayer.playDanger(this)
-                val ttcName = extractDisplayName(deviceId)
-                OverlayManager.showDangerOverlay(this, danger = true, approachingName = ttcName)
+                OverlayManager.showDangerOverlay(this, danger = true, deviceList = buildDeviceListSpannable())
                 sendDetectedBroadcast(deviceId, BleConstants.LEVEL_DANGER, avgRssi)
                 sendAlertBroadcast(deviceId, BleConstants.LEVEL_DANGER)
-                sendStatusBroadcast("⚡ 충돌 예측 %.0f초: $ttcName (%.0fkm/h)".format(ttc, speedKmh))
-                alertState[deviceId] = Pair(BleConstants.LEVEL_DANGER, now)
+                sendStatusBroadcast("⚡ 충돌 예측 %.0f초: ${extractDisplayName(deviceId)}".format(ttc))
                 return
             }
         }
 
-        Log.d(TAG, "RSSI raw=$rssi → preFiltered=$preFiltered → kfRssi=$kalmanRssi " +
-            "vel=%.2fm/s state=$newState stableLevel=$stableLevel".format(kfVel))
+        Log.d(TAG, "RSSI raw=$rssi → pre=$preFiltered → kfRssi=%.1f " +
+            "vel=%.2fdBm/s state=$newState stable=$stableLevel".format(kfRssi, kfVel))
 
         val prev = alertState[deviceId]
         val prevLevel     = prev?.first  ?: BleConstants.LEVEL_SAFE
@@ -724,9 +692,9 @@ class BleService : LifecycleService() {
                 if (DevSettings.autoSaveAlerts)
                     FirebaseManager.saveAlert(deviceId, myId, avgRssi, "WARNING")
                 val name = extractDisplayName(deviceId)
-                OverlayManager.showDangerOverlay(this, danger = false, approachingName = name)
+                OverlayManager.showDangerOverlay(this, danger = false, deviceList = buildDeviceListSpannable())
                 sendAlertBroadcast(deviceId, BleConstants.LEVEL_WARNING)
-                Log.d(TAG, "경고 발생: $deviceId ($name) avgRssi=$avgRssi state=$newState vel=%.2fm/s".format(kfVel))
+                Log.d(TAG, "경고 발생: $deviceId ($name) avgRssi=$avgRssi state=$newState vel=%.2fdBm/s".format(kfVel))
             }
         }
     }
@@ -850,6 +818,44 @@ class BleService : LifecycleService() {
         }
     }
 
+    /**
+     * alertState 기준 다중 기기 목록 Spannable 생성.
+     * RSSI 강한 순(가까운 순) 정렬, 최대 10개, 색상·볼드 포함.
+     * OverlayManager.showDangerOverlay() deviceList 파라미터로 전달.
+     */
+    private fun buildDeviceListSpannable(): CharSequence {
+        if (alertState.isEmpty()) return ""
+        val sb = SpannableStringBuilder()
+        alertState.entries
+            .sortedByDescending { deviceRssiMap[it.key] ?: -100 }
+            .take(10)
+            .forEachIndexed { idx, (deviceId, pair) ->
+                val level = pair.first
+                val rssi  = deviceRssiMap[deviceId] ?: -99
+                val name  = extractDisplayName(deviceId)
+                val type  = if (deviceId.startsWith(BleConstants.DEVICE_PREFIX)) "장비" else "보행자"
+                if (idx > 0) sb.append("\n")
+                val prefix = when (level) {
+                    BleConstants.LEVEL_DANGER  -> "🚨"
+                    BleConstants.LEVEL_WARNING -> "⚠"
+                    else                       -> "📡"
+                }
+                val line  = "$prefix  $name ($type)  ${rssi}dBm"
+                val start = sb.length
+                sb.append(line)
+                val end   = sb.length
+                val color = when (level) {
+                    BleConstants.LEVEL_DANGER  -> Color.rgb(255, 100,  80)
+                    BleConstants.LEVEL_WARNING -> Color.rgb(255, 180,  40)
+                    else                       -> Color.rgb(170, 210, 230)
+                }
+                sb.setSpan(ForegroundColorSpan(color), start, end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                if (level >= BleConstants.LEVEL_DANGER)
+                    sb.setSpan(StyleSpan(Typeface.BOLD), start, end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
+        return sb
+    }
+
     private fun extractDisplayName(deviceId: String): String {
         val suffix = when {
             deviceId.startsWith(BleConstants.DEVICE_PREFIX) ->
@@ -897,41 +903,6 @@ class BleService : LifecycleService() {
         })
     }
 
-    // ── 대기 모드 전환 헬퍼 ────────────────────────────────────────────
-    /** IDLE_TO_PENDING_MS 후 PendingIntent 모드로 전환 (타이머 재설정) */
-    private fun scheduleIdleTransition() {
-        idleHandler.removeCallbacks(idleRunnable)
-        idleHandler.postDelayed(idleRunnable, IDLE_TO_PENDING_MS)
-        Log.d(TAG, "대기 타이머 시작: ${IDLE_TO_PENDING_MS / 1000}초 후 PendingIntent 전환")
-    }
-
-    /** 기기 감지 시 대기 타이머 취소 */
-    private fun cancelIdleTimer() {
-        idleHandler.removeCallbacks(idleRunnable)
-    }
-
-    /**
-     * 대기 전환 실행: BleService 정지 + BlePendingScanner 기동.
-     * 30초 무감지 경과 후 idleRunnable이 이 함수를 호출.
-     */
-    private fun handleIdleTransition() {
-        if (!isRunning || myMode.isEmpty() || alertState.isNotEmpty()) return
-        Log.d(TAG, "대기 전환: BlePendingScanner 기동 후 BleService 정지")
-        sendStatusBroadcast("대기 모드 전환 (PendingIntent 스캔)")
-        startPendingScanner()
-        stopAll()           // 클린업 + stopSelf()
-    }
-
-    /** PendingIntent 스캔 시작 (BleService 정지 전 호출) */
-    private fun startPendingScanner() {
-        if (myMode.isNotEmpty()) BlePendingScanner.start(this)
-    }
-
-    /** PendingIntent 스캔 중지 (applyMode 진입 시 호출) */
-    private fun stopPendingScanner() {
-        BlePendingScanner.stop(this)
-    }
-
     // ── BLE만 중지 (서비스 유지) ───────────────────────────────────────
     private fun stopBle() {
         bleAdvertiser?.stopAdvertising(); bleAdvertiser = null
@@ -955,13 +926,13 @@ class BleService : LifecycleService() {
         detectedThrottleMap.clear()
         recedingStartMap.clear()
         peakAlertRssiMap.clear()
+        deviceRssiMap.clear()
         testRunnable?.let { testHandler.removeCallbacks(it) }
         testRunnable = null
         muteHandler.removeCallbacksAndMessages(null)
         isMuted = false
         isMutedPublic = false
         healthCheckHandler.removeCallbacksAndMessages(null)
-        idleHandler.removeCallbacks(idleRunnable)   // 대기 전환 타이머 정리
         try { unregisterReceiver(btStateReceiver) } catch (_: Exception) {}
         try { unregisterReceiver(volumeReceiver)  } catch (_: Exception) {}
         try { unregisterReceiver(screenReceiver)  } catch (_: Exception) {}

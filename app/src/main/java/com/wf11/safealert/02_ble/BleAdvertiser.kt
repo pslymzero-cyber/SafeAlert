@@ -35,7 +35,14 @@ class BleAdvertiser(
         }
     }
 
-    fun startAdvertising(deviceId: String) {
+    // 현재 광고 중인 deviceId (UWB 재시작용)
+    private var currentDeviceId = ""
+
+    /**
+     * @param uwbLocalAddress 이 기기의 UWB 주소 2바이트 (null = UWB 미지원/미초기화)
+     */
+    fun startAdvertising(deviceId: String, uwbLocalAddress: ByteArray? = null) {
+        currentDeviceId = deviceId
         // 장비 작업자: LOW_LATENCY(100ms) — 포크리프트 충돌 방지 우선
         // 보행자: BALANCED(250ms) — 배터리 절약
         val advertiseMode = if (prefix == BleConstants.DEVICE_PREFIX)
@@ -56,8 +63,6 @@ class BleAdvertiser(
         val idBytes = deviceId.toByteArray(Charsets.UTF_8).take(14).toByteArray()
 
         // ── Primary 광고 패킷 (ServiceUUID 포함 → 화면 꺼짐에도 스캔 필터 작동) ──
-        // Android가 "00001234-0000-1000-8000-00805F9B34FB"를 2바이트 16-bit UUID로 자동 압축
-        // 패킷 크기: flags(3) + UUID_16bit(4) + manufacturer(4+idBytes) ≤ 31 ✓
         val advertiseData = AdvertiseData.Builder()
             .addServiceUuid(ParcelUuid(UUID.fromString(BleConstants.SERVICE_UUID)))
             .addManufacturerData(companyId, idBytes)
@@ -65,8 +70,29 @@ class BleAdvertiser(
             .setIncludeTxPowerLevel(false)
             .build()
 
-        advertiser.startAdvertising(settings, advertiseData, callback)
-        Log.d(TAG, "광고 시작: companyId=0x${companyId.toString(16).uppercase()} id=$deviceId")
+        // ── UWB 스캔 응답 (지원 시 별도 패킷으로 UWB 주소 공유) ──
+        val scanResponse = if (uwbLocalAddress != null && uwbLocalAddress.size >= 2) {
+            AdvertiseData.Builder()
+                .addManufacturerData(BleConstants.COMPANY_ID_UWB_EXT, uwbLocalAddress.take(2).toByteArray())
+                .setIncludeDeviceName(false)
+                .build()
+        } else null
+
+        if (scanResponse != null) {
+            advertiser.startAdvertising(settings, advertiseData, scanResponse, callback)
+            Log.d(TAG, "광고+UWB 시작: id=$deviceId uwb=${uwbLocalAddress!!.take(2).joinToString("") { "%02X".format(it) }}")
+        } else {
+            advertiser.startAdvertising(settings, advertiseData, callback)
+            Log.d(TAG, "광고 시작: companyId=0x${companyId.toString(16).uppercase()} id=$deviceId")
+        }
+    }
+
+    /** UWB 주소 준비 완료 후 광고 재시작 */
+    fun restartWithUwbAddress(uwbLocalAddress: ByteArray) {
+        try { advertiser.stopAdvertising(callback) } catch (_: Exception) {}
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            startAdvertising(currentDeviceId, uwbLocalAddress)
+        }, 300)
     }
 
     fun stopAdvertising() {

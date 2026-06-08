@@ -1,0 +1,191 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#F8F9FA">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <!-- 헤더 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="#1D4ED8"
+            android:padding="20dp"
+            android:layout_marginBottom="16dp">
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="오픈소스 라이선스"
+                android:textColor="#FFFFFF"
+                android:textSize="20sp"
+                android:textStyle="bold"/>
+            <TextView
+                android:id="@+id/tv_osl_version"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="SafeAlert v1.0.6"
+                android:textColor="#BFDBFE"
+                android:textSize="12sp"
+                android:layout_marginTop="4dp"/>
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="이 앱은 아래 오픈소스 라이브러리를 사용합니다."
+                android:textColor="#DBEAFE"
+                android:textSize="12sp"
+                android:layout_marginTop="6dp"/>
+        </LinearLayout>
+
+        <!-- Google / Android Jetpack -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Android Jetpack  —  Google LLC"
+            android:textStyle="bold"
+            android:textSize="14sp"
+            android:textColor="#374151"
+            android:layout_marginBottom="6dp"/>
+
+        <androidx.cardview.widget.CardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp">
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="14dp">
+
+                <!-- 각 라이브러리 항목 (재사용 패턴) -->
+                <include layout="@layout/item_oss_entry"
+                    android:id="@+id/oss_core_ktx"/>
+                <View android:layout_width="match_parent" android:layout_height="1dp"
+                    android:background="#F3F4F6" android:layout_marginVertical="8dp"/>
+                <include layout="@layout/item_oss_entry"
+                    android:id="@+id/oss_appcompat"/>
+                <View android:layout_width="match_parent" android:layout_height="1dp"
+                    android:background="#F3F4F6" android:layout_marginVertical="8dp"/>
+                <include layout="@layout/item_oss_entry"
+                    android:id="@+id/oss_material"/>
+                <View android:layout_width="match_parent" android:layout_height="1dp"
+                    android:background="#F3F4F6" android:layout_marginVertical="8dp"/>
+                <include layout="@layout/item_oss_entry"
+                    android:id="@+id/oss_constraintlayout"/>
+                <View android:layout_width="match_parent" android:layout_height="1dp"
+                    android:background="#F3F4F6" android:layout_marginVertical="8dp"/>
+                <include layout="@layout/item_oss_entry"
+                    android:id="@+id/oss_recyclerview"/>
+                <View android:layout_width="match_parent" android:layout_height="1dp"
+                    android:background="#F3F4F6" android:layout_marginVertical="8dp"/>
+                <include layout="@layout/item_oss_entry"
+                    android:id="@+id/oss_lifecycle_service"/>
+                <View android:layout_width="match_parent" android:layout_height="1dp"
+                    android:background="#F3F4F6" android:layout_marginVertical="8dp"/>
+                <include layout="@layout/item_oss_entry"
+                    android:id="@+id/oss_lifecycle_runtime"/>
+
+            </LinearLayout>
+        </androidx.cardview.widget.CardView>
+
+        <!-- JetBrains -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Kotlin  —  JetBrains s.r.o."
+            android:textStyle="bold"
+            android:textSize="14sp"
+            android:textColor="#374151"
+            android:layout_marginBottom="6dp"/>
+
+        <androidx.cardview.widget.CardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp">
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="14dp">
+
+                <include layout="@layout/item_oss_entry"
+                    android:id="@+id/oss_kotlin"/>
+                <View android:layout_width="match_parent" android:layout_height="1dp"
+                    android:background="#F3F4F6" android:layout_marginVertical="8dp"/>
+                <include layout="@layout/item_oss_entry"
+                    android:id="@+id/oss_coroutines"/>
+
+            </LinearLayout>
+        </androidx.cardview.widget.CardView>
+
+        <!-- Firebase -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Firebase  —  Google LLC"
+            android:textStyle="bold"
+            android:textSize="14sp"
+            android:textColor="#374151"
+            android:layout_marginBottom="6dp"/>
+
+        <androidx.cardview.widget.CardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="20dp">
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="14dp">
+
+                <include layout="@layout/item_oss_entry"
+                    android:id="@+id/oss_firebase_database"/>
+                <View android:layout_width="match_parent" android:layout_height="1dp"
+                    android:background="#F3F4F6" android:layout_marginVertical="8dp"/>
+                <include layout="@layout/item_oss_entry"
+                    android:id="@+id/oss_firebase_analytics"/>
+
+            </LinearLayout>
+        </androidx.cardview.widget.CardView>
+
+        <!-- Apache 2.0 라이선스 요약 -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Apache License 2.0 — 주요 조건"
+            android:textStyle="bold"
+            android:textSize="14sp"
+            android:textColor="#374151"
+            android:layout_marginBottom="6dp"/>
+
+        <androidx.cardview.widget.CardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="24dp">
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:padding="14dp"
+                android:textSize="11sp"
+                android:textColor="#6B7280"
+                android:lineSpacingExtra="3dp"
+                android:text="Copyright 소유자 및 기여자에 의한 소프트웨어 배포 및 사용은\n다음 조건을 만족하는 경우 허용됩니다:\n\n• 소스 코드 배포 시 저작권 고지, 라이선스 원문, 면책 조항을 포함할 것\n• 바이너리 배포 시 동등한 고지를 문서 또는 배포물에 포함할 것\n• 기여자 이름을 광고·홍보 목적으로 무단 사용하지 않을 것\n\n전체 라이선스 원문: https://www.apache.org/licenses/LICENSE-2.0"/>
+        </androidx.cardview.widget.CardView>
+
+        <!-- 저작권 -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Copyright 2024-2026 WF11 Team. All Rights Reserved."
+            android:textSize="11sp"
+            android:textColor="#9CA3AF"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginBottom="24dp"/>
+
+    </LinearLayout>
+</ScrollView>

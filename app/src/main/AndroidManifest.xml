@@ -37,6 +37,10 @@
 
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="true" />
 
+    <!-- UWB 정밀 거리 측정 (지원 기기만, required=false → 미지원 기기도 설치 가능) -->
+    <uses-permission android:name="android.permission.UWB_RANGING" />
+    <uses-feature android:name="android.hardware.uwb" android:required="false" />
+
     <application
         android:name=".SafeAlertApp"
         android:allowBackup="true"
@@ -55,10 +59,11 @@
             </intent-filter>
         </activity>
 
-        <activity android:name=".ui.DeviceActivity" android:exported="false" />
-        <activity android:name=".ui.WalkerActivity" android:exported="false" />
-        <activity android:name=".ui.DevSettingsActivity" android:exported="false" />
+<activity android:name=".ui.DevSettingsActivity" android:exported="false" />
+        <activity android:name=".ui.CalibrationWizardActivity" android:exported="false" />
         <activity android:name=".ui.BeaconManagerActivity" android:exported="false" />
+        <activity android:name=".ui.BleSettingsActivity" android:exported="false" />
+        <activity android:name=".ui.OpenSourceLicensesActivity" android:exported="false" />
 
         <!-- APK 설치용 FileProvider -->
         <provider
