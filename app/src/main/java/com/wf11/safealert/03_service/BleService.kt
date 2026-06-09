@@ -254,6 +254,11 @@ class BleService : LifecycleService() {
     //   1바이트 페이로드에서 언패킹한 Category 로 표시 라벨(보행자/EPJ/지게차)을 판별한다.
     private val deviceCategoryMap = mutableMapOf<String, Int>()
 
+    // [v1.0.44] 수신한 상대 기기의 State(동적 상태) 캐시 — 디코드된 PSTATE_* 보관.
+    //   평상 표시문구를 '정지 중(IDLE)=주변 대기' / '이동 중(FORWARD)=접근'으로 분기하는 데 쓴다.
+    //   ※ 후진/하역(특수경보)은 suddenLabelMap(makeStateLabel)이 우선하므로 이 캐시에 의존하지 않는다.
+    private val deviceStateMap    = mutableMapOf<String, Int>()
+
     // [v1.0.30 Req3] Firebase 경보 저장 모바일데이터 방어 — 기기별 마지막 저장 시각(ms).
     //   같은 기기에 대해 FIREBASE_SAVE_THROTTLE_MS(1분) 안에는 재업로드하지 않는다.
     private val firebaseLastSaveMap = mutableMapOf<String, Long>()
@@ -513,6 +518,7 @@ class BleService : LifecycleService() {
                             mutedDevices.remove(deviceId)
                             suddenLabelMap.remove(deviceId)
                             deviceCategoryMap.remove(deviceId)
+                            deviceStateMap.remove(deviceId)
                             firebaseLastSaveMap.remove(deviceId)
                             sendAlertBroadcast(deviceId, BleConstants.LEVEL_SAFE)
                             if (alertState.isEmpty()) {
@@ -653,6 +659,7 @@ class BleService : LifecycleService() {
         val rCategory = BleConstants.decodeCategory(remoteState)
         val rState    = BleConstants.decodeState(remoteState)
         deviceCategoryMap[deviceId] = rCategory   // 표시 라벨(보행자/EPJ/지게차) 판별용 캐시
+        deviceStateMap[deviceId]    = rState      // [v1.0.44] 표시문구 분기용(정지=대기/이동=접근) 상태 캐시
 
         // [v1.0.42] UWB 거리→RSSI 환산(calibRssiAt1m/pathLossExp 의존) 제거.
         //   거리 추정은 칼만 필터(RSSI)만으로 수행 — 수신 raw RSSI 를 그대로 전처리 파이프라인에 투입.
@@ -704,6 +711,7 @@ class BleService : LifecycleService() {
             deviceRssiMap.remove(deviceId)
             suddenLabelMap.remove(deviceId)
             deviceCategoryMap.remove(deviceId)
+            deviceStateMap.remove(deviceId)
             firebaseLastSaveMap.remove(deviceId)
             rssiPreFilter.clear(deviceId)     // [v1.0.38 클린업] 미추적 기기 EMA 전처리 상태 정리
             kalmanFilters.remove(deviceId)    // [v1.0.38 클린업] 미추적 기기 칼만 인스턴스 정리(stale 재등장 방지)
@@ -812,6 +820,7 @@ class BleService : LifecycleService() {
                 mutedDevices.remove(deviceId)
                 suddenLabelMap.remove(deviceId)
                 deviceCategoryMap.remove(deviceId)
+                deviceStateMap.remove(deviceId)
                 firebaseLastSaveMap.remove(deviceId)
                 sendAlertBroadcast(deviceId, BleConstants.LEVEL_SAFE)
                 if (alertState.isEmpty()) {
@@ -1247,9 +1256,14 @@ class BleService : LifecycleService() {
      * v1.0.34 평상(NORMAL) 접근 표시문자열 - Category 기반 분화 (directive 4).
      *   EPJ 는 스펙 지정 문구 "{이름} EPJ가 접근 중!", 그 외는 "{이름} ({역할})" 간결 표기.
      *   ※ 특수상태(STATE!=평상)는 suddenLabelMap(makeStateLabel)이 우선하며, 이 함수는 그 폴백.
+     *   v1.0.44 상대가 '정지 중'(PSTATE_IDLE) 신호를 송출 중이면 위 접근 표기 대신
+     *     "{이름}이(가) 주변에 대기 중입니다." 로 안내한다(이동 중=FORWARD 일 때만 '접근' 표기).
      */
     private fun makeApproachLabel(deviceId: String): String {
         val name = extractDisplayName(deviceId)
+        // [v1.0.44] 정지 중(IDLE) 신호 수신 → 접근이 아니라 '주변 대기'로 표기. 카테고리 무관.
+        if (deviceStateMap[deviceId] == BleConstants.PSTATE_IDLE)
+            return "${name}이(가) 주변에 대기 중입니다."
         return if (deviceCategoryMap[deviceId] == BleConstants.CAT_EPJ)
             "$name EPJ가 접근 중!"
         else
@@ -1447,6 +1461,7 @@ class BleService : LifecycleService() {
         alertState.clear()
         suddenLabelMap.clear()
         deviceCategoryMap.clear()
+        deviceStateMap.clear()
         broadcastDeviceList(force = true)   // [v1.0.26 Req2] 서비스 중지 → 빈 목록 송출('감지 없음' 반영)
         localSnapshot = ""; lastLocalSnapshot = ""   // [v1.0.42 Req2] 내 장비(Local) 스냅샷 초기화
         rssiPreFilter.clearAll()
