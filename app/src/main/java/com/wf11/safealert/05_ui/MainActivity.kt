@@ -60,6 +60,22 @@ class MainActivity : AppCompatActivity() {
     private val statusHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private var muteAnimator: ObjectAnimator? = null
 
+    // [v1.0.37] UI 렌더 스로틀 — 감지 목록(TextView) 갱신을 최소 uiRenderThrottleMs(500ms)
+    //   간격으로 코얼레싱해 UI 스레드/GPU 재드로우 부하·전력을 줄인다. 데이터 수신(detectedDevices)과
+    //   백그라운드 계산(BleService/Kalman)은 실시간 유지 — '화면에 뿌리는' 작업만 제한한다.
+    //   단 위험도 '상승'(특히 DANGER 진입=경고 배경색/아이콘)은 스로틀 우회 즉시 렌더(안전 우선).
+    private val uiThrottleHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val uiRenderThrottleMs = 500L
+    private var lastRenderMs = 0L
+    private var pendingRender = false
+    private var lastRenderedTopLevel = BleConstants.LEVEL_SAFE
+    private val renderRunnable = Runnable {
+        pendingRender = false
+        lastRenderMs = android.os.SystemClock.elapsedRealtime()
+        lastRenderedTopLevel = detectedDevices.maxOfOrNull { it.second } ?: BleConstants.LEVEL_SAFE
+        updateDetectedDisplay()
+    }
+
     private val statusRunnable = object : Runnable {
         private var lastText = ""
         private var lastMuted = false
@@ -161,7 +177,9 @@ class MainActivity : AppCompatActivity() {
                             }
                         }
                     }
-                    updateDetectedDisplay()
+                    // [v1.0.37] 즉시 렌더 대신 throttle 경유(500ms 코얼레싱, 위험도 상승은 우회 즉시).
+                    //   데이터(detectedDevices)는 위에서 이미 최신으로 반영됨 — 화면 출력만 제한된다.
+                    requestDetectedRender()
                 }
 
                 BleService.BROADCAST_BLE_STATUS -> {
@@ -240,8 +258,35 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         statusHandler.removeCallbacks(statusRunnable)
+        uiThrottleHandler.removeCallbacks(renderRunnable)   // [v1.0.37] UI 스로틀 타이머 정리
         try { unregisterReceiver(alertReceiver) } catch (_: Exception) {}
         muteAnimator?.cancel()
+    }
+
+    /**
+     * [v1.0.37 UI 스로틀] 감지 목록 렌더 요청 — 최소 uiRenderThrottleMs(500ms) 간격으로 코얼레싱한다.
+     *  - 위험도 '상승'(직전 렌더 대비 topLevel↑, 특히 DANGER 진입)은 스로틀 우회 즉시 렌더:
+     *    위험 경고의 배경색·아이콘·크기 강조가 지연 없이 즉각 화면에 반영된다(안전 최우선).
+     *  - 그 외 일반 갱신(RSSI 숫자 변동·안전/경고 목록 증감)은 500ms 간격으로만 화면 반영해
+     *    UI 스레드·GPU 재드로우 빈도를 낮춘다(전력 절감). 백그라운드 계산은 영향받지 않는다.
+     *  - 마지막 변경이 스로틀에 걸리면 trailing 타이머(renderRunnable)가 최신 스냅샷으로 1회 렌더.
+     */
+    private fun requestDetectedRender() {
+        val topLevel = detectedDevices.maxOfOrNull { it.second } ?: BleConstants.LEVEL_SAFE
+        val now = android.os.SystemClock.elapsedRealtime()
+        val escalated = topLevel > lastRenderedTopLevel          // 위험도 상승 = 크리티컬 → 즉시
+        if (escalated || now - lastRenderMs >= uiRenderThrottleMs) {
+            uiThrottleHandler.removeCallbacks(renderRunnable)     // 예약된 trailing 렌더 무효화
+            pendingRender = false
+            lastRenderMs = now
+            lastRenderedTopLevel = topLevel
+            updateDetectedDisplay()
+        } else if (!pendingRender) {
+            // 스로틀 구간 내 첫 갱신 → 남은 시간 뒤 1회 trailing 렌더 예약(중복 예약 방지)
+            pendingRender = true
+            uiThrottleHandler.postDelayed(renderRunnable, uiRenderThrottleMs - (now - lastRenderMs))
+        }
+        // pendingRender==true 면 이미 예약됨 — 추가 동작 불필요(최신 데이터는 detectedDevices 에 보존)
     }
 
     /**

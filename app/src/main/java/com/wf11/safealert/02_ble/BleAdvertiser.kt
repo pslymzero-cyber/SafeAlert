@@ -70,10 +70,11 @@ class BleAdvertiser(
     fun startAdvertising(deviceId: String, uwbLocalAddress: ByteArray? = null) {
         currentDeviceId = deviceId
         if (uwbLocalAddress != null) lastUwbAddress = uwbLocalAddress
-        // 장비 작업자: LOW_LATENCY(100ms) — 포크리프트 충돌 방지 우선
-        // 보행자: BALANCED(250ms) — 배터리 절약
+        // [v1.0.37] 배터리 최적화 — 송출 모드를 BALANCED 로 하향(구 장비측 LOW_LATENCY).
+        //   장비/보행자 모두 BALANCED(250ms) 듀티로 라디오 전력 비용을 낮춰 시간당 소모를 반감.
+        //   분기는 '역할별 송출 정책' 슬롯으로 보존(현재 둘 다 BALANCED — 추후 재튜닝 여지).
         val advertiseMode = if (prefix == BleConstants.DEVICE_PREFIX)
-            AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY
+            AdvertiseSettings.ADVERTISE_MODE_BALANCED
         else
             AdvertiseSettings.ADVERTISE_MODE_BALANCED
 

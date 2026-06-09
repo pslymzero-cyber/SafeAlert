@@ -41,8 +41,11 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
         private const val BATCH_DELAY_ACTIVE_MS     = 0L
         private const val BATCH_DELAY_SCREEN_OFF_MS = 500L
 
-        // [v1.0.27] 스캔 모드 상수 — 전투(LOW_LATENCY) / 휴식(BALANCED)
-        private val ACTIVE_SCAN_MODE = ScanSettings.SCAN_MODE_LOW_LATENCY
+        // [v1.0.27] 스캔 모드 상수 — 전투 / 휴식(BALANCED)
+        // [v1.0.37] 배터리 최적화: 평상시(전투)도 LOW_LATENCY→BALANCED 로 하향.
+        //   라디오 스캔 듀티를 낮춰 시간당 소모를 반감한다. 동적 전환(setEcoMode) 구조는
+        //   보존하되 현재 ACTIVE=REST=BALANCED 라 실효 전환은 없다(추후 재튜닝 여지).
+        private val ACTIVE_SCAN_MODE = ScanSettings.SCAN_MODE_BALANCED
         private val REST_SCAN_MODE   = ScanSettings.SCAN_MODE_BALANCED
 
         // [v1.0.29] 상대 모션 상태 ServiceData 디코드용 (송신측 addServiceData 와 동일 UUID)

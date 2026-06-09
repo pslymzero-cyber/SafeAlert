@@ -193,10 +193,12 @@ object ImuFusion {
         }
         // [v1.0.36] 게임 회전 벡터(GAME_ROTATION_VECTOR) 등록 — 코너링 감지용(내부 전용, 미전송).
         //   지자기를 안 써 자기장 교란에 면역. 없으면 코너링 미감지(Time-Gate 평상값 — 안전).
-        //   회전율 미분 정확도를 위해 SENSOR_DELAY_GAME(~50Hz)로 촘촘히 받는다.
+        //   [v1.0.37] 배터리 최적화: SENSOR_DELAY_GAME(~50Hz)→SENSOR_DELAY_NORMAL(~5Hz)로 하향.
+        //     CPU 깨우기 빈도를 ~1/10로 줄여 전력을 절감한다. 회전율은 실제 이벤트 간격(dt)으로
+        //     미분하므로 deg/s 값 자체는 유지되고, EMA 평활 반응만 다소 느려진다(코너링 판정 OK).
         val gameRot = sensorManager?.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR)
         if (gameRot != null) {
-            sensorManager?.registerListener(listener, gameRot, SensorManager.SENSOR_DELAY_GAME)
+            sensorManager?.registerListener(listener, gameRot, SensorManager.SENSOR_DELAY_NORMAL)
             hasGameRotation = true
             Log.d(TAG, "게임회전벡터 등록 — 코너링(급회전) 내부 감지 활성")
         } else {
