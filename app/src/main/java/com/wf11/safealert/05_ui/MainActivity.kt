@@ -56,6 +56,10 @@ class MainActivity : AppCompatActivity() {
     // (displayName, alertLevel, rssi) 정렬 리스트. 단일 진실 공급원이라 부분 add/remove 없음 = 불일치 불가.
     private val detectedDevices = mutableListOf<Triple<String, Int, Int>>()
 
+    // [v1.0.42] Broadcast 수신과 폴링 폴백이 공유하는 '마지막 반영 스냅샷'.
+    //   같은 값이면 양쪽 모두 no-op → 중복 렌더 방지. 초기 sentinel()은 빈 목록("")과도 구분.
+    private var lastSyncedSnapshot = ""
+
     // 1초마다 서비스 상태 직접 폴링 (Broadcast 실패 대비)
     private val statusHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private var muteAnimator: ObjectAnimator? = null
@@ -81,6 +85,15 @@ class MainActivity : AppCompatActivity() {
         private var lastMuted = false
         override fun run() {
             if (binding.cardRunning.visibility == View.VISIBLE) {
+                // [v1.0.42] Broadcast 누락 대비 폴백 — 서비스 스냅샷(BleService.detectedSnapshot)을
+                //   직접 읽어 목록을 동기화한다. 브로드캐스트가 정상이면 같은 값이라 no-op,
+                //   누락(RECEIVER_NOT_EXPORTED/암시적 전달 실패)되면 여기서 800ms 내 복구된다.
+                val snap = BleService.detectedSnapshot
+                if (snap != lastSyncedSnapshot) {
+                    lastSyncedSnapshot = snap
+                    applyDeviceListSnapshot(snap)
+                    requestDetectedRender()
+                }
                 // [v1.0.26 Req2] tv_ble_status 는 '감지 기기 목록' 전용 영역으로 전환.
                 // 목록이 비었을 때만 그 자리에 '서비스 상태' 1줄을 임시로 표시한다.
                 val text = when {
@@ -163,20 +176,9 @@ class MainActivity : AppCompatActivity() {
                 // 통째로 수신 → detectedDevices 를 매번 새로 구성. 부분 add/remove 없음 = 불일치 불가.
                 BleService.BROADCAST_DETECTED -> {
                     val raw = intent.getStringExtra(BleService.EXTRA_DEVICE_LIST) ?: ""
-                    detectedDevices.clear()
-                    if (raw.isNotEmpty()) {
-                        val recSep  = 30.toChar()   // U+001E 레코드 구분자 (BleService 출력과 동일)
-                        val unitSep = 31.toChar()   // U+001F 필드 구분자
-                        raw.split(recSep).forEach { rec ->
-                            val f = rec.split(unitSep)
-                            if (f.size >= 3) {
-                                val level = f[0].toIntOrNull() ?: BleConstants.LEVEL_SAFE
-                                val rssi  = f[1].toIntOrNull() ?: -99
-                                val name  = f[2]
-                                detectedDevices.add(Triple(name, level, rssi))
-                            }
-                        }
-                    }
+                    // [v1.0.42] 폴링 폴백과 '동일 파서' 공유 + lastSyncedSnapshot 동기화(중복 렌더 방지).
+                    lastSyncedSnapshot = raw
+                    applyDeviceListSnapshot(raw)
                     // [v1.0.37] 즉시 렌더 대신 throttle 경유(500ms 코얼레싱, 위험도 상승은 우회 즉시).
                     //   데이터(detectedDevices)는 위에서 이미 최신으로 반영됨 — 화면 출력만 제한된다.
                     requestDetectedRender()
@@ -264,6 +266,27 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
+     * [v1.0.42 공용 파서] BleService 직렬화 스냅샷을 detectedDevices 로 파싱.
+     *   레코드 구분 = U+001E, 필드 = "level / rssi / name"(U+001F 구분).
+     *   Broadcast 수신과 800ms 폴링 폴백이 '같은 파서'를 쓰게 해 두 경로 결과가 절대 어긋나지 않게 한다.
+     */
+    private fun applyDeviceListSnapshot(raw: String) {
+        detectedDevices.clear()
+        if (raw.isEmpty()) return
+        val recSep  = 30.toChar()   // U+001E 레코드 구분자 (BleService 출력과 동일)
+        val unitSep = 31.toChar()   // U+001F 필드 구분자
+        raw.split(recSep).forEach { rec ->
+            val f = rec.split(unitSep)
+            if (f.size >= 3) {
+                val level = f[0].toIntOrNull() ?: BleConstants.LEVEL_SAFE
+                val rssi  = f[1].toIntOrNull() ?: -99
+                val name  = f[2]
+                detectedDevices.add(Triple(name, level, rssi))
+            }
+        }
+    }
+
+    /**
      * [v1.0.37 UI 스로틀] 감지 목록 렌더 요청 — 최소 uiRenderThrottleMs(500ms) 간격으로 코얼레싱한다.
      *  - 위험도 '상승'(직전 렌더 대비 topLevel↑, 특히 DANGER 진입)은 스로틀 우회 즉시 렌더:
      *    위험 경고의 배경색·아이콘·크기 강조가 지연 없이 즉각 화면에 반영된다(안전 최우선).
@@ -323,6 +346,13 @@ class MainActivity : AppCompatActivity() {
             .take(10)
 
         val sb = SpannableStringBuilder()
+        // [v1.0.42] 사용자 요청 — 목록 최상단에 '주변 감지 기기 N건' 헤더(연회색 소형).
+        run {
+            val hStart = sb.length
+            sb.append("주변 감지 기기 ${detectedDevices.size}건\n")
+            sb.setSpan(ForegroundColorSpan(0xFF9FB8C8.toInt()), hStart, sb.length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+            sb.setSpan(RelativeSizeSpan(0.78f), hStart, sb.length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
         sorted.forEachIndexed { idx, (name, level, rssi) ->
             if (idx > 0) sb.append("\n")
             val prefix = when (level) {

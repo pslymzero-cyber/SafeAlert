@@ -62,6 +62,13 @@ class BleService : LifecycleService() {
         @Volatile var safeAlertFound: Int  = 0
         @Volatile var isRunning: Boolean   = false
         @Volatile var isMutedPublic: Boolean = false
+        // [v1.0.42] Broadcast 누락 대비 폴백 — broadcastDeviceList 와 '동일 직렬화' 스냅샷을
+        //   static 으로도 노출. MainActivity 가 800ms 폴링으로 직접 읽어 목록을 채운다.
+        //   (브로드캐스트가 RECEIVER_NOT_EXPORTED/암시적 전달 실패로 누락돼도 '주변 감지 기기 N건'이
+        //    반드시 화면에 뜨도록 — 오버레이는 뜨는데 목록만 비던 증상의 구조적 차단.)
+        //   직렬화: 레코드 구분 U+001E, 필드 구분 U+001F, 필드 순서 level/rssi/name.
+        @Volatile var detectedSnapshot: String = ""   // "levelrssiname" 레코드, 구분 
+        @Volatile var detectedCount: Int       = 0    // 현재 경보 중(alertState) 기기 수
     }
 
     private var bleAdvertiser: BleAdvertiser? = null
@@ -1290,7 +1297,12 @@ class BleService : LifecycleService() {
             sb.append(level).append('\u001F').append(rssi).append('\u001F').append(name)
         }
 
-        sendBroadcast(Intent(BROADCAST_DETECTED).apply {
+        // [v1.0.42] 폴백 동기화 소스 갱신 — 브로드캐스트가 누락돼도 MainActivity 폴링이 이 값을 읽는다.
+        detectedSnapshot = sb.toString()
+        detectedCount    = sorted.size
+
+        // [v1.0.42] setPackage 로 '명시적' 브로드캐스트화 → RECEIVER_NOT_EXPORTED 수신자와 확실히 호환.
+        sendBroadcast(Intent(BROADCAST_DETECTED).setPackage(packageName).apply {
             putExtra(EXTRA_DEVICE_LIST, sb.toString())
             putExtra(EXTRA_DEVICE_COUNT, sorted.size)
         })
