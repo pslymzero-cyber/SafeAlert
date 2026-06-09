@@ -52,6 +52,11 @@ class BleAdvertiser(
     // 현재 광고 중인 deviceId (UWB 재시작용)
     private var currentDeviceId = ""
 
+    // [v1.0.41] 중지 가드 — stopAdvertising() 호출 후, 메인 루퍼에 예약돼(postDelayed) 있던
+    //   재광고 콜백이 광고를 되살리는 누수를 차단. 한 번 true 가 되면 이 인스턴스는 다시
+    //   광고하지 않는다(재시작은 BleService 가 BleAdvertiser 를 새로 생성하므로 안전).
+    @Volatile private var stopped = false
+
     // [v1.0.34 다이나믹 페이로드] 현재 송신자 STATE(2bit, PSTATE_*) — Category·Speed 와 함께
     //   encodePayload() 로 1바이트로 패킹되어 ServiceData 로 탑재된다.
     @Volatile private var currentState: Int = BleConstants.PSTATE_NORMAL
@@ -68,6 +73,8 @@ class BleAdvertiser(
      * @param uwbLocalAddress 이 기기의 UWB 주소 2바이트 (null = UWB 미지원/미초기화)
      */
     fun startAdvertising(deviceId: String, uwbLocalAddress: ByteArray? = null) {
+        // [v1.0.41] 예약 콜백이 stop 후 뒤늦게 실행돼도 여기서 차단.
+        if (stopped) { Log.d(TAG, "중지 상태 — 광고 시작 생략"); return }
         currentDeviceId = deviceId
         if (uwbLocalAddress != null) lastUwbAddress = uwbLocalAddress
         // [v1.0.37] 배터리 최적화 — 송출 모드를 BALANCED 로 하향(구 장비측 LOW_LATENCY).
@@ -165,6 +172,7 @@ class BleAdvertiser(
 
     /** v1.0.36 광고 정지 후 STATE_RESTART_DELAY_MS 뒤 최신 페이로드로 재광고 (updateState/updateSpeed 공용). */
     private fun restartAdvertise() {
+        if (stopped) return
         try { advertiser.stopAdvertising(callback) } catch (_: Exception) {}
         stateHandler.postDelayed({
             startAdvertising(currentDeviceId, lastUwbAddress)
@@ -173,14 +181,21 @@ class BleAdvertiser(
 
     /** UWB 주소 준비 완료 후 광고 재시작 */
     fun restartWithUwbAddress(uwbLocalAddress: ByteArray) {
+        if (stopped) return
         try { advertiser.stopAdvertising(callback) } catch (_: Exception) {}
-        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+        // [v1.0.41] 전용 Handler 대신 stateHandler 로 통일 — stopAdvertising() 의
+        //   removeCallbacksAndMessages(null) 한 번으로 모든 예약 재광고를 취소하기 위함.
+        stateHandler.postDelayed({
             startAdvertising(currentDeviceId, uwbLocalAddress)
         }, 300)
     }
 
     fun stopAdvertising() {
-        advertiser.stopAdvertising(callback)
-        Log.d(TAG, "광고 중지")
+        // [v1.0.41] 핵심 수정 — 예약된 재광고(restartAdvertise/updateState/updateSpeed/
+        //   restartWithUwbAddress 의 postDelayed)가 stop 직후 광고를 되살리는 누수를 차단.
+        stopped = true
+        stateHandler.removeCallbacksAndMessages(null)
+        try { advertiser.stopAdvertising(callback) } catch (_: Exception) {}
+        Log.d(TAG, "광고 중지(예약 재광고 취소 포함)")
     }
 }
