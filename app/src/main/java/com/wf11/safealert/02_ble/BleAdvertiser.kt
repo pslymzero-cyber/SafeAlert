@@ -27,11 +27,9 @@ class BleAdvertiser(
         private const val STATE_RESTART_DELAY_MS = 50L
         // [v1.0.36] 속도 미세 변화 무시 임계(km/h). 1km/h 미만 변화는 재광고 생략(stop/start 폭주 방지).
         private const val MIN_SPEED_DELTA_KMH = 1.0
-        // [v1.0.42 Req3] RSSI 슬립 중 '하트비트' — 연속 광고는 끄되, HEARTBEAT_INTERVAL_MS 마다
-        //   HEARTBEAT_BURST_MS 동안만 짧게 광고를 켠다. 두 기기가 동시에 잠들어도(상호 슬립)
-        //   서로의 버스트를 스캔으로 잡아 재발견 → wake 할 수 있게 하는 데드락 방지 장치.
-        private const val HEARTBEAT_INTERVAL_MS = 4000L
-        private const val HEARTBEAT_BURST_MS    = 700L
+        // [v1.0.43 Req3] (구) 하트비트 버스트 상수 폐지 — 슬립을 'stop + 700ms/4s 버스트'에서
+        //   'LOW_POWER(~1s) 연속 광고'로 전환(깨어남 지연 제거). 완전 정지하지 않고 저빈도로 상시
+        //   송출하므로 상대 스캐너가 항상 나를 잡아 즉시 재발견한다. 재광고 정리 대기는 STATE_RESTART_DELAY_MS 공용.
     }
 
     private val callback = object : AdvertiseCallback() {
@@ -62,8 +60,9 @@ class BleAdvertiser(
     //   광고하지 않는다(재시작은 BleService 가 BleAdvertiser 를 새로 생성하므로 안전).
     @Volatile private var stopped = false
 
-    // [v1.0.42 Req3] RSSI 동적 슬립 가드 — stopped(영구 종료)와 '독립'. paused=true 면 연속 광고를
-    //   쉬고 하트비트만 내보낸다. resumeAdvertising() 으로 언제든 즉시(0ms) 깨어날 수 있다.
+    // [v1.0.42 Req3 · v1.0.43] RSSI 동적 슬립 가드 — stopped(영구 종료)와 '독립'. paused=true 면
+    //   BALANCED 연속 광고를 LOW_POWER 연속 광고로 낮춰 상시 송출한다(완전 정지 아님). startAdvertising 이
+    //   이 플래그를 보고 광고 모드를 자동 선택한다. resumeAdvertising() 으로 즉시(0ms) BALANCED 로 승격.
     //   ※ stopped 와 분리해야 함: stopped 는 단방향 종료(재광고 영구 차단)이므로 슬립/웨이크에 쓰면
     //     한 번 자면 다시 못 깨는 데드락이 된다 → 별도 플래그(paused)로 일시정지/재개를 구현한다.
     @Volatile private var paused = false
@@ -98,11 +97,12 @@ class BleAdvertiser(
         if (stopped) { Log.d(TAG, "중지 상태 — 광고 시작 생략"); return }
         currentDeviceId = deviceId
         if (uwbLocalAddress != null) lastUwbAddress = uwbLocalAddress
-        // [v1.0.37] 배터리 최적화 — 송출 모드를 BALANCED 로 하향(구 장비측 LOW_LATENCY).
-        //   장비/보행자 모두 BALANCED(250ms) 듀티로 라디오 전력 비용을 낮춰 시간당 소모를 반감.
-        //   분기는 '역할별 송출 정책' 슬롯으로 보존(현재 둘 다 BALANCED — 추후 재튜닝 여지).
-        val advertiseMode = if (prefix == BleConstants.DEVICE_PREFIX)
-            AdvertiseSettings.ADVERTISE_MODE_BALANCED
+        // [v1.0.37] 활성 송출 모드 BALANCED(250ms) — 라디오 전력 비용을 낮춰 시간당 소모 반감.
+        // [v1.0.43 Req3] 슬립(paused)이면 LOW_POWER(~1s) '연속' 광고로 전환 — 완전 정지 대신
+        //   저빈도 상시 송출. 상대 스캐너가 항상(~1s 내) 나를 발견 → 깨어남 지연 제거.
+        //   깨어나면(paused=false) 다시 BALANCED 로 승격. (구 하트비트 버스트 폐지)
+        val advertiseMode = if (paused)
+            AdvertiseSettings.ADVERTISE_MODE_LOW_POWER
         else
             AdvertiseSettings.ADVERTISE_MODE_BALANCED
 
@@ -211,49 +211,42 @@ class BleAdvertiser(
         }, 300)
     }
 
-    // ── [v1.0.42 Req3] RSSI 동적 슬립/웨이크 ────────────────────────────────
-    /**
-     * 슬립 중(paused) 주기적 하트비트 — 연속 광고는 꺼두되 HEARTBEAT_INTERVAL_MS 마다
-     * HEARTBEAT_BURST_MS 동안만 짧게 광고를 켰다 끈다. 두 기기가 동시에 잠들어도
-     * 서로의 버스트를 스캔으로 잡아 재발견(→ wake) 할 수 있게 하는 상호-슬립 데드락 방지.
-     */
-    private val heartbeatRunnable = object : Runnable {
-        override fun run() {
-            if (stopped || !paused) return                 // 종료/이미 깨어남 → 하트비트 종료
-            startAdvertising(currentDeviceId, lastUwbAddress)   // 짧은 버스트 ON
-            stateHandler.postDelayed({
-                if (stopped || !paused) return@postDelayed     // 버스트 도중 깨어났으면 그대로 둔다
-                try { advertiser.stopAdvertising(callback) } catch (_: Exception) {}  // 버스트 OFF
-            }, HEARTBEAT_BURST_MS)
-            stateHandler.postDelayed(this, HEARTBEAT_INTERVAL_MS)   // 다음 하트비트 예약
-        }
-    }
+    // ── [v1.0.42 Req3 · v1.0.43 개선] RSSI 동적 슬립/웨이크 ──────────────────
+    //   [v1.0.43] 슬립을 'stop + 하트비트 버스트(700ms/4s)' → 'LOW_POWER 연속 광고'로 전환.
+    //   완전 정지하지 않고 저빈도(~1s)로 항상 송출하므로 상대가 즉시 재발견 → 깨어남 지연 제거.
+    //   (구 heartbeatRunnable / HEARTBEAT_* 상수 폐지)
 
     /**
-     * [v1.0.42 Req3] RSSI 슬립 진입 — 연속 광고를 멈추고 하트비트 모드로 전환.
-     * stopped(영구 종료)와 독립이므로 resumeAdvertising() 으로 즉시 되살릴 수 있다.
+     * [v1.0.42 Req3 · v1.0.43 개선] RSSI 슬립 진입 — 완전 정지가 아니라 LOW_POWER 연속 광고로 낮춘다.
+     * paused=true 로 둔 뒤 재광고하면 startAdvertising 이 LOW_POWER(~1s) 모드로 상시 송출한다.
+     * 상대 스캐너가 항상 나를 잡을 수 있어 재발견(→ wake) 지연이 사라진다.
+     * stopped(영구 종료)와 독립 — resumeAdvertising() 으로 언제든 즉시 BALANCED 로 승격.
      */
     fun pauseAdvertising() {
         if (stopped || paused) return
         paused = true
-        stateHandler.removeCallbacksAndMessages(null)      // 예약된 재광고/하트비트 전부 취소
+        stateHandler.removeCallbacksAndMessages(null)      // 예약된 재광고 콜백 전부 취소
         try { advertiser.stopAdvertising(callback) } catch (_: Exception) {}
-        Log.d(TAG, "RSSI 슬립 진입 — 연속 광고 중단(하트비트 유지)")
-        stateHandler.postDelayed(heartbeatRunnable, HEARTBEAT_INTERVAL_MS)
+        // stop→start OS 정리 대기 후 재광고 — paused=true 이므로 startAdvertising 이 LOW_POWER 연속으로 송출.
+        stateHandler.postDelayed({
+            startAdvertising(currentDeviceId, lastUwbAddress)
+        }, STATE_RESTART_DELAY_MS)
+        Log.d(TAG, "RSSI 슬립 진입 — LOW_POWER 연속 광고로 전환(상시 저빈도 송출)")
     }
 
     /**
-     * [v1.0.42 Req3] RSSI 웨이크 — 0ms 즉시 연속 광고 재개. 재개 시점의 최신 currentState/
-     * currentSpeedKmh 가 그대로 패킹돼 나가므로 '강한 LocalState 송출' 효과를 낸다(postDelayed 없음).
+     * [v1.0.42 Req3 · v1.0.43 개선] RSSI 웨이크 — 0ms 즉시 BALANCED 연속 광고로 승격.
+     * paused=false 로 둔 뒤 재광고하면 startAdvertising 이 BALANCED 모드로 올린다. 재개 시점의 최신
+     * currentState/currentSpeedKmh 가 그대로 패킹돼 나가 '강한 LocalState 송출' 효과를 낸다(postDelayed 없음).
      */
     fun resumeAdvertising() {
         if (stopped) return
         val wasPaused = paused
         paused = false
-        stateHandler.removeCallbacksAndMessages(null)      // 하트비트 버스트 잔여 콜백 제거
+        stateHandler.removeCallbacksAndMessages(null)      // 슬립 측 예약 콜백 제거
         try { advertiser.stopAdvertising(callback) } catch (_: Exception) {}
-        startAdvertising(currentDeviceId, lastUwbAddress)  // 0ms 즉시 연속 광고 ON
-        if (wasPaused) Log.d(TAG, "RSSI 웨이크 — 즉시 연속 광고 재개(LocalState 강송출)")
+        startAdvertising(currentDeviceId, lastUwbAddress)  // 0ms 즉시 BALANCED 연속 광고 ON
+        if (wasPaused) Log.d(TAG, "RSSI 웨이크 — 즉시 BALANCED 연속 광고로 승격(LocalState 강송출)")
     }
 
     fun stopAdvertising() {
