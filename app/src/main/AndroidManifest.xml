@@ -60,7 +60,6 @@
         </activity>
 
 <activity android:name=".ui.DevSettingsActivity" android:exported="false" />
-        <activity android:name=".ui.CalibrationWizardActivity" android:exported="false" />
         <activity android:name=".ui.BeaconManagerActivity" android:exported="false" />
         <activity android:name=".ui.BleSettingsActivity" android:exported="false" />
         <activity android:name=".ui.OpenSourceLicensesActivity" android:exported="false" />

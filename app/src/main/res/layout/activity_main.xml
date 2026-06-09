@@ -94,17 +94,27 @@
                             android:textSize="11sp" android:textColor="#8AAFC4"/>
                     </LinearLayout>
 
+                    <!-- ══ 내 장비 (Local) 섹션 — 내가 송출하는 역할/상태/속도 (수신 데이터와 분리) ══ -->
+                    <TextView
+                        android:id="@+id/tv_local_header"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:text="■ 내 장비 (Local)"
+                        android:textSize="12sp" android:textStyle="bold"
+                        android:textColor="#2563EB"/>
+
                     <!-- 이름 / ID (별도 줄, 굵게) -->
                     <TextView
                         android:id="@+id/tv_running_id"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="10dp"
+                        android:layout_marginTop="4dp"
                         android:textSize="18sp"
                         android:textStyle="bold"
                         android:textColor="#0D1B2A"/>
 
-                    <!-- 모드 -->
+                    <!-- 모드 (내 역할) -->
                     <TextView
                         android:id="@+id/tv_running_mode"
                         android:layout_width="match_parent"
@@ -114,17 +124,53 @@
                         android:textStyle="bold"
                         android:textColor="#0D1B2A"/>
 
-                    <!-- 감지 신호 목록 (RSSI 강한 순, 최대 10개) -->
+                    <!-- [v1.0.42 Req2] 내 장비 상태/속도 — localSnapshot 에서만 갱신(수신 데이터 영향 X) -->
+                    <TextView
+                        android:id="@+id/tv_local_state"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:background="#DBEAFE"
+                        android:padding="10dp"
+                        android:text="상태: 정지·일반 · 속도: 0 km/h"
+                        android:textSize="13sp" android:textStyle="bold"
+                        android:textColor="#1E3A8A"
+                        android:fontFamily="monospace"/>
+
+                    <!-- ══ 수신 타겟 (Target) 섹션 — 상대 기기 수신 데이터 전용 (내 장비와 분리) ══ -->
+                    <TextView
+                        android:id="@+id/tv_target_header"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="16dp"
+                        android:text="■ 수신 타겟 (Target)"
+                        android:textSize="12sp" android:textStyle="bold"
+                        android:textColor="#C0392B"/>
+
+                    <!-- 감지 신호 목록 placeholder (목록이 비었을 때만 표시) -->
                     <TextView
                         android:id="@+id/tv_approaching"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="10dp"
+                        android:layout_marginTop="6dp"
                         android:padding="14dp"
                         android:textSize="14sp"
                         android:textColor="#E0F0FF"
                         android:gravity="start"
                         android:lineSpacingMultiplier="1.4"
+                        android:fontFamily="monospace"/>
+
+                    <!-- 감지 기기 목록 / BLE 상태 (수신 타겟 상세 readout — detectedSnapshot 에서만 갱신) -->
+                    <TextView
+                        android:id="@+id/tv_ble_status"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="서비스 시작 중..."
+                        android:textSize="13sp" android:textColor="#5B8FA8"
+                        android:background="#DDE9F0"
+                        android:padding="12dp"
+                        android:lineSpacingMultiplier="1.3"
                         android:fontFamily="monospace"/>
 
                     <!-- 무음 인디케이터 -->
@@ -164,19 +210,6 @@
                         android:stateListAnimator="@null"
                         style="@style/Widget.MaterialComponents.Button.UnelevatedButton"
                         app:cornerRadius="12dp"/>
-
-                    <!-- BLE 상태 로그 (중지 버튼 아래, 작은 글씨) -->
-                    <TextView
-                        android:id="@+id/tv_ble_status"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="10dp"
-                        android:text="서비스 시작 중..."
-                        android:textSize="13sp" android:textColor="#5B8FA8"
-                        android:background="#DDE9F0"
-                        android:padding="12dp"
-                        android:lineSpacingMultiplier="1.3"
-                        android:fontFamily="monospace"/>
 
                 </LinearLayout>
             </androidx.cardview.widget.CardView>

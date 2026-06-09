@@ -31,6 +31,7 @@ import androidx.core.content.ContextCompat
 import com.wf11.safealert.BuildConfig
 import com.wf11.safealert.R
 import com.wf11.safealert.ble.BleConstants
+import com.wf11.safealert.ble.LocalState
 import com.wf11.safealert.utils.BeaconRegistry
 import com.wf11.safealert.utils.DevSettings
 import com.wf11.safealert.utils.OverlayManager
@@ -59,6 +60,12 @@ class MainActivity : AppCompatActivity() {
     // [v1.0.42] Broadcast 수신과 폴링 폴백이 공유하는 '마지막 반영 스냅샷'.
     //   같은 값이면 양쪽 모두 no-op → 중복 렌더 방지. 초기 sentinel()은 빈 목록("")과도 구분.
     private var lastSyncedSnapshot = ""
+
+    // [v1.0.42 Req2] 내 장비(Local) 상태 전용 '마지막 반영 스냅샷'.
+    //   Broadcast(BROADCAST_LOCAL_STATE)와 800ms 폴링(BleService.localSnapshot)이 공유한다.
+    //   ※ 이 채널은 '내가 송출하는' 상태만 운반한다 — 수신 타겟(detectedSnapshot)과 물리적으로 분리되어
+    //     상대 페이로드가 내 장비 표시를 절대 덮어쓸 수 없다(Req2 핵심 불변식).
+    private var lastLocalSnapshot = ""
 
     // 1초마다 서비스 상태 직접 폴링 (Broadcast 실패 대비)
     private val statusHandler = android.os.Handler(android.os.Looper.getMainLooper())
@@ -93,6 +100,13 @@ class MainActivity : AppCompatActivity() {
                     lastSyncedSnapshot = snap
                     applyDeviceListSnapshot(snap)
                     requestDetectedRender()
+                }
+                // [v1.0.42 Req2] 내 장비(Local) 상태/속도 — '내 송출' 전용 채널(localSnapshot)만 폴링.
+                //   tv_ble_status(수신 타겟)와 완전히 다른 소스라 수신 데이터가 여기로 새지 않는다.
+                val localSnap = BleService.localSnapshot
+                if (localSnap != lastLocalSnapshot) {
+                    lastLocalSnapshot = localSnap
+                    parseLocalSnapshot(localSnap)?.let { updateLocalDisplay(it) }
                 }
                 // [v1.0.26 Req2] tv_ble_status 는 '감지 기기 목록' 전용 영역으로 전환.
                 // 목록이 비었을 때만 그 자리에 '서비스 상태' 1줄을 임시로 표시한다.
@@ -191,6 +205,14 @@ class MainActivity : AppCompatActivity() {
                         binding.tvBleStatus.text = status
                     }
                 }
+
+                // [v1.0.42 Req2] 내 장비(Local) 상태 푸시 — 수신 타겟 데이터가 절대 건드리지 못하는 별도 채널.
+                //   tv_local_state(내 장비) 만 갱신한다. detectedDevices/tv_ble_status 는 손대지 않는다.
+                BleService.BROADCAST_LOCAL_STATE -> {
+                    val raw = intent.getStringExtra(BleService.EXTRA_LOCAL_STATE) ?: return
+                    lastLocalSnapshot = raw
+                    parseLocalSnapshot(raw)?.let { updateLocalDisplay(it) }
+                }
             }
         }
     }
@@ -231,6 +253,7 @@ class MainActivity : AppCompatActivity() {
             // [v1.0.26 Req2] BROADCAST_ALERT 구독 제거 — 목록·플로팅 모두 BleService(alertState)가 단일 관리.
             addAction(BleService.BROADCAST_DETECTED)
             addAction(BleService.BROADCAST_BLE_STATUS)
+            addAction(BleService.BROADCAST_LOCAL_STATE)   // [v1.0.42 Req2] 내 장비 상태 채널
         }
         registerReceiver(alertReceiver, filter, RECEIVER_NOT_EXPORTED)
         statusHandler.post(statusRunnable)
@@ -284,6 +307,31 @@ class MainActivity : AppCompatActivity() {
                 detectedDevices.add(Triple(name, level, rssi))
             }
         }
+    }
+
+    /**
+     * [v1.0.42 Req2] 내 장비(Local) 스냅샷 파서 — BleService.localSnapshot / EXTRA_LOCAL_STATE 전용.
+     *   형식: "category / state / speedKmh" (U+001F 필드 구분, BleService.broadcastLocalState 와 동일).
+     *   수신 타겟 파서(applyDeviceListSnapshot)와 의도적으로 분리 — 두 채널이 절대 섞이지 않는다.
+     */
+    private fun parseLocalSnapshot(raw: String): LocalState? {
+        if (raw.isEmpty()) return null
+        val f = raw.split(31.toChar())   // U+001F 필드 구분자
+        if (f.size < 3) return null
+        val cat = f[0].toIntOrNull() ?: return null
+        val st  = f[1].toIntOrNull() ?: return null
+        val sp  = f[2].toDoubleOrNull() ?: 0.0
+        return LocalState(cat, st, sp)
+    }
+
+    /**
+     * [v1.0.42 Req2] 내 장비(Local) 상태/속도를 tv_local_state 에만 출력.
+     *   역할(Category)은 tv_running_mode(roleDisplayName)가 담당 → 여기선 상태·속도만 표시(중복 방지).
+     *   이 메서드는 tv_ble_status(수신 타겟)·detectedDevices 를 절대 건드리지 않는다.
+     */
+    private fun updateLocalDisplay(local: LocalState) {
+        binding.tvLocalState.text =
+            "상태: ${local.stateLabel} · 속도: ${local.speedKmh.toInt()} km/h"
     }
 
     /**
@@ -569,6 +617,9 @@ class MainActivity : AppCompatActivity() {
         binding.tvApproaching.visibility = View.VISIBLE  // [v1.0.26 Req3] 중앙 안내(목록은 하단 tv_ble_status 로 이동)
         binding.layoutPermissionWarning.visibility = View.GONE
         updateDetectedDisplay()  // 초기 안내("감지 기기 없음") 표시
+        // [v1.0.42 Req2] 내 장비 상태 라인 초기화 — 서비스 첫 localSnapshot 수신 전 기본값.
+        binding.tvLocalState.text = "상태: 정지·일반 · 속도: 0 km/h"
+        lastLocalSnapshot = ""
         binding.tvRunningMode.text  = roleDisplayName(currentCategory)   // [v1.0.34] 3-Role 라벨
         binding.tvRunningSince.text = SimpleDateFormat("HH:mm 시작", Locale.KOREA).format(Date(since))
         // 이름 입력 시 이름, 없으면 자동 ID 표시

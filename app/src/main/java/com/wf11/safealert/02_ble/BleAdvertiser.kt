@@ -27,6 +27,11 @@ class BleAdvertiser(
         private const val STATE_RESTART_DELAY_MS = 50L
         // [v1.0.36] 속도 미세 변화 무시 임계(km/h). 1km/h 미만 변화는 재광고 생략(stop/start 폭주 방지).
         private const val MIN_SPEED_DELTA_KMH = 1.0
+        // [v1.0.42 Req3] RSSI 슬립 중 '하트비트' — 연속 광고는 끄되, HEARTBEAT_INTERVAL_MS 마다
+        //   HEARTBEAT_BURST_MS 동안만 짧게 광고를 켠다. 두 기기가 동시에 잠들어도(상호 슬립)
+        //   서로의 버스트를 스캔으로 잡아 재발견 → wake 할 수 있게 하는 데드락 방지 장치.
+        private const val HEARTBEAT_INTERVAL_MS = 4000L
+        private const val HEARTBEAT_BURST_MS    = 700L
     }
 
     private val callback = object : AdvertiseCallback() {
@@ -57,9 +62,18 @@ class BleAdvertiser(
     //   광고하지 않는다(재시작은 BleService 가 BleAdvertiser 를 새로 생성하므로 안전).
     @Volatile private var stopped = false
 
+    // [v1.0.42 Req3] RSSI 동적 슬립 가드 — stopped(영구 종료)와 '독립'. paused=true 면 연속 광고를
+    //   쉬고 하트비트만 내보낸다. resumeAdvertising() 으로 언제든 즉시(0ms) 깨어날 수 있다.
+    //   ※ stopped 와 분리해야 함: stopped 는 단방향 종료(재광고 영구 차단)이므로 슬립/웨이크에 쓰면
+    //     한 번 자면 다시 못 깨는 데드락이 된다 → 별도 플래그(paused)로 일시정지/재개를 구현한다.
+    @Volatile private var paused = false
+
+    /** [v1.0.42 Req3] 현재 RSSI 슬립(일시정지) 상태인지 — BleService 의 전력관리 평가가 참조. */
+    val isPaused: Boolean get() = paused
+
     // [v1.0.34 다이나믹 페이로드] 현재 송신자 STATE(2bit, PSTATE_*) — Category·Speed 와 함께
     //   encodePayload() 로 1바이트로 패킹되어 ServiceData 로 탑재된다.
-    @Volatile private var currentState: Int = BleConstants.PSTATE_NORMAL
+    @Volatile private var currentState: Int = BleConstants.PSTATE_IDLE
     // [v1.0.36] 현재 송신 예상속도(km/h, 0~15) — startAdvertising 이 Speed 4비트로 패킹해 싣는다.
     //   BleService 가 ImuFusion.estimatedSpeedKmh 를 주기적으로 updateSpeed() 로 밀어 넣는다.
     @Volatile private var currentSpeedKmh: Double = 0.0
@@ -68,6 +82,13 @@ class BleAdvertiser(
     // 재광고 시 UWB 주소 유지 (updateState / restartWithUwbAddress 공용)
     private var lastUwbAddress: ByteArray? = null
     private val stateHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
+    // ── [v1.0.42 Req2] 현재 '송출 중'인 로컬 상태 읽기 전용 노출 — 내 장비(Local) UI 표시 전용 ──
+    //   BleService 가 이 값들로 LocalState 를 구성해 MainActivity 에 전파한다.
+    //   수신(Target) 경로와 완전히 분리 — 외부에서 쓰기 불가(읽기 전용 getter).
+    val txCategory: Int  get() = category
+    val txState: Int     get() = currentState
+    val txSpeedKmh: Double get() = currentSpeedKmh
 
     /**
      * @param uwbLocalAddress 이 기기의 UWB 주소 2바이트 (null = UWB 미지원/미초기화)
@@ -172,7 +193,7 @@ class BleAdvertiser(
 
     /** v1.0.36 광고 정지 후 STATE_RESTART_DELAY_MS 뒤 최신 페이로드로 재광고 (updateState/updateSpeed 공용). */
     private fun restartAdvertise() {
-        if (stopped) return
+        if (stopped || paused) return   // [v1.0.42 Req3] 슬립 중엔 STATE/Speed 갱신이 광고를 깨우지 않음
         try { advertiser.stopAdvertising(callback) } catch (_: Exception) {}
         stateHandler.postDelayed({
             startAdvertising(currentDeviceId, lastUwbAddress)
@@ -181,13 +202,58 @@ class BleAdvertiser(
 
     /** UWB 주소 준비 완료 후 광고 재시작 */
     fun restartWithUwbAddress(uwbLocalAddress: ByteArray) {
-        if (stopped) return
+        if (stopped || paused) return   // [v1.0.42 Req3] 슬립 중엔 UWB 재시작도 광고를 깨우지 않음
         try { advertiser.stopAdvertising(callback) } catch (_: Exception) {}
         // [v1.0.41] 전용 Handler 대신 stateHandler 로 통일 — stopAdvertising() 의
         //   removeCallbacksAndMessages(null) 한 번으로 모든 예약 재광고를 취소하기 위함.
         stateHandler.postDelayed({
             startAdvertising(currentDeviceId, uwbLocalAddress)
         }, 300)
+    }
+
+    // ── [v1.0.42 Req3] RSSI 동적 슬립/웨이크 ────────────────────────────────
+    /**
+     * 슬립 중(paused) 주기적 하트비트 — 연속 광고는 꺼두되 HEARTBEAT_INTERVAL_MS 마다
+     * HEARTBEAT_BURST_MS 동안만 짧게 광고를 켰다 끈다. 두 기기가 동시에 잠들어도
+     * 서로의 버스트를 스캔으로 잡아 재발견(→ wake) 할 수 있게 하는 상호-슬립 데드락 방지.
+     */
+    private val heartbeatRunnable = object : Runnable {
+        override fun run() {
+            if (stopped || !paused) return                 // 종료/이미 깨어남 → 하트비트 종료
+            startAdvertising(currentDeviceId, lastUwbAddress)   // 짧은 버스트 ON
+            stateHandler.postDelayed({
+                if (stopped || !paused) return@postDelayed     // 버스트 도중 깨어났으면 그대로 둔다
+                try { advertiser.stopAdvertising(callback) } catch (_: Exception) {}  // 버스트 OFF
+            }, HEARTBEAT_BURST_MS)
+            stateHandler.postDelayed(this, HEARTBEAT_INTERVAL_MS)   // 다음 하트비트 예약
+        }
+    }
+
+    /**
+     * [v1.0.42 Req3] RSSI 슬립 진입 — 연속 광고를 멈추고 하트비트 모드로 전환.
+     * stopped(영구 종료)와 독립이므로 resumeAdvertising() 으로 즉시 되살릴 수 있다.
+     */
+    fun pauseAdvertising() {
+        if (stopped || paused) return
+        paused = true
+        stateHandler.removeCallbacksAndMessages(null)      // 예약된 재광고/하트비트 전부 취소
+        try { advertiser.stopAdvertising(callback) } catch (_: Exception) {}
+        Log.d(TAG, "RSSI 슬립 진입 — 연속 광고 중단(하트비트 유지)")
+        stateHandler.postDelayed(heartbeatRunnable, HEARTBEAT_INTERVAL_MS)
+    }
+
+    /**
+     * [v1.0.42 Req3] RSSI 웨이크 — 0ms 즉시 연속 광고 재개. 재개 시점의 최신 currentState/
+     * currentSpeedKmh 가 그대로 패킹돼 나가므로 '강한 LocalState 송출' 효과를 낸다(postDelayed 없음).
+     */
+    fun resumeAdvertising() {
+        if (stopped) return
+        val wasPaused = paused
+        paused = false
+        stateHandler.removeCallbacksAndMessages(null)      // 하트비트 버스트 잔여 콜백 제거
+        try { advertiser.stopAdvertising(callback) } catch (_: Exception) {}
+        startAdvertising(currentDeviceId, lastUwbAddress)  // 0ms 즉시 연속 광고 ON
+        if (wasPaused) Log.d(TAG, "RSSI 웨이크 — 즉시 연속 광고 재개(LocalState 강송출)")
     }
 
     fun stopAdvertising() {

@@ -42,11 +42,10 @@ object BleConstants {
     const val MOTION_STATE_NORMAL     = 0x01
     const val MOTION_STATE_SUDDEN     = 0x02
 
-    // [v1.0.39] 급정거·급회전(0x02) 즉시 DANGER 격상 임계를 위험(rssiDanger=-55)으로 통일.
-    //   (구 SUDDEN_ALERT_RSSI_THRESHOLD=-60 → 모든 위험 발령을 -55 이내로 일관)
-    //   상대 STATE 가 급변(급정거/급회전)이고 정제 칼만 RSSI가 rssiDanger 이상(가까움)이면
-    //   TTC·속도·방향 조건을 모두 무시하고 즉시 최고 DANGER로 격상한다.
-    //   사용처(BleService 0x02 분기)에서 BleConstants.rssiDanger 를 직접 참조한다.
+    // [v1.0.42] 특수상태(후진 PSTATE_REVERSE / 하역 PSTATE_LOADING) 즉시 DANGER 격상 임계를
+    //   위험(rssiDanger=-55)으로 통일. 상대 STATE 가 후진·하역이고 정제 RSSI가 rssiDanger 이상
+    //   (가까움)이면 TTC·속도·방향 조건을 모두 무시하고 즉시 최고 DANGER로 격상한다.
+    //   사용처(BleService 특수경보 분기)에서 BleConstants.rssiDanger 를 직접 참조한다.
 
     // ───────────────────────────────────────────────────────────────
     // [v1.0.34 다이나믹 페이로드 — 1Byte 비트패킹 프로토콜 (2-2-4 Split)]
@@ -58,11 +57,11 @@ object BleConstants {
     //
     //   CAT  (Category, 송신자 역할 — bits 7:6):
     //     00 보행자(WALKER) / 01 EPJ / 10 지게차·리치·오더피커(FORKLIFT) / 11 예약
-    //   STATE (송신자 동적 상태 — bits 5:4):
-    //     00 평상(NORMAL)
-    //     01 급정거·급회전(SUDDEN)   - 공통(특수경보 트리거)
-    //     11 비상(EMERGENCY)         - 공통 / 지게차는 '하역·오더피커 상승'
-    //     10 후진(REVERSE)           - 지게차 전용
+    //   STATE (송신자 동적 상태 — bits 5:4) [v1.0.42 의미 재정의]:
+    //     00 정지·일반(IDLE)      - 정지 또는 평상(특수경보 아님)
+    //     01 전진·주행(FORWARD)   - 평상 주행(특수경보 아님)
+    //     10 후진(REVERSE)        - 특수경보 트리거
+    //     11 하역·작업(LOADING)   - 특수경보 트리거 / 지게차는 '상부 고소 작업'
     //   SPEED (bits 3:0): 0~15 km/h 를 1km/h 단위로 양자화 → 코드 0~15 (4비트 full).
     //          공식: encode = (kmh / 1.0).toInt(),  decode = code * 1.0 (km/h).
     //          [v1.0.36] 송신단(ImuFusion.estimatedSpeedKmh, 가속도 RMS 기반 예상속도)이
@@ -78,11 +77,11 @@ object BleConstants {
     const val CAT_FORKLIFT = 0b10   // 지게차·리치·오더피커
     const val CAT_RESERVED = 0b11   // 예약
 
-    // State (bits 5:4)
-    const val PSTATE_NORMAL    = 0b00   // 평상
-    const val PSTATE_SUDDEN    = 0b01   // 급정거·급회전 (공통, 특수경보 트리거)
-    const val PSTATE_REVERSE   = 0b10   // 후진 (지게차 전용)
-    const val PSTATE_EMERGENCY = 0b11   // 비상(공통) / 지게차 하역·오더피커 상승
+    // State (bits 5:4) — [v1.0.42] 의미 재정의: 차량 주행 모드 중심
+    const val PSTATE_IDLE    = 0b00   // 정지·일반 (정지 또는 평상)
+    const val PSTATE_FORWARD = 0b01   // 전진·주행 (평상 주행 — 특수경보 아님)
+    const val PSTATE_REVERSE = 0b10   // 후진 (특수경보 트리거)
+    const val PSTATE_LOADING = 0b11   // 하역·작업 (특수경보 / 지게차 상부 고소 작업)
 
     // Speed (bits 3:0) — 1km/h 단위 양자화 [v1.0.36: 0~6 0.5단위 → 0~15 1단위 확장]
     const val SPEED_UNIT_KMH = 1.0      // 1코드 = 1km/h
@@ -127,4 +126,53 @@ object BleConstants {
 
     /** 패킹된 1바이트에서 Speed 를 km/h 실측값으로 환산 (코드 * 1.0). */
     fun decodeSpeedKmh(payload: Int): Double = decodeSpeed(payload) * SPEED_UNIT_KMH
+
+    // ── [v1.0.42 Req2] 표시용 한글 라벨 (Local/Target 양쪽 UI 가 공유하는 단일 소스) ──
+    /** Category(CAT_*) -> 표시용 한글 라벨. */
+    fun categoryLabel(category: Int): String = when (category) {
+        CAT_WALKER   -> "보행자"
+        CAT_EPJ      -> "EPJ"
+        CAT_FORKLIFT -> "지게차"
+        else         -> "예비"
+    }
+
+    /** State(PSTATE_*) -> 표시용 한글 라벨 (v1.0.42 의미 재정의: 정지·일반/전진·주행/후진/하역·작업). */
+    fun stateLabel(state: Int): String = when (state) {
+        PSTATE_IDLE    -> "정지·일반"
+        PSTATE_FORWARD -> "전진·주행"
+        PSTATE_REVERSE -> "후진"
+        PSTATE_LOADING -> "하역·작업"
+        else           -> "정지·일반"
+    }
+}
+
+/**
+ * [v1.0.42 Req2] 내 장비(Local) 송신 상태 — 내가 BLE 로 '송출'하는 역할/상태/속도.
+ *   수신(Target)과 완전히 분리된 별도 모델이다. 상대 페이로드 디코드 결과(TargetState)가
+ *   이 값을 절대 덮어쓰지 않도록 데이터 모델 자체를 분리한다(received hex → local UI 오염 차단).
+ */
+data class LocalState(
+    val category: Int    = BleConstants.CAT_WALKER,    // 내 역할 (CAT_*)
+    val state: Int       = BleConstants.PSTATE_IDLE,    // 내 동적 상태 (PSTATE_*)
+    val speedKmh: Double = 0.0                          // 내 송출 예상속도 (0~15)
+) {
+    val categoryLabel: String get() = BleConstants.categoryLabel(category)
+    val stateLabel: String    get() = BleConstants.stateLabel(state)
+}
+
+/**
+ * [v1.0.42 Req2] 수신 타겟(Target) 상태 — 상대 기기가 송출한 1바이트 페이로드 디코드 결과.
+ *   deviceId 별 1개. 내 장비(Local) 표시에 절대 영향을 주지 않는다.
+ */
+data class TargetState(
+    val deviceId: String,
+    val displayName: String,
+    val category: Int,        // 상대 역할 (CAT_*)
+    val state: Int,           // 상대 동적 상태 (PSTATE_*)
+    val speedKmh: Double,     // 상대 송출 속도 (km/h)
+    val level: Int,           // 경보 레벨 (LEVEL_*)
+    val rssi: Int             // 최근 RSSI (dBm)
+) {
+    val categoryLabel: String get() = BleConstants.categoryLabel(category)
+    val stateLabel: String    get() = BleConstants.stateLabel(state)
 }

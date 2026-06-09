@@ -51,9 +51,11 @@ class BleService : LifecycleService() {
         const val EXTRA_STATUS         = "extra_status"
         const val EXTRA_DEVICE_LIST    = "extra_device_list"    // [v1.0.26 Req2] 직렬화된 감지 기기 목록(최대 10)
         const val EXTRA_DEVICE_COUNT   = "extra_device_count"   // [v1.0.26 Req2] 목록 기기 수(0=감지 없음)
+        const val EXTRA_LOCAL_STATE    = "extra_local_state"    // [v1.0.42 Req2] 내 장비(Local) 직렬화 상태
         const val BROADCAST_ALERT      = "com.wf11.safealert.ALERT"
         const val BROADCAST_DETECTED   = "com.wf11.safealert.DETECTED"
         const val BROADCAST_BLE_STATUS = "com.wf11.safealert.BLE_STATUS"
+        const val BROADCAST_LOCAL_STATE = "com.wf11.safealert.LOCAL_STATE"   // [v1.0.42 Req2] 내 장비(Local) 상태 전파
         private const val CHANNEL_ID   = "safealert_channel"
         private const val NOTIF_ID     = 1001
 
@@ -69,6 +71,10 @@ class BleService : LifecycleService() {
         //   직렬화: 레코드 구분 U+001E, 필드 구분 U+001F, 필드 순서 level/rssi/name.
         @Volatile var detectedSnapshot: String = ""   // "levelrssiname" 레코드, 구분 
         @Volatile var detectedCount: Int       = 0    // 현재 경보 중(alertState) 기기 수
+        // [v1.0.42 Req2] 내 장비(Local) 상태 스냅샷 — 수신(Target) 경로와 완전 분리된 단일 소스.
+        //   직렬화 필드 순서 = category / state / speedKmh (필드 구분 U+001F).
+        //   오직 내 송출 상태(myCategory + bleAdvertiser TX)에서만 갱신 — 상대 페이로드가 절대 못 건드린다.
+        @Volatile var localSnapshot: String    = ""
     }
 
     private var bleAdvertiser: BleAdvertiser? = null
@@ -209,8 +215,7 @@ class BleService : LifecycleService() {
         return buf.filter { now - it.first <= windowMs }.maxOfOrNull { it.second }
     }
 
-    private val ttcFeedbackMap = mutableMapOf<String, Pair<Double, Long>>()
-    private val LEARN_RATE = 0.05f
+    // [v1.0.42] ttcFeedbackMap / LEARN_RATE 제거 — pathLossExp 온라인 학습(거리 모델 자가학습) 폐지.
 
     private val recedingStartMap = mutableMapOf<String, Long>()
     private val RECEDING_CLEAR_MS = 2500L
@@ -219,6 +224,23 @@ class BleService : LifecycleService() {
     private val RECEDING_DBM_DROP = 5
     // 기기별 마지막 avgRssi 보관 — 플로팅 위젯 최우선 기기 선정·정렬에 사용
     private val deviceRssiMap     = mutableMapOf<String, Int>()
+
+    // ── [v1.0.42 Req3] RSSI 동적 슬립/웨이크 (송출 전력 관리) ─────────────────
+    //   모든 타겟 RSSI ≤ SLEEP_RSSI_DBM(-90)/신호 없음 → 광고 슬립(연속 송출 중단, 하트비트만).
+    //   하나라도 RSSI ≥ WAKE_RSSI_DBM(-89) → 0ms 즉시 웨이크(연속 광고 재개 + LocalState 강송출).
+    //   스캔(RX)은 절대 멈추지 않으므로 접근 감지/웨이크는 항상 살아 있다.
+    private val WAKE_RSSI_DBM    = -89          // 이 값 이상(가까움)이면 즉시 웨이크
+    private val SLEEP_RSSI_DBM   = -90          // 모든 신호가 이 값 이하면 슬립 (경계: -89/-90 정수 간격 0)
+    private val SIGNAL_STALE_MS  = 6_000L       // 이보다 오래된 RSSI 표본은 '신호 없음'으로 간주
+    private val ADV_POWER_EVAL_MS = 2_500L      // 송출 전력 주기 평가 간격
+    // deviceId → (최근 effectiveRssi, 기록 시각ms). 웨이크 판단/슬립 평가의 단일 소스.
+    private val wakeRssiMap = mutableMapOf<String, Pair<Int, Long>>()
+    private val advPowerHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
+    // [v1.0.42 Req5] dev_settings 변경 라이브 전파 리스너 — 강한 참조로 보관(필드).
+    //   SharedPreferences 가 리스너를 WeakReference 로 들고 있어 지역변수로 두면 GC 되어 끊긴다.
+    private val devPrefsListener =
+        android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key -> applyLiveSettings(key) }
 
     // [v1.0.25 Req4] 기기별 음소거(Acknowledge) — deviceId → 음소거 해제 시각(ms). 플로팅 터치 시 등록.
     private val mutedDevices      = mutableMapOf<String, Long>()
@@ -244,7 +266,10 @@ class BleService : LifecycleService() {
     //   '가까워짐'을 APPROACH_TIMEGATE_MS(0.5초) 연속 유지할 때만 신규/격상 경보를 발령한다.
     //   → 전파 튐(single-frame spike)으로 인한 즉각 오알람을 차단. 쿨다운 재알람·0x02 특수경보·
     //     TTC 선발령에는 적용하지 않는다(끊김 방지/즉각 안전 — 각 경로가 위에서 먼저 return).
-    private val APPROACH_TIMEGATE_MS      = 500L   // 신규/격상 경보 전 최소 연속 접근 시간(평상)
+    // [v1.0.42 Req5] Time-Gate 지연 시간 — DevSettings 에서 라이브로 읽는다(앱 재시작 없이 반영,
+    //   기본 500L=기존값 그대로). 게이트 판정 로직(아래 processAlert)은 일절 손대지 않고 '값의 출처'만
+    //   상수→설정으로 옮긴다 → 칼만/3중 하드게이트/기하학 판정 보존.
+    private val APPROACH_TIMEGATE_MS: Long get() = DevSettings.timeGateMs   // 신규/격상 경보 전 최소 연속 접근 시간(평상)
     private val APPROACH_TIMEGATE_VEL_DBM = 0.5    // '가까워짐' 판정 최소 접근속도(dBm/s)
     // [v1.0.36] 코너링 중 Time-Gate 연장 — 내 장비가 급회전 중이면 전파가 일시 출렁이므로
     //   오작동 방지를 위해 0.5초 → 1.0초로 일시 연장한다(ImuFusion.isCornering 으로 판정).
@@ -270,6 +295,7 @@ class BleService : LifecycleService() {
                 minOf(ImuFusion.estimatedSpeedKmh, BleConstants.EPJ_MAX_SPEED_KMH.toFloat())
             else ImuFusion.estimatedSpeedKmh
             bleAdvertiser?.updateSpeed(txSpeed)
+            broadcastLocalState()   // [v1.0.42 Req2] 주기 갱신 — Local UI(상태/속도) 폴링 소스 최신 유지
             speedPushHandler.postDelayed(this, SPEED_PUSH_INTERVAL_MS)
         }
     }
@@ -301,16 +327,20 @@ class BleService : LifecycleService() {
                 }
             }
         }
-        // [v1.0.34 다이나믹 페이로드] IMU 3-State 모션 변화 → 송신 STATE(PSTATE_*) 매핑 후 광고 갱신.
-        //   v1.0.34 는 급변(0x02)만 PSTATE_SUDDEN 으로 싣고, 정지(0x00)·일반이동(0x01)은 PSTATE_NORMAL 로 통합.
-        //   (후진 PSTATE_REVERSE / 하역 PSTATE_EMERGENCY 는 예약 — ACTION_TEST_STATE 로만 수동 주입)
+        // [v1.0.42 의미 재정의] IMU 3-State 모션 변화 → 송신 STATE(PSTATE_*) 매핑 후 광고 갱신.
+        //   정지(0x00) → PSTATE_IDLE(정지·일반), 일반이동(0x01)·급변(0x02) → PSTATE_FORWARD(전진·주행).
+        //   IMU 는 후진/하역을 판별할 수 없으므로 PSTATE_REVERSE / PSTATE_LOADING 는
+        //   ACTION_TEST_STATE(또는 차량 통합)로만 수동 주입한다.
+        //   ※ 급정거로 인한 빠른 접근은 State 가 아니라 충돌 기하학 필터(Speed+kfVel)가 감지한다.
         ImuFusion.onMotionStateChanged = { code ->
-            val pState = if (code == BleConstants.MOTION_STATE_SUDDEN)
-                BleConstants.PSTATE_SUDDEN else BleConstants.PSTATE_NORMAL
+            val pState = if (code == BleConstants.MOTION_STATE_STATIONARY)
+                BleConstants.PSTATE_IDLE else BleConstants.PSTATE_FORWARD
             bleAdvertiser?.updateState(pState)
+            broadcastLocalState()   // [v1.0.42 Req2] 내 상태 변화 즉시 Local UI 전파
         }
         // [v1.0.36] 속도 송신 폴링 시작 — 주기적으로 내 예상속도를 광고 Speed 4비트로 공유.
         speedPushHandler.post(speedPushRunnable)
+        DevSettings.registerOnChange(devPrefsListener)   // [v1.0.42 Req5] 설정 라이브 전파 구독
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -363,12 +393,13 @@ class BleService : LifecycleService() {
             ACTION_MUTE_TEMP   -> muteTemporarily("화면 터치")
             ACTION_UNMUTE      -> unmuteImmediately()
             ACTION_MUTE_DEVICE -> muteDevice(intent.getStringExtra(EXTRA_ID))
-            // [v1.0.34] 개발자 수동 STATE 주입 — 후진(PSTATE_REVERSE)/하역(PSTATE_EMERGENCY) 예약비트
-            //   송신 무결성을 2-기기 현장 테스트로 검증하기 위한 훅(평상 복귀=PSTATE_NORMAL).
+            // [v1.0.42] 개발자 수동 STATE 주입 — 후진(PSTATE_REVERSE=2)/하역(PSTATE_LOADING=3) 특수상태.
+            //   송신 무결성을 2-기기 현장 테스트로 검증하기 위한 훅(평상 복귀=PSTATE_IDLE).
             //   예) adb shell am startservice -n .../BleService -a ACTION_TEST_STATE --ei extra_pstate 2
             ACTION_TEST_STATE -> {
-                val s = intent.getIntExtra(EXTRA_PSTATE, BleConstants.PSTATE_NORMAL)
+                val s = intent.getIntExtra(EXTRA_PSTATE, BleConstants.PSTATE_IDLE)
                 bleAdvertiser?.updateState(s)
+                broadcastLocalState()   // [v1.0.42 Req2] 수동 STATE 주입 즉시 Local UI 반영
                 sendStatusBroadcast("수동 STATE 주입: $s")
             }
         }
@@ -432,6 +463,8 @@ class BleService : LifecycleService() {
                     bleAdv.startAdvertising(myId)
                 }
                 sendStatusBroadcast("TX 송출 요청: $myId")
+                broadcastLocalState()   // [v1.0.42 Req2] 송출 시작 시점 Local 상태 초기 전파
+                startAdvPowerManager()  // [v1.0.42 Req3] RSSI 기반 송출 전력 관리(슬립/웨이크) 시작
                 Log.d(TAG, "TX 시작: $prefix$myId")
             } else {
                 sendStatusBroadcast("❌ TX 오류: 이 기기는 BLE 광고 미지원")
@@ -455,6 +488,7 @@ class BleService : LifecycleService() {
                                 && !DevSettings.walkerDetectsWalker) return
 
                             val effectiveRssi = if (DevSettings.debugMode) DevSettings.simulatedRssi else rssi
+                            noteRssiForWake(deviceId, effectiveRssi)   // [v1.0.42 Req3] 근접 신호 → 즉시 웨이크 판단
                             processAlert(deviceId, effectiveRssi, remoteState, remoteSpeedKmh)
                             // [v1.0.26 Req2] processAlert 가 alertState 를 어떻게 바꿨든(추가·격상·SAFE 제거·TTC 선발령)
                             // 그 직후 전체 스냅샷을 한 번에 송출 → 하단 목록이 플로팅·알람과 절대 어긋나지 않는다.
@@ -473,6 +507,7 @@ class BleService : LifecycleService() {
                             recedingStartMap.remove(deviceId)
                             peakAlertRssiMap.remove(deviceId)
                             deviceRssiMap.remove(deviceId)
+                            wakeRssiMap.remove(deviceId)              // [v1.0.42 Req3] 슬립/웨이크 표본 정리
                             approachStreakStartMap.remove(deviceId)   // [v1.0.35] Time-Gate 접근 추적 정리
                             oneSecBuffer.remove(deviceId)   // [v1.0.31] 게이트가 raw도 push → 신호소실 시 함께 정리
                             mutedDevices.remove(deviceId)
@@ -619,15 +654,10 @@ class BleService : LifecycleService() {
         val rState    = BleConstants.decodeState(remoteState)
         deviceCategoryMap[deviceId] = rCategory   // 표시 라벨(보행자/EPJ/지게차) 판별용 캐시
 
-        // UWB 거리 우선: ToF 거리를 RSSI 등가값으로 변환
-        val inputRssi: Int = run {
-            val uwbDist = uwbRanger?.uwbDistances?.get(deviceId)
-            if (uwbDist != null && uwbDist > 0f) {
-                val calib = DevSettings.calibRssiAt1m.toDouble()
-                val n     = DevSettings.pathLossExp.toDouble()
-                (calib - 10.0 * n * Math.log10(uwbDist.toDouble())).toInt()
-            } else rssi
-        }
+        // [v1.0.42] UWB 거리→RSSI 환산(calibRssiAt1m/pathLossExp 의존) 제거.
+        //   거리 추정은 칼만 필터(RSSI)만으로 수행 — 수신 raw RSSI 를 그대로 전처리 파이프라인에 투입.
+        //   (UWB 주소 교환 세션은 유지하되, ToF 거리는 더 이상 경보 판정에 사용하지 않는다.)
+        val inputRssi: Int = rssi
 
         val mode     = DevSettings.detectionMode
         val auxRatio = DevSettings.blendRatio / 100.0
@@ -680,8 +710,8 @@ class BleService : LifecycleService() {
             return
         }
 
-        // ── [v1.0.29 → v1.0.39] 0x02 특수경보 (최우선 분기 · 하이브리드 교차검증) ──────────
-        // 상대 remoteState 가 0x02(급정거/급회전)이고 'smoothedRssi(EMA)와 avg1sec(raw 1초평균)'이
+        // ── [v1.0.42] 후진·하역 특수경보 (최우선 분기 · 하이브리드 교차검증) ──────────
+        // 상대 remoteState 가 후진(REVERSE=10)/하역(LOADING=11)이고 'smoothedRssi(EMA)와 avg1sec(raw 1초평균)'이
         // 둘 다 위험권(rssiDanger=-55) 이상(가까움)일 때만 TTC·속도·방향·절대거리 가드를 무시하고 즉시 DANGER 격상.
         //   ★ v1.0.32: 거리 판정을 kfRssi(칼만) → smoothedRssi(=preFiltered, EMA 출력)로 변경.
         //     칼만 lag 로 실제보다 가깝게 떠 있는 원거리 오발을 줄이고 지침(smoothedRssi 기준)을 준수.
@@ -690,8 +720,8 @@ class BleService : LifecycleService() {
         //     (Ghost Danger)'을 낼 수 있는데, 반응이 빠른 raw 1초평균이 이미 멀어졌으면(rssiDanger 미만)
         //     즉시 차단해 이탈 기기의 과경보 잔상을 완전히 제거한다.
         //   ★ v1.0.39: 즉시 격상 임계를 구 SUDDEN_ALERT_RSSI_THRESHOLD(-60) → rssiDanger(-55)로 통일.
-        // 표시문자열을 "{이름}이(가) 급정거 또는 급회전 중입니다."로 덮어써 오버레이·목록에 출력.
-        if (rState != BleConstants.PSTATE_NORMAL
+        // 표시문자열을 makeStateLabel(후진·하역 경보 문구)로 덮어써 오버레이·목록에 출력.
+        if ((rState == BleConstants.PSTATE_REVERSE || rState == BleConstants.PSTATE_LOADING)
             && preFiltered >= BleConstants.rssiDanger
             && avg1sec     >= BleConstants.rssiDanger) {
             deviceRssiMap[deviceId]  = kalmanRssi
@@ -882,7 +912,6 @@ class BleService : LifecycleService() {
             && (recentPeakRssi(deviceId, 500L) ?: avg1sec) >= BleConstants.rssiDanger) {
             val ttc = estimateTTC(kfRssi, kfVel)
             if (ttc != null && ttc <= TTC_THRESHOLD_SEC) {
-                ttcFeedbackMap[deviceId] = Pair(ttc, now)
                 alertState[deviceId] = Pair(BleConstants.LEVEL_DANGER, now)  // ★ 먼저 업데이트 → 목록에 DANGER 반영
                 Log.w(TAG, "TTC 선발령: $deviceId TTC=%.1fs kfVel=%.2fdBm/s".format(ttc, kfVel))
                 forceAlarmVolume()
@@ -1156,22 +1185,9 @@ class BleService : LifecycleService() {
         Log.d(TAG, "상태: $status")
     }
 
-    private fun learnFromTTCFeedback(deviceId: String) {
-        val feedback = ttcFeedbackMap.remove(deviceId) ?: return
-        val (predictedTtc, alertTime) = feedback
-        val actualTtc = (System.currentTimeMillis() - alertTime) / 1000.0
-        if (actualTtc < 0.5 || actualTtc > 30.0) return
-        val ratio = (actualTtc / predictedTtc).coerceIn(0.5, 2.0)
-        val currentN = DevSettings.pathLossExp
-        val correction = LEARN_RATE * (1.0 - ratio).toFloat() * currentN
-        val newN = (currentN + correction).coerceIn(1.5f, 4.5f)
-        if (Math.abs(newN - currentN) > 0.01f) {
-            DevSettings.pathLossExp = newN
-            Log.i(TAG, "TTC 학습: n %.2f → %.2f (예측 %.1fs, 실제 %.1fs)".format(
-                currentN, newN, predictedTtc, actualTtc))
-            sendStatusBroadcast("거리 모델 학습: n=%.2f".format(newN))
-        }
-    }
+    // [v1.0.42] learnFromTTCFeedback() 제거 — pathLossExp(경로손실지수) 온라인 학습 폐지.
+    //   거리 추정은 칼만 필터(RSSI)만으로 수행하므로 거리 모델 자가학습 루프는 불필요.
+    //   (호출처 없는 死코드였으며 TTC 선발령 경보 동작에는 영향 없음.)
 
     private fun extractDisplayName(deviceId: String): String {
         val suffix = when {
@@ -1241,22 +1257,21 @@ class BleService : LifecycleService() {
     }
 
     /**
-     * v1.0.34 특수상태(STATE!=평상) 경보 표시문자열 - Category/State 조합 (directive 4).
-     *   급정거(SUDDEN, 공통): 보행자는 기존 문장, EPJ·지게차는 "{이름} {역할} 급정거·급회전 중! 주의!"
-     *   후진(REVERSE, 지게차): "{이름} 지게차 후진 중! 주의!"
-     *   비상(EMERGENCY): 지게차는 "{이름} 상부 고소 작업 중! 낙하물 주의!", 그 외 공통 "{이름} {역할} 비상 상황!"
+     * v1.0.42 특수상태(후진·하역) 경보 표시문자열 - Category/State 조합.
+     *   후진(REVERSE): 지게차는 "{이름} 지게차 후진 중! 주의!", 그 외 "{이름} {역할} 후진 중! 주의!"
+     *   하역·작업(LOADING): 지게차는 "{이름} 상부 고소 작업 중! 낙하물 주의!", 그 외 "{이름} {역할} 하역·작업 중! 주의!"
+     *   ※ 정지·일반(IDLE)·전진·주행(FORWARD)은 특수경보가 아니므로 이 함수는 호출되지 않는다(폴백만).
      */
     private fun makeStateLabel(name: String, category: Int, state: Int): String {
         val role = categoryRoleName(category)
         return when (state) {
-            BleConstants.PSTATE_SUDDEN ->
-                if (category == BleConstants.CAT_WALKER) makeSuddenLabel(name)
-                else "$name $role 급정거·급회전 중! 주의!"
-            BleConstants.PSTATE_REVERSE   -> "$name 지게차 후진 중! 주의!"
-            BleConstants.PSTATE_EMERGENCY ->
+            BleConstants.PSTATE_REVERSE ->
+                if (category == BleConstants.CAT_FORKLIFT) "$name 지게차 후진 중! 주의!"
+                else "$name $role 후진 중! 주의!"
+            BleConstants.PSTATE_LOADING ->
                 if (category == BleConstants.CAT_FORKLIFT) "$name 상부 고소 작업 중! 낙하물 주의!"
-                else "$name $role 비상 상황!"
-            else                          -> makeSuddenLabel(name)
+                else "$name $role 하역·작업 중! 주의!"
+            else -> "$name $role 주행 중! 주의!"
         }
     }
 
@@ -1308,6 +1323,100 @@ class BleService : LifecycleService() {
         })
     }
 
+    // ── [v1.0.42 Req2] 내 장비(Local) 상태 전파 — 수신(Target) 경로와 완전 분리 ──────────
+    private var lastLocalSnapshot = ""
+
+    /**
+     * 내 장비(Local) 상태 스냅샷 갱신 + 전파.
+     *   bleAdvertiser 가 '실제 송출 중'인 category/state/speed 를 읽어 직렬화한다(필드 구분 U+001F).
+     *   값 변화가 있을 때만 브로드캐스트(중복 억제). 폴백용 static localSnapshot 은 항상 최신으로 유지.
+     *   ※ 이 함수는 오직 내 송출 상태에서만 값을 만든다 — 상대 페이로드(Target)가 끼어들 여지가 구조적으로 없다.
+     */
+    private fun broadcastLocalState() {
+        val adv = bleAdvertiser
+        val cat = adv?.txCategory ?: myCategory
+        val st  = adv?.txState   ?: BleConstants.PSTATE_IDLE
+        val sp  = adv?.txSpeedKmh ?: 0.0
+        val snap = "$cat${31.toChar()}$st${31.toChar()}${"%.1f".format(sp)}"
+        localSnapshot = snap
+        if (snap == lastLocalSnapshot) return
+        lastLocalSnapshot = snap
+        sendBroadcast(Intent(BROADCAST_LOCAL_STATE).setPackage(packageName)
+            .putExtra(EXTRA_LOCAL_STATE, snap))
+    }
+
+    // ── [v1.0.42 Req3] RSSI 동적 슬립/웨이크 구동부 ──────────────────────────
+    /** onDeviceDetected 마다 호출 — 최근 RSSI 표본 기록 + 근접(≥WAKE)이면 0ms 즉시 웨이크. */
+    private fun noteRssiForWake(deviceId: String, rssi: Int) {
+        wakeRssiMap[deviceId] = Pair(rssi, System.currentTimeMillis())
+        if (rssi >= WAKE_RSSI_DBM) wakeAdvertiser()
+    }
+
+    /** 슬립 중인 광고자를 즉시 깨운다(연속 광고 재개 + 최신 LocalState 강송출). */
+    private fun wakeAdvertiser() {
+        val adv = bleAdvertiser ?: return
+        if (adv.isPaused) {
+            adv.resumeAdvertising()
+            broadcastLocalState()
+            Log.d(TAG, "RSSI 웨이크: 근접 신호 → 광고 즉시 재개")
+        }
+    }
+
+    /** ADV_POWER_EVAL_MS 주기로 송출 전력(슬립/웨이크)을 재평가하는 루프 시작. */
+    private fun startAdvPowerManager() {
+        advPowerHandler.removeCallbacksAndMessages(null)
+        advPowerHandler.postDelayed(object : Runnable {
+            override fun run() {
+                evaluateAdvertiserPower()
+                if (isRunning) advPowerHandler.postDelayed(this, ADV_POWER_EVAL_MS)
+            }
+        }, ADV_POWER_EVAL_MS)
+    }
+
+    /**
+     * 근접 신호 유무로 광고자를 슬립/웨이크 재평가.
+     *  - 신선한 표본 중 하나라도 RSSI ≥ WAKE 거나 활성 경보 존재 → 웨이크(연속 광고).
+     *  - 모두 ≤ SLEEP(또는 표본 없음) + 경보 없음 → 슬립(하트비트 모드).
+     *  오래된(>SIGNAL_STALE_MS) 표본은 평가하며 제거한다.
+     */
+    private fun evaluateAdvertiserPower() {
+        val adv = bleAdvertiser ?: return
+        val now = System.currentTimeMillis()
+        var anyNear = false
+        val iter = wakeRssiMap.entries.iterator()
+        while (iter.hasNext()) {
+            val (r, ts) = iter.next().value
+            if (now - ts > SIGNAL_STALE_MS) { iter.remove(); continue }
+            if (r >= WAKE_RSSI_DBM) anyNear = true
+        }
+        val hasAlert = alertState.isNotEmpty()
+        when {
+            anyNear || hasAlert -> if (adv.isPaused) {
+                adv.resumeAdvertising(); broadcastLocalState()
+                Log.d(TAG, "RSSI 웨이크(평가): 근접/경보 → 연속 광고 재개")
+            }
+            else -> if (!adv.isPaused) {
+                adv.pauseAdvertising()
+                Log.d(TAG, "RSSI 슬립(평가): 근접 신호 없음 → 하트비트 모드")
+            }
+        }
+    }
+
+    /**
+     * [v1.0.42 Req5] dev_settings(SharedPreferences) 변경을 앱/서비스 재시작 없이 즉시 반영.
+     *   · 타겟별 차등 반경(rssiWarning/rssiDanger), Time-Gate 지연(timeGateMs), 검출모드/블렌드는
+     *     processAlert 가 매 프레임 라이브 getter 로 읽으므로 그 자체로 자동 반영된다.
+     *   · 여기서는 추가로 KalmanFilter 인스턴스에 프리셋을 즉시 재주입한다 — 현재 미검출(대기)이라
+     *     다음 프레임을 못 받는 필터까지 곧바로 갱신(BleService + KalmanFilter 양쪽 라이브 적용).
+     *   ※ 칼만/3중 하드게이트/기하학 판정 로직은 건드리지 않는다 — '파라미터 값'만 라이브로 바꾼다.
+     */
+    private fun applyLiveSettings(changedKey: String?) {
+        val preset = DevSettings.kalmanPreset
+        kalmanFilters.values.forEach { it.updatePreset(preset) }
+        Log.d(TAG, "[Req5] 설정 라이브 반영(key=$changedKey): KF프리셋=$preset 위험=${BleConstants.rssiDanger}dBm 경고=${BleConstants.rssiWarning}dBm TimeGate=${DevSettings.timeGateMs}ms")
+        sendStatusBroadcast("설정 라이브 반영됨")
+    }
+
     private fun sendAlertBroadcast(deviceId: String, level: Int) {
         val displayName = if (level == BleConstants.LEVEL_SAFE) "" else extractDisplayName(deviceId)
         val type = typeLabelOf(deviceId)
@@ -1339,6 +1448,7 @@ class BleService : LifecycleService() {
         suddenLabelMap.clear()
         deviceCategoryMap.clear()
         broadcastDeviceList(force = true)   // [v1.0.26 Req2] 서비스 중지 → 빈 목록 송출('감지 없음' 반영)
+        localSnapshot = ""; lastLocalSnapshot = ""   // [v1.0.42 Req2] 내 장비(Local) 스냅샷 초기화
         rssiPreFilter.clearAll()
         kalmanFilters.clear()
         trackingStateMap.clear()
@@ -1358,6 +1468,8 @@ class BleService : LifecycleService() {
         isMuted = false
         isMutedPublic = false
         healthCheckHandler.removeCallbacksAndMessages(null)
+        advPowerHandler.removeCallbacksAndMessages(null)   // [v1.0.42 Req3] 송출 전력 평가 루프 중지
+        wakeRssiMap.clear()
         try { unregisterReceiver(btStateReceiver) } catch (_: Exception) {}
         try { unregisterReceiver(volumeReceiver)  } catch (_: Exception) {}
         try { unregisterReceiver(screenReceiver)  } catch (_: Exception) {}
@@ -1372,6 +1484,7 @@ class BleService : LifecycleService() {
     }
 
     override fun onDestroy() {
+        DevSettings.unregisterOnChange(devPrefsListener)   // [v1.0.42 Req5] 설정 라이브 전파 해제
         if (isRunning) stopAll()
         super.onDestroy()
     }

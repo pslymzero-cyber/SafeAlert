@@ -49,6 +49,15 @@ object DevSettings {
         get() = prefs.getInt(KEY_BLEND_RATIO, 0)
         set(v) = prefs.edit().putInt(KEY_BLEND_RATIO, v.coerceIn(0, 50)).apply()
 
+    // [v1.0.42 Req5] Time-Gate(민감도 지연) 지연 시간 — 신규/격상 경보 전 최소 연속 접근시간(ms).
+    //   BleService.APPROACH_TIMEGATE_MS 가 이 값을 매 프레임 라이브로 읽어 앱 재시작 없이 반영한다.
+    //   기본 500L 은 기존 하드코딩값과 동일(거동 보존). 0=즉시통과 ~ 3000ms 범위로 clamp.
+    private const val KEY_TIMEGATE_MS = "timegate_ms"
+    const val DEFAULT_TIMEGATE_MS = 500L
+    var timeGateMs: Long
+        get() = prefs.getLong(KEY_TIMEGATE_MS, DEFAULT_TIMEGATE_MS).coerceIn(0L, 3000L)
+        set(v) = prefs.edit().putLong(KEY_TIMEGATE_MS, v.coerceIn(0L, 3000L)).apply()
+
     // 고정값 모드 임계값 (절댓값으로 저장, 예: 65 → RSSI -65)
     private const val KEY_FIXED_DANGER_ABS  = "fixed_danger_abs"   // 기본 65  → RSSI ≥ -65
     private const val KEY_FIXED_WARNING_ABS = "fixed_warning_abs"  // 기본 80  → RSSI ≥ -80
@@ -64,14 +73,8 @@ object DevSettings {
     // 알람 볼륨 게인 (0-100%)
     private const val KEY_ALARM_VOLUME = "alarm_volume"
 
-    // BLE 거리 교정
-    private const val KEY_CALIB_RSSI    = "calib_rssi_at_1m"
-    private const val KEY_PATH_LOSS_EXP = "path_loss_exp"
-    private const val KEY_CALIB_VER     = "calib_version"
-    // v3: 실측 기반 기본값 확정 (5m=-56, 10m=-63, 15m=-69 회귀)
-    // v4: DEFAULT_CALIB -38→-50 보정 (실측 대비 3배 과대 추정 수정)
-    // 버전이 낮으면 자동으로 기본값 적용 (이전 잘못된 교정값 제거)
-    private const val CALIB_VERSION     = 4
+    // [v1.0.42] BLE 거리 교정 키(KEY_CALIB_RSSI/KEY_PATH_LOSS_EXP/KEY_CALIB_VER) 전면 제거.
+    //   거리 추정은 칼만 필터(RSSI)만으로 수행 — 교정값·경로손실지수·거리 교정 마법사 폐지.
 
     // 송수신 모드 설정
     private const val KEY_DEVICE_TX  = "device_tx"   // 장비 작업자 송신 여부
@@ -86,39 +89,23 @@ object DevSettings {
 
     fun init(context: Context) {
         prefs = context.applicationContext.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
-        // 이전 버전의 잘못된 교정값 자동 초기화
-        if (prefs.getInt(KEY_CALIB_VER, 0) < CALIB_VERSION) {
-            prefs.edit()
-                .remove(KEY_CALIB_RSSI)
-                .remove(KEY_PATH_LOSS_EXP)
-                .remove(KEY_APPLIED_PROFILE_MODEL)  // 버전 업 시 프로파일도 재적용
-                .putInt(KEY_CALIB_VER, CALIB_VERSION)
-                .apply()
-        }
-        // 기기 모델별 RSSI 수신 감도 프로파일 자동 주입
-        // (수동 교정이 없는 경우, 처음 실행 시 1회만 적용)
-        DeviceProfileManager.autoApplyIfNeeded()
     }
 
-    // BLE 거리 설정 — 미터 단위 저장, RSSI는 교정값으로 자동 계산
-    private const val KEY_WARNING_DIST = "warning_dist_m"
-    private const val KEY_DANGER_DIST  = "danger_dist_m"
-
-    var warningDistM: Float
-        get() = prefs.getFloat(KEY_WARNING_DIST, 10f).coerceIn(1f, 50f)  // 기본 10m
-        set(v) = prefs.edit().putFloat(KEY_WARNING_DIST, v.coerceIn(1f, 50f)).apply()
-
-    var dangerDistM: Float
-        get() = prefs.getFloat(KEY_DANGER_DIST, 5f).coerceIn(1f, 50f)    // 기본 5m
-        set(v) = prefs.edit().putFloat(KEY_DANGER_DIST, v.coerceIn(1f, 50f)).apply()
+    // [v1.0.42 Req5] 설정 라이브 전파 — dev_settings 변경 리스너 등록/해제(앱 재시작 없이 반영).
+    //   prefs 를 외부에 노출하지 않고 등록 경로만 캡슐화한다. BleService 가 강한 참조로 리스너를
+    //   보관(SharedPreferences 는 리스너를 WeakReference 로 들고 있어 약참조면 GC 로 끊긴다).
+    fun registerOnChange(l: SharedPreferences.OnSharedPreferenceChangeListener) =
+        prefs.registerOnSharedPreferenceChangeListener(l)
+    fun unregisterOnChange(l: SharedPreferences.OnSharedPreferenceChangeListener) =
+        prefs.unregisterOnSharedPreferenceChangeListener(l)
 
     // [v1.0.40] 위험/경보 RSSI 임계 — 신호세기(dBm)로 직접 제어 (사용자 조정 가능)
     //   v1.0.39 에서 거리계산 파생을 폐지하고 절대 고정(-75/-55)했고, v1.0.40 부터는
     //   BLE 설정의 dBm 슬라이더로 직접 저장/조정한다(고정값 모드 절댓값 슬라이더와 통일).
     //   저장은 음수 dBm 그대로. UI 슬라이더는 절댓값(양수 30~100)으로 표시 후 음수화해 저장.
     //   제약(UI): 위험은 경고보다 가까움 = 덜 음수 = 절댓값이 더 작다 (예 위험 -55 > 경고 -75).
-    //   ※ 거리/교정 필드(warningDistM/dangerDistM/calibRssiAt1m)는 UWB 거리→RSSI 환산·
-    //     캘리브레이션 마법사에서 계속 쓰여 보존한다.
+    //   [v1.0.42] 거리계산·교정(calibRssiAt1m/pathLossExp/warningDistM/dangerDistM/거리 교정
+    //     마법사) 전면 폐지 → 거리 추정은 칼만 필터(RSSI)만으로 수행. dBm 임계만 직접 조정한다.
     //   prefs 키는 기존 KEY_RSSI_WARNING / KEY_RSSI_DANGER (상단 L11-12) 재사용.
     const val DEFAULT_RSSI_WARNING_ABS = -75   // 경보(WARNING): RSSI >= -75  (-56~-75 구간)
     const val DEFAULT_RSSI_DANGER_ABS  = -55   // 위험(DANGER) : RSSI >= -55  (0~-55 구간)
@@ -184,33 +171,8 @@ object DevSettings {
         prefs.edit().clear().apply()
     }
 
-    // 1m 기준 RSSI
-    // 기본값 -50 dBm: -38에서 3배 과대 추정 보정 (30m→10m, 60m→20m 매칭)
-    // 보정 수식: new = old - 10*n*log10(3) = -38 - 10*2.53*log10(3) ≈ -50
-    // DeviceProfileManager 자동 주입 비교 기준값
-    const val DEFAULT_CALIB = -50
-
-    var calibRssiAt1m: Int
-        get() = prefs.getInt(KEY_CALIB_RSSI, DEFAULT_CALIB)
-        set(v) = prefs.edit().putInt(KEY_CALIB_RSSI, v.coerceIn(-90, 0)).apply()
-
-    // 경로손실지수 n
-    // 기본값 2.53: 실측 (5m=-56, 10m=-63, 15m=-69) 3점 회귀 결과
-    var pathLossExp: Float
-        get() {
-            val v = prefs.getFloat(KEY_PATH_LOSS_EXP, 2.53f)
-            return if (v < 1.5f || v > 4.5f) { prefs.edit().remove(KEY_PATH_LOSS_EXP).apply(); 2.53f } else v
-        }
-        set(v) = prefs.edit().putFloat(KEY_PATH_LOSS_EXP, v.coerceIn(1.5f, 4.5f)).apply()
-
-    fun resetCalibration() {
-        prefs.edit()
-            .remove(KEY_CALIB_RSSI)
-            .remove(KEY_PATH_LOSS_EXP)
-            .putInt(KEY_CALIB_VER, CALIB_VERSION)  // 초기화 후도 최신 버전 유지
-            .apply()
-        // 이후 get 시 기본값 -50 dBm, n=2.53 사용됨
-    }
+    // [v1.0.42] calibRssiAt1m / pathLossExp / resetCalibration() / DEFAULT_CALIB 전면 제거.
+    //   거리 추정은 칼만 필터(RSSI)만으로 수행 — RSSI→거리 환산식·경로손실 모델 폐지.
 
     // 알람 볼륨 게인 (0~100%)
     var alarmVolume: Int
@@ -234,12 +196,7 @@ object DevSettings {
         get() = prefs.getBoolean(KEY_WALKER_RX, true)
         set(v) = prefs.edit().putBoolean(KEY_WALKER_RX, v).apply()
 
-    // 기기 모델 프로파일 자동 주입 이력
-    // DeviceProfileManager가 이 모델에 이미 적용했는지 기억 (재부팅 후 불필요한 재적용 방지)
-    private const val KEY_APPLIED_PROFILE_MODEL = "applied_profile_model"
-    var appliedProfileModel: String
-        get() = prefs.getString(KEY_APPLIED_PROFILE_MODEL, "") ?: ""
-        set(v) = prefs.edit().putString(KEY_APPLIED_PROFILE_MODEL, v).apply()
+    // [v1.0.42] 기기 모델 프로파일 자동 주입 이력(appliedProfileModel) 제거 — DeviceProfileManager 폐지.
 
     // 보행자끼리 경보 여부 (기본: OFF — 보행자는 장비만 감지)
     private const val KEY_WALKER_DETECTS_WALKER = "walker_detects_walker"
