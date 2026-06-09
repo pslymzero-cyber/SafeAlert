@@ -222,26 +222,34 @@ class BleService : LifecycleService() {
 
     private val HYSTERESIS_DBM = 5
 
-    // ── [v1.0.35 민감도 지연(Time-Gate) + 방향 벡터 필터] ──────────────────────────
+    // ── [v1.0.35 민감도 지연(Time-Gate)] + [v1.0.36 코너링 연장 · 충돌 기하학 필터] ──────────
     // Time-Gate: 위험권 진입 후에도 2D 칼만 미분(kfVel, dBm/s)이 APPROACH_TIMEGATE_VEL_DBM 이상
     //   '가까워짐'을 APPROACH_TIMEGATE_MS(0.5초) 연속 유지할 때만 신규/격상 경보를 발령한다.
     //   → 전파 튐(single-frame spike)으로 인한 즉각 오알람을 차단. 쿨다운 재알람·0x02 특수경보·
     //     TTC 선발령에는 적용하지 않는다(끊김 방지/즉각 안전 — 각 경로가 위에서 먼저 return).
-    private val APPROACH_TIMEGATE_MS      = 500L   // 신규/격상 경보 전 최소 연속 접근 시간
+    private val APPROACH_TIMEGATE_MS      = 500L   // 신규/격상 경보 전 최소 연속 접근 시간(평상)
     private val APPROACH_TIMEGATE_VEL_DBM = 0.5    // '가까워짐' 판정 최소 접근속도(dBm/s)
-    // 방향 벡터 필터: 내 방위각 vs 상대 방위각 차가 이 각(도) 이상이면 '등지고 가는 궤적'.
-    //   단, 접근 중(kfVel ≥ VEL)이면 절대 억제하지 않는다(false negative=사고 방지).
-    private val DIVERGE_ANGLE_DEG         = 135f
+    // [v1.0.36] 코너링 중 Time-Gate 연장 — 내 장비가 급회전 중이면 전파가 일시 출렁이므로
+    //   오작동 방지를 위해 0.5초 → 1.0초로 일시 연장한다(ImuFusion.isCornering 으로 판정).
+    private val APPROACH_TIMEGATE_CORNERING_MS = 1000L
+    // [v1.0.36] 충돌 기하학 필터(Collision Geometry) 파라미터.
+    //   합산 접근속도(내속도+상대속도, km/h)를 RSSI 변화율(dBm/s)로 환산해 실제 kfVel 과 대조한다.
+    //   단위 환산계수는 위험권(~6m)·경로손실지수(n≈2.5) 근사 — 현장 튜닝 대상.
+    private val CLOSING_KMH_TO_DBMS        = 0.5   // 합산속도(km/h) → 예상 접근(dBm/s) 환산계수
+    private val COLLISION_MIN_CLOSING_KMH  = 1.0   // 합산속도 이 미만이면 기하 판정 불가(보류 안 함)
+    private val COLLISION_HEAD_ON_RATIO    = 0.6   // 실제/예상 접근비 이상 → 정면충돌(Time-Gate 즉시통과)
+    private val COLLISION_SIDE_RATIO       = 0.3   // 실제/예상 접근비 이하 → 측면/나란히(보류 후보)
+    private val COLLISION_ABS_SAFE_VEL_DBM = 2.0   // 이 이상 빠른 접근이면 측면판정 무시(false negative 방지)
     private val approachStreakStartMap    = mutableMapOf<String, Long>()  // 연속 접근 시작 시각(ms)
 
-    // [v1.0.35] 방위각 송신 폴링 — ImuFusion.azimuthDeg 를 주기적으로 advertiser(Byte 2)에 push.
+    // [v1.0.36] 속도 송신 폴링 — ImuFusion.estimatedSpeedKmh 를 주기적으로 advertiser(Speed 4비트)에 push.
     //   advertiser 내부 2초 throttle·미세변화 무시와 맞물려 실제 재광고는 드물게 일어난다.
-    private val AZIMUTH_PUSH_INTERVAL_MS  = 1500L
-    private val azimuthHandler = android.os.Handler(android.os.Looper.getMainLooper())
-    private val azimuthPushRunnable = object : Runnable {
+    private val SPEED_PUSH_INTERVAL_MS    = 1500L
+    private val speedPushHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val speedPushRunnable = object : Runnable {
         override fun run() {
-            if (ImuFusion.hasAzimuth) bleAdvertiser?.updateAzimuth(ImuFusion.azimuthDeg)
-            azimuthHandler.postDelayed(this, AZIMUTH_PUSH_INTERVAL_MS)
+            bleAdvertiser?.updateSpeed(ImuFusion.estimatedSpeedKmh)
+            speedPushHandler.postDelayed(this, SPEED_PUSH_INTERVAL_MS)
         }
     }
 
@@ -280,8 +288,8 @@ class BleService : LifecycleService() {
                 BleConstants.PSTATE_SUDDEN else BleConstants.PSTATE_NORMAL
             bleAdvertiser?.updateState(pState)
         }
-        // [v1.0.35] 방위각 송신 폴링 시작 — 주기적으로 내 진행 방위각을 광고 Byte 2 로 공유.
-        azimuthHandler.post(azimuthPushRunnable)
+        // [v1.0.36] 속도 송신 폴링 시작 — 주기적으로 내 예상속도를 광고 Speed 4비트로 공유.
+        speedPushHandler.post(speedPushRunnable)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -418,7 +426,7 @@ class BleService : LifecycleService() {
                 bleScanner = BleScanner(scanner).also { s ->
                     s.onStatusUpdate = { msg -> sendStatusBroadcast(msg) }
                     s.startScanning(object : BleScanCallback {
-                        override fun onDeviceDetected(deviceId: String, rssi: Int, alertLevel: Int, remoteState: Int, remoteAzimuth: Int) {
+                        override fun onDeviceDetected(deviceId: String, rssi: Int, alertLevel: Int, remoteState: Int, remoteSpeedKmh: Double) {
                             lastScanResultMs = System.currentTimeMillis()
 
                             if (myMode == "WALKER"
@@ -426,7 +434,7 @@ class BleService : LifecycleService() {
                                 && !DevSettings.walkerDetectsWalker) return
 
                             val effectiveRssi = if (DevSettings.debugMode) DevSettings.simulatedRssi else rssi
-                            processAlert(deviceId, effectiveRssi, remoteState, remoteAzimuth)
+                            processAlert(deviceId, effectiveRssi, remoteState, remoteSpeedKmh)
                             // [v1.0.26 Req2] processAlert 가 alertState 를 어떻게 바꿨든(추가·격상·SAFE 제거·TTC 선발령)
                             // 그 직후 전체 스냅샷을 한 번에 송출 → 하단 목록이 플로팅·알람과 절대 어긋나지 않는다.
                             broadcastDeviceList()
@@ -582,10 +590,10 @@ class BleService : LifecycleService() {
         }
     }
 
-    private fun processAlert(deviceId: String, rssi: Int, remoteState: Int = 0x00, remoteAzimuth: Int = -1) {
-        // [v1.0.34] 수신 1바이트 페이로드 언패킹 → Category / State (Speed 는 v1.0.34 미사용)
+    private fun processAlert(deviceId: String, rssi: Int, remoteState: Int = 0x00, remoteSpeedKmh: Double = 0.0) {
+        // [v1.0.36] 수신 1바이트 페이로드 언패킹 → Category / State / Speed(4비트).
         //   remoteState 는 BleScanner 가 ServiceData 1바이트를 0~255 로 그대로 넘긴 값.
-        //   [v1.0.35] remoteAzimuth = ServiceData Byte 2(0~255). -1=방향 미지(구버전/비콘).
+        //   remoteSpeedKmh = 상대 송신 예상속도(km/h). 충돌 기하학 필터의 합산속도에 사용.
         val rCategory = BleConstants.decodeCategory(remoteState)
         val rState    = BleConstants.decodeState(remoteState)
         deviceCategoryMap[deviceId] = rCategory   // 표시 라벨(보행자/EPJ/지게차) 판별용 캐시
@@ -875,39 +883,52 @@ class BleService : LifecycleService() {
         val shouldAlert = isFirstDetection || levelEscalated || (cooldownPassed && !isReceding)
         if (!shouldAlert) return
 
-        // ── [v1.0.35] 민감도 지연(Time-Gate) + 방향 벡터 필터 — 신규/격상 경보 한정 ─────────────
+        // ── [v1.0.35 Time-Gate] + [v1.0.36 코너링 연장 · 충돌 기하학 필터] — 신규/격상 경보 한정 ──
         // 여기 도달 = shouldAlert(신규/격상/쿨다운경과) 통과. 이 중 '신규(첫 감지)·격상'에만
-        // 두 보수 조건을 추가로 요구한다:
-        //   (1) Time-Gate: 2D 칼만 미분(kfVel)이 0.5dBm/s 이상 '가까워짐'을 0.5초 연속 유지할 것.
+        // 아래 두 보수 조건을 추가로 요구한다:
+        //   (1) Time-Gate: 2D 칼만 미분(kfVel)이 0.5dBm/s 이상 '가까워짐'을 일정시간 연속 유지할 것.
         //       전파 튐(1프레임 spike)으로 위험권에 잠깐 닿은 것만으론 소리/화면 경보하지 않는다.
-        //   (2) 방향 벡터 필터: 내 방위각 vs 상대 방위각이 등지고 멀어지는 궤적(≥135°)이면 억제.
-        //       단 '접근 중(kfVel≥0.5)'이면 절대 억제 안 함 — 정면 충돌 코스 오인억제(사고) 방지.
+        //       [v1.0.36] 내 장비가 코너링(급회전) 중이면 전파가 출렁이므로 0.5→1.0초로 일시 연장.
+        //   (2) 충돌 기하학 필터: 합산 접근속도(내속도+상대속도, km/h)를 dBm/s 로 환산한
+        //       '예상 접근속도'와 실제 kfVel 을 대조한다.
+        //         · 근접(실제/예상 ≥ 0.6) = 정면충돌 코스 → Time-Gate 즉시 통과(강한 발령).
+        //         · 현저히 낮음(≤ 0.3) = 나란히/직각 교차 안전 코스 → 신규·격상 경보 보류.
+        //       단 빠르게 접근 중(kfVel ≥ 2.0dBm/s)이면 측면판정 무시 — 오인억제(사고) 방지.
+        //       합산속도가 미미(<1km/h, 양쪽 거의 정지)하면 기하 판정을 건너뛰고 순수 Time-Gate 로 폴백.
         // ※ 신규 기기는 통과 전까지 alertState 에 등록되지 않으므로(아래 Pair 할당이 이 블록 뒤),
         //   매 프레임 isFirstDetection=true 로 재평가되며 approachStreak 이 자연히 누적된다.
         // ※ 0x02 특수경보·TTC 선발령은 위에서 이미 즉시 발령·return → 본 게이트 영향을 받지 않는다.
         // ※ 쿨다운 재알람(추적중·동급)은 isEscalation=false → 면제(기존 동작 유지, 끊김 방지).
         // ※ 3중 하드게이트(min(칼만,raw,EMA))는 위에서 이미 통과 — 본 필터는 그와 독립적으로
-        //   '신규 격상'만 더 지연시킬 뿐, 어떤 위험도 새로 통과시키지 않는다(단방향 보수화).
+        //   '신규 격상'의 발령 타이밍만 조정할 뿐, 경보 레벨은 오직 RSSI 게이트가 결정한다.
+        val timeGateMs = if (ImuFusion.isCornering) APPROACH_TIMEGATE_CORNERING_MS else APPROACH_TIMEGATE_MS
         val kfApproaching = kfVel >= APPROACH_TIMEGATE_VEL_DBM
         if (kfApproaching) {
             approachStreakStartMap.putIfAbsent(deviceId, now)
         } else {
             approachStreakStartMap.remove(deviceId)   // 접근 끊김 → streak 리셋
         }
-        val approachStreakMs  = if (kfApproaching) now - (approachStreakStartMap[deviceId] ?: now) else 0L
-        val approachSustained = kfApproaching && approachStreakMs >= APPROACH_TIMEGATE_MS
+        val approachStreakMs = if (kfApproaching) now - (approachStreakStartMap[deviceId] ?: now) else 0L
 
-        val suppressByDirection = run {
-            if (kfApproaching) return@run false                               // 접근 중 → 절대 억제 안 함(안전)
-            if (remoteAzimuth < 0 || !ImuFusion.hasAzimuth) return@run false   // 방향 정보 없음 → 억제 안 함
-            val diff = angleDiffDeg(ImuFusion.azimuthDeg, BleConstants.decodeAzimuth(remoteAzimuth))
-            diff >= DIVERGE_ANGLE_DEG                                          // 등지고 멀어지는 궤적
-        }
+        // [v1.0.36] 충돌 기하학 — 합산 접근속도(km/h)를 dBm/s 로 환산해 실제 kfVel 과 대조.
+        val mySpeedKmh      = ImuFusion.estimatedSpeedKmh.toDouble()
+        val closingSpeedKmh = mySpeedKmh + remoteSpeedKmh                      // 예상 최대 접근속도(km/h)
+        val expectedKfVel   = closingSpeedKmh * CLOSING_KMH_TO_DBMS            // → 예상 RSSI 접근속도(dBm/s)
+        val closingRatio    = if (expectedKfVel > 0.01) kfVel / expectedKfVel else 0.0
+        val geometryValid   = closingSpeedKmh >= COLLISION_MIN_CLOSING_KMH     // 양쪽 거의 정지면 판정 불가
+        // 정면충돌 코스: 실제 접근이 예상의 60% 이상 → Time-Gate 즉시 통과(강한 발령).
+        val headOnCourse    = geometryValid && closingRatio >= COLLISION_HEAD_ON_RATIO
+        // 측면/나란히: 실제 접근이 예상의 30% 이하 + 절대 접근속도도 느림(<2.0) → 보류(경계 격하).
+        val sideCourse      = geometryValid && closingRatio <= COLLISION_SIDE_RATIO &&
+                              kfVel < COLLISION_ABS_SAFE_VEL_DBM
+
+        // headOn 이면 Time-Gate 즉시 통과, 아니면 평상/코너링 Time-Gate 충족 필요.
+        val approachSustained = headOnCourse || (kfApproaching && approachStreakMs >= timeGateMs)
 
         val isEscalation = isFirstDetection || levelEscalated
-        if (isEscalation && (suppressByDirection || !approachSustained)) {
-            Log.d(TAG, "[v1.0.35] 경보 보류 ${extractDisplayName(deviceId)}: dir억제=$suppressByDirection 접근지속=${approachStreakMs}ms(<${APPROACH_TIMEGATE_MS}) vel=%.2f".format(kfVel))
-            return   // 소리/화면 경보 보류 — 다음 프레임 재평가(위험권 유지+접근지속 0.5초 시 발령)
+        if (isEscalation && (sideCourse || !approachSustained)) {
+            Log.d(TAG, "[v1.0.36] 경보 보류 ${extractDisplayName(deviceId)}: side=$sideCourse 접근지속=${approachStreakMs}ms(<${timeGateMs}) ratio=%.2f 합산=%.1fkm/h vel=%.2f".format(closingRatio, closingSpeedKmh, kfVel))
+            return   // 소리/화면 경보 보류 — 다음 프레임 재평가(접근지속 충족 또는 정면충돌 코스 시 발령)
         }
 
         alertState[deviceId] = Pair(stableLevel, now)
@@ -942,13 +963,6 @@ class BleService : LifecycleService() {
                 Log.d(TAG, "경고 발생: $deviceId ($name) avgRssi=$avgRssi state=$newState vel=%.2fdBm/s".format(kfVel))
             }
         }
-    }
-
-    /** v1.0.35 두 방위각(도)의 최소 사잇각(0~180°). 방향 벡터 필터의 '등짐' 판정용. */
-    private fun angleDiffDeg(a: Float, b: Float): Float {
-        var d = Math.abs(a - b) % 360f
-        if (d > 180f) d = 360f - d
-        return d
     }
 
     private val isScreenOn: Boolean
@@ -1277,7 +1291,7 @@ class BleService : LifecycleService() {
         ImuFusion.onStationaryChanged = null
         ImuFusion.onMotionStateChanged = null   // [v1.0.29] 모션 상태 콜백 해제
         ecoHandler.removeCallbacks(ecoDowngradeRunnable)
-        azimuthHandler.removeCallbacks(azimuthPushRunnable)   // [v1.0.35] 방위각 송신 폴링 중지
+        speedPushHandler.removeCallbacks(speedPushRunnable)   // [v1.0.36] 속도 송신 폴링 중지
         ImuFusion.stop()
         uwbRanger?.stop(); uwbRanger = null
         AlertSoundPlayer.stopSound()

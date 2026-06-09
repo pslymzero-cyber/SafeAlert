@@ -52,6 +52,17 @@ object ImuFusion {
     // 0x02 진입 후 이 시간 동안 0x02 유지 → 잦은 깜빡임 방지(Hysteresis 디바운스)
     private const val SUDDEN_HOLD_MS         = 1500L
 
+    // [v1.0.36] 코너링(급회전) 판정 임계 — heading 변화율(deg/s) 절댓값 이 값 이상이면 코너링.
+    //   완만한 보행/주행 곡선(<~40°/s)은 평상, 급커브·제자리 회전(>~60°/s)만 코너링으로 잡는다.
+    private const val CORNERING_RATE_THRESHOLD = 60f
+    // [v1.0.36] 코너링 회전율 EMA 평활 계수(노이즈 억제). 1에 가까울수록 즉응, 0이면 둔감.
+    private const val TURN_RATE_EMA          = 0.4f
+    // [v1.0.36] 예상속도 환산 계수 — motionScore(가속도 RMS, m/s²) → km/h 거친 비례 매핑.
+    //   보행 RMS≈1.0 → ~4km/h, 빠른이동 RMS≈2.5 → ~10km/h. 정밀 속도계 아님(예상치).
+    private const val SPEED_ACCEL_TO_KMH     = 4.0f
+    // [v1.0.36] 예상속도 송출 상한 (BleConstants.SPEED_MAX_KMH 와 일치)
+    private const val EST_SPEED_MAX_KMH      = 15f
+
     private var sensorManager: SensorManager? = null
     @Volatile private var isRunning = false
 
@@ -74,24 +85,43 @@ object ImuFusion {
     private val accelBuffer = ArrayDeque<Float>()
     private val lock = Any()
 
-    // [v1.0.35] 방위각(Azimuth) — 지자기/회전벡터 센서로 산출한 현재 진행 방위각(0~360°).
-    //   송신단이 ServiceData Byte 2 로 공유 → 수신단의 '방향 벡터 필터'에 쓰인다.
-    //   hasAzimuth=false(센서 없음)면 BleService 가 방향 필터를 비활성(안전: 억제 안 함).
-    @Volatile var azimuthDeg: Float = 0f
+    // [v1.0.36] 게임 회전 벡터(자이로+가속도, 지자기 미사용 → 자기장 교란 면역) 기반 '코너링' 감지.
+    //   외부로 전송하지 않는다(내부 전용). 내 장비가 급격히 회전(코너링) 중인지 판정에만 쓴다.
+    //   heading(진행 방위, deg)의 시간변화율(deg/s)을 구해 turnRateDegPerSec 로 노출.
+    private val gameRotMatrix = FloatArray(9)
+    private val gameOrient    = FloatArray(3)
+    @Volatile private var lastHeadingDeg = Float.NaN
+    @Volatile private var lastHeadingMs  = 0L
+    @Volatile var turnRateDegPerSec: Float = 0f
         private set
-    @Volatile var hasAzimuth: Boolean = false
+    @Volatile var hasGameRotation: Boolean = false
         private set
-    private val rotationMatrix    = FloatArray(9)
-    private val orientationAngles = FloatArray(3)
+    /** 현재 '코너링(급회전)' 중인지 — |회전율| ≥ CORNERING_RATE_THRESHOLD. BleService Time-Gate 연장 트리거. */
+    val isCornering: Boolean get() = hasGameRotation && abs(turnRateDegPerSec) >= CORNERING_RATE_THRESHOLD
 
     private val listener = object : SensorEventListener {
         override fun onSensorChanged(event: SensorEvent) {
-            // [v1.0.35] 회전 벡터 → 방위각(Azimuth) 산출. ServiceData Byte 2 로 공유된다.
-            if (event.sensor.type == Sensor.TYPE_ROTATION_VECTOR) {
-                SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
-                SensorManager.getOrientation(rotationMatrix, orientationAngles)
-                val deg = Math.toDegrees(orientationAngles[0].toDouble()).toFloat()
-                azimuthDeg = ((deg % 360f) + 360f) % 360f   // 방위각 0~360° 정규화
+            // [v1.0.36] 게임 회전 벡터 → heading 변화율(코너링) 산출. 외부 전송 안 함(내부 전용).
+            //   지자기 미사용 센서라 자석 간섭에 면역. 알람 발령엔 안 쓰고 Time-Gate 연장 판단에만 사용.
+            if (event.sensor.type == Sensor.TYPE_GAME_ROTATION_VECTOR) {
+                SensorManager.getRotationMatrixFromVector(gameRotMatrix, event.values)
+                SensorManager.getOrientation(gameRotMatrix, gameOrient)
+                val headingDeg = Math.toDegrees(gameOrient[0].toDouble()).toFloat()
+                val nowMs = SystemClock.elapsedRealtime()
+                if (!lastHeadingDeg.isNaN() && lastHeadingMs != 0L) {
+                    val dtSec = (nowMs - lastHeadingMs) / 1000f
+                    if (dtSec > 0.001f) {
+                        // heading 차를 -180..180 으로 wrap (360° 경계 점프 제거)
+                        var dHeading = headingDeg - lastHeadingDeg
+                        while (dHeading > 180f)  dHeading -= 360f
+                        while (dHeading < -180f) dHeading += 360f
+                        val rate = dHeading / dtSec
+                        // EMA 평활 — 센서 노이즈로 인한 순간 스파이크 억제
+                        turnRateDegPerSec = TURN_RATE_EMA * rate + (1f - TURN_RATE_EMA) * turnRateDegPerSec
+                    }
+                }
+                lastHeadingDeg = headingDeg
+                lastHeadingMs  = nowMs
                 return
             }
 
@@ -161,16 +191,17 @@ object ImuFusion {
         } else {
             Log.w(TAG, "자이로 센서 없음 — 가속도 급변만으로 0x02 판정")
         }
-        // [v1.0.35] 회전 벡터 센서 등록 — 방위각(Byte 2) 측정용. 없으면 방향 공유 비활성.
-        //   SENSOR_DELAY_UI(~16Hz)면 방향 추종에 충분하고 배터리에도 유리.
-        val rot = sensorManager?.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
-        if (rot != null) {
-            sensorManager?.registerListener(listener, rot, SensorManager.SENSOR_DELAY_UI)
-            hasAzimuth = true
-            Log.d(TAG, "회전벡터 센서 등록 — 방위각 공유(Byte 2) 활성")
+        // [v1.0.36] 게임 회전 벡터(GAME_ROTATION_VECTOR) 등록 — 코너링 감지용(내부 전용, 미전송).
+        //   지자기를 안 써 자기장 교란에 면역. 없으면 코너링 미감지(Time-Gate 평상값 — 안전).
+        //   회전율 미분 정확도를 위해 SENSOR_DELAY_GAME(~50Hz)로 촘촘히 받는다.
+        val gameRot = sensorManager?.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR)
+        if (gameRot != null) {
+            sensorManager?.registerListener(listener, gameRot, SensorManager.SENSOR_DELAY_GAME)
+            hasGameRotation = true
+            Log.d(TAG, "게임회전벡터 등록 — 코너링(급회전) 내부 감지 활성")
         } else {
-            hasAzimuth = false
-            Log.w(TAG, "회전벡터 센서 없음 — 방향 정보 공유 비활성")
+            hasGameRotation = false
+            Log.w(TAG, "게임회전벡터 센서 없음 — 코너링 감지 비활성(Time-Gate 평상값)")
         }
         isRunning = true
         Log.d(TAG, "IMU 융합 초기화 (SENSOR_DELAY_GAME, ${WINDOW_SIZE}샘플 창)")
@@ -186,9 +217,11 @@ object ImuFusion {
         // [v1.0.29] 3-State 상태 리셋
         lastSuddenMs = 0L
         lastNotifiedMotionState = STATE_STATIONARY
-        // [v1.0.35] 방위각 상태 리셋
-        hasAzimuth = false
-        azimuthDeg = 0f
+        // [v1.0.36] 코너링(게임 회전 벡터) 상태 리셋
+        hasGameRotation   = false
+        turnRateDegPerSec = 0f
+        lastHeadingDeg    = Float.NaN
+        lastHeadingMs     = 0L
         isRunning = false
         Log.d(TAG, "IMU 융합 중지")
     }
@@ -242,7 +275,18 @@ object ImuFusion {
             return if (isStationary) STATE_STATIONARY else STATE_NORMAL
         }
 
+    /**
+     * v1.0.36 예상 진행속도(km/h, 0~15) — 가속도 RMS(motionScore) 기반 거친 추정값.
+     *   실내 GPS 음영 환경이라 정확한 속도계가 없어, IMU 진동 강도를 속도로 비례 환산한다.
+     *   확정 정지면 0, 그 외엔 motionScore×SPEED_ACCEL_TO_KMH 를 0~EST_SPEED_MAX_KMH 로 clamp.
+     *   BleAdvertiser.updateSpeed() 로 송출 → 수신단 충돌 기하학 필터의 '합산 접근속도' 재료.
+     *   ※ 정밀 속도계가 아닌 '예상치'. 충돌 판정은 이 값과 RSSI 미분을 비율로만 대조한다.
+     */
+    val estimatedSpeedKmh: Float
+        get() = if (isStationary) 0f
+                else (motionScore * SPEED_ACCEL_TO_KMH).coerceIn(0f, EST_SPEED_MAX_KMH)
+
     fun debugString(): String =
-        "score=%.2f isStationary=$isStationary Q×=%.1f".format(
-            motionScore, if (isStationary) 1 else 0, adaptiveQFactor)
+        "score=%.2f isStationary=$isStationary Q×=%.1f turn=%.0f°/s spd=%.1fkm/h".format(
+            motionScore, adaptiveQFactor, turnRateDegPerSec, estimatedSpeedKmh)
 }

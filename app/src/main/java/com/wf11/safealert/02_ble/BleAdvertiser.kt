@@ -21,13 +21,12 @@ class BleAdvertiser(
     companion object {
         private const val TAG = "BleAdvertiser"
         // [v1.0.29] 상태 갱신 최소 주기 — 안드로이드 OS Advertising Rate-Limit 회피
-        //   [v1.0.35] STATE 와 방위각(Byte 2) 재광고가 이 throttle 을 '공유'한다.
+        //   [v1.0.36] STATE 와 Speed(bits 3:0) 재광고가 이 throttle 을 '공유'한다.
         private const val MIN_STATE_UPDATE_INTERVAL_MS = 2000L
         // 상태 변경 시 stopAdvertising 후 재시작까지 대기 (OS 정리 시간 확보)
         private const val STATE_RESTART_DELAY_MS = 50L
-        // [v1.0.35] 방위각 미세 변화 무시 임계(코드 단위, 1코드 ≈ 1.41°).
-        //   ±4코드(≈5.6°) 미만 변화는 재광고를 생략해 불필요한 stop/start 폭주를 막는다.
-        private const val MIN_AZIMUTH_DELTA_CODE = 4
+        // [v1.0.36] 속도 미세 변화 무시 임계(km/h). 1km/h 미만 변화는 재광고 생략(stop/start 폭주 방지).
+        private const val MIN_SPEED_DELTA_KMH = 1.0
     }
 
     private val callback = object : AdvertiseCallback() {
@@ -54,12 +53,12 @@ class BleAdvertiser(
     private var currentDeviceId = ""
 
     // [v1.0.34 다이나믹 페이로드] 현재 송신자 STATE(2bit, PSTATE_*) — Category·Speed 와 함께
-    //   encodePayload() 로 1바이트로 패킹되어 ServiceData 로 탑재된다. (Speed 는 0 고정)
+    //   encodePayload() 로 1바이트로 패킹되어 ServiceData 로 탑재된다.
     @Volatile private var currentState: Int = BleConstants.PSTATE_NORMAL
-    // [v1.0.35] 현재 송신 방위각 코드(0~255) — startAdvertising 이 Byte 2 로 싣는다.
-    //   BleService 가 ImuFusion.azimuthDeg 를 주기적으로 updateAzimuth() 로 밀어 넣는다.
-    @Volatile private var currentAzimuthCode: Int = 0
-    // [v1.0.35] STATE·방위각 재광고 공용 throttle 타임스탬프 (구 lastStateUpdateMs)
+    // [v1.0.36] 현재 송신 예상속도(km/h, 0~15) — startAdvertising 이 Speed 4비트로 패킹해 싣는다.
+    //   BleService 가 ImuFusion.estimatedSpeedKmh 를 주기적으로 updateSpeed() 로 밀어 넣는다.
+    @Volatile private var currentSpeedKmh: Double = 0.0
+    // [v1.0.36] STATE·Speed 재광고 공용 throttle 타임스탬프 (구 lastStateUpdateMs)
     private var lastPayloadUpdateMs = 0L
     // 재광고 시 UWB 주소 유지 (updateState / restartWithUwbAddress 공용)
     private var lastUwbAddress: ByteArray? = null
@@ -93,14 +92,13 @@ class BleAdvertiser(
         // ── Primary 광고 패킷 (ServiceUUID 포함 → 화면 꺼짐에도 스캔 필터 작동) ──
         val advertiseData = AdvertiseData.Builder()
             .addServiceUuid(ParcelUuid(UUID.fromString(BleConstants.SERVICE_UUID)))
-            // [v1.0.35] 2바이트 ServiceData: Byte 1 = Category+State+Speed(2-2-4 패킹),
-            //   Byte 2 = 방위각(0~255). SERVICE_UUID 가 16비트 short UUID(0x1234) 패턴 →
-            //   ServiceData 약 6바이트. 전체 ≈ flags3 + svcUuid4 + svcData6 + mfg(4+N) ≤ 31(N≤14).
+            // [v1.0.36] 1바이트 ServiceData 복구: Category+State+Speed(2-2-4 패킹) 단일 바이트.
+            //   v1.0.35 의 2번째 방위각 바이트는 지자기 자기장 교란 문제로 전면 롤백됐다.
+            //   SERVICE_UUID 가 16비트 short UUID(0x1234) 패턴 → ServiceData 약 5바이트.
             .addServiceData(
                 ParcelUuid(UUID.fromString(BleConstants.SERVICE_UUID)),
                 byteArrayOf(
-                    BleConstants.encodePayload(category, currentState),
-                    currentAzimuthCode.toByte()
+                    BleConstants.encodePayload(category, currentState, currentSpeedKmh)
                 )
             )
             .addManufacturerData(companyId, idBytes)
@@ -129,7 +127,7 @@ class BleAdvertiser(
      * [v1.0.34 다이나믹 페이로드] 송신자 STATE(2bit, PSTATE_*) 갱신.
      * 변경이 있을 때만, 그리고 최소 2초 간격(OS Rate-Limit 회피)으로
      * 기존 광고를 멈추고 약 50ms 뒤 새 페이로드(Category+State+Speed)로 다시 켠다.
-     * Category 는 생성자에서 고정, Speed 는 0 고정 — 여기선 STATE 만 바뀐다.
+     * Category 는 생성자 고정, Speed 는 updateSpeed() 가 갱신 — 여기선 STATE 만 바뀐다.
      */
     fun updateState(newState: Int) {
         val s = newState and 0b11
@@ -147,24 +145,24 @@ class BleAdvertiser(
     }
 
     /**
-     * v1.0.35 방위각(Byte 2) 갱신. ImuFusion 의 현재 방위각을 BleService 가 주기적으로 밀어 넣는다.
-     *  - 미세 변화(±MIN_AZIMUTH_DELTA_CODE 미만)는 무시 — 불필요한 stop/start 폭주 방지.
+     * v1.0.36 송신 예상속도(Speed 4비트) 갱신. ImuFusion.estimatedSpeedKmh 를 BleService 가 주기적으로 민다.
+     *  - 미세 변화(±MIN_SPEED_DELTA_KMH 미만)는 무시 — 불필요한 stop/start 폭주 방지.
      *  - STATE 와 동일한 2초 Rate-Limit throttle 을 공유한다(동시 재광고 충돌 방지).
      *    throttle 에 걸리면 이번 갱신은 생략하고 다음 폴링(BleService ~1.5초)에서 재시도.
-     *  - 재광고 시 startAdvertising 이 최신 currentState + currentAzimuthCode 를 함께 싣는다.
+     *  - 재광고 시 startAdvertising 이 최신 currentState + currentSpeedKmh 를 함께 패킹해 싣는다.
      */
-    fun updateAzimuth(azimuthDeg: Float) {
-        val code = BleConstants.encodeAzimuth(azimuthDeg).toInt() and 0xFF
-        if (abs(code - currentAzimuthCode) < MIN_AZIMUTH_DELTA_CODE) return
+    fun updateSpeed(speedKmh: Float) {
+        val v = speedKmh.toDouble().coerceIn(0.0, BleConstants.SPEED_MAX_KMH)
+        if (abs(v - currentSpeedKmh) < MIN_SPEED_DELTA_KMH) return
         val now = SystemClock.elapsedRealtime()
         if (now - lastPayloadUpdateMs < MIN_STATE_UPDATE_INTERVAL_MS) return
         lastPayloadUpdateMs = now
-        currentAzimuthCode = code
-        Log.d(TAG, "방위각 갱신 → code=$code (~${code * 360 / 255}°) 재광고")
+        currentSpeedKmh = v
+        Log.d(TAG, "속도 갱신 → %.1fkm/h 재광고".format(v))
         restartAdvertise()
     }
 
-    /** v1.0.35 광고 정지 후 STATE_RESTART_DELAY_MS 뒤 최신 페이로드로 재광고 (updateState/updateAzimuth 공용). */
+    /** v1.0.36 광고 정지 후 STATE_RESTART_DELAY_MS 뒤 최신 페이로드로 재광고 (updateState/updateSpeed 공용). */
     private fun restartAdvertise() {
         try { advertiser.stopAdvertising(callback) } catch (_: Exception) {}
         stateHandler.postDelayed({

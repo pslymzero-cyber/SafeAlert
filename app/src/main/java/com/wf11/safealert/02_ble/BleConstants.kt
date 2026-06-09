@@ -61,10 +61,10 @@ object BleConstants {
     //     01 급정거·급회전(SUDDEN)   - 공통(특수경보 트리거)
     //     11 비상(EMERGENCY)         - 공통 / 지게차는 '하역·오더피커 상승'
     //     10 후진(REVERSE)           - 지게차 전용
-    //   SPEED (bits 3:0): 0~6 km/h 를 0.5km/h 단위로 양자화 → 코드 0~12.
-    //          공식: encode = (kmh / 0.5).toInt(),  decode = code * 0.5 (km/h).
-    //          v1.0.34 송신단은 실내 GPS 음영·IMU 드리프트로 미측정이라 0 고정 송출,
-    //          수신단 2D 칼만이 '상대 접근속도'를 별도 산출하므로 충돌 방지엔 영향 없음.
+    //   SPEED (bits 3:0): 0~15 km/h 를 1km/h 단위로 양자화 → 코드 0~15 (4비트 full).
+    //          공식: encode = (kmh / 1.0).toInt(),  decode = code * 1.0 (km/h).
+    //          [v1.0.36] 송신단(ImuFusion.estimatedSpeedKmh, 가속도 RMS 기반 예상속도)이
+    //          실시간 송출 → 수신단 '충돌 기하학 필터'가 합산 접근속도 산출에 사용한다.
     //
     //   ※ 호환성: 보행자 평상(CAT=00,STATE=00,SPEED=0) = 0x00 →
     //     페이로드를 싣지 않는 iBeacon/MAC 비콘의 기본 0x00 과 자연 일치(안전한 기본값).
@@ -82,9 +82,9 @@ object BleConstants {
     const val PSTATE_REVERSE   = 0b10   // 후진 (지게차 전용)
     const val PSTATE_EMERGENCY = 0b11   // 비상(공통) / 지게차 하역·오더피커 상승
 
-    // Speed (bits 3:0) — 0.5km/h 단위 양자화
-    const val SPEED_UNIT_KMH = 0.5      // 1코드 = 0.5km/h
-    const val SPEED_MAX_KMH  = 6.0      // 송출 상한 (코드 12)
+    // Speed (bits 3:0) — 1km/h 단위 양자화 [v1.0.36: 0~6 0.5단위 → 0~15 1단위 확장]
+    const val SPEED_UNIT_KMH = 1.0      // 1코드 = 1km/h
+    const val SPEED_MAX_KMH  = 15.0     // 송출 상한 (코드 15, 4비트 full)
 
     // 비트 필드 마스크/시프트  (2-2-4: CAT 상위 → SPEED 하위)
     private const val CAT_SHIFT   = 6
@@ -99,8 +99,8 @@ object BleConstants {
      * 레이아웃: bits[7:6]=CAT, bits[5:4]=STATE, bits[3:0]=SPEED.
      * @param category CAT_* (0~3) — 범위 밖 상위 비트는 마스킹돼 버려진다.
      * @param state    PSTATE_* (0~3)
-     * @param speedKmh 0~6 km/h (범위 밖은 clamp). 0.5km/h 단위 양자화: (kmh / 0.5).toInt().
-     *                 v1.0.34 송신단은 0.0 고정 호출.
+     * @param speedKmh 0~15 km/h (범위 밖은 clamp). 1km/h 단위 양자화: (kmh / 1.0).toInt().
+     *                 v1.0.36 송신단은 ImuFusion.estimatedSpeedKmh(가속도 RMS 추정)를 송출.
      */
     fun encodePayload(category: Int, state: Int, speedKmh: Double = 0.0): Byte {
         val c = (category and CAT_MASK) shl CAT_SHIFT
@@ -119,25 +119,6 @@ object BleConstants {
     /** 패킹된 1바이트에서 Speed 코드(bits 3:0, 0~15) 추출. */
     fun decodeSpeed(payload: Int): Int = ((payload and 0xFF) shr SPEED_SHIFT) and SPEED_MASK
 
-    /** 패킹된 1바이트에서 Speed 를 km/h 실측값으로 환산 (코드 * 0.5). */
+    /** 패킹된 1바이트에서 Speed 를 km/h 실측값으로 환산 (코드 * 1.0). */
     fun decodeSpeedKmh(payload: Int): Double = decodeSpeed(payload) * SPEED_UNIT_KMH
-
-    // ───────────────────────────────────────────────────────────────
-    // [v1.0.35 방향 정보 공유 — Byte 2: 방위각(Azimuth) 0~360° → 0~255 선형압축]
-    //   2바이트 페이로드의 두 번째 바이트. 송신단이 지자기/회전벡터 센서로 구한
-    //   진행 방위각(도)을 1바이트로 압축해 싣는다. 수신단은 역산해 상대의 진행 방향을
-    //   복원하고, BleService 의 '방향 벡터 필터'(등지고 멀어지는 궤적 알람 억제)에 쓴다.
-    //   ※ Byte 1(2-2-4 패킹)은 v1.0.34 와 100% 동일 — 하위호환 유지.
-    //     1바이트만 보내는 구버전/외부 비콘은 Byte 2 부재 → 수신측이 '방향 미지(-1)'로
-    //     처리해 방향 필터를 비활성(안전: 알람을 억제하지 않음)한다.
-    // ───────────────────────────────────────────────────────────────
-
-    /** 방위각(0~360°)을 1바이트(0~255)로 선형 압축. 공식: (deg / 360) * 255. */
-    fun encodeAzimuth(azimuthDeg: Float): Byte {
-        val norm = ((azimuthDeg % 360f) + 360f) % 360f          // 음수/초과 → 0~360 정규화
-        return (norm / 360f * 255f).toInt().coerceIn(0, 255).toByte()
-    }
-
-    /** 수신 Byte 2(0~255)를 방위각(0~360°)으로 역산. 공식: (byte2 / 255) * 360. */
-    fun decodeAzimuth(byte2: Int): Float = (byte2 and 0xFF) / 255f * 360f
 }
