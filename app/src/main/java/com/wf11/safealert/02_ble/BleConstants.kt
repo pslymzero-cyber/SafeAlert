@@ -42,9 +42,11 @@ object BleConstants {
     const val MOTION_STATE_NORMAL     = 0x01
     const val MOTION_STATE_SUDDEN     = 0x02
 
-    // 상대 STATE 가 급변(급정거/급회전 등)이고 정제 칼만 RSSI가 이 값 이상(가까움)이면
-    // TTC·속도·방향 조건을 모두 무시하고 즉시 최고 DANGER로 격상한다.
-    const val SUDDEN_ALERT_RSSI_THRESHOLD = -60
+    // [v1.0.39] 급정거·급회전(0x02) 즉시 DANGER 격상 임계를 위험(rssiDanger=-55)으로 통일.
+    //   (구 SUDDEN_ALERT_RSSI_THRESHOLD=-60 → 모든 위험 발령을 -55 이내로 일관)
+    //   상대 STATE 가 급변(급정거/급회전)이고 정제 칼만 RSSI가 rssiDanger 이상(가까움)이면
+    //   TTC·속도·방향 조건을 모두 무시하고 즉시 최고 DANGER로 격상한다.
+    //   사용처(BleService 0x02 분기)에서 BleConstants.rssiDanger 를 직접 참조한다.
 
     // ───────────────────────────────────────────────────────────────
     // [v1.0.34 다이나믹 페이로드 — 1Byte 비트패킹 프로토콜 (2-2-4 Split)]
@@ -85,6 +87,10 @@ object BleConstants {
     // Speed (bits 3:0) — 1km/h 단위 양자화 [v1.0.36: 0~6 0.5단위 → 0~15 1단위 확장]
     const val SPEED_UNIT_KMH = 1.0      // 1코드 = 1km/h
     const val SPEED_MAX_KMH  = 15.0     // 송출 상한 (코드 15, 4비트 full)
+    // [v1.0.39] EPJ(전동 파레트 잭) 물리 최고속도 가정 — 송수신 양단에서 속도를 이 값으로 cap.
+    //   송신: 내 카테고리가 EPJ면 송출 속도를 3km/h 로 제한.
+    //   수신: 내가/상대가 EPJ면 충돌 기하학 합산 접근속도 계산 시 해당 속도를 3km/h 로 제한.
+    const val EPJ_MAX_SPEED_KMH = 3.0
 
     // 비트 필드 마스크/시프트  (2-2-4: CAT 상위 → SPEED 하위)
     private const val CAT_SHIFT   = 6

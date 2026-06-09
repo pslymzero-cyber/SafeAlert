@@ -192,6 +192,16 @@ class BleService : LifecycleService() {
         return if (buf.isEmpty()) rssi else buf.map { it.second }.average().toInt()
     }
 
+    // [v1.0.39] 최근 windowMs(기본 0.5초) 동안 받은 RSSI 중 최댓값(가장 가까운 신호)을 반환.
+    //   oneSecBuffer 는 매 프레임 oneSecAvgRssi() 에서 (시각,rssi)로 채워지므로 그대로 재활용한다.
+    //   TTC 긴급 선발령 게이트 전용 — '직전 0.5초 피크'가 위험권(rssiDanger=-55)일 때만 긴급을 허용해
+    //   멀리서 칼만 속도 추정만으로 긴급이 새어 나오는 것을 차단한다. (버퍼 비면 null)
+    private fun recentPeakRssi(deviceId: String, windowMs: Long = 500L): Int? {
+        val buf = oneSecBuffer[deviceId] ?: return null
+        val now = System.currentTimeMillis()
+        return buf.filter { now - it.first <= windowMs }.maxOfOrNull { it.second }
+    }
+
     private val ttcFeedbackMap = mutableMapOf<String, Pair<Double, Long>>()
     private val LEARN_RATE = 0.05f
 
@@ -248,7 +258,11 @@ class BleService : LifecycleService() {
     private val speedPushHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private val speedPushRunnable = object : Runnable {
         override fun run() {
-            bleAdvertiser?.updateSpeed(ImuFusion.estimatedSpeedKmh)
+            // [v1.0.39] EPJ 는 물리 최고속도 3km/h 가정 → 송출 속도를 cap (충돌예측 과대추정 방지).
+            val txSpeed = if (myCategory == BleConstants.CAT_EPJ)
+                minOf(ImuFusion.estimatedSpeedKmh, BleConstants.EPJ_MAX_SPEED_KMH.toFloat())
+            else ImuFusion.estimatedSpeedKmh
+            bleAdvertiser?.updateSpeed(txSpeed)
             speedPushHandler.postDelayed(this, SPEED_PUSH_INTERVAL_MS)
         }
     }
@@ -654,22 +668,25 @@ class BleService : LifecycleService() {
             suddenLabelMap.remove(deviceId)
             deviceCategoryMap.remove(deviceId)
             firebaseLastSaveMap.remove(deviceId)
+            rssiPreFilter.clear(deviceId)     // [v1.0.38 클린업] 미추적 기기 EMA 전처리 상태 정리
+            kalmanFilters.remove(deviceId)    // [v1.0.38 클린업] 미추적 기기 칼만 인스턴스 정리(stale 재등장 방지)
             return
         }
 
-        // ── [v1.0.29 → v1.0.33] 0x02 특수경보 (최우선 분기 · 하이브리드 교차검증) ──────────
+        // ── [v1.0.29 → v1.0.39] 0x02 특수경보 (최우선 분기 · 하이브리드 교차검증) ──────────
         // 상대 remoteState 가 0x02(급정거/급회전)이고 'smoothedRssi(EMA)와 avg1sec(raw 1초평균)'이
-        // 둘 다 임계(-60) 이상(가까움)일 때만 TTC·속도·방향·절대거리 가드를 무시하고 즉시 DANGER 격상.
+        // 둘 다 위험권(rssiDanger=-55) 이상(가까움)일 때만 TTC·속도·방향·절대거리 가드를 무시하고 즉시 DANGER 격상.
         //   ★ v1.0.32: 거리 판정을 kfRssi(칼만) → smoothedRssi(=preFiltered, EMA 출력)로 변경.
         //     칼만 lag 로 실제보다 가깝게 떠 있는 원거리 오발을 줄이고 지침(smoothedRssi 기준)을 준수.
         //   ★ v1.0.33: smoothedRssi 에 avg1sec(raw) 를 논리곱으로 결합(하이브리드). 이탈 중 기기는
-        //     fall α=0.05 의 EMA 지연(lag)으로 smoothedRssi 가 한동안 −60 위로 떠 있어 'DANGER 잔상
-        //     (Ghost Danger)'을 낼 수 있는데, 반응이 빠른 raw 1초평균이 이미 멀어졌으면(−60 미만)
+        //     fall α=0.05 의 EMA 지연(lag)으로 smoothedRssi 가 한동안 위험권 위로 떠 있어 'DANGER 잔상
+        //     (Ghost Danger)'을 낼 수 있는데, 반응이 빠른 raw 1초평균이 이미 멀어졌으면(rssiDanger 미만)
         //     즉시 차단해 이탈 기기의 과경보 잔상을 완전히 제거한다.
+        //   ★ v1.0.39: 즉시 격상 임계를 구 SUDDEN_ALERT_RSSI_THRESHOLD(-60) → rssiDanger(-55)로 통일.
         // 표시문자열을 "{이름}이(가) 급정거 또는 급회전 중입니다."로 덮어써 오버레이·목록에 출력.
         if (rState != BleConstants.PSTATE_NORMAL
-            && preFiltered >= BleConstants.SUDDEN_ALERT_RSSI_THRESHOLD
-            && avg1sec     >= BleConstants.SUDDEN_ALERT_RSSI_THRESHOLD) {
+            && preFiltered >= BleConstants.rssiDanger
+            && avg1sec     >= BleConstants.rssiDanger) {
             deviceRssiMap[deviceId]  = kalmanRssi
             suddenLabelMap[deviceId] = makeStateLabel(extractDisplayName(deviceId), rCategory, rState)
             alertState[deviceId]     = Pair(BleConstants.LEVEL_DANGER, now)
@@ -848,10 +865,14 @@ class BleService : LifecycleService() {
         //   ★ v1.0.31: estimateTTC 는 kfRssi(칼만)로 계산 → 칼만이 spike/lag로 가깝게 떠 있으면
         //     remaining<=0 이 되어 'TTC 0초' 오발이 났다. raw 실측(avg1sec)이 경고권(rssiWarning)
         //     이상으로 실제 가까울 때만 선발령을 허용해, 원거리에서의 TTC 0초 오발을 차단한다.
+        //   ★ v1.0.39: 긴급(DANGER) 선발령 게이트 추가 — '직전 0.5초 동안 받은 RSSI 중 최댓값(피크)'이
+        //     위험권(rssiDanger=-55) 이상일 때만 긴급을 허용한다. 이로써 멀리(-75 부근)서 칼만 속도
+        //     추정만으로 긴급이 새어 나오던 문제를 차단한다. (버퍼 비면 avg1sec 로 폴백)
         if (stableLevel == BleConstants.LEVEL_WARNING
             && newState == TrackingState.APPROACHING
             && !ImuFusion.isStationary
-            && avg1sec >= BleConstants.rssiWarning) {
+            && avg1sec >= BleConstants.rssiWarning
+            && (recentPeakRssi(deviceId, 500L) ?: avg1sec) >= BleConstants.rssiDanger) {
             val ttc = estimateTTC(kfRssi, kfVel)
             if (ttc != null && ttc <= TTC_THRESHOLD_SEC) {
                 ttcFeedbackMap[deviceId] = Pair(ttc, now)
@@ -911,8 +932,14 @@ class BleService : LifecycleService() {
         val approachStreakMs = if (kfApproaching) now - (approachStreakStartMap[deviceId] ?: now) else 0L
 
         // [v1.0.36] 충돌 기하학 — 합산 접근속도(km/h)를 dBm/s 로 환산해 실제 kfVel 과 대조.
-        val mySpeedKmh      = ImuFusion.estimatedSpeedKmh.toDouble()
-        val closingSpeedKmh = mySpeedKmh + remoteSpeedKmh                      // 예상 최대 접근속도(km/h)
+        // [v1.0.39] EPJ 3km/h cap — 내가 EPJ면 내 속도를, 상대가 EPJ면 상대 속도를 3km/h 로 가정해
+        //   합산 접근속도를 과대추정하지 않도록 양단 모두 제한한다.
+        val mySpeedKmh      = (if (myCategory == BleConstants.CAT_EPJ)
+                                  minOf(ImuFusion.estimatedSpeedKmh, BleConstants.EPJ_MAX_SPEED_KMH.toFloat())
+                              else ImuFusion.estimatedSpeedKmh).toDouble()
+        val remoteSpeedCap  = if (rCategory == BleConstants.CAT_EPJ)
+                                  minOf(remoteSpeedKmh, BleConstants.EPJ_MAX_SPEED_KMH) else remoteSpeedKmh
+        val closingSpeedKmh = mySpeedKmh + remoteSpeedCap                      // 예상 최대 접근속도(km/h)
         val expectedKfVel   = closingSpeedKmh * CLOSING_KMH_TO_DBMS            // → 예상 RSSI 접근속도(dBm/s)
         val closingRatio    = if (expectedKfVel > 0.01) kfVel / expectedKfVel else 0.0
         val geometryValid   = closingSpeedKmh >= COLLISION_MIN_CLOSING_KMH     // 양쪽 거의 정지면 판정 불가

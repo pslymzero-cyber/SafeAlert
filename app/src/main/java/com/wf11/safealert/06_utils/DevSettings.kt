@@ -112,21 +112,18 @@ object DevSettings {
         get() = prefs.getFloat(KEY_DANGER_DIST, 5f).coerceIn(1f, 50f)    // 기본 5m
         set(v) = prefs.edit().putFloat(KEY_DANGER_DIST, v.coerceIn(1f, 50f)).apply()
 
-    // 거리 → RSSI 변환 (교정값 반영) — 교정이 달라져도 "5m는 항상 5m"
-    // rssi = calibRssiAt1m - 10 * n * log10(distance_m)
-    val rssiWarning: Int
-        get() {
-            val dist = warningDistM.toDouble().coerceAtLeast(0.5)
-            val n    = pathLossExp.toDouble()
-            return (calibRssiAt1m.toDouble() - 10.0 * n * Math.log10(dist)).toInt()
-        }
+    // [v1.0.39] 위험/경보 임계 — RSSI 절대값 직접 고정 (거리계산 파생 폐지)
+    //   사용자 요구: 경보 -75, 위험 -55 를 신호세기로 직접 고정한다.
+    //   기존 거리계산(calibRssiAt1m·pathLossExp·warningDistM·dangerDistM)은 교정값이 바뀌면
+    //   임계가 함께 흔들려 '-75 에서도 위험 오발'의 원인이 됐다 → 절대 고정으로 전환.
+    //   조정이 필요하면 아래 두 상수(DEFAULT_RSSI_*_ABS)만 수정한다.
+    //   ※ 거리/교정 필드(warningDistM/dangerDistM/calibRssiAt1m)는 UWB 거리→RSSI 환산 등
+    //     다른 경로에서 계속 쓰여 보존한다.
+    const val DEFAULT_RSSI_WARNING_ABS = -75   // 경보(WARNING): RSSI >= -75  (-56~-75 구간)
+    const val DEFAULT_RSSI_DANGER_ABS  = -55   // 위험(DANGER) : RSSI >= -55  (0~-55 구간)
 
-    val rssiDanger: Int
-        get() {
-            val dist = dangerDistM.toDouble().coerceAtLeast(0.5)
-            val n    = pathLossExp.toDouble()
-            return (calibRssiAt1m.toDouble() - 10.0 * n * Math.log10(dist)).toInt()
-        }
+    val rssiWarning: Int get() = DEFAULT_RSSI_WARNING_ABS
+    val rssiDanger: Int  get() = DEFAULT_RSSI_DANGER_ABS
 
     var scanPeriodMs: Long
         get() = prefs.getLong(KEY_SCAN_PERIOD_MS, 3000L)
