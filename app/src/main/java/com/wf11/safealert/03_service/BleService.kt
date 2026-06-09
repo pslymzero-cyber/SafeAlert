@@ -19,6 +19,7 @@ import com.wf11.safealert.ble.BleConstants
 import com.wf11.safealert.ble.BleScanner
 import com.wf11.safealert.ble.BleScanCallback
 import com.wf11.safealert.ble.KalmanFilter
+import com.wf11.safealert.ble.MedianFilter
 import com.wf11.safealert.ble.RssiPreFilter
 import com.wf11.safealert.firebase.FirebaseManager
 import com.wf11.safealert.utils.BeaconRegistry
@@ -103,6 +104,16 @@ class BleService : LifecycleService() {
     //   비대칭 α: 강해짐(접근)=0.3 빠름 / 약해짐(난수)=0.05 느림 / D-Boost(prevVel>+2.0)=0.4 빗장개방.
     private val rssiPreFilter = RssiPreFilter()
 
+    // ── [v1.0.45] MedianFilter: 비선형 순위통계 전처리 (임펄스 제거, EMA '앞단') ──
+    // 철제랙 다중경로 단발 반사(+값 1프레임 튐)를 선형 단계(EMA→칼만) 진입 전에 구조적으로 제거.
+    // 윈도우 N=3 → 그룹지연 약 1프레임. 게이트 3번째 다리(medianValue) 및 워밍업 가드의 기준.
+    private val medianFilter = MedianFilter()
+
+    // ── [v1.0.45] 후처리 P-EMA: 칼만 출력(kfRssi)의 거리(P)항 전용 비대칭 평활 ──
+    // P-D 분리: D항(kfVel)은 위상선행이 생명이라 후필터 우회(Time-Gate 직결), P항(거리)은 평활 허용.
+    // 상승α=0.4(접근 빠른 추종)/하강α=0.15(이탈 잔상 완화), D-Boost 미사용(속도는 칼만이 이미 반영).
+    private val pEmaFilter = RssiPreFilter(alphaRise = 0.4, alphaFall = 0.15, dBoostEnabled = false)
+
     // ── Always-On 정책 (v1.0.24) ──────────────────────────────────────
     // PendingIntent 대기 모드 완전 폐기: 주변 기기 유무(SAFE 상태 포함)와 무관하게
     // 서비스는 사용자가 직접 '중지'를 누르기 전까지 절대 자동 종료(stopAll())하지 않고
@@ -175,6 +186,16 @@ class BleService : LifecycleService() {
 
     // ── 2D 칼만 필터 맵 (v1.0.20: KalmanFilter, 거리+속도 동시 추적) ──
     private val kalmanFilters = mutableMapOf<String, KalmanFilter>()
+
+    // ── [v1.0.45] 돌진 시 칼만 FAST 조건부 승격 ─────────────────────────
+    // prevVel(직전 칼만 속도) > RUSH_FAST_VEL_DBM 이 '연속 RUSH_FAST_MIN_FRAMES 프레임' 지속되거나,
+    // IMU 실가속(adaptiveQFactor ≥ RUSH_FAST_IMU_QFACTOR)이 동반될 때만 NORMAL→FAST 로 승격한다.
+    //   ★ 가드레일: 단발 임펄스는 1프레임만 가짜속도를 만들므로(연속 2프레임 불충족) FAST 를 못 켠다
+    //     → Median 의 임펄스 제거를 되돌리지 못한다. 돌진 종료 시 사용자 프리셋으로 자동 환원.
+    private val rushFrameMap = mutableMapOf<String, Int>()
+    private val RUSH_FAST_VEL_DBM     = 2.0   // 돌진 후보 프레임 판정: prevVel 이 이 값 초과
+    private val RUSH_FAST_MIN_FRAMES  = 2     // 연속 N프레임 지속 시에만 FAST 승격(임펄스 차단)
+    private val RUSH_FAST_IMU_QFACTOR = 2.0   // IMU 실가속 동반: adaptiveQFactor 이 이 값 이상이면 즉시 허용
 
     // ── TTC 파라미터 ──────────────────────────────────────────────────
     // [v1.0.25 Req2] 현장 초민감 오발령 해결 — 8.0초 → 3.0초로 대폭 강화 (충돌 임박 시에만 선발령)
@@ -503,6 +524,9 @@ class BleService : LifecycleService() {
                             Log.d(TAG, "신호 소실: $deviceId")
                             alertState.remove(deviceId)
                             rssiPreFilter.clear(deviceId)
+                            medianFilter.clear(deviceId)      // [v1.0.45] Median 윈도우 정리
+                            pEmaFilter.clear(deviceId)        // [v1.0.45] 후처리 P-EMA 상태 정리
+                            rushFrameMap.remove(deviceId)     // [v1.0.45] 돌진 프레임 카운터 정리
                             kalmanFilters[deviceId]?.reset()
                             kalmanFilters.remove(deviceId)
                             trackingStateMap.remove(deviceId)
@@ -674,20 +698,45 @@ class BleService : LifecycleService() {
         val kf = kalmanFilters.getOrPut(deviceId) {
             KalmanFilter(DevSettings.kalmanPreset)
         }
-        kf.updatePreset(DevSettings.kalmanPreset)
+        // 직전 프레임 칼만 추정속도(estimatedVel) — 돌진 FAST 판정·D-Boost 피드백 공용.
+        //   ※ kf.update()는 아래에서 호출되므로 지금 값은 '직전 프레임' 속도 = 1-step 미분 피드백.
+        val prevVel = kf.estimatedVel
+
+        // ── [v1.0.45] 돌진 시 칼만 FAST 조건부 승격 (가드레일 포함) ────────
+        // 이번 프레임 kf.update() 가 쓸 프리셋을 '직전 속도'로 결정한다(인과 정합).
+        //   조건: (prevVel>임계가 연속 2프레임 지속) OR (IMU 실가속 동반). 둘 다 단발 임펄스로는
+        //   성립 불가 → Median 임펄스 제거를 훼손하지 않는다. 미충족 시 사용자 프리셋으로 환원.
+        val rushFrames = if (prevVel > RUSH_FAST_VEL_DBM) (rushFrameMap[deviceId] ?: 0) + 1 else 0
+        rushFrameMap[deviceId] = rushFrames
+        val imuRealAccel = ImuFusion.adaptiveQFactor >= RUSH_FAST_IMU_QFACTOR
+        val promoteFast  = rushFrames >= RUSH_FAST_MIN_FRAMES || imuRealAccel
+        kf.updatePreset(if (promoteFast) DevSettings.KALMAN_PRESET_FAST else DevSettings.kalmanPreset)
+
+        // ── [v1.0.45] Median(비선형 임펄스 제거) → 비대칭EMA+D-Boost(선형 평활) 직렬 전처리 ──
+        //   파이프라인: Raw → Median(N=3) → 비대칭EMA(D-Boost) → 칼만. 단발 반사 임펄스를 선형
+        //   단계 진입 '전'에 순위통계로 제거해 칼만 속도(kfVel) 오염을 차단한다.
+        val medianValue = medianFilter.push(deviceId, inputRssi)
 
         // ── [v1.0.32] RssiPreFilter: 비대칭 비례제어(Asymmetric P-Control) EMA 전처리 ──
-        // 직전 프레임 칼만 추정속도(estimatedVel)를 D-Boost 피드백으로 전달한다.
-        //   ※ kf.update()는 바로 아래에서 호출되므로, 지금 읽는 estimatedVel 은 '직전 프레임'
-        //     속도 = 1-step 미분 피드백. 강한 돌진(prevVel>+2.0)이면 α 빗장을 열어 지연을 없앤다.
-        //   정제 출력(smoothedRssi=preFiltered)만 칼만 입력으로 주입(raw 직접 입력 금지).
-        val prevVel     = kf.estimatedVel
-        val preFiltered = rssiPreFilter.push(deviceId, inputRssi, prevVel)
+        //   강한 돌진(prevVel>+2.0)이면 α 빗장(D-Boost)을 열어 지연을 없앤다.
+        //   ★ v1.0.45: EMA 입력을 raw → medianValue 로 변경(Median 직렬 선행). 정제 출력(preFiltered)만
+        //     칼만 입력으로 주입(raw 직접 입력 금지).
+        val preFiltered = rssiPreFilter.push(deviceId, medianValue, prevVel)
 
         // ── 2D 칼만 필터 업데이트 (RSSI 공간) ────────────────────────────
         // kfRssi: 추정 RSSI(dBm) / kfVel: 변화율(dBm/s), 양수=접근 / 음수=이탈
         val (kfRssi, kfVel) = kf.update(preFiltered, ImuFusion.adaptiveQFactor)
         val kalmanRssi = kfRssi.toInt()
+
+        // ── [v1.0.45] 후처리 P-EMA: 거리(P)항 전용 평활 — kfRssi → 비대칭 P-EMA → 거리판정 ──
+        //   D항(kfVel)은 위상선행 유지를 위해 후필터 우회(아래 Time-Gate/TTC 에 kfVel 직결).
+        //   P항(거리)만 평활(상승0.4/하강0.15). 게이트 1번째 다리는 raw-order kalmanRssi 유지(보수적 min).
+        val pEma = pEmaFilter.push(deviceId, kalmanRssi)
+
+        // ── [v1.0.45] 워밍업 가드: Median 윈도우 충전 전(콜드스타트)에는 신규/격상 발령 보류 ──
+        //   첫 N프레임은 임펄스로 시작했을 때 거짓 근접으로 보일 수 있어, 필터 상태는 계속 쌓되
+        //   '발령'만 보류한다. 윈도우가 차면 Median 임펄스 방어가 완성된다(특수경보·TTC·일반 모두 적용).
+        val warmingUp = !medianFilter.isFull(deviceId)
 
         // [v1.0.31] raw 1초평균 — 하드게이트/2차게이트/TTC 교차검증용으로 게이트 '앞'에서 1회만 계산.
         //   oneSecAvgRssi 는 호출마다 버퍼에 push(부작용) → 프레임당 1회 호출 후 변수 재사용한다.
@@ -703,10 +752,14 @@ class BleService : LifecycleService() {
         // TTC·0x02 특수경보까지 전부 무시하고 즉시 정리 후 return 한다.
         // 이미 추적 중(alertState 존재)인 기기는 게이트를 통과시켜, 아래 이탈(receding) 페이드아웃
         // 로직이 부드럽게 해제하도록 맡긴다(급단절 방지).
-        //   ★ v1.0.32 3중 가드: 칼만(kalmanRssi)·raw1초평균(avg1sec)에 더해 전처리 EMA 출력
-        //     (smoothedRssi=preFiltered)까지 세 경로 중 가장 먼(가장 음수) 값을 기준으로 잡는다.
-        //     어느 한 경로라도 경고 임계보다 멀면 속도·TTC와 무관하게 신규 격상을 차단(SAFE).
-        val gateRssi = minOf(kalmanRssi, avg1sec, preFiltered)
+        //   ★ v1.0.32 3중 가드: 칼만(kalmanRssi)·raw1초평균(avg1sec)에 더해 전처리 정제경로까지
+        //     세 경로 중 가장 먼(가장 음수) 값을 기준으로 잡는다. 어느 한 경로라도 경고 임계보다
+        //     멀면 속도·TTC와 무관하게 신규 격상을 차단(SAFE).
+        //   ★ v1.0.45: 3번째 다리를 EMA 출력(preFiltered) → Median 출력(medianValue)으로 교체.
+        //     preFiltered 는 하강 α=0.05 로 이탈 시 잔상(SAFE 복귀 지연)을 만들지만, medianValue 는
+        //     raw-order(지연 약 1프레임)라 임펄스는 제거하면서도 실제 이탈에는 신속히 따라가 게이트가
+        //     더 빨리 풀린다(잔상 제거). 보수적 min 원칙·avg1sec raw 교차검증은 그대로 보존.
+        val gateRssi = minOf(kalmanRssi, avg1sec, medianValue)
         if (gateRssi < BleConstants.rssiWarning && !alertState.containsKey(deviceId)) {
             deviceRssiMap.remove(deviceId)
             suddenLabelMap.remove(deviceId)
@@ -714,6 +767,9 @@ class BleService : LifecycleService() {
             deviceStateMap.remove(deviceId)
             firebaseLastSaveMap.remove(deviceId)
             rssiPreFilter.clear(deviceId)     // [v1.0.38 클린업] 미추적 기기 EMA 전처리 상태 정리
+            medianFilter.clear(deviceId)      // [v1.0.45] Median 윈도우 정리(워밍업 상태 리셋)
+            pEmaFilter.clear(deviceId)        // [v1.0.45] 후처리 P-EMA 상태 정리
+            rushFrameMap.remove(deviceId)     // [v1.0.45] 돌진 프레임 카운터 정리
             kalmanFilters.remove(deviceId)    // [v1.0.38 클린업] 미추적 기기 칼만 인스턴스 정리(stale 재등장 방지)
             return
         }
@@ -728,15 +784,19 @@ class BleService : LifecycleService() {
         //     (Ghost Danger)'을 낼 수 있는데, 반응이 빠른 raw 1초평균이 이미 멀어졌으면(rssiDanger 미만)
         //     즉시 차단해 이탈 기기의 과경보 잔상을 완전히 제거한다.
         //   ★ v1.0.39: 즉시 격상 임계를 구 SUDDEN_ALERT_RSSI_THRESHOLD(-60) → rssiDanger(-55)로 통일.
+        //   ★ v1.0.45: 거리판정을 preFiltered(전단 EMA) → pEma(칼만 후처리 P-EMA, 거리 P항)로 변경.
+        //     P-D 분리 일관성 — 거리(P)는 평활 P-EMA 로 판정, 속도(D=kfVel)는 별도 우회. avg1sec(raw)
+        //     하이브리드 교차검증은 유지(이탈 시 잔상 차단). warmingUp(Median 미충전) 구간은 발령 보류.
         // 표시문자열을 makeStateLabel(후진·하역 경보 문구)로 덮어써 오버레이·목록에 출력.
         if ((rState == BleConstants.PSTATE_REVERSE || rState == BleConstants.PSTATE_LOADING)
-            && preFiltered >= BleConstants.rssiDanger
-            && avg1sec     >= BleConstants.rssiDanger) {
+            && !warmingUp                                   // [v1.0.45] 콜드스타트 임펄스 발령 보류
+            && pEma    >= BleConstants.rssiDanger           // [v1.0.45] 거리판정: 후처리 P-EMA(거리 P항)
+            && avg1sec >= BleConstants.rssiDanger) {
             deviceRssiMap[deviceId]  = kalmanRssi
             suddenLabelMap[deviceId] = makeStateLabel(extractDisplayName(deviceId), rCategory, rState)
             alertState[deviceId]     = Pair(BleConstants.LEVEL_DANGER, now)
             bleScanner?.setEcoMode(false)   // 즉시 전투 모드(LOW_LATENCY)
-            Log.w(TAG, "특수경보(STATE=$rState CAT=$rCategory): $deviceId smoothed=$preFiltered kfRssi=%.1f".format(kfRssi))
+            Log.w(TAG, "특수경보(STATE=$rState CAT=$rCategory): $deviceId pEma=$pEma kfRssi=%.1f".format(kfRssi))
             // 무음(전역/개별)은 존중 — 상태·표시는 유지하되 소리/진동만 억제
             if (isMuted || isDeviceMuted(deviceId)) {
                 updateFloatingOverlay()
@@ -764,7 +824,8 @@ class BleService : LifecycleService() {
         val avgRssi: Int
 
         if (mode == DevSettings.MODE_FIXED_AVG) {
-            val blended = (avg1sec * (1.0 - auxRatio) + kalmanRssi * auxRatio).toInt()
+            // [v1.0.45] 거리(P) 항: kalmanRssi → pEma(후처리 비대칭 P-EMA)로 평활. 속도(D)는 별도 우회.
+            val blended = (avg1sec * (1.0 - auxRatio) + pEma * auxRatio).toInt()
             avgRssi = blended
             val warningThresh = -DevSettings.fixedWarningAbs
             // DEPARTING 쿨다운 중: 경보 완전 억제 / 이후: 강화된 임계 적용
@@ -778,7 +839,8 @@ class BleService : LifecycleService() {
             stableLevel = if (ImuFusion.isStationary && rawLevel >= BleConstants.LEVEL_DANGER)
                 BleConstants.LEVEL_WARNING else rawLevel
         } else {
-            val blended = (kalmanRssi * (1.0 - auxRatio) + avg1sec * auxRatio).toInt()
+            // [v1.0.45] 거리(P) 항: kalmanRssi → pEma(후처리 비대칭 P-EMA)로 평활. 속도(D)는 별도 우회.
+            val blended = (pEma * (1.0 - auxRatio) + avg1sec * auxRatio).toInt()
             avgRssi = blended
             val beaconOffset = runCatching { BeaconRegistry.getRssiOffsetForFullId(deviceId) }.getOrDefault(0)
             val rawLevel = calcLevelWithHysteresis(deviceId, blended, beaconOffset)
@@ -808,6 +870,9 @@ class BleService : LifecycleService() {
             if (alertState.containsKey(deviceId)) {
                 alertState.remove(deviceId)
                 rssiPreFilter.clear(deviceId)
+                medianFilter.clear(deviceId)      // [v1.0.45]
+                pEmaFilter.clear(deviceId)        // [v1.0.45]
+                rushFrameMap.remove(deviceId)     // [v1.0.45]
                 kf.reset()
                 kalmanFilters.remove(deviceId)
                 trackingStateMap.remove(deviceId)
@@ -880,6 +945,9 @@ class BleService : LifecycleService() {
             if (recedingMs >= RECEDING_CLEAR_MS && alertState.containsKey(deviceId)) {
                 alertState.remove(deviceId)
                 rssiPreFilter.clear(deviceId)
+                medianFilter.clear(deviceId)      // [v1.0.45]
+                pEmaFilter.clear(deviceId)        // [v1.0.45]
+                rushFrameMap.remove(deviceId)     // [v1.0.45]
                 kalmanFilters[deviceId]?.reset()
                 kalmanFilters.remove(deviceId)
                 wasStationaryMap.remove(deviceId)
@@ -914,7 +982,8 @@ class BleService : LifecycleService() {
         //   ★ v1.0.39: 긴급(DANGER) 선발령 게이트 추가 — '직전 0.5초 동안 받은 RSSI 중 최댓값(피크)'이
         //     위험권(rssiDanger=-55) 이상일 때만 긴급을 허용한다. 이로써 멀리(-75 부근)서 칼만 속도
         //     추정만으로 긴급이 새어 나오던 문제를 차단한다. (버퍼 비면 avg1sec 로 폴백)
-        if (stableLevel == BleConstants.LEVEL_WARNING
+        if (!warmingUp                                      // [v1.0.45] 콜드스타트 임펄스 선발령 보류
+            && stableLevel == BleConstants.LEVEL_WARNING
             && newState == TrackingState.APPROACHING
             && !ImuFusion.isStationary
             && avg1sec >= BleConstants.rssiWarning
@@ -933,8 +1002,8 @@ class BleService : LifecycleService() {
             }
         }
 
-        Log.d(TAG, "RSSI raw=$rssi → pre=$preFiltered → kfRssi=%.1f " +
-            "vel=%.2fdBm/s state=$newState stable=$stableLevel".format(kfRssi, kfVel))
+        Log.d(TAG, ("RSSI raw=$rssi → med=$medianValue → pre=$preFiltered → kf=%.1f → pEma=$pEma " +
+            "vel=%.2fdBm/s state=$newState stable=$stableLevel fast=$promoteFast warm=$warmingUp").format(kfRssi, kfVel))
 
         val prev = alertState[deviceId]
         val prevLevel     = prev?.first  ?: BleConstants.LEVEL_SAFE
@@ -946,7 +1015,8 @@ class BleService : LifecycleService() {
         val isFirstDetection = prev == null
         val levelEscalated   = stableLevel > prevLevel
         val cooldownPassed   = now - lastAlertTime >= cooldown
-        val shouldAlert = isFirstDetection || levelEscalated || (cooldownPassed && !isReceding)
+        // [v1.0.45] 워밍업(Median 미충전) 구간은 신규/격상 발령 보류 — 콜드스타트 임펄스 오염 방어.
+        val shouldAlert = !warmingUp && (isFirstDetection || levelEscalated || (cooldownPassed && !isReceding))
         if (!shouldAlert) return
 
         // ── [v1.0.35 Time-Gate] + [v1.0.36 코너링 연장 · 충돌 기하학 필터] — 신규/격상 경보 한정 ──
@@ -1465,6 +1535,9 @@ class BleService : LifecycleService() {
         broadcastDeviceList(force = true)   // [v1.0.26 Req2] 서비스 중지 → 빈 목록 송출('감지 없음' 반영)
         localSnapshot = ""; lastLocalSnapshot = ""   // [v1.0.42 Req2] 내 장비(Local) 스냅샷 초기화
         rssiPreFilter.clearAll()
+        medianFilter.clearAll()    // [v1.0.45]
+        pEmaFilter.clearAll()      // [v1.0.45]
+        rushFrameMap.clear()       // [v1.0.45]
         kalmanFilters.clear()
         trackingStateMap.clear()
         crossingStartMap.clear()

@@ -26,11 +26,21 @@ import kotlin.math.roundToInt
  *      필터 지연을 최소화하고 생존 반응속도를 확보한다.
  *
  * 정제된 출력(smoothedRssi)만 2D 칼만 필터의 Measurement 로 주입된다(raw 직접 입력 금지).
+ *
+ * [v1.0.45 재사용 파라미터화] 동일 비대칭 EMA 코어를 칼만 '후처리 P-EMA'로도 재사용한다.
+ *   · 기본 생성자(인자 없음) = 전단(front) EMA: 상승0.3/하강0.05/D-Boost0.4, D-Boost ON (기존 동작 보존).
+ *   · 후처리 P-EMA 재사용 시: RssiPreFilter(alphaRise=0.4, alphaFall=0.15, dBoostEnabled=false).
+ *     칼만이 이미 속도(D)를 반영하므로 P-EMA 단계의 D-Boost 는 비활성화한다(거리 P항 전용 평활).
  */
-class RssiPreFilter {
+class RssiPreFilter(
+    private val alphaRise:     Double  = ALPHA_RISE,
+    private val alphaFall:     Double  = ALPHA_FALL,
+    private val alphaDBoost:   Double  = ALPHA_DBOOST,
+    private val dBoostEnabled: Boolean = true,
+) {
 
     companion object {
-        // 비대칭 비례상수(α)
+        // 비대칭 비례상수(α) — 전단 EMA 기본값
         const val ALPHA_RISE     = 0.3    // 신호 강해짐(접근/위험): 빠른 추종
         const val ALPHA_FALL     = 0.05   // 신호 약해짐(난수 의심): 느린 추종
         const val ALPHA_DBOOST   = 0.4    // 강한 돌진(D-Boost): 빗장 완전 개방
@@ -59,11 +69,11 @@ class RssiPreFilter {
         val r = rssi.toDouble()
         val alpha = when {
             // D-Boost: 강한 돌진(접근속도 가파름) → 신호 일시감소(R<S)여도 빗장 개방
-            prevVel > VEL_DBOOST_DBM -> ALPHA_DBOOST
+            dBoostEnabled && prevVel > VEL_DBOOST_DBM -> alphaDBoost
             // 신호 강해짐(R ≥ S): 위험 방향 → 빠른 추종
-            r >= prev                -> ALPHA_RISE
+            r >= prev                                 -> alphaRise
             // 신호 약해짐(R < S): 철제랙 간섭 등 난수 의심 → 매우 느린 추종
-            else                     -> ALPHA_FALL
+            else                                      -> alphaFall
         }
 
         val s = prev + alpha * (r - prev)
