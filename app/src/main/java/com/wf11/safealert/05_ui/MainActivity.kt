@@ -246,7 +246,7 @@ class MainActivity : AppCompatActivity() {
             DevSettings.MODE_FIXED_AVG ->
                 "1초 평균 고정값 · 위험 ${DevSettings.fixedDangerAbs} / 경고 ${DevSettings.fixedWarningAbs}"
             else ->
-                "칼만 필터 · 위험 ${DevSettings.dangerDistM.toInt()}m / 경고 ${DevSettings.warningDistM.toInt()}m"
+                "칼만 필터 · 위험 ${DevSettings.rssiDanger}dBm / 경고 ${DevSettings.rssiWarning}dBm"
         }
         val beaconCount = BeaconRegistry.count()
         binding.tvBeaconSummary.text = if (beaconCount > 0)

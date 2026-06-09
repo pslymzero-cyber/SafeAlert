@@ -112,18 +112,26 @@ object DevSettings {
         get() = prefs.getFloat(KEY_DANGER_DIST, 5f).coerceIn(1f, 50f)    // 기본 5m
         set(v) = prefs.edit().putFloat(KEY_DANGER_DIST, v.coerceIn(1f, 50f)).apply()
 
-    // [v1.0.39] 위험/경보 임계 — RSSI 절대값 직접 고정 (거리계산 파생 폐지)
-    //   사용자 요구: 경보 -75, 위험 -55 를 신호세기로 직접 고정한다.
-    //   기존 거리계산(calibRssiAt1m·pathLossExp·warningDistM·dangerDistM)은 교정값이 바뀌면
-    //   임계가 함께 흔들려 '-75 에서도 위험 오발'의 원인이 됐다 → 절대 고정으로 전환.
-    //   조정이 필요하면 아래 두 상수(DEFAULT_RSSI_*_ABS)만 수정한다.
-    //   ※ 거리/교정 필드(warningDistM/dangerDistM/calibRssiAt1m)는 UWB 거리→RSSI 환산 등
-    //     다른 경로에서 계속 쓰여 보존한다.
+    // [v1.0.40] 위험/경보 RSSI 임계 — 신호세기(dBm)로 직접 제어 (사용자 조정 가능)
+    //   v1.0.39 에서 거리계산 파생을 폐지하고 절대 고정(-75/-55)했고, v1.0.40 부터는
+    //   BLE 설정의 dBm 슬라이더로 직접 저장/조정한다(고정값 모드 절댓값 슬라이더와 통일).
+    //   저장은 음수 dBm 그대로. UI 슬라이더는 절댓값(양수 30~100)으로 표시 후 음수화해 저장.
+    //   제약(UI): 위험은 경고보다 가까움 = 덜 음수 = 절댓값이 더 작다 (예 위험 -55 > 경고 -75).
+    //   ※ 거리/교정 필드(warningDistM/dangerDistM/calibRssiAt1m)는 UWB 거리→RSSI 환산·
+    //     캘리브레이션 마법사에서 계속 쓰여 보존한다.
+    //   prefs 키는 기존 KEY_RSSI_WARNING / KEY_RSSI_DANGER (상단 L11-12) 재사용.
     const val DEFAULT_RSSI_WARNING_ABS = -75   // 경보(WARNING): RSSI >= -75  (-56~-75 구간)
     const val DEFAULT_RSSI_DANGER_ABS  = -55   // 위험(DANGER) : RSSI >= -55  (0~-55 구간)
+    const val RSSI_THRESH_MIN = -100           // 슬라이더 하한(가장 멂, 절댓값 100)
+    const val RSSI_THRESH_MAX = -30            // 슬라이더 상한(가장 가까움, 절댓값 30)
 
-    val rssiWarning: Int get() = DEFAULT_RSSI_WARNING_ABS
-    val rssiDanger: Int  get() = DEFAULT_RSSI_DANGER_ABS
+    var rssiWarning: Int
+        get() = prefs.getInt(KEY_RSSI_WARNING, DEFAULT_RSSI_WARNING_ABS).coerceIn(RSSI_THRESH_MIN, RSSI_THRESH_MAX)
+        set(v) = prefs.edit().putInt(KEY_RSSI_WARNING, v.coerceIn(RSSI_THRESH_MIN, RSSI_THRESH_MAX)).apply()
+
+    var rssiDanger: Int
+        get() = prefs.getInt(KEY_RSSI_DANGER, DEFAULT_RSSI_DANGER_ABS).coerceIn(RSSI_THRESH_MIN, RSSI_THRESH_MAX)
+        set(v) = prefs.edit().putInt(KEY_RSSI_DANGER, v.coerceIn(RSSI_THRESH_MIN, RSSI_THRESH_MAX)).apply()
 
     var scanPeriodMs: Long
         get() = prefs.getLong(KEY_SCAN_PERIOD_MS, 3000L)

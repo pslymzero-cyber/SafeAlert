@@ -33,9 +33,9 @@ class BleSettingsActivity : AppCompatActivity() {
             }
         )
 
-        // 칼만 모드: 거리 (m)
-        binding.seekWarnDist.progress = (DevSettings.warningDistM.toInt() - 1).coerceIn(0, 49)
-        binding.seekDangDist.progress = (DevSettings.dangerDistM.toInt()  - 1).coerceIn(0, 49)
+        // 칼만 모드: RSSI 임계 (dBm) — 슬라이더 progress=절댓값(30~100), 저장은 음수 dBm
+        binding.seekWarnDist.progress = (-DevSettings.rssiWarning).coerceIn(30, 100)
+        binding.seekDangDist.progress = (-DevSettings.rssiDanger ).coerceIn(30, 100)
         updateDistLabels()
 
         // 고정값 모드: 절댓값
@@ -80,11 +80,15 @@ class BleSettingsActivity : AppCompatActivity() {
         DevSettings.detectionMode = if (isKalman) DevSettings.MODE_KALMAN else DevSettings.MODE_FIXED_AVG
 
         if (isKalman) {
-            var warnM = (binding.seekWarnDist.progress + 1).toFloat()
-            var dangM = (binding.seekDangDist.progress  + 1).toFloat()
-            if (warnM < dangM) { val t = warnM; warnM = dangM + 1f; dangM = t }
-            DevSettings.warningDistM = warnM
-            DevSettings.dangerDistM  = dangM
+            // 슬라이더 progress=절댓값(30~100). 위험은 경고보다 가까움 → 절댓값이 더 작아야.
+            val warnAbs = binding.seekWarnDist.progress
+            val dangAbs = binding.seekDangDist.progress
+            if (dangAbs >= warnAbs) {
+                Toast.makeText(this, "위험 임계는 경고보다 가까워야 합니다 (절댓값을 더 작게)", Toast.LENGTH_SHORT).show()
+                return
+            }
+            DevSettings.rssiWarning = -warnAbs
+            DevSettings.rssiDanger  = -dangAbs
             DevSettings.kalmanPreset = when (binding.rgKalmanPreset.checkedRadioButtonId) {
                 binding.rbKfFast.id   -> DevSettings.KALMAN_PRESET_FAST
                 binding.rbKfNormal.id -> DevSettings.KALMAN_PRESET_NORMAL
@@ -108,10 +112,11 @@ class BleSettingsActivity : AppCompatActivity() {
     }
 
     private fun updateDistLabels() {
-        val warnM = binding.seekWarnDist.progress + 1
-        val dangM = binding.seekDangDist.progress  + 1
-        binding.tvWarnDist.text = "${warnM}m"
-        binding.tvDangDist.text = "${dangM}m"
+        // 슬라이더 progress=절댓값(30~100) → 표시는 음수 dBm
+        val warnAbs = binding.seekWarnDist.progress
+        val dangAbs = binding.seekDangDist.progress
+        binding.tvWarnDist.text = "-${warnAbs} dBm"
+        binding.tvDangDist.text = "-${dangAbs} dBm"
     }
 
     private fun updateAbsLabels() {

@@ -384,7 +384,7 @@ class BleService : LifecycleService() {
         val modeStr = if (DevSettings.detectionMode == DevSettings.MODE_FIXED_AVG)
             "고정값(위험|${DevSettings.fixedDangerAbs}|경고|${DevSettings.fixedWarningAbs})"
         else
-            "칼만(위험${DevSettings.dangerDistM.toInt()}m≈${BleConstants.rssiDanger}dBm 경고${DevSettings.warningDistM.toInt()}m≈${BleConstants.rssiWarning}dBm)"
+            "칼만(위험 ${BleConstants.rssiDanger}dBm / 경고 ${BleConstants.rssiWarning}dBm)"
         Log.i(TAG, "=== BLE 임계값 확인: $modeStr ===")
         sendStatusBroadcast("설정: $modeStr")
 

@@ -41,10 +41,10 @@
                         android:layout_marginEnd="12dp" android:clickable="false" android:focusable="false"/>
                     <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content"
                         android:layout_weight="1" android:orientation="vertical">
-                        <TextView android:text="칼만 필터 (거리 기반)"
+                        <TextView android:text="칼만 필터 (신호세기 기반)"
                             android:textSize="15sp" android:textStyle="bold" android:textColor="#111827"
                             android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-                        <TextView android:text="거리(m)를 직접 설정 · 노이즈 자동 억제"
+                        <TextView android:text="신호세기(dBm)를 직접 설정 · 노이즈 자동 억제"
                             android:textSize="12sp" android:textColor="#9CA3AF"
                             android:layout_width="wrap_content" android:layout_height="wrap_content"/>
                     </LinearLayout>
@@ -88,7 +88,7 @@
 
                     <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
                         android:orientation="horizontal" android:gravity="center_vertical">
-                        <TextView android:text="경고 거리" android:layout_width="0dp"
+                        <TextView android:text="경고 신호세기" android:layout_width="0dp"
                             android:layout_height="wrap_content" android:layout_weight="1"
                             android:textSize="13sp" android:textColor="#374151"/>
                         <TextView android:id="@+id/tv_warn_dist"
@@ -96,10 +96,10 @@
                             android:textSize="14sp" android:textStyle="bold" android:textColor="#F59E0B"/>
                     </LinearLayout>
                     <SeekBar android:id="@+id/seek_warn_dist" android:layout_width="match_parent"
-                        android:layout_height="wrap_content" android:layout_marginTop="4dp" android:max="49"/>
+                        android:layout_height="wrap_content" android:layout_marginTop="4dp" android:min="30" android:max="100"/>
                     <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
                         android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="12dp">
-                        <TextView android:text="위험 거리" android:layout_width="0dp"
+                        <TextView android:text="위험 신호세기" android:layout_width="0dp"
                             android:layout_height="wrap_content" android:layout_weight="1"
                             android:textSize="13sp" android:textColor="#374151"/>
                         <TextView android:id="@+id/tv_dang_dist"
@@ -107,7 +107,7 @@
                             android:textSize="14sp" android:textStyle="bold" android:textColor="#EF4444"/>
                     </LinearLayout>
                     <SeekBar android:id="@+id/seek_dang_dist" android:layout_width="match_parent"
-                        android:layout_height="wrap_content" android:layout_marginTop="4dp" android:max="49"/>
+                        android:layout_height="wrap_content" android:layout_marginTop="4dp" android:min="30" android:max="100"/>
                 </LinearLayout>
             </androidx.cardview.widget.CardView>
 
