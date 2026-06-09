@@ -88,15 +88,17 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
                 val rssi       = result.rssi
                 val alertLevel = calcAlertLevel(rssi)
 
-                // [v1.0.29 다이나믹 페이로드] 상대 ServiceData 1Byte → 모션 상태 코드 해독
-                //   미지원(구버전) 기기는 ServiceData 가 없으므로 0x00(정지)으로 간주.
-                val remoteState = record.getServiceData(SERVICE_DATA_UUID)
-                    ?.firstOrNull()?.toInt()?.and(0xFF)
+                // [v1.0.35 2바이트 페이로드] 상대 ServiceData → Byte1=모션상태, Byte2=방위각 해독.
+                //   미지원(구버전 1바이트/비콘): Byte1 부재→0x00(정지), Byte2 부재→-1(방향 미지).
+                //   방향 미지(-1)면 수신측 방향 필터가 자동 비활성 → 안전(알람 억제 안 함).
+                val svcData       = record.getServiceData(SERVICE_DATA_UUID)
+                val remoteState   = svcData?.getOrNull(0)?.toInt()?.and(0xFF)
                     ?: BleConstants.MOTION_STATE_STATIONARY
+                val remoteAzimuth = svcData?.getOrNull(1)?.toInt()?.and(0xFF) ?: -1
 
                 BleService.safeAlertFound++
                 detectedDevices[fullId] = System.currentTimeMillis()
-                scanCallback?.onDeviceDetected(fullId, rssi, alertLevel, remoteState)
+                scanCallback?.onDeviceDetected(fullId, rssi, alertLevel, remoteState, remoteAzimuth)
 
                 // UWB 주소 스캔 응답 파싱 (지원 기기 한정)
                 val uwbData = record.getManufacturerSpecificData(BleConstants.COMPANY_ID_UWB_EXT)

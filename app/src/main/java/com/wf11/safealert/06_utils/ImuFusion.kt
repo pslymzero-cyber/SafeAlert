@@ -74,8 +74,27 @@ object ImuFusion {
     private val accelBuffer = ArrayDeque<Float>()
     private val lock = Any()
 
+    // [v1.0.35] 방위각(Azimuth) — 지자기/회전벡터 센서로 산출한 현재 진행 방위각(0~360°).
+    //   송신단이 ServiceData Byte 2 로 공유 → 수신단의 '방향 벡터 필터'에 쓰인다.
+    //   hasAzimuth=false(센서 없음)면 BleService 가 방향 필터를 비활성(안전: 억제 안 함).
+    @Volatile var azimuthDeg: Float = 0f
+        private set
+    @Volatile var hasAzimuth: Boolean = false
+        private set
+    private val rotationMatrix    = FloatArray(9)
+    private val orientationAngles = FloatArray(3)
+
     private val listener = object : SensorEventListener {
         override fun onSensorChanged(event: SensorEvent) {
+            // [v1.0.35] 회전 벡터 → 방위각(Azimuth) 산출. ServiceData Byte 2 로 공유된다.
+            if (event.sensor.type == Sensor.TYPE_ROTATION_VECTOR) {
+                SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
+                SensorManager.getOrientation(rotationMatrix, orientationAngles)
+                val deg = Math.toDegrees(orientationAngles[0].toDouble()).toFloat()
+                azimuthDeg = ((deg % 360f) + 360f) % 360f   // 방위각 0~360° 정규화
+                return
+            }
+
             // [v1.0.29] 자이로: Z축 회전율 급증 → 급회전(0x02) 트리거
             if (event.sensor.type == Sensor.TYPE_GYROSCOPE) {
                 if (abs(event.values[2]) > SUDDEN_GYRO_THRESHOLD) {
@@ -142,6 +161,17 @@ object ImuFusion {
         } else {
             Log.w(TAG, "자이로 센서 없음 — 가속도 급변만으로 0x02 판정")
         }
+        // [v1.0.35] 회전 벡터 센서 등록 — 방위각(Byte 2) 측정용. 없으면 방향 공유 비활성.
+        //   SENSOR_DELAY_UI(~16Hz)면 방향 추종에 충분하고 배터리에도 유리.
+        val rot = sensorManager?.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
+        if (rot != null) {
+            sensorManager?.registerListener(listener, rot, SensorManager.SENSOR_DELAY_UI)
+            hasAzimuth = true
+            Log.d(TAG, "회전벡터 센서 등록 — 방위각 공유(Byte 2) 활성")
+        } else {
+            hasAzimuth = false
+            Log.w(TAG, "회전벡터 센서 없음 — 방향 정보 공유 비활성")
+        }
         isRunning = true
         Log.d(TAG, "IMU 융합 초기화 (SENSOR_DELAY_GAME, ${WINDOW_SIZE}샘플 창)")
     }
@@ -156,6 +186,9 @@ object ImuFusion {
         // [v1.0.29] 3-State 상태 리셋
         lastSuddenMs = 0L
         lastNotifiedMotionState = STATE_STATIONARY
+        // [v1.0.35] 방위각 상태 리셋
+        hasAzimuth = false
+        azimuthDeg = 0f
         isRunning = false
         Log.d(TAG, "IMU 융합 중지")
     }

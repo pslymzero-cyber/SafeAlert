@@ -8,6 +8,7 @@ import android.os.ParcelUuid
 import android.os.SystemClock
 import android.util.Log
 import java.util.UUID
+import kotlin.math.abs
 
 class BleAdvertiser(
     private val advertiser: BluetoothLeAdvertiser,
@@ -20,9 +21,13 @@ class BleAdvertiser(
     companion object {
         private const val TAG = "BleAdvertiser"
         // [v1.0.29] 상태 갱신 최소 주기 — 안드로이드 OS Advertising Rate-Limit 회피
+        //   [v1.0.35] STATE 와 방위각(Byte 2) 재광고가 이 throttle 을 '공유'한다.
         private const val MIN_STATE_UPDATE_INTERVAL_MS = 2000L
         // 상태 변경 시 stopAdvertising 후 재시작까지 대기 (OS 정리 시간 확보)
         private const val STATE_RESTART_DELAY_MS = 50L
+        // [v1.0.35] 방위각 미세 변화 무시 임계(코드 단위, 1코드 ≈ 1.41°).
+        //   ±4코드(≈5.6°) 미만 변화는 재광고를 생략해 불필요한 stop/start 폭주를 막는다.
+        private const val MIN_AZIMUTH_DELTA_CODE = 4
     }
 
     private val callback = object : AdvertiseCallback() {
@@ -51,7 +56,11 @@ class BleAdvertiser(
     // [v1.0.34 다이나믹 페이로드] 현재 송신자 STATE(2bit, PSTATE_*) — Category·Speed 와 함께
     //   encodePayload() 로 1바이트로 패킹되어 ServiceData 로 탑재된다. (Speed 는 0 고정)
     @Volatile private var currentState: Int = BleConstants.PSTATE_NORMAL
-    private var lastStateUpdateMs = 0L
+    // [v1.0.35] 현재 송신 방위각 코드(0~255) — startAdvertising 이 Byte 2 로 싣는다.
+    //   BleService 가 ImuFusion.azimuthDeg 를 주기적으로 updateAzimuth() 로 밀어 넣는다.
+    @Volatile private var currentAzimuthCode: Int = 0
+    // [v1.0.35] STATE·방위각 재광고 공용 throttle 타임스탬프 (구 lastStateUpdateMs)
+    private var lastPayloadUpdateMs = 0L
     // 재광고 시 UWB 주소 유지 (updateState / restartWithUwbAddress 공용)
     private var lastUwbAddress: ByteArray? = null
     private val stateHandler = android.os.Handler(android.os.Looper.getMainLooper())
@@ -84,12 +93,15 @@ class BleAdvertiser(
         // ── Primary 광고 패킷 (ServiceUUID 포함 → 화면 꺼짐에도 스캔 필터 작동) ──
         val advertiseData = AdvertiseData.Builder()
             .addServiceUuid(ParcelUuid(UUID.fromString(BleConstants.SERVICE_UUID)))
-            // [v1.0.34] Category+State+Speed 를 1바이트로 패킹해 ServiceData 로 탑재
-            //   SERVICE_UUID 가 16비트 short UUID(0x1234) 패턴 → ServiceData 약 5바이트.
-            //   전체 패킷 ≈ flags3 + svcUuid4 + svcData5 + mfg(4+N) ≤ 31바이트 유지(N≤14).
+            // [v1.0.35] 2바이트 ServiceData: Byte 1 = Category+State+Speed(2-2-4 패킹),
+            //   Byte 2 = 방위각(0~255). SERVICE_UUID 가 16비트 short UUID(0x1234) 패턴 →
+            //   ServiceData 약 6바이트. 전체 ≈ flags3 + svcUuid4 + svcData6 + mfg(4+N) ≤ 31(N≤14).
             .addServiceData(
                 ParcelUuid(UUID.fromString(BleConstants.SERVICE_UUID)),
-                byteArrayOf(BleConstants.encodePayload(category, currentState))
+                byteArrayOf(
+                    BleConstants.encodePayload(category, currentState),
+                    currentAzimuthCode.toByte()
+                )
             )
             .addManufacturerData(companyId, idBytes)
             .setIncludeDeviceName(false)
@@ -123,14 +135,37 @@ class BleAdvertiser(
         val s = newState and 0b11
         if (s == currentState) return
         val now = SystemClock.elapsedRealtime()
-        if (now - lastStateUpdateMs < MIN_STATE_UPDATE_INTERVAL_MS) {
+        if (now - lastPayloadUpdateMs < MIN_STATE_UPDATE_INTERVAL_MS) {
             // 2초 이내 재갱신 금지 — 다음 상태 변화 시점에 반영
             Log.d(TAG, "상태 갱신 보류(Rate-Limit): STATE=$s")
             return
         }
-        lastStateUpdateMs = now
+        lastPayloadUpdateMs = now
         currentState = s
         Log.d(TAG, "STATE 갱신 → $s (CAT=$category) 재광고")
+        restartAdvertise()
+    }
+
+    /**
+     * v1.0.35 방위각(Byte 2) 갱신. ImuFusion 의 현재 방위각을 BleService 가 주기적으로 밀어 넣는다.
+     *  - 미세 변화(±MIN_AZIMUTH_DELTA_CODE 미만)는 무시 — 불필요한 stop/start 폭주 방지.
+     *  - STATE 와 동일한 2초 Rate-Limit throttle 을 공유한다(동시 재광고 충돌 방지).
+     *    throttle 에 걸리면 이번 갱신은 생략하고 다음 폴링(BleService ~1.5초)에서 재시도.
+     *  - 재광고 시 startAdvertising 이 최신 currentState + currentAzimuthCode 를 함께 싣는다.
+     */
+    fun updateAzimuth(azimuthDeg: Float) {
+        val code = BleConstants.encodeAzimuth(azimuthDeg).toInt() and 0xFF
+        if (abs(code - currentAzimuthCode) < MIN_AZIMUTH_DELTA_CODE) return
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastPayloadUpdateMs < MIN_STATE_UPDATE_INTERVAL_MS) return
+        lastPayloadUpdateMs = now
+        currentAzimuthCode = code
+        Log.d(TAG, "방위각 갱신 → code=$code (~${code * 360 / 255}°) 재광고")
+        restartAdvertise()
+    }
+
+    /** v1.0.35 광고 정지 후 STATE_RESTART_DELAY_MS 뒤 최신 페이로드로 재광고 (updateState/updateAzimuth 공용). */
+    private fun restartAdvertise() {
         try { advertiser.stopAdvertising(callback) } catch (_: Exception) {}
         stateHandler.postDelayed({
             startAdvertising(currentDeviceId, lastUwbAddress)

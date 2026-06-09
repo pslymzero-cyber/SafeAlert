@@ -222,6 +222,29 @@ class BleService : LifecycleService() {
 
     private val HYSTERESIS_DBM = 5
 
+    // ── [v1.0.35 민감도 지연(Time-Gate) + 방향 벡터 필터] ──────────────────────────
+    // Time-Gate: 위험권 진입 후에도 2D 칼만 미분(kfVel, dBm/s)이 APPROACH_TIMEGATE_VEL_DBM 이상
+    //   '가까워짐'을 APPROACH_TIMEGATE_MS(0.5초) 연속 유지할 때만 신규/격상 경보를 발령한다.
+    //   → 전파 튐(single-frame spike)으로 인한 즉각 오알람을 차단. 쿨다운 재알람·0x02 특수경보·
+    //     TTC 선발령에는 적용하지 않는다(끊김 방지/즉각 안전 — 각 경로가 위에서 먼저 return).
+    private val APPROACH_TIMEGATE_MS      = 500L   // 신규/격상 경보 전 최소 연속 접근 시간
+    private val APPROACH_TIMEGATE_VEL_DBM = 0.5    // '가까워짐' 판정 최소 접근속도(dBm/s)
+    // 방향 벡터 필터: 내 방위각 vs 상대 방위각 차가 이 각(도) 이상이면 '등지고 가는 궤적'.
+    //   단, 접근 중(kfVel ≥ VEL)이면 절대 억제하지 않는다(false negative=사고 방지).
+    private val DIVERGE_ANGLE_DEG         = 135f
+    private val approachStreakStartMap    = mutableMapOf<String, Long>()  // 연속 접근 시작 시각(ms)
+
+    // [v1.0.35] 방위각 송신 폴링 — ImuFusion.azimuthDeg 를 주기적으로 advertiser(Byte 2)에 push.
+    //   advertiser 내부 2초 throttle·미세변화 무시와 맞물려 실제 재광고는 드물게 일어난다.
+    private val AZIMUTH_PUSH_INTERVAL_MS  = 1500L
+    private val azimuthHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val azimuthPushRunnable = object : Runnable {
+        override fun run() {
+            if (ImuFusion.hasAzimuth) bleAdvertiser?.updateAzimuth(ImuFusion.azimuthDeg)
+            azimuthHandler.postDelayed(this, AZIMUTH_PUSH_INTERVAL_MS)
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         isRunning = true
@@ -257,6 +280,8 @@ class BleService : LifecycleService() {
                 BleConstants.PSTATE_SUDDEN else BleConstants.PSTATE_NORMAL
             bleAdvertiser?.updateState(pState)
         }
+        // [v1.0.35] 방위각 송신 폴링 시작 — 주기적으로 내 진행 방위각을 광고 Byte 2 로 공유.
+        azimuthHandler.post(azimuthPushRunnable)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -393,7 +418,7 @@ class BleService : LifecycleService() {
                 bleScanner = BleScanner(scanner).also { s ->
                     s.onStatusUpdate = { msg -> sendStatusBroadcast(msg) }
                     s.startScanning(object : BleScanCallback {
-                        override fun onDeviceDetected(deviceId: String, rssi: Int, alertLevel: Int, remoteState: Int) {
+                        override fun onDeviceDetected(deviceId: String, rssi: Int, alertLevel: Int, remoteState: Int, remoteAzimuth: Int) {
                             lastScanResultMs = System.currentTimeMillis()
 
                             if (myMode == "WALKER"
@@ -401,7 +426,7 @@ class BleService : LifecycleService() {
                                 && !DevSettings.walkerDetectsWalker) return
 
                             val effectiveRssi = if (DevSettings.debugMode) DevSettings.simulatedRssi else rssi
-                            processAlert(deviceId, effectiveRssi, remoteState)
+                            processAlert(deviceId, effectiveRssi, remoteState, remoteAzimuth)
                             // [v1.0.26 Req2] processAlert 가 alertState 를 어떻게 바꿨든(추가·격상·SAFE 제거·TTC 선발령)
                             // 그 직후 전체 스냅샷을 한 번에 송출 → 하단 목록이 플로팅·알람과 절대 어긋나지 않는다.
                             broadcastDeviceList()
@@ -419,6 +444,7 @@ class BleService : LifecycleService() {
                             recedingStartMap.remove(deviceId)
                             peakAlertRssiMap.remove(deviceId)
                             deviceRssiMap.remove(deviceId)
+                            approachStreakStartMap.remove(deviceId)   // [v1.0.35] Time-Gate 접근 추적 정리
                             oneSecBuffer.remove(deviceId)   // [v1.0.31] 게이트가 raw도 push → 신호소실 시 함께 정리
                             mutedDevices.remove(deviceId)
                             suddenLabelMap.remove(deviceId)
@@ -556,9 +582,10 @@ class BleService : LifecycleService() {
         }
     }
 
-    private fun processAlert(deviceId: String, rssi: Int, remoteState: Int = 0x00) {
+    private fun processAlert(deviceId: String, rssi: Int, remoteState: Int = 0x00, remoteAzimuth: Int = -1) {
         // [v1.0.34] 수신 1바이트 페이로드 언패킹 → Category / State (Speed 는 v1.0.34 미사용)
         //   remoteState 는 BleScanner 가 ServiceData 1바이트를 0~255 로 그대로 넘긴 값.
+        //   [v1.0.35] remoteAzimuth = ServiceData Byte 2(0~255). -1=방향 미지(구버전/비콘).
         val rCategory = BleConstants.decodeCategory(remoteState)
         val rState    = BleConstants.decodeState(remoteState)
         deviceCategoryMap[deviceId] = rCategory   // 표시 라벨(보행자/EPJ/지게차) 판별용 캐시
@@ -848,6 +875,41 @@ class BleService : LifecycleService() {
         val shouldAlert = isFirstDetection || levelEscalated || (cooldownPassed && !isReceding)
         if (!shouldAlert) return
 
+        // ── [v1.0.35] 민감도 지연(Time-Gate) + 방향 벡터 필터 — 신규/격상 경보 한정 ─────────────
+        // 여기 도달 = shouldAlert(신규/격상/쿨다운경과) 통과. 이 중 '신규(첫 감지)·격상'에만
+        // 두 보수 조건을 추가로 요구한다:
+        //   (1) Time-Gate: 2D 칼만 미분(kfVel)이 0.5dBm/s 이상 '가까워짐'을 0.5초 연속 유지할 것.
+        //       전파 튐(1프레임 spike)으로 위험권에 잠깐 닿은 것만으론 소리/화면 경보하지 않는다.
+        //   (2) 방향 벡터 필터: 내 방위각 vs 상대 방위각이 등지고 멀어지는 궤적(≥135°)이면 억제.
+        //       단 '접근 중(kfVel≥0.5)'이면 절대 억제 안 함 — 정면 충돌 코스 오인억제(사고) 방지.
+        // ※ 신규 기기는 통과 전까지 alertState 에 등록되지 않으므로(아래 Pair 할당이 이 블록 뒤),
+        //   매 프레임 isFirstDetection=true 로 재평가되며 approachStreak 이 자연히 누적된다.
+        // ※ 0x02 특수경보·TTC 선발령은 위에서 이미 즉시 발령·return → 본 게이트 영향을 받지 않는다.
+        // ※ 쿨다운 재알람(추적중·동급)은 isEscalation=false → 면제(기존 동작 유지, 끊김 방지).
+        // ※ 3중 하드게이트(min(칼만,raw,EMA))는 위에서 이미 통과 — 본 필터는 그와 독립적으로
+        //   '신규 격상'만 더 지연시킬 뿐, 어떤 위험도 새로 통과시키지 않는다(단방향 보수화).
+        val kfApproaching = kfVel >= APPROACH_TIMEGATE_VEL_DBM
+        if (kfApproaching) {
+            approachStreakStartMap.putIfAbsent(deviceId, now)
+        } else {
+            approachStreakStartMap.remove(deviceId)   // 접근 끊김 → streak 리셋
+        }
+        val approachStreakMs  = if (kfApproaching) now - (approachStreakStartMap[deviceId] ?: now) else 0L
+        val approachSustained = kfApproaching && approachStreakMs >= APPROACH_TIMEGATE_MS
+
+        val suppressByDirection = run {
+            if (kfApproaching) return@run false                               // 접근 중 → 절대 억제 안 함(안전)
+            if (remoteAzimuth < 0 || !ImuFusion.hasAzimuth) return@run false   // 방향 정보 없음 → 억제 안 함
+            val diff = angleDiffDeg(ImuFusion.azimuthDeg, BleConstants.decodeAzimuth(remoteAzimuth))
+            diff >= DIVERGE_ANGLE_DEG                                          // 등지고 멀어지는 궤적
+        }
+
+        val isEscalation = isFirstDetection || levelEscalated
+        if (isEscalation && (suppressByDirection || !approachSustained)) {
+            Log.d(TAG, "[v1.0.35] 경보 보류 ${extractDisplayName(deviceId)}: dir억제=$suppressByDirection 접근지속=${approachStreakMs}ms(<${APPROACH_TIMEGATE_MS}) vel=%.2f".format(kfVel))
+            return   // 소리/화면 경보 보류 — 다음 프레임 재평가(위험권 유지+접근지속 0.5초 시 발령)
+        }
+
         alertState[deviceId] = Pair(stableLevel, now)
         if (isMuted) return
 
@@ -880,6 +942,13 @@ class BleService : LifecycleService() {
                 Log.d(TAG, "경고 발생: $deviceId ($name) avgRssi=$avgRssi state=$newState vel=%.2fdBm/s".format(kfVel))
             }
         }
+    }
+
+    /** v1.0.35 두 방위각(도)의 최소 사잇각(0~180°). 방향 벡터 필터의 '등짐' 판정용. */
+    private fun angleDiffDeg(a: Float, b: Float): Float {
+        var d = Math.abs(a - b) % 360f
+        if (d > 180f) d = 360f - d
+        return d
     }
 
     private val isScreenOn: Boolean
@@ -1208,6 +1277,7 @@ class BleService : LifecycleService() {
         ImuFusion.onStationaryChanged = null
         ImuFusion.onMotionStateChanged = null   // [v1.0.29] 모션 상태 콜백 해제
         ecoHandler.removeCallbacks(ecoDowngradeRunnable)
+        azimuthHandler.removeCallbacks(azimuthPushRunnable)   // [v1.0.35] 방위각 송신 폴링 중지
         ImuFusion.stop()
         uwbRanger?.stop(); uwbRanger = null
         AlertSoundPlayer.stopSound()
@@ -1226,6 +1296,7 @@ class BleService : LifecycleService() {
         recedingStartMap.clear()
         peakAlertRssiMap.clear()
         deviceRssiMap.clear()
+        approachStreakStartMap.clear()   // [v1.0.35] Time-Gate 접근 추적 정리
         mutedDevices.clear()
         firebaseLastSaveMap.clear()
         testRunnable?.let { testHandler.removeCallbacks(it) }
