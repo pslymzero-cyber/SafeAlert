@@ -30,6 +30,17 @@ class BleAdvertiser(
         // [v1.0.43 Req3] (구) 하트비트 버스트 상수 폐지 — 슬립을 'stop + 700ms/4s 버스트'에서
         //   'LOW_POWER(~1s) 연속 광고'로 전환(깨어남 지연 제거). 완전 정지하지 않고 저빈도로 상시
         //   송출하므로 상대 스캐너가 항상 나를 잡아 즉시 재발견한다. 재광고 정리 대기는 STATE_RESTART_DELAY_MS 공용.
+
+        // [v1.0.48 #5] 죽은 설정이던 '광고 간격(advertiseInterval)'을 활성 광고 모드에 매핑.
+        //   안드로이드 공개 광고 API 는 임의 ms 간격을 받지 않고 3단 프리셋만 허용하므로
+        //   설정값을 가장 가까운 프리셋으로 양자화한다(스피너: 100/200/500/1000ms).
+        //     ≤100ms → LOW_LATENCY(~100ms) / ≤250ms → BALANCED(~250ms — 기본 200,
+        //     v1.0.37 거동 보존) / 초과 → LOW_POWER(~1000ms)
+        private fun mapAdvertiseMode(intervalMs: Int): Int = when {
+            intervalMs <= 100 -> AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY
+            intervalMs <= 250 -> AdvertiseSettings.ADVERTISE_MODE_BALANCED
+            else              -> AdvertiseSettings.ADVERTISE_MODE_LOW_POWER
+        }
     }
 
     private val callback = object : AdvertiseCallback() {
@@ -70,6 +81,11 @@ class BleAdvertiser(
     /** [v1.0.42 Req3] 현재 RSSI 슬립(일시정지) 상태인지 — BleService 의 전력관리 평가가 참조. */
     val isPaused: Boolean get() = paused
 
+    // [v1.0.48 #5] 마지막으로 OS 에 실제 적용한 광고 모드 — refreshAdvertiseMode() 의 no-op 가드용.
+    //   prefs 리스너는 설정 저장 시 키마다 불리므로(한 번에 ~12회) 모드가 실제로 바뀐 경우에만
+    //   재광고해 stop/start 폭주를 막는다. -1 = 아직 광고 시작 전.
+    @Volatile private var lastAppliedAdvertiseMode: Int = -1
+
     // [v1.0.34 다이나믹 페이로드] 현재 송신자 STATE(2bit, PSTATE_*) — Category·Speed 와 함께
     //   encodePayload() 로 1바이트로 패킹되어 ServiceData 로 탑재된다.
     @Volatile private var currentState: Int = BleConstants.PSTATE_IDLE
@@ -81,6 +97,31 @@ class BleAdvertiser(
     // 재광고 시 UWB 주소 유지 (updateState / restartWithUwbAddress 공용)
     private var lastUwbAddress: ByteArray? = null
     private val stateHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
+    // [v1.0.51 #1] Rate-Limit 드롭 보완 — throttle 에 걸려 적용 못 한 최신 STATE 보류 저장(-1=없음).
+    //   IMU 모션 통지는 '전이 순간'에만 오므로 한 번 드롭되면 다음 전이까지 낡은 상태로 고착된다
+    //   (예: 잠깐 정지 후 2초 내 출발 → FORWARD 드롭 → 이동 내내 IDLE 송출 = 상대에겐 '대기 중').
+    //   보류해 두고 잔여 시간 뒤 자동 재시도해 고착을 끊는다. 모든 갱신 경로가 메인 루퍼 → 락 불필요.
+    @Volatile private var pendingState = -1
+    private val pendingStateRunnable = object : Runnable {
+        override fun run() {
+            val s = pendingState
+            if (s < 0) return
+            if (s == currentState) { pendingState = -1; return }   // 그 사이 동일 상태로 수렴 → 재광고 불필요
+            val now = SystemClock.elapsedRealtime()
+            val remain = MIN_STATE_UPDATE_INTERVAL_MS - (now - lastPayloadUpdateMs)
+            if (remain > 0) {
+                // 그 사이 속도 재광고가 throttle 타임스탬프를 갱신 → 잔여 시간만큼 재대기
+                stateHandler.postDelayed(this, remain)
+                return
+            }
+            pendingState = -1
+            lastPayloadUpdateMs = now
+            currentState = s
+            Log.d(TAG, "보류 STATE 재시도 적용 → $s 재광고")
+            restartAdvertise()
+        }
+    }
 
     // ── [v1.0.42 Req2] 현재 '송출 중'인 로컬 상태 읽기 전용 노출 — 내 장비(Local) UI 표시 전용 ──
     //   BleService 가 이 값들로 LocalState 를 구성해 MainActivity 에 전파한다.
@@ -97,14 +138,15 @@ class BleAdvertiser(
         if (stopped) { Log.d(TAG, "중지 상태 — 광고 시작 생략"); return }
         currentDeviceId = deviceId
         if (uwbLocalAddress != null) lastUwbAddress = uwbLocalAddress
-        // [v1.0.37] 활성 송출 모드 BALANCED(250ms) — 라디오 전력 비용을 낮춰 시간당 소모 반감.
         // [v1.0.43 Req3] 슬립(paused)이면 LOW_POWER(~1s) '연속' 광고로 전환 — 완전 정지 대신
         //   저빈도 상시 송출. 상대 스캐너가 항상(~1s 내) 나를 발견 → 깨어남 지연 제거.
-        //   깨어나면(paused=false) 다시 BALANCED 로 승격. (구 하트비트 버스트 폐지)
-        val advertiseMode = if (paused)
-            AdvertiseSettings.ADVERTISE_MODE_LOW_POWER
-        else
-            AdvertiseSettings.ADVERTISE_MODE_BALANCED
+        //   깨어나면(paused=false) 활성 모드로 승격. (구 하트비트 버스트 폐지)
+        // [v1.0.48 #5] 활성 모드를 BALANCED 고정에서 설정(advertiseInterval) 매핑으로 전환 —
+        //   매 (재)광고 시점에 설정을 다시 읽으므로 슬립/웨이크·STATE/Speed 재광고가 항상 최신값 적용.
+        //   슬립은 항상 LOW_POWER 유지(공개 API 최저 주기 — 설정과 무관).
+        val advertiseMode = if (paused) AdvertiseSettings.ADVERTISE_MODE_LOW_POWER
+                            else mapAdvertiseMode(BleConstants.advertiseInterval)
+        lastAppliedAdvertiseMode = advertiseMode   // [v1.0.48 #5] refreshAdvertiseMode no-op 판정용
 
         val settings = AdvertiseSettings.Builder()
             .setAdvertiseMode(advertiseMode)
@@ -157,16 +199,33 @@ class BleAdvertiser(
      * 변경이 있을 때만, 그리고 최소 2초 간격(OS Rate-Limit 회피)으로
      * 기존 광고를 멈추고 약 50ms 뒤 새 페이로드(Category+State+Speed)로 다시 켠다.
      * Category 는 생성자 고정, Speed 는 updateSpeed() 가 갱신 — 여기선 STATE 만 바뀐다.
+     * [v1.0.51 #1] Rate-Limit 에 걸린 갱신을 버리지 않고 보류(pendingState) 후 잔여 시간 뒤
+     *   자동 재시도한다. (구버전: 드롭 → IMU 가 전이 순간에만 통지하는 특성과 겹쳐 실제와
+     *   반대 상태로 고착 — 이동 중인데 '대기 중'으로 보이는 현상의 원인)
      */
     fun updateState(newState: Int) {
         val s = newState and 0b11
-        if (s == currentState) return
-        val now = SystemClock.elapsedRealtime()
-        if (now - lastPayloadUpdateMs < MIN_STATE_UPDATE_INTERVAL_MS) {
-            // 2초 이내 재갱신 금지 — 다음 상태 변화 시점에 반영
-            Log.d(TAG, "상태 갱신 보류(Rate-Limit): STATE=$s")
+        if (s == currentState) {
+            // [v1.0.51 #1] 최신 의도 == 현재 송출 상태 → 반대 상태로 남은 보류 재시도는 낡은 값이므로 취소
+            //   (예: 잠깐 정지로 IDLE 보류 → 2초 내 이동 재개 → 보류 IDLE 이 이동 중에 적용되는 역전 방지)
+            if (pendingState >= 0) {
+                pendingState = -1
+                stateHandler.removeCallbacks(pendingStateRunnable)
+            }
             return
         }
+        val now = SystemClock.elapsedRealtime()
+        val wait = MIN_STATE_UPDATE_INTERVAL_MS - (now - lastPayloadUpdateMs)
+        if (wait > 0) {
+            // [v1.0.51 #1] 2초 이내 재갱신 금지 — 드롭 대신 보류 저장 후 잔여 시간 뒤 재시도
+            pendingState = s
+            stateHandler.removeCallbacks(pendingStateRunnable)
+            stateHandler.postDelayed(pendingStateRunnable, wait)
+            Log.d(TAG, "상태 갱신 보류(Rate-Limit): STATE=$s — ${wait}ms 후 재시도")
+            return
+        }
+        pendingState = -1                                  // 직접 적용이 보류를 대체
+        stateHandler.removeCallbacks(pendingStateRunnable)
         lastPayloadUpdateMs = now
         currentState = s
         Log.d(TAG, "STATE 갱신 → $s (CAT=$category) 재광고")
@@ -198,6 +257,18 @@ class BleAdvertiser(
         stateHandler.postDelayed({
             startAdvertising(currentDeviceId, lastUwbAddress)
         }, STATE_RESTART_DELAY_MS)
+    }
+
+    /** [v1.0.48 #5] 설정(advertiseInterval) 라이브 반영 — BleService 의 prefs 리스너가 호출.
+     *  슬립(paused) 중엔 어차피 LOW_POWER 고정이라 건너뛰고(웨이크 시 startAdvertising 이 새
+     *  매핑을 자동 적용), 활성 광고 중이며 매핑 모드가 실제로 바뀐 경우에만 재광고한다(no-op 가드
+     *  — 무관한 설정 키 변경·resetToDefault 에도 안전). */
+    fun refreshAdvertiseMode() {
+        if (stopped || paused) return
+        val target = mapAdvertiseMode(BleConstants.advertiseInterval)
+        if (target == lastAppliedAdvertiseMode) return
+        Log.d(TAG, "광고 모드 라이브 갱신 → 간격설정 ${BleConstants.advertiseInterval}ms")
+        restartAdvertise()
     }
 
     /** UWB 주소 준비 완료 후 광고 재시작 */

@@ -35,6 +35,7 @@ class KalmanFilter(private var preset: Int = DevSettings.KALMAN_PRESET_NORMAL) {
     private var pVV: Double = 100.0   // 분산: vel-vel
     private var initialized: Boolean = false
     private var lastTsMs:    Long    = 0L
+    private var updateCnt:   Int     = 0      // [v1.0.49 #1] 누적 update 횟수 — 기하학 판정 워밍업 게이트용
 
     // ── 프리셋별 파라미터 ─────────────────────────────────────────────
     /** 과정 노이즈 q ((dBm/s²)²) */
@@ -60,6 +61,8 @@ class KalmanFilter(private var preset: Int = DevSettings.KALMAN_PRESET_NORMAL) {
     /** 추정 변화율 (dBm/s). 양수=접근 / 음수=이탈. 미초기화 시 0.0 */
     val estimatedVel:   Double  get() = if (initialized) vel  else 0.0
     val isInitialized:  Boolean get() = initialized
+    /** [v1.0.49 #1] 누적 update 횟수. 콜드 구간(vel≈초기값 0.0)의 측면 오판정 유예 게이트에 사용 */
+    val updateCount:    Int     get() = updateCnt
 
     /**
      * 새 정제 RSSI 샘플로 필터 업데이트.
@@ -73,6 +76,7 @@ class KalmanFilter(private var preset: Int = DevSettings.KALMAN_PRESET_NORMAL) {
     fun update(filteredRssi: Int, imuQScale: Double = 1.0): Pair<Double, Double> {
         val meas  = filteredRssi.toDouble()
         val nowMs = System.currentTimeMillis()
+        updateCnt++   // [v1.0.49 #1] 초기화/정상 양 경로 공통 증가
 
         if (!initialized) {
             rssi        = meas
@@ -135,5 +139,6 @@ class KalmanFilter(private var preset: Int = DevSettings.KALMAN_PRESET_NORMAL) {
     fun reset() {
         initialized = false
         vel         = 0.0
+        updateCnt   = 0   // [v1.0.49 #1] 워밍업 카운터 리셋
     }
 }

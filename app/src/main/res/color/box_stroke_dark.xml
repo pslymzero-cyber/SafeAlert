@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- [v1.0.50 #2] 이름 입력 박스 테두리 (다크: 평상 회청 / 포커스 파랑) -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:color="#60A5FA" android:state_focused="true" />
+    <item android:color="#3A4358" />
+</selector>

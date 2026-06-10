@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- [v1.0.50 #2] 수신 타겟 목록 박스 — solid 는 흰색 placeholder, 실제 색은 backgroundTint 로 적용
+     (코드 updateDetectedDisplay 가 경보 레벨별 색을 backgroundTintList 로 갱신 → 둥근 모서리 유지) -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="#FFFFFFFF" />
+    <corners android:radius="12dp" />
+</shape>

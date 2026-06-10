@@ -21,7 +21,7 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
         // 30분 쓰로틀 방지: 45초마다 스캔 껐다 켜기 (OS의 30분 연속 스캔 차단 정책 우회)
         private const val SCAN_RESTART_MS   = 45_000L
         // [v1.0.28] 기기 소실 타임아웃 — 스캔 모드 연동(동적).
-        //  ACTIVE(LOW_LATENCY): 촘촘한 스캔 → 2초 미수신이면 소실 판정(빠른 반응).
+        //  ACTIVE: 촘촘한 스캔 → 2초 미수신이면 소실 판정(빠른 반응).
         //  REST(BALANCED):      OFF 듀티 구간이 길어 2초를 넘기는 정상 케이스가 있으므로
         //                       6초로 연장 → 옆에 멀쩡히 있는 기기가 '감지 없음'으로
         //                       오소실/깜빡임 되는 v1.0.27 휴식모드 회귀를 방지한다.
@@ -29,10 +29,8 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
         private const val DEVICE_TIMEOUT_REST_MS   = 6000L
 
         // ── 동적 스캔 모드 정책 (v1.0.27 배터리 최적화) ────────────────────
-        // 기본은 SCAN_MODE_LOW_LATENCY(0초 지연, 안전 우선)로 100% 가동한다.
-        // 단 IMU 가 '정지 5초'를 확정하면 BleService 가 setEcoMode(true)를 호출해
-        // REST_SCAN_MODE(BALANCED)로 낮춰 라디오 듀티를 ~75% 줄인다(휴식 모드).
-        // 이동이 감지되는 즉시(0초) setEcoMode(false) → LOW_LATENCY 원복(전투 모드).
+        // IMU 가 '정지 5초'를 확정하면 BleService 가 setEcoMode(true)를 호출해
+        // 휴식 모드로 전환하고, 이동 감지 즉시 setEcoMode(false) → 전투 모드 원복.
         //
         // 배칭 딜레이는 이와 직교 — 화면 꺼짐 시 CPU 웨이크업만 별도로 억제한다.
         //   화면 켜짐/활성: 0ms   — 즉시 전달, 경보 지연 0
@@ -41,12 +39,18 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
         private const val BATCH_DELAY_ACTIVE_MS     = 0L
         private const val BATCH_DELAY_SCREEN_OFF_MS = 500L
 
-        // [v1.0.27] 스캔 모드 상수 — 전투 / 휴식(BALANCED)
-        // [v1.0.37] 배터리 최적화: 평상시(전투)도 LOW_LATENCY→BALANCED 로 하향.
-        //   라디오 스캔 듀티를 낮춰 시간당 소모를 반감한다. 동적 전환(setEcoMode) 구조는
-        //   보존하되 현재 ACTIVE=REST=BALANCED 라 실효 전환은 없다(추후 재튜닝 여지).
-        private val ACTIVE_SCAN_MODE = ScanSettings.SCAN_MODE_BALANCED
-        private val REST_SCAN_MODE   = ScanSettings.SCAN_MODE_BALANCED
+        // [v1.0.48 #5] 죽은 설정이던 '스캔 주기(scanPeriodMs)'를 실제 스캔 듀티에 매핑.
+        //   안드로이드 공개 스캔 API 는 임의 ms 주기를 받지 않고 3단 프리셋만 허용하므로,
+        //   설정값을 가장 가까운 프리셋으로 양자화한다(스피너: 1000/2000/3000/5000ms).
+        //     ≤1000ms → LOW_LATENCY (거의 연속 스캔 — 고감도·고소모)
+        //     ≤3000ms → BALANCED    (약 1.0s 스캔/4.1s 주기 — 기본 3000ms, v1.0.37 거동 보존)
+        //     초과    → LOW_POWER   (약 0.5s 스캔/5.1s 주기 — 절전)
+        //   (구) ACTIVE_SCAN_MODE/REST_SCAN_MODE 고정 상수(v1.0.37 둘 다 BALANCED) 폐지.
+        private fun mapScanMode(periodMs: Long): Int = when {
+            periodMs <= 1000L -> ScanSettings.SCAN_MODE_LOW_LATENCY
+            periodMs <= 3000L -> ScanSettings.SCAN_MODE_BALANCED
+            else              -> ScanSettings.SCAN_MODE_LOW_POWER
+        }
 
         // [v1.0.29] 상대 모션 상태 ServiceData 디코드용 (송신측 addServiceData 와 동일 UUID)
         private val SERVICE_DATA_UUID = ParcelUuid(UUID.fromString(BleConstants.SERVICE_UUID))
@@ -63,8 +67,21 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
     // 화면 상태 — false 시 500ms 하드웨어 배칭 (스캔 모드와 직교, CPU 웨이크업만 최소화)
     @Volatile var isScreenOn: Boolean = true
 
-    // [v1.0.27] 현재 스캔 모드 — 기본 전투(LOW_LATENCY). IMU 정지 5초 확정 시에만 휴식(BALANCED).
-    @Volatile private var currentScanMode: Int = ACTIVE_SCAN_MODE
+    // [v1.0.48 #5] 전투 모드 = 설정 scanPeriodMs 의 프리셋 매핑(라이브 — 매번 설정에서 읽음).
+    //   휴식 모드 = 전투가 LOW_LATENCY 면 BALANCED 로 한 단계 강하, 그 외엔 전투와 동일
+    //   (BALANCED 미만으론 더 내리지 않음 — 기본 3000ms 에선 둘 다 BALANCED, 현행 거동 보존).
+    private val activeScanMode: Int get() = mapScanMode(BleConstants.scanPeriodMs)
+    private val restScanMode: Int
+        get() = if (activeScanMode == ScanSettings.SCAN_MODE_LOW_LATENCY)
+                    ScanSettings.SCAN_MODE_BALANCED else activeScanMode
+
+    // [v1.0.48 #5] eco(휴식) 상태를 boolean 으로 별도 추적 — (구) '모드 값 비교' 방식은
+    //   ACTIVE==REST(BALANCED)라 항상 같은 쪽으로 고정되는 함정이 있었고, 모드가 설정에
+    //   따라 변하는 지금은 값 비교로 eco 여부를 복원할 수 없다.
+    @Volatile private var ecoMode = false
+
+    // [v1.0.27] 현재 스캔 모드 — 기본 전투(설정 매핑값). IMU 정지 5초 확정 시에만 휴식(eco).
+    @Volatile private var currentScanMode: Int = mapScanMode(BleConstants.scanPeriodMs)
 
     private val bleScanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
@@ -170,10 +187,15 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
     private val timeoutChecker = object : Runnable {
         override fun run() {
             val now = System.currentTimeMillis()
-            // [v1.0.28] BALANCED(휴식) 모드는 스캔 OFF 구간이 길어 타임아웃을 늘려야
+            // [v1.0.28] 듀티 스캔(BALANCED/LOW_POWER)은 스캔 OFF 구간이 길어 타임아웃을 늘려야
             //           정상 기기의 오소실('감지 없음' 깜빡임)을 막는다.
-            val timeoutMs = if (currentScanMode == REST_SCAN_MODE) DEVICE_TIMEOUT_REST_MS
-                            else DEVICE_TIMEOUT_ACTIVE_MS
+            // [v1.0.48 #5] 타임아웃 선택 기준을 'eco 여부'가 아닌 '현재 라디오 듀티'로 교정.
+            //   (구) currentScanMode == REST_SCAN_MODE 비교는 ACTIVE==REST 라 항상 6초로
+            //   고정되던 함정이었다. 연속 스캔(LOW_LATENCY)일 때만 2초 — 듀티 스캔에서 2초를
+            //   쓰면 스캔 OFF 구간(최대 ~4.6초) 동안 멀쩡한 기기가 오소실된다.
+            //   기본 설정(BALANCED)에선 6초 그대로 — 현행 거동 보존.
+            val timeoutMs = if (currentScanMode == ScanSettings.SCAN_MODE_LOW_LATENCY)
+                                DEVICE_TIMEOUT_ACTIVE_MS else DEVICE_TIMEOUT_REST_MS
             detectedDevices.entries
                 .filter { now - it.value > timeoutMs }
                 .map { it.key }
@@ -232,8 +254,8 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
     }
 
     private fun startScanInternal() {
-        // [v1.0.27] 스캔 모드는 currentScanMode(동적). 기본 LOW_LATENCY(0초 지연),
-        // IMU 정지 5초 확정 시에만 REST_SCAN_MODE(BALANCED)로 낮춘다. 이동 즉시 원복.
+        // [v1.0.27] 스캔 모드는 currentScanMode(동적). 기본 전투(activeScanMode),
+        // IMU 정지 5초 확정 시에만 휴식(restScanMode)으로 낮춘다. 이동 즉시 원복.
         // 배칭 딜레이는 화면 상태로 별도 결정(스캔 모드와 직교).
         val batchDelay = if (!isScreenOn) BATCH_DELAY_SCREEN_OFF_MS else BATCH_DELAY_ACTIVE_MS
         val settings = ScanSettings.Builder()
@@ -257,14 +279,21 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
 
     private fun restartScanInternal() {
         try { scanner.stopScan(bleScanCallback) } catch (_: Exception) {}
-        handler.postDelayed({ startScanInternal() }, 300)
+        // [v1.0.46 #5] stopScanning() 직후 잔류 람다가 유령 스캔을 다시 켜는 것 방지
+        handler.postDelayed({ if (isScanning) startScanInternal() }, 300)
     }
 
-    /** 화면 꺼짐 → 500ms 하드웨어 배칭 전환 (LOW_LATENCY 유지, CPU 웨이크업 최소화) */
+    // [v1.0.46 #9] 워치독(healthCheck) 전용 RX 재시작 — TX 광고는 건드리지 않아
+    // 상대 기기에서 내가 사라지는 가시성 갭이 생기지 않는다.
+    fun restartScan() {
+        if (isScanning) restartScanInternal()
+    }
+
+    /** 화면 꺼짐 → 500ms 하드웨어 배칭 전환 (스캔 모드는 유지, CPU 웨이크업만 최소화) */
     fun notifyScreenOff() {
         isScreenOn = false
         if (isScanning) {
-            Log.d(TAG, "화면 꺼짐 → LOW_LATENCY + ${BATCH_DELAY_SCREEN_OFF_MS}ms 배칭 전환")
+            Log.d(TAG, "화면 꺼짐 → ${scanModeName(currentScanMode)} + ${BATCH_DELAY_SCREEN_OFF_MS}ms 배칭 전환")
             restartScanInternal()
         }
     }
@@ -279,14 +308,24 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
     }
 
     // [v1.0.27] 동적 절전 스캔 모드 전환 (BleService 가 IMU 상태에 따라 호출).
-    //  eco=true  → 휴식 모드: REST_SCAN_MODE(BALANCED). 정지 5초 확정 시.
-    //  eco=false → 전투 모드: ACTIVE_SCAN_MODE(LOW_LATENCY). 이동 즉시·경보 발생 시.
+    //  eco=true  → 휴식 모드: restScanMode. 정지 5초 확정 시.
+    //  eco=false → 전투 모드: activeScanMode(설정 scanPeriodMs 매핑). 이동 즉시·경보 발생 시.
     // 모드가 실제로 바뀔 때만 재시작(idempotent) → 불필요한 스캔 리셋 없음.
     fun setEcoMode(eco: Boolean) {
-        val target = if (eco) REST_SCAN_MODE else ACTIVE_SCAN_MODE
+        ecoMode = eco                                // [v1.0.48 #5] 모드 값과 분리해 eco 상태 기억
+        applyScanMode()
+    }
+
+    /** [v1.0.48 #5] 설정(scanPeriodMs) 라이브 반영 — BleService 의 prefs 리스너가 호출.
+     *  현재 eco 상태는 유지한 채 목표 모드만 재계산. 모드가 실제로 바뀔 때만 재시작하므로
+     *  무관한 설정 키 변경·resetToDefault(null key)에도 안전하다(no-op). */
+    fun refreshScanMode() = applyScanMode()
+
+    private fun applyScanMode() {
+        val target = if (ecoMode) restScanMode else activeScanMode
         if (currentScanMode == target) return        // 동일 모드 → no-op (안전·저비용)
         currentScanMode = target
-        Log.d(TAG, "스캔 모드 → ${scanModeName(target)} (${if (eco) "휴식" else "전투"} 모드)")
+        Log.d(TAG, "스캔 모드 → ${scanModeName(target)} (${if (ecoMode) "휴식" else "전투"} · 주기설정 ${BleConstants.scanPeriodMs}ms)")
         if (isScanning) restartScanInternal()
     }
 

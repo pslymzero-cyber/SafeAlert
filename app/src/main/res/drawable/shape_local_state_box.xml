@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- [v1.0.50 #2] 내 장비 상태 박스 (다크 남색 인셋) -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="#1C2A4A" />
+    <corners android:radius="12dp" />
+</shape>

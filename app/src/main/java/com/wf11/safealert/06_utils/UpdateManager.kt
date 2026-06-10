@@ -10,11 +10,14 @@ import android.os.Environment
 import android.util.Log
 import androidx.core.content.FileProvider
 import com.google.firebase.database.FirebaseDatabase
+import com.wf11.safealert.BuildConfig
 import java.io.File
 
 object UpdateManager {
 
-    const val CURRENT_VERSION = "1.0.0"
+    // [v1.0.46 #6] 하드코딩 "1.0.0" → BuildConfig 단일 출처. 하드코딩 시절엔 설치본이 최신이어도
+    //   Firebase latest 가 1.0.0 보다 크기만 하면 '새 버전' 판정 → 업데이트 다이얼로그 무한 반복.
+    val CURRENT_VERSION: String = BuildConfig.VERSION_NAME
     private const val TAG = "UpdateManager"
 
     data class UpdateInfo(

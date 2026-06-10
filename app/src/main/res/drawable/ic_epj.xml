@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- [v1.0.50 #1] EPJ(워키 스태커) 일러스트 아이콘 (좌향, 회백 바디 + 틸러 핸들) -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="64"
+    android:viewportHeight="64">
+
+    <!-- 마스트 (수직 레일) -->
+    <path
+        android:fillColor="#C9D3E0"
+        android:pathData="M25,6 L31,6 L31,54 L25,54 Z" />
+    <!-- 마스트 안쪽 슬릿 -->
+    <path
+        android:fillColor="#8E9DB2"
+        android:pathData="M27.2,8 L28.8,8 L28.8,52 L27.2,52 Z" />
+
+    <!-- 포크 힐 (수직) -->
+    <path
+        android:fillColor="#9DB0C6"
+        android:pathData="M27,44 L31,44 L31,57 L27,57 Z" />
+    <!-- 포크 블레이드 (수평) -->
+    <path
+        android:fillColor="#B9C5D4"
+        android:pathData="M1,54.5 L31,54.5 L31,57 L1,57 Z" />
+
+    <!-- 틸러 핸들 (대각 막대) -->
+    <path
+        android:fillColor="#8E9DB2"
+        android:pathData="M42.5,30.5 L54.5,16.5 L57.3,18.9 L45.3,32.9 Z" />
+    <!-- 틸러 손잡이 (끝 원형 그립) -->
+    <path
+        android:fillColor="#56627A"
+        android:pathData="M56,17.5 m-4,0 a4,4 0 1,1 8,0 a4,4 0 1,1 -8,0" />
+
+    <!-- 바디 (밝은 회백, 위 라운드) -->
+    <path
+        android:fillColor="#DCE3EC"
+        android:pathData="M31,28 L45,28 Q52,28 52,35 L52,52 L31,52 Z" />
+    <!-- 바디 하단 음영 띠 -->
+    <path
+        android:fillColor="#AAB8C9"
+        android:pathData="M31,47 L52,47 L52,52 L31,52 Z" />
+
+    <!-- 구동휠 -->
+    <path
+        android:fillColor="#18202E"
+        android:pathData="M42,53.5 m-5.5,0 a5.5,5.5 0 1,1 11,0 a5.5,5.5 0 1,1 -11,0" />
+    <path
+        android:fillColor="#56627A"
+        android:pathData="M42,53.5 m-2.3,0 a2.3,2.3 0 1,1 4.6,0 a2.3,2.3 0 1,1 -4.6,0" />
+    <!-- 포크 앞단 롤러 -->
+    <path
+        android:fillColor="#18202E"
+        android:pathData="M8,56.5 m-2.5,0 a2.5,2.5 0 1,1 5,0 a2.5,2.5 0 1,1 -5,0" />
+</vector>

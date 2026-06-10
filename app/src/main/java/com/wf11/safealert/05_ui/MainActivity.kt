@@ -9,6 +9,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.text.Spannable
@@ -28,6 +29,8 @@ import android.view.WindowManager
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.widget.TextViewCompat
+import com.google.android.material.button.MaterialButton
 import com.wf11.safealert.BuildConfig
 import com.wf11.safealert.R
 import com.wf11.safealert.ble.BleConstants
@@ -219,11 +222,13 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // 화면 꺼지지 않도록
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+
+        // [v1.0.50 #3] 다크 리워크 — 시스템 바를 화면 배경색에 맞춤 (이 화면 한정, 테마 리소스는 불변)
+        window.statusBarColor = 0xFF0B1220.toInt()
+        window.navigationBarColor = 0xFF0B1220.toInt()
 
         // 하단 버전 표시 — BuildConfig에서 읽어 항상 최신값 반영
         binding.tvVersionFooter.text = "v${BuildConfig.VERSION_NAME}  ·  Created by Ian"
@@ -234,7 +239,7 @@ class MainActivity : AppCompatActivity() {
         binding.cardRoleWalker.setOnClickListener   { saveDisplayName(); onRoleSelected("WALKER", BleConstants.CAT_WALKER) }
         binding.cardRoleEpj.setOnClickListener      { saveDisplayName(); onRoleSelected("DEVICE", BleConstants.CAT_EPJ) }
         binding.cardRoleForklift.setOnClickListener { saveDisplayName(); onRoleSelected("DEVICE", BleConstants.CAT_FORKLIFT) }
-        binding.btnStop.setOnClickListener       { stopServiceWithDelay() }
+        binding.btnStop.setOnClickListener       { stopServiceImmediately() }
         binding.cardSettings.setOnClickListener  { showPinDialog() }
         binding.cardBleSettings.setOnClickListener {
             startActivity(Intent(this, BleSettingsActivity::class.java))
@@ -256,7 +261,6 @@ class MainActivity : AppCompatActivity() {
             addAction(BleService.BROADCAST_LOCAL_STATE)   // [v1.0.42 Req2] 내 장비 상태 채널
         }
         registerReceiver(alertReceiver, filter, RECEIVER_NOT_EXPORTED)
-        statusHandler.post(statusRunnable)
         restoreRunningState()
         checkUpdate()
         checkBluetoothStatus()
@@ -266,6 +270,10 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        // [v1.0.46 배터리(b)] 800ms 상태 폴링을 화면 가시 구간으로 한정 — onResume 게시 / onPause 중단.
+        //   백그라운드 감시는 BleService 단독 책임이라 Activity 폴링은 순수 전력 낭비였다.
+        statusHandler.removeCallbacks(statusRunnable)
+        statusHandler.post(statusRunnable)
         // BLE 설정 요약 업데이트
         binding.tvBleModeSummary.text = when (DevSettings.detectionMode) {
             DevSettings.MODE_FIXED_AVG ->
@@ -278,6 +286,11 @@ class MainActivity : AppCompatActivity() {
             "UUID ${beaconCount}개 등록됨 · iOS/앱 없는 보행자 감지 중"
         else
             "iOS/앱 없는 보행자 감지 설정"
+    }
+
+    override fun onPause() {
+        super.onPause()
+        statusHandler.removeCallbacks(statusRunnable)   // [v1.0.46 배터리(b)]
     }
 
     override fun onDestroy() {
@@ -374,9 +387,10 @@ class MainActivity : AppCompatActivity() {
             binding.tvApproaching.setBackgroundColor(Color.TRANSPARENT)
             binding.tvApproaching.setTextColor(0xFF8AAFC4.toInt())
             binding.tvApproaching.text = "주변 감지 기기 없음 · 감시 중"
-            // 하단 목록 영역 → 밝은 파란 박스 + 서비스 상태 1줄로 복귀
-            binding.tvBleStatus.setBackgroundColor(0xFFDDE9F0.toInt())
-            binding.tvBleStatus.setTextColor(0xFF5B8FA8.toInt())
+            // 하단 목록 영역 → 어두운 인셋 박스 + 서비스 상태 1줄로 복귀
+            // [v1.0.50 #3] backgroundTint 갱신 — shape_target_box 의 둥근 모서리를 유지한다.
+            binding.tvBleStatus.backgroundTintList = ColorStateList.valueOf(0xE8101A2C.toInt())
+            binding.tvBleStatus.setTextColor(0xFF7C93A8.toInt())
             val status = BleService.lastStatus
             binding.tvBleStatus.text = if (status.isNotEmpty()) status else "· 감시 중 ·"
             return
@@ -436,7 +450,7 @@ class MainActivity : AppCompatActivity() {
             topLevel == BleConstants.LEVEL_WARNING -> 0xDD1A1400.toInt()  // 짙은 황
             else                                   -> 0xDD051220.toInt()  // 짙은 남색
         }
-        binding.tvBleStatus.setBackgroundColor(bgColor)
+        binding.tvBleStatus.backgroundTintList = ColorStateList.valueOf(bgColor)   // [v1.0.50 #3] 둥근 모서리 유지
         binding.tvBleStatus.setTextColor(0xFFE0F0FF.toInt())
         binding.tvBleStatus.text = sb
     }
@@ -537,9 +551,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startServiceWithCurrentMode() {
-        // 혹시 pending stop이 있으면 취소 (중지→재시작 레이스 방지)
-        pendingStopRunnable?.let { pendingStopHandler.removeCallbacks(it) }
-        pendingStopRunnable = null
         val mode  = currentMode ?: return
         // 이름 입력 시 그 이름을 BLE 송출 ID로 사용 (상대방 화면에 표시됨)
         val displayName = prefs.getString("display_name", "")?.trim()
@@ -563,12 +574,17 @@ class MainActivity : AppCompatActivity() {
         showRunningUi(mode, since)
     }
 
-    private var pendingStopRunnable: Runnable? = null
-    private val pendingStopHandler = android.os.Handler(android.os.Looper.getMainLooper())
-
-    private fun stopServiceWithDelay() {
-        prefs.edit().remove("running_mode").remove("running_since").apply()
+    private fun stopServiceImmediately() {
+        // [v1.0.46 중지버그①] 500ms 지연 게시 제거 — 지연 틈에 START_STICKY 복원이 잔존
+        //   prefs(running_mode)를 읽어 서비스를 부활시키던 핵심 경로를 끊는다.
+        //   prefs 는 commit(동기) — ACTION_STOP 도착 전에 디스크 상태부터 '중지'로 확정.
+        prefs.edit()
+            .remove("running_mode")
+            .remove("running_since")
+            .remove("running_category")
+            .commit()
         currentMode = null
+        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)   // [v1.0.46 배터리(a)] 중지 후 화면 소등 허용
 
         // ── 소리/진동/오버레이 즉시 중지 (서비스 종료 기다리지 않음) ──
         com.wf11.safealert.service.AlertSoundPlayer.stopSound()
@@ -581,26 +597,23 @@ class MainActivity : AppCompatActivity() {
         // 테스트 경보 실행 중이었으면 버튼 상태 초기화
         if (testAlertRunning) {
             testAlertRunning = false
-            binding.btnTestAlert.text = "🔔 테스트 경보"
-            binding.btnTestAlert.setBackgroundColor(0xFFFEF3C7.toInt())
-            binding.btnTestAlert.setTextColor(0xFFB45309.toInt())
+            styleTestButton(testAccent)   // [v1.0.50 #3] TEST 버튼 평상 스타일 복귀
         }
 
         // 무음 인디케이터 초기화
         muteAnimator?.cancel()
         binding.tvMutedIndicator.visibility = View.GONE
 
+        // [v1.0.50 #3] 역할 배경 사진/스크림 숨김 — 선택 화면은 다크 단색 배경
+        binding.ivRoleBackground.visibility = View.GONE
+        binding.viewBgScrim.visibility      = View.GONE
+
         binding.cardRunning.visibility  = View.GONE
         binding.layoutSelect.visibility = View.VISIBLE
         binding.layoutPermissionWarning.visibility = View.GONE
 
-        // 서비스 종료는 500ms 후 (BLE 스택 정리 시간)
-        pendingStopRunnable?.let { pendingStopHandler.removeCallbacks(it) }
-        val r = Runnable {
-            startService(Intent(this, BleService::class.java).apply { action = BleService.ACTION_STOP })
-        }
-        pendingStopRunnable = r
-        pendingStopHandler.postDelayed(r, 500)
+        // [v1.0.46 중지버그①] 즉시 게시 — BLE 스택 정리는 BleService.stopAll() 내부 책임이다.
+        startService(Intent(this, BleService::class.java).apply { action = BleService.ACTION_STOP })
     }
 
     private fun restoreRunningState() {
@@ -612,6 +625,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showRunningUi(mode: String, since: Long) {
+        // [v1.0.46 배터리(a)] 화면 상시 점등을 '감시 중' 화면으로 한정 — 대기(역할 선택) 화면은
+        //   정상 소등 허용. 기존엔 onCreate 무조건이라 앱만 띄워 두면 화면이 영구 점등됐다.
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         binding.layoutSelect.visibility  = View.GONE
         binding.cardRunning.visibility   = View.VISIBLE
         binding.tvApproaching.visibility = View.VISIBLE  // [v1.0.26 Req3] 중앙 안내(목록은 하단 tv_ble_status 로 이동)
@@ -625,8 +641,8 @@ class MainActivity : AppCompatActivity() {
         // 이름 입력 시 이름, 없으면 자동 ID 표시
         val displayName = prefs.getString("display_name", "")?.trim()
         binding.tvRunningId.text = if (!displayName.isNullOrEmpty()) displayName else myId()
-        val bgColor = if (mode == "DEVICE") 0xFFEFF6FF.toInt() else 0xFFF0FDF4.toInt()
-        binding.cardRunning.setCardBackgroundColor(bgColor)
+        // [v1.0.50 #3] 다크 리워크 — 역할별 배경 사진/아이콘/TEST 액센트 적용 (시각 요소만, 기능 불변)
+        applyRoleVisuals(currentCategory)
         // 블루투스 상태 즉시 표시
         val btManager = getSystemService(android.bluetooth.BluetoothManager::class.java)
         binding.tvBleStatus.text = when {
@@ -635,12 +651,43 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** v1.0.34 Category(CAT_*) -> 실행 중 카드 역할명(이모지는 기존 자산 재사용, EPJ는 텍스트). */
+    /** v1.0.34 Category(CAT_*) -> 실행 중 카드 역할명. [v1.0.50 #3] 이모지 제거 — 아이콘은 iv_role_icon(벡터)이 담당. */
     private fun roleDisplayName(category: Int): String = when (category) {
         BleConstants.CAT_EPJ      -> "EPJ 작업자"
-        BleConstants.CAT_FORKLIFT -> "🚛 지게차"
-        BleConstants.CAT_WALKER   -> "🚶 보행자"
-        else                      -> "🚶 보행자"
+        BleConstants.CAT_FORKLIFT -> "지게차"
+        BleConstants.CAT_WALKER   -> "보행자"
+        else                      -> "보행자"
+    }
+
+    // [v1.0.50 #3] TEST 버튼 평상시 액센트(역할별) — toggleTestAlert/stopServiceImmediately 가 복귀에 사용
+    private var testAccent = 0xFFD7DEE8.toInt()
+
+    /**
+     * [v1.0.50 #3] 역할별 실행 화면 비주얼 — 배경 사진 / 역할 아이콘 / TEST 버튼 액센트.
+     *   시각 요소만 바꾼다(감지·경보·송출 로직과 무관). 선택 화면 복귀 시 stopServiceImmediately 가 숨긴다.
+     */
+    private fun applyRoleVisuals(category: Int) {
+        val (bgRes, iconRes, accent) = when (category) {
+            BleConstants.CAT_FORKLIFT -> Triple(R.drawable.bg_forklift, R.drawable.ic_forklift, 0xFFF97316.toInt())
+            BleConstants.CAT_EPJ      -> Triple(R.drawable.bg_epj,      R.drawable.ic_epj,      0xFFD7DEE8.toInt())
+            else                      -> Triple(R.drawable.bg_walker,   R.drawable.ic_walker,   0xFF4ADE80.toInt())
+        }
+        binding.ivRoleBackground.setImageResource(bgRes)
+        binding.ivRoleBackground.visibility = View.VISIBLE
+        binding.viewBgScrim.visibility      = View.VISIBLE
+        binding.ivRoleIcon.setImageResource(iconRes)
+        styleTestButton(accent)
+    }
+
+    /** [v1.0.50 #3] TEST 버튼 평상시 스타일 — 투명 배경 + 역할 액센트 외곽선/텍스트/종 아이콘. */
+    private fun styleTestButton(accent: Int) {
+        testAccent = accent
+        val btn = binding.btnTestAlert as MaterialButton
+        btn.text = "TEST"
+        btn.setTextColor(accent)
+        btn.strokeColor = ColorStateList.valueOf(accent)
+        btn.backgroundTintList = ColorStateList.valueOf(Color.TRANSPARENT)
+        TextViewCompat.setCompoundDrawableTintList(btn, ColorStateList.valueOf(accent))
     }
 
     private fun saveDisplayName() {
@@ -685,11 +732,17 @@ class MainActivity : AppCompatActivity() {
         testAlertRunning = !testAlertRunning
         val action = if (testAlertRunning) BleService.ACTION_TEST_START else BleService.ACTION_TEST_STOP
         startService(Intent(this, BleService::class.java).apply { this.action = action })
-        binding.btnTestAlert.text = if (testAlertRunning) "⏹ 테스트 중지" else "🔔 테스트 경보"
-        val color = if (testAlertRunning) 0xFFFEE2E2.toInt() else 0xFFFEF3C7.toInt()
-        val textColor = if (testAlertRunning) 0xFFDC2626.toInt() else 0xFFB45309.toInt()
-        binding.btnTestAlert.setBackgroundColor(color)
-        binding.btnTestAlert.setTextColor(textColor)
+        // [v1.0.50 #3] 다크 리워크 — 테스트 중엔 적색 강조, 평상시엔 역할 액센트 외곽선 복귀
+        if (testAlertRunning) {
+            val btn = binding.btnTestAlert as MaterialButton
+            btn.text = "STOP"
+            btn.setTextColor(0xFFF87171.toInt())
+            btn.strokeColor = ColorStateList.valueOf(0xFFF87171.toInt())
+            btn.backgroundTintList = ColorStateList.valueOf(0x33DC2626)
+            TextViewCompat.setCompoundDrawableTintList(btn, ColorStateList.valueOf(0xFFF87171.toInt()))
+        } else {
+            styleTestButton(testAccent)
+        }
     }
 
     private fun checkBluetoothStatus() {

@@ -90,6 +90,10 @@ class BleService : LifecycleService() {
 
     private val MUTE_DURATION_MS = 10_000L
     private val muteHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    // [v1.0.46 #11] forceAlarmVolume 의 ignoringVolumeChange 해제(300ms) 전용 핸들러.
+    //   muteHandler 공용이던 시절, muteTemporarily()의 removeCallbacksAndMessages(null)가 해제
+    //   콜백까지 지워 ignoringVolumeChange=true 고착(볼륨버튼 무음 영구 무력화) 레이스가 있었다.
+    private val volumeGuardHandler = android.os.Handler(android.os.Looper.getMainLooper())
     @Volatile private var isMuted = false
 
     @Volatile private var activeSoundLevel = BleConstants.LEVEL_SAFE
@@ -117,7 +121,7 @@ class BleService : LifecycleService() {
     // ── Always-On 정책 (v1.0.24) ──────────────────────────────────────
     // PendingIntent 대기 모드 완전 폐기: 주변 기기 유무(SAFE 상태 포함)와 무관하게
     // 서비스는 사용자가 직접 '중지'를 누르기 전까지 절대 자동 종료(stopAll())하지 않고
-    // 살아서 100% LOW_LATENCY 스캔을 유지한다. (현장 5초 기상 지연 → 0초 보장)
+    // 살아서 스캔을 유지한다(v1.0.37부터 상시 BALANCED). (현장 5초 기상 지연 → 0초 보장)
 
     private val volumeReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -150,6 +154,8 @@ class BleService : LifecycleService() {
                     Log.d(TAG, "블루투스 켜짐 → BLE 재시작")
                     sendStatusBroadcast("블루투스 켜짐 → BLE 재시작")
                     android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                        // [v1.0.46 #10] '중지' 직후 BT 토글 레이스 — 서비스가 이미 멈췄으면 BLE 부활 금지
+                        if (!isRunning) return@postDelayed
                         stopBle()
                         applyMode()
                     }, 1000)
@@ -173,7 +179,7 @@ class BleService : LifecycleService() {
     private val healthCheckHandler = android.os.Handler(android.os.Looper.getMainLooper())
 
     // ── [v1.0.27] IMU 연동 동적 스캔 모드 (휴식/전투) ───────────────────────
-    // 정지 5초 확정 → BALANCED 절전(휴식). 이동 즉시 → LOW_LATENCY 원복(전투).
+    // 정지 5초 확정 → REST 절전(휴식). 이동 즉시 → ACTIVE 원복(전투).
     private val STATIONARY_ECO_DELAY_MS = 5_000L
     private val ecoHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private val ecoDowngradeRunnable = Runnable {
@@ -280,6 +286,11 @@ class BleService : LifecycleService() {
     //   ※ 후진/하역(특수경보)은 suddenLabelMap(makeStateLabel)이 우선하므로 이 캐시에 의존하지 않는다.
     private val deviceStateMap    = mutableMapOf<String, Int>()
 
+    // [v1.0.51 #3] 수신한 상대 기기의 Speed(4비트 디코드, km/h) 캐시.
+    //   표시문구 이동 판정을 STATE 단독 → 'STATE!=IDLE 또는 속도>0' 으로 확장 — 송신측 STATE 가
+    //   고착·지연돼도 같은 패킷의 속도 비트로 '이동 중'을 놓치지 않는다(경보 격하 예외와 동일 기준).
+    private val deviceSpeedMap    = mutableMapOf<String, Double>()
+
     // [v1.0.30 Req3] Firebase 경보 저장 모바일데이터 방어 — 기기별 마지막 저장 시각(ms).
     //   같은 기기에 대해 FIREBASE_SAVE_THROTTLE_MS(1분) 안에는 재업로드하지 않는다.
     private val firebaseLastSaveMap = mutableMapOf<String, Long>()
@@ -308,6 +319,23 @@ class BleService : LifecycleService() {
     private val COLLISION_HEAD_ON_RATIO    = 0.6   // 실제/예상 접근비 이상 → 정면충돌(Time-Gate 즉시통과)
     private val COLLISION_SIDE_RATIO       = 0.3   // 실제/예상 접근비 이하 → 측면/나란히(보류 후보)
     private val COLLISION_ABS_SAFE_VEL_DBM = 2.0   // 이 이상 빠른 접근이면 측면판정 무시(false negative 방지)
+
+    // ── [v1.0.49 A/B 신규 기기 경보 지연 수정] ──────────────────────────────────────
+    // #1 콜드 칼만 기하학 유예: 칼만 update 횟수가 이 값 미만이면 vel 이 아직 초기값(0.0) 부근이라
+    //    closingRatio≈0 → sideCourse(측면) 오판정으로 돌진 기기를 보류시킨다. 워밍업 동안은
+    //    측면판정만 무효화 — headOn 즉시통과·Time-Gate 는 그대로 둔다(보수 방향 유지).
+    private val KALMAN_GEOMETRY_MIN_UPDATES = 5
+    // #2 경고권 밖 필터 보존 밴드: 게이트(rssiWarning) 미달이라도 이 폭(dB) 안이면 필터 상태
+    //    (Median·EMA·칼만·P-EMA)를 삭제하지 않고 보존 — 경고권 진입 '전'에 미리 수렴시켜 신규 기기의
+    //    콜드스타트(Median 3프레임 + 칼만 vel 수렴 수초)를 제거한다. 경보 로직은 여전히 스킵(return)
+    //    하므로 오경보 없음. 밴드 밖(원거리)은 기존대로 전삭제. 소실 기기 정리는 onDeviceLost 담당.
+    private val FILTER_PRESERVE_BAND_DB = 10
+    // #3 게이트 보류 기기 목록 표시: 워밍업/기하학 보류로 alertState 등록 전인 기기를 '감지됨(SAFE)'
+    //    행으로 하단 목록에 노출 — 경보 발령 전 불가시 구간 제거. 오버레이(topPriorityDevice)는
+    //    경보 전용 의미를 지키기 위해 제외. TTL(스캐너 타임아웃 정렬) 경과 시 목록에서 자동 제거.
+    private val PENDING_DISPLAY_TTL_MS = 6000L
+    private val pendingDisplayMap = mutableMapOf<String, Long>()   // deviceId → 마지막 보류 시각(ms)
+
     private val approachStreakStartMap    = mutableMapOf<String, Long>()  // 연속 접근 시작 시각(ms)
 
     // [v1.0.36] 속도 송신 폴링 — ImuFusion.estimatedSpeedKmh 를 주기적으로 advertiser(Speed 4비트)에 push.
@@ -316,6 +344,17 @@ class BleService : LifecycleService() {
     private val speedPushHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private val speedPushRunnable = object : Runnable {
         override fun run() {
+            // [v1.0.51 #2] STATE 자가 치유 동기화 — IMU 모션 통지는 '전이 순간'에만 오므로 한 번
+            //   유실되면 다음 전이까지 낡은 상태로 고착될 수 있다. 매 폴링마다 최신 motionState 를
+            //   다시 밀어 넣는다(동일 상태면 advertiser 내부에서 no-op → 재광고 비용 없음).
+            //   단, 수동 주입 특수상태(후진/하역 — ACTION_TEST_STATE)는 자동 동기화가 덮지 않는다.
+            //   updateSpeed 보다 '먼저' 호출 — 공용 2초 throttle 슬롯을 STATE 변화가 우선 차지.
+            val tx = bleAdvertiser?.txState ?: BleConstants.PSTATE_IDLE
+            if (tx != BleConstants.PSTATE_REVERSE && tx != BleConstants.PSTATE_LOADING) {
+                val pState = if (ImuFusion.motionState == BleConstants.MOTION_STATE_STATIONARY)
+                    BleConstants.PSTATE_IDLE else BleConstants.PSTATE_FORWARD
+                bleAdvertiser?.updateState(pState)
+            }
             // [v1.0.39] EPJ 는 물리 최고속도 3km/h 가정 → 송출 속도를 cap (충돌예측 과대추정 방지).
             val txSpeed = if (myCategory == BleConstants.CAT_EPJ)
                 minOf(ImuFusion.estimatedSpeedKmh, BleConstants.EPJ_MAX_SPEED_KMH.toFloat())
@@ -347,9 +386,9 @@ class BleService : LifecycleService() {
                     // 정지 진입 → 5초 디바운스 후 절전(그 사이 이동하면 취소됨)
                     ecoHandler.postDelayed(ecoDowngradeRunnable, STATIONARY_ECO_DELAY_MS)
                 } else {
-                    // 이동 감지 즉시(0초) → LOW_LATENCY 원복(전투 모드)
+                    // 이동 감지 즉시(0초) → ACTIVE 원복(전투 모드)
                     bleScanner?.setEcoMode(false)
-                    Log.d(TAG, "IMU 이동 감지 → 즉시 LOW_LATENCY 복귀(전투 모드)")
+                    Log.d(TAG, "IMU 이동 감지 → 즉시 ACTIVE 복귀(전투 모드)")
                 }
             }
         }
@@ -413,7 +452,17 @@ class BleService : LifecycleService() {
                 ))
                 applyMode()
             }
-            ACTION_STOP       -> stopAll()
+            ACTION_STOP       -> {
+                // [v1.0.46 중지버그] 사용자가 직접 중지 → START_STICKY 복원 키를 동기(.commit) 제거.
+                //   stopAll() 내부가 아닌 여기서만 지운다: onDestroy→stopAll() 경로(시스템 킬·앱 종료)는
+                //   prefs 가 남아 있어야 Always-On 복원이 동작한다. device_id 는 사용자 식별자라 보존.
+                getSharedPreferences("safealert_prefs", MODE_PRIVATE).edit()
+                    .remove("running_mode")
+                    .remove("running_since")
+                    .remove("running_category")
+                    .commit()
+                stopAll()
+            }
             ACTION_TEST_START -> startTestAlert()
             ACTION_TEST_STOP  -> stopTestAlert()
             ACTION_MUTE_TEMP   -> muteTemporarily("화면 터치")
@@ -438,7 +487,7 @@ class BleService : LifecycleService() {
             .putString("running_mode", mode)
             .putString("device_id", id)
             .putInt("running_category", category)   // [v1.0.34] 역할 복원용
-            .apply()
+            .commit()   // [v1.0.46 중지버그] 동기 저장 — .apply() 비동기 유실로 인한 복원/중지 불일치 방지
     }
 
     private fun applyMode() {
@@ -543,7 +592,9 @@ class BleService : LifecycleService() {
                             suddenLabelMap.remove(deviceId)
                             deviceCategoryMap.remove(deviceId)
                             deviceStateMap.remove(deviceId)
+                            deviceSpeedMap.remove(deviceId)   // [v1.0.51 #3]
                             firebaseLastSaveMap.remove(deviceId)
+                            pendingDisplayMap.remove(deviceId)   // [v1.0.49 #3] 소실 기기 보류 표시 정리
                             sendAlertBroadcast(deviceId, BleConstants.LEVEL_SAFE)
                             if (alertState.isEmpty()) {
                                 AlertSoundPlayer.stopSound()
@@ -575,9 +626,14 @@ class BleService : LifecycleService() {
     private fun calcLevelWithHysteresis(deviceId: String, rssi: Int, rssiOffset: Int = 0): Int {
         val prevLevel = alertState[deviceId]?.first ?: BleConstants.LEVEL_SAFE
         val warning   = BleConstants.rssiWarning - rssiOffset
+        val danger    = BleConstants.rssiDanger  - rssiOffset
         return when {
+            // [v1.0.46 #1] 거리 기반 DANGER 복원 — v1.0.20 전면 재작성 때 문서화 없이 사라진 회귀.
+            //   서행 접근(kfVel 미달 → TTC 미발동, 후진/하역 아님)이라도 위험권 진입이면 DANGER.
+            rssi >= danger -> BleConstants.LEVEL_DANGER
+            prevLevel >= BleConstants.LEVEL_DANGER && rssi >= danger - HYSTERESIS_DBM -> BleConstants.LEVEL_DANGER
             rssi >= warning -> BleConstants.LEVEL_WARNING
-            prevLevel == BleConstants.LEVEL_WARNING && rssi >= warning - HYSTERESIS_DBM -> BleConstants.LEVEL_WARNING
+            prevLevel >= BleConstants.LEVEL_WARNING && rssi >= warning - HYSTERESIS_DBM -> BleConstants.LEVEL_WARNING
             else -> BleConstants.LEVEL_SAFE
         }
     }
@@ -599,8 +655,9 @@ class BleService : LifecycleService() {
         val remaining = BleConstants.rssiDanger.toDouble() - kfRssi
         if (remaining <= 0) return 0.0                  // 이미 위험 구역
         val ttc = remaining / kfVel
-        Log.d(TAG, "TTC: kfRssi=%.1f rssiDanger=%d vel=%.2fdBm/s TTC=%.1fs"
-            .format(kfRssi, BleConstants.rssiDanger, kfVel, ttc))
+        if (DevSettings.logVerbose)   // [v1.0.46 배터리(g)] 프레임당 로그 → verbose 게이트
+            Log.d(TAG, "TTC: kfRssi=%.1f rssiDanger=%d vel=%.2fdBm/s TTC=%.1fs"
+                .format(kfRssi, BleConstants.rssiDanger, kfVel, ttc))
         return ttc
     }
 
@@ -684,6 +741,7 @@ class BleService : LifecycleService() {
         val rState    = BleConstants.decodeState(remoteState)
         deviceCategoryMap[deviceId] = rCategory   // 표시 라벨(보행자/EPJ/지게차) 판별용 캐시
         deviceStateMap[deviceId]    = rState      // [v1.0.44] 표시문구 분기용(정지=대기/이동=접근) 상태 캐시
+        deviceSpeedMap[deviceId]    = remoteSpeedKmh   // [v1.0.51 #3] 표시문구 이동 판정 보조(속도>0=이동)
 
         // [v1.0.42] UWB 거리→RSSI 환산(calibRssiAt1m/pathLossExp 의존) 제거.
         //   거리 추정은 칼만 필터(RSSI)만으로 수행 — 수신 raw RSSI 를 그대로 전처리 파이프라인에 투입.
@@ -761,16 +819,23 @@ class BleService : LifecycleService() {
         //     더 빨리 풀린다(잔상 제거). 보수적 min 원칙·avg1sec raw 교차검증은 그대로 보존.
         val gateRssi = minOf(kalmanRssi, avg1sec, medianValue)
         if (gateRssi < BleConstants.rssiWarning && !alertState.containsKey(deviceId)) {
+            // [v1.0.49 #2] 필터 보존 밴드 — 경고 임계 바로 아래(밴드 내) 기기는 필터 상태를 지우지 않고
+            //   경보 로직만 스킵한다. 위에서 Median·EMA·칼만·P-EMA·1초버퍼가 이미 이번 프레임 값으로
+            //   갱신됐으므로 밴드 체류 중 자동 워밍업 → 경고권 진입 프레임부터 웜 상태로 즉시 판정 가능.
+            //   (구버전: 매 프레임 전삭제 → 진입 시 콜드스타트로 경보 수초 지연 — A/B 교차 직전 표시의 주원인)
+            if (gateRssi >= BleConstants.rssiWarning - FILTER_PRESERVE_BAND_DB) return
             deviceRssiMap.remove(deviceId)
             suddenLabelMap.remove(deviceId)
             deviceCategoryMap.remove(deviceId)
             deviceStateMap.remove(deviceId)
+            deviceSpeedMap.remove(deviceId)   // [v1.0.51 #3]
             firebaseLastSaveMap.remove(deviceId)
             rssiPreFilter.clear(deviceId)     // [v1.0.38 클린업] 미추적 기기 EMA 전처리 상태 정리
             medianFilter.clear(deviceId)      // [v1.0.45] Median 윈도우 정리(워밍업 상태 리셋)
             pEmaFilter.clear(deviceId)        // [v1.0.45] 후처리 P-EMA 상태 정리
             rushFrameMap.remove(deviceId)     // [v1.0.45] 돌진 프레임 카운터 정리
             kalmanFilters.remove(deviceId)    // [v1.0.38 클린업] 미추적 기기 칼만 인스턴스 정리(stale 재등장 방지)
+            pendingDisplayMap.remove(deviceId)   // [v1.0.49 #3] 밴드 밖 원거리 — 보류 표시도 함께 정리
             return
         }
 
@@ -795,7 +860,8 @@ class BleService : LifecycleService() {
             deviceRssiMap[deviceId]  = kalmanRssi
             suddenLabelMap[deviceId] = makeStateLabel(extractDisplayName(deviceId), rCategory, rState)
             alertState[deviceId]     = Pair(BleConstants.LEVEL_DANGER, now)
-            bleScanner?.setEcoMode(false)   // 즉시 전투 모드(LOW_LATENCY)
+            pendingDisplayMap.remove(deviceId)   // [v1.0.49 #3] 경보 등록 → 보류 표시 해제
+            bleScanner?.setEcoMode(false)   // 즉시 전투 모드(ACTIVE)
             Log.w(TAG, "특수경보(STATE=$rState CAT=$rCategory): $deviceId pEma=$pEma kfRssi=%.1f".format(kfRssi))
             // 무음(전역/개별)은 존중 — 상태·표시는 유지하되 소리/진동만 억제
             if (isMuted || isDeviceMuted(deviceId)) {
@@ -803,8 +869,10 @@ class BleService : LifecycleService() {
                 return
             }
             forceAlarmVolume()
-            if (DevSettings.vibrationEnabled && !isScreenOn) VibrationHelper.vibrateDanger(this)
+            // [v1.0.46 #7] !isScreenOn 조건 제거 — FLAG_KEEP_SCREEN_ON 탓에 포그라운드 진동이 사망 상태였다
+            if (DevSettings.vibrationEnabled) VibrationHelper.vibrateDanger(this)
             if (DevSettings.soundEnabled)     AlertSoundPlayer.playDanger(this)
+            activeSoundLevel = BleConstants.LEVEL_DANGER   // [v1.0.46 #2] 사이렌 레벨 동기 — 후속 WARNING 의 조기차단/영구지속 방지
             updateFloatingOverlay()
             sendAlertBroadcast(deviceId, BleConstants.LEVEL_DANGER)
             sendStatusBroadcast("⚡ ${suddenLabelMap[deviceId]}")
@@ -820,6 +888,17 @@ class BleService : LifecycleService() {
 
         // avg1sec(raw 1초평균)은 위 하드게이트 앞에서 이미 계산됨(프레임당 1회).
 
+        // [v1.0.47 #2] 정지(isStationary) 시 DANGER→WARNING 격하의 적용 조건 정밀화.
+        //   기존엔 내 IMU 가 정지면 상대가 누구든 무조건 격하 → 가만히 서 있는 보행자가 움직이는
+        //   장비의 접근에도 사이렌(DANGER)을 못 받았다(정지/이동 여부에 따라 기기별로 울림·침묵이
+        //   갈리는 비대칭의 직접 원인). 예외(격하 금지): 내가 보행자 + 상대가 장비(지게차/EPJ)
+        //   + 상대가 활동 중(속도>0 또는 비IDLE 상태). 유지(계속 격하): 장비 운전자 폰의 정지 격하
+        //   (주차·대기 중 오발 억제), 보행자끼리 정지 근접(잡담), 주차된 장비(속도0·IDLE) 옆 정지.
+        val movingEquipApproach = myCategory == BleConstants.CAT_WALKER &&
+            (rCategory == BleConstants.CAT_FORKLIFT || rCategory == BleConstants.CAT_EPJ) &&
+            (remoteSpeedKmh > 0.0 || rState != BleConstants.PSTATE_IDLE)
+        val demoteWhileStationary = ImuFusion.isStationary && !movingEquipApproach
+
         var stableLevel: Int
         val avgRssi: Int
 
@@ -827,16 +906,38 @@ class BleService : LifecycleService() {
             // [v1.0.45] 거리(P) 항: kalmanRssi → pEma(후처리 비대칭 P-EMA)로 평활. 속도(D)는 별도 우회.
             val blended = (avg1sec * (1.0 - auxRatio) + pEma * auxRatio).toInt()
             avgRssi = blended
-            val warningThresh = -DevSettings.fixedWarningAbs
+            // [v1.0.47 #4] 기기별 RSSI 오프셋을 고정값 모드에도 적용 — 칼만 경로만 보정하던 모드 비대칭 해소.
+            //   부호 규약은 calcLevelWithHysteresis 와 동일(임계 - offset): 양수 오프셋 = 더 민감(임계 하향).
+            val beaconOffset  = runCatching { BeaconRegistry.getRssiOffsetForFullId(deviceId) }.getOrDefault(0)
+            val warningThresh = -DevSettings.fixedWarningAbs - beaconOffset
+            val dangerThresh  = -DevSettings.fixedDangerAbs - beaconOffset   // [v1.0.46 #1] 고정값 모드도 거리 DANGER 복원
             // DEPARTING 쿨다운 중: 경보 완전 억제 / 이후: 강화된 임계 적용
-            val effectiveThresh = if (isNowDepart) {
-                val timeDep = now - (departingStartMap[deviceId] ?: now)
-                if (timeDep < DEPARTING_REENTRY_COOLDOWN_MS) Int.MIN_VALUE
-                else warningThresh - DEPARTING_HYSTERESIS_DBM
-            } else warningThresh
-            val rawLevel = if (blended >= effectiveThresh) BleConstants.LEVEL_WARNING else BleConstants.LEVEL_SAFE
-            // ── isStationary 방어: 지게차 정지 중 DANGER 억제 ──────────────
-            stableLevel = if (ImuFusion.isStationary && rawLevel >= BleConstants.LEVEL_DANGER)
+            //   [v1.0.46 #3] 억제값 Int.MIN_VALUE → MAX_VALUE 교정. MIN_VALUE 는 모든 RSSI 가
+            //   임계를 통과(비교 역전)해 '억제' 의도와 정반대로 WARNING 을 강제했다.
+            val timeDep    = now - (departingStartMap[deviceId] ?: now)
+            val suppressed = isNowDepart && timeDep < DEPARTING_REENTRY_COOLDOWN_MS
+            // [v1.0.47 #1] WARNING 재진입 마진 부호 역전 교정('-' → '+'). RSSI 는 0에 가까울수록
+            //   강함(가까움)이라 '강화'는 임계를 0쪽(+)으로 올려야 하는데, '-'가 -80→-88 로 '완화'해
+            //   이탈(DEPARTING) 중 재경보 반경이 오히려 8dBm 넓어졌다(교차 통과 후 알람 지속의 원인).
+            //   아래 DANGER 분기·applyDepartingHysteresis 와 같은 '+' 방향으로 통일.
+            val effWarning = when {
+                suppressed  -> Int.MAX_VALUE
+                isNowDepart -> warningThresh + DEPARTING_HYSTERESIS_DBM
+                else        -> warningThresh
+            }
+            // DANGER 재진입은 applyDepartingHysteresis 와 같은 '+' 마진(더 가까워야 유지).
+            val effDanger = when {
+                suppressed  -> Int.MAX_VALUE
+                isNowDepart -> dangerThresh + DEPARTING_HYSTERESIS_DBM
+                else        -> dangerThresh
+            }
+            val rawLevel = when {
+                blended >= effDanger  -> BleConstants.LEVEL_DANGER
+                blended >= effWarning -> BleConstants.LEVEL_WARNING
+                else                  -> BleConstants.LEVEL_SAFE
+            }
+            // ── 정지 격하 방어 ([v1.0.47 #2] 보행자+활동 장비 접근은 예외 — 위 demoteWhileStationary) ──
+            stableLevel = if (demoteWhileStationary && rawLevel >= BleConstants.LEVEL_DANGER)
                 BleConstants.LEVEL_WARNING else rawLevel
         } else {
             // [v1.0.45] 거리(P) 항: kalmanRssi → pEma(후처리 비대칭 P-EMA)로 평활. 속도(D)는 별도 우회.
@@ -845,8 +946,8 @@ class BleService : LifecycleService() {
             val beaconOffset = runCatching { BeaconRegistry.getRssiOffsetForFullId(deviceId) }.getOrDefault(0)
             val rawLevel = calcLevelWithHysteresis(deviceId, blended, beaconOffset)
             val afterHysteresis = applyDepartingHysteresis(deviceId, rawLevel, blended, beaconOffset, now)
-            // ── isStationary 방어: 지게차 정지 중 DANGER 억제 ──────────────
-            stableLevel = if (ImuFusion.isStationary && afterHysteresis >= BleConstants.LEVEL_DANGER)
+            // ── 정지 격하 방어 ([v1.0.47 #2] 보행자+활동 장비 접근은 예외 — 위 demoteWhileStationary) ──
+            stableLevel = if (demoteWhileStationary && afterHysteresis >= BleConstants.LEVEL_DANGER)
                 BleConstants.LEVEL_WARNING else afterHysteresis
         }
 
@@ -878,6 +979,7 @@ class BleService : LifecycleService() {
                 trackingStateMap.remove(deviceId)
                 crossingStartMap.remove(deviceId)
                 departingStartMap.remove(deviceId)
+                approachStreakStartMap.remove(deviceId)   // [v1.0.46 #4] stale 시작시각 → 재접근 시 Time-Gate 즉시통과 방지
                 wasStationaryMap.remove(deviceId)
                 recedingStartMap.remove(deviceId)
                 peakAlertRssiMap.remove(deviceId)
@@ -886,7 +988,9 @@ class BleService : LifecycleService() {
                 suddenLabelMap.remove(deviceId)
                 deviceCategoryMap.remove(deviceId)
                 deviceStateMap.remove(deviceId)
+                deviceSpeedMap.remove(deviceId)   // [v1.0.51 #3]
                 firebaseLastSaveMap.remove(deviceId)
+                pendingDisplayMap.remove(deviceId)   // [v1.0.49 #3]
                 sendAlertBroadcast(deviceId, BleConstants.LEVEL_SAFE)
                 if (alertState.isEmpty()) {
                     AlertSoundPlayer.stopSound()
@@ -900,12 +1004,13 @@ class BleService : LifecycleService() {
             return
         }
 
-        // [v1.0.27] 여기 도달 = 비-SAFE(경보 상황). 정지 중이라도 즉시 전투모드(LOW_LATENCY) 보장.
+        // [v1.0.27] 여기 도달 = 비-SAFE(경보 상황). 정지 중이라도 즉시 전투모드(ACTIVE) 보장.
         bleScanner?.setEcoMode(false)
 
         // 무음 중 — 상태 추적만 유지 (전역 무음 또는 [v1.0.25] 해당 기기 Acknowledge 무음)
         if (isMuted || isDeviceMuted(deviceId)) {
             alertState[deviceId] = Pair(stableLevel, alertState[deviceId]?.second ?: now)
+            pendingDisplayMap.remove(deviceId)   // [v1.0.49 #3] 경보 등록 → 보류 표시 해제
             return
         }
 
@@ -956,8 +1061,10 @@ class BleService : LifecycleService() {
                 trackingStateMap.remove(deviceId)
                 crossingStartMap.remove(deviceId)
                 departingStartMap.remove(deviceId)
+                approachStreakStartMap.remove(deviceId)   // [v1.0.46 #4]
                 deviceRssiMap.remove(deviceId)
                 firebaseLastSaveMap.remove(deviceId)
+                pendingDisplayMap.remove(deviceId)   // [v1.0.49 #3]
                 sendAlertBroadcast(deviceId, BleConstants.LEVEL_SAFE)
                 if (alertState.isEmpty()) {
                     AlertSoundPlayer.stopSound()
@@ -975,7 +1082,9 @@ class BleService : LifecycleService() {
 
         // ── TTC 기반 선발령 (RSSI 공간 vel 직접 사용, v1.0.20 / v1.0.31 raw 가드) ──────────
         // DEPARTING/CROSSING 상태에서는 억제 (이탈 중 = 충돌 위험 없음)
-        // isStationary 시에도 억제 (정지 중 TTC 선발령 오발 방지)
+        //   [v1.0.46 #8] isStationary 억제 제거 — '정지한 작업자'에게 장비가 돌진하는 시나리오가
+        //   TTC 의 존재 이유인데 내 IMU 정지가 선발령을 차단하고 있었다. 오발은 아래
+        //   avg1sec(경고권)·peak500ms(위험권) 이중 게이트가 그대로 방어한다.
         //   ★ v1.0.31: estimateTTC 는 kfRssi(칼만)로 계산 → 칼만이 spike/lag로 가깝게 떠 있으면
         //     remaining<=0 이 되어 'TTC 0초' 오발이 났다. raw 실측(avg1sec)이 경고권(rssiWarning)
         //     이상으로 실제 가까울 때만 선발령을 허용해, 원거리에서의 TTC 0초 오발을 차단한다.
@@ -985,16 +1094,23 @@ class BleService : LifecycleService() {
         if (!warmingUp                                      // [v1.0.45] 콜드스타트 임펄스 선발령 보류
             && stableLevel == BleConstants.LEVEL_WARNING
             && newState == TrackingState.APPROACHING
-            && !ImuFusion.isStationary
             && avg1sec >= BleConstants.rssiWarning
             && (recentPeakRssi(deviceId, 500L) ?: avg1sec) >= BleConstants.rssiDanger) {
             val ttc = estimateTTC(kfRssi, kfVel)
             if (ttc != null && ttc <= TTC_THRESHOLD_SEC) {
                 alertState[deviceId] = Pair(BleConstants.LEVEL_DANGER, now)  // ★ 먼저 업데이트 → 목록에 DANGER 반영
+                pendingDisplayMap.remove(deviceId)   // [v1.0.49 #3] 경보 등록 → 보류 표시 해제
                 Log.w(TAG, "TTC 선발령: $deviceId TTC=%.1fs kfVel=%.2fdBm/s".format(ttc, kfVel))
                 forceAlarmVolume()
-                if (DevSettings.vibrationEnabled && !isScreenOn) VibrationHelper.vibrateDanger(this)
+                // [v1.0.48 #4] TTC 급접근 진동 — 보행자·EPJ(작업자)는 전용 빠른 패턴(vibrateRapidApproach)으로
+                //   일반 DANGER 진동과 촉각 구분(장비가 나에게 돌진 중 = 즉시 회피 신호). 지게차 운전자는
+                //   기존 강패턴(vibrateDanger) 유지 — 운전 중 과도한 패턴 분화는 혼란만 준다.
+                if (DevSettings.vibrationEnabled) {                                     // [v1.0.46 #7] 포그라운드에서도 진동
+                    if (myCategory == BleConstants.CAT_FORKLIFT) VibrationHelper.vibrateDanger(this)
+                    else VibrationHelper.vibrateRapidApproach(this)
+                }
                 if (DevSettings.soundEnabled)     AlertSoundPlayer.playDanger(this)
+                activeSoundLevel = BleConstants.LEVEL_DANGER   // [v1.0.46 #2] 사이렌 레벨 동기
                 updateFloatingOverlay()
                 sendAlertBroadcast(deviceId, BleConstants.LEVEL_DANGER)
                 sendStatusBroadcast("⚡ 충돌 예측 %.0f초: ${extractDisplayName(deviceId)}".format(ttc))
@@ -1002,8 +1118,9 @@ class BleService : LifecycleService() {
             }
         }
 
-        Log.d(TAG, ("RSSI raw=$rssi → med=$medianValue → pre=$preFiltered → kf=%.1f → pEma=$pEma " +
-            "vel=%.2fdBm/s state=$newState stable=$stableLevel fast=$promoteFast warm=$warmingUp").format(kfRssi, kfVel))
+        if (DevSettings.logVerbose)   // [v1.0.46 배터리(g)] 프레임당 로그 → verbose 게이트
+            Log.d(TAG, ("RSSI raw=$rssi → med=$medianValue → pre=$preFiltered → kf=%.1f → pEma=$pEma " +
+                "vel=%.2fdBm/s state=$newState stable=$stableLevel fast=$promoteFast warm=$warmingUp").format(kfRssi, kfVel))
 
         val prev = alertState[deviceId]
         val prevLevel     = prev?.first  ?: BleConstants.LEVEL_SAFE
@@ -1017,11 +1134,15 @@ class BleService : LifecycleService() {
         val cooldownPassed   = now - lastAlertTime >= cooldown
         // [v1.0.45] 워밍업(Median 미충전) 구간은 신규/격상 발령 보류 — 콜드스타트 임펄스 오염 방어.
         val shouldAlert = !warmingUp && (isFirstDetection || levelEscalated || (cooldownPassed && !isReceding))
-        if (!shouldAlert) return
+        if (!shouldAlert) {
+            // [v1.0.49 #3] 워밍업 등으로 발령 보류된 '신규' 기기 — 경보는 아니지만 목록엔 '감지됨' 노출.
+            if (isFirstDetection) pendingDisplayMap[deviceId] = now
+            return
+        }
 
-        // ── [v1.0.35 Time-Gate] + [v1.0.36 코너링 연장 · 충돌 기하학 필터] — 신규/격상 경보 한정 ──
-        // 여기 도달 = shouldAlert(신규/격상/쿨다운경과) 통과. 이 중 '신규(첫 감지)·격상'에만
-        // 아래 두 보수 조건을 추가로 요구한다:
+        // ── [v1.0.35 Time-Gate] + [v1.0.36 코너링 연장 · 충돌 기하학 필터] — 신규(첫 감지) 경보 한정 ──
+        // 여기 도달 = shouldAlert(신규/격상/쿨다운경과) 통과. 이 중 '신규(첫 감지)'에만
+        // 아래 두 보수 조건을 추가로 요구한다 ([v1.0.47 #3] 격상은 면제로 변경):
         //   (1) Time-Gate: 2D 칼만 미분(kfVel)이 0.5dBm/s 이상 '가까워짐'을 일정시간 연속 유지할 것.
         //       전파 튐(1프레임 spike)으로 위험권에 잠깐 닿은 것만으론 소리/화면 경보하지 않는다.
         //       [v1.0.36] 내 장비가 코너링(급회전) 중이면 전파가 출렁이므로 0.5→1.0초로 일시 연장.
@@ -1034,7 +1155,7 @@ class BleService : LifecycleService() {
         // ※ 신규 기기는 통과 전까지 alertState 에 등록되지 않으므로(아래 Pair 할당이 이 블록 뒤),
         //   매 프레임 isFirstDetection=true 로 재평가되며 approachStreak 이 자연히 누적된다.
         // ※ 0x02 특수경보·TTC 선발령은 위에서 이미 즉시 발령·return → 본 게이트 영향을 받지 않는다.
-        // ※ 쿨다운 재알람(추적중·동급)은 isEscalation=false → 면제(기존 동작 유지, 끊김 방지).
+        // ※ 쿨다운 재알람(추적중·동급)·격상(levelEscalated)은 면제 — 게이트는 첫 감지에만 적용.
         // ※ 3중 하드게이트(min(칼만,raw,EMA))는 위에서 이미 통과 — 본 필터는 그와 독립적으로
         //   '신규 격상'의 발령 타이밍만 조정할 뿐, 경보 레벨은 오직 RSSI 게이트가 결정한다.
         val timeGateMs = if (ImuFusion.isCornering) APPROACH_TIMEGATE_CORNERING_MS else APPROACH_TIMEGATE_MS
@@ -1061,17 +1182,28 @@ class BleService : LifecycleService() {
         // 정면충돌 코스: 실제 접근이 예상의 60% 이상 → Time-Gate 즉시 통과(강한 발령).
         val headOnCourse    = geometryValid && closingRatio >= COLLISION_HEAD_ON_RATIO
         // 측면/나란히: 실제 접근이 예상의 30% 이하 + 절대 접근속도도 느림(<2.0) → 보류(경계 격하).
-        val sideCourse      = geometryValid && closingRatio <= COLLISION_SIDE_RATIO &&
+        // [v1.0.49 #1] 콜드 칼만 유예 — update 횟수 미달이면 vel 이 초기값(0.0) 부근이라 ratio≈0 으로
+        //   돌진 기기도 측면으로 오판된다. 칼만이 웜업되기 전엔 측면판정을 무효화한다(headOn 즉시통과·
+        //   Time-Gate 는 영향 없음 — 콜드 ratio≈0 이면 headOn 은 어차피 false, 보수 방향 그대로).
+        val kalmanWarm      = kf.updateCount >= KALMAN_GEOMETRY_MIN_UPDATES
+        val sideCourse      = kalmanWarm && geometryValid && closingRatio <= COLLISION_SIDE_RATIO &&
                               kfVel < COLLISION_ABS_SAFE_VEL_DBM
 
         // headOn 이면 Time-Gate 즉시 통과, 아니면 평상/코너링 Time-Gate 충족 필요.
         val approachSustained = headOnCourse || (kfApproaching && approachStreakMs >= timeGateMs)
 
-        val isEscalation = isFirstDetection || levelEscalated
-        if (isEscalation && (sideCourse || !approachSustained)) {
+        // [v1.0.47 #3] 게이트 적용을 '신규(첫 감지)'로 축소 — 격상(levelEscalated)은 면제.
+        //   이미 게이트를 통과해 WARNING 경보 중인 기기의 DANGER 승급에까지 kfVel≥0.5 연속을 요구하면,
+        //   수신 감도가 낮은 폰(RSSI 동특성 작음 → kfVel 미달)은 위험권에 들어와도 승급이 무기 보류됐다
+        //   (위험 경보 지연·기기별 비대칭의 원인). 스파이크 오발은 Median→EMA→칼만→P-EMA 다단 평활과
+        //   3중 하드게이트, raw 2차 방어선이 이미 막으므로 격상까지 게이트하는 것은 중복 보수였다.
+        if (isFirstDetection && (sideCourse || !approachSustained)) {
+            pendingDisplayMap[deviceId] = now   // [v1.0.49 #3] 보류 중에도 목록엔 '감지됨' 노출
             Log.d(TAG, "[v1.0.36] 경보 보류 ${extractDisplayName(deviceId)}: side=$sideCourse 접근지속=${approachStreakMs}ms(<${timeGateMs}) ratio=%.2f 합산=%.1fkm/h vel=%.2f".format(closingRatio, closingSpeedKmh, kfVel))
             return   // 소리/화면 경보 보류 — 다음 프레임 재평가(접근지속 충족 또는 정면충돌 코스 시 발령)
         }
+
+        pendingDisplayMap.remove(deviceId)   // [v1.0.49 #3] 게이트 통과 → 보류 표시 해제(아래에서 경보 등록)
 
         alertState[deviceId] = Pair(stableLevel, now)
         if (isMuted) return
@@ -1086,8 +1218,27 @@ class BleService : LifecycleService() {
         activeSoundLevel = stableLevel
 
         when (stableLevel) {
+            // [v1.0.46 #1] 거리 기반 DANGER 커밋 분기 복원 — v1.0.20 재작성에서 사라진 회귀.
+            //   서행 접근(TTC 미발동·특수상태 아님)도 위험권 진입이면 위험 경보+Firebase 기록.
+            BleConstants.LEVEL_DANGER -> {
+                if (DevSettings.vibrationEnabled)
+                    VibrationHelper.vibrateDanger(this)
+                if (DevSettings.soundEnabled)
+                    AlertSoundPlayer.playDanger(this)
+                if (DevSettings.autoSaveAlerts) {
+                    val lastFbSave = firebaseLastSaveMap[deviceId] ?: 0L
+                    if (now - lastFbSave >= FIREBASE_SAVE_THROTTLE_MS) {
+                        firebaseLastSaveMap[deviceId] = now
+                        FirebaseManager.saveAlert(deviceId, myId, avgRssi, "DANGER")
+                    }
+                }
+                val name = extractDisplayName(deviceId)
+                updateFloatingOverlay()
+                sendAlertBroadcast(deviceId, BleConstants.LEVEL_DANGER)
+                Log.w(TAG, "위험 발생: $deviceId ($name) avgRssi=$avgRssi state=$newState vel=%.2fdBm/s".format(kfVel))
+            }
             BleConstants.LEVEL_WARNING -> {
-                if (DevSettings.vibrationEnabled && !isScreenOn)
+                if (DevSettings.vibrationEnabled)   // [v1.0.46 #7] 포그라운드(화면 켜짐)에서도 진동
                     VibrationHelper.vibrateWarning(this)
                 if (DevSettings.soundEnabled)
                     AlertSoundPlayer.playWarning(this)
@@ -1119,7 +1270,8 @@ class BleService : LifecycleService() {
             am.setStreamVolume(AudioManager.STREAM_ALARM, target, 0)
             Log.d(TAG, "알람 볼륨: $target/$maxVol (${DevSettings.alarmVolume}%)")
         } catch (e: Exception) { Log.w(TAG, "볼륨 강제 설정 실패: ${e.message}") }
-        muteHandler.postDelayed({ ignoringVolumeChange = false }, 300)
+        volumeGuardHandler.removeCallbacksAndMessages(null)   // [v1.0.46 #11] 연속 호출 시 직전 해제 예약 갱신
+        volumeGuardHandler.postDelayed({ ignoringVolumeChange = false }, 300)
     }
 
     private fun muteTemporarily(source: String) {
@@ -1213,12 +1365,11 @@ class BleService : LifecycleService() {
             override fun run() {
                 val elapsed = System.currentTimeMillis() - lastScanResultMs
                 if (elapsed > SCAN_HEALTH_CHECK_MS) {
-                    Log.w(TAG, "스캔 헬스체크: ${elapsed / 1000}초간 결과 없음 → 재시작")
-                    sendStatusBroadcast("스캔 응답 없음 → 자동 재시작")
-                    stopBle()
-                    android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                        if (isRunning) applyMode()
-                    }, 500)
+                    // [v1.0.46 #9] stopBle()+applyMode() 전체 재시작은 TX 광고까지 끊어 상대 기기에서
+                    //   내가 사라지는 가시성 갭을 냈다(주변 무기기 정상 상황에서도 15초마다 반복).
+                    //   수신(RX) 스캐너만 재시작 — 송신(TX)은 무중단. 상태 브로드캐스트 스팸도 제거.
+                    Log.w(TAG, "스캔 헬스체크: ${elapsed / 1000}초간 결과 없음 → RX 스캔 재시작")
+                    bleScanner?.restartScan()
                     lastScanResultMs = System.currentTimeMillis()
                 }
                 if (isRunning) healthCheckHandler.postDelayed(this, SCAN_HEALTH_CHECK_MS)
@@ -1323,21 +1474,20 @@ class BleService : LifecycleService() {
     }
 
     /**
-     * v1.0.34 평상(NORMAL) 접근 표시문자열 - Category 기반 분화 (directive 4).
-     *   EPJ 는 스펙 지정 문구 "{이름} EPJ가 접근 중!", 그 외는 "{이름} ({역할})" 간결 표기.
-     *   ※ 특수상태(STATE!=평상)는 suddenLabelMap(makeStateLabel)이 우선하며, 이 함수는 그 폴백.
-     *   v1.0.44 상대가 '정지 중'(PSTATE_IDLE) 신호를 송출 중이면 위 접근 표기 대신
-     *     "{이름}이(가) 주변에 대기 중입니다." 로 안내한다(이동 중=FORWARD 일 때만 '접근' 표기).
+     * v1.0.34 평상(NORMAL) 접근 표시문자열.
+     *   ※ 특수상태(후진·하역)는 suddenLabelMap(makeStateLabel)이 우선하며, 이 함수는 그 폴백.
+     *   [v1.0.51 #3] 이동 판정을 STATE 단독 → 'STATE!=IDLE 또는 수신 속도>0' 으로 확장하고
+     *     문구를 이동="{이름}이(가) 이동 중입니다." / 정지="{이름}이(가) 주변에 있습니다." 로 통일.
+     *     (구: 정지='주변에 대기 중입니다' / 이동=EPJ만 '접근 중!'·그 외 '{이름} ({역할})'.
+     *      송신측 STATE 가 고착되면 이동 중에도 '대기 중'으로 보이던 문제 — 속도 비트는
+     *      1.5초 폴링으로 갱신돼 더 신선하므로 둘 중 하나만 이동을 가리켜도 '이동 중' 표기.)
      */
     private fun makeApproachLabel(deviceId: String): String {
         val name = extractDisplayName(deviceId)
-        // [v1.0.44] 정지 중(IDLE) 신호 수신 → 접근이 아니라 '주변 대기'로 표기. 카테고리 무관.
-        if (deviceStateMap[deviceId] == BleConstants.PSTATE_IDLE)
-            return "${name}이(가) 주변에 대기 중입니다."
-        return if (deviceCategoryMap[deviceId] == BleConstants.CAT_EPJ)
-            "$name EPJ가 접근 중!"
-        else
-            "$name (${typeLabelOf(deviceId)})"
+        val moving = (deviceStateMap[deviceId] ?: BleConstants.PSTATE_IDLE) != BleConstants.PSTATE_IDLE ||
+                     (deviceSpeedMap[deviceId] ?: 0.0) > 0.0
+        return if (moving) "${name}이(가) 이동 중입니다."
+               else        "${name}이(가) 주변에 있습니다."
     }
 
     /**
@@ -1375,8 +1525,11 @@ class BleService : LifecycleService() {
      */
     private fun broadcastDeviceList(force: Boolean = false) {
         val now = System.currentTimeMillis()
+        // [v1.0.49 #3] 보류(pending) 기기 stale 정리 — TTL(스캐너 타임아웃 정렬) 경과분 제거.
+        pendingDisplayMap.entries.removeIf { now - it.value > PENDING_DISPLAY_TTL_MS }
         val entries = alertState.entries.toList()
-        if (!force && entries.isNotEmpty() && now - lastDeviceListMs < 200L) return
+        // [v1.0.49 #3] 쓰로틀 조건 확장 — 경보가 없어도 보류 기기가 있으면 200ms 쓰로틀 대상(빈 목록만 즉시).
+        if (!force && (entries.isNotEmpty() || pendingDisplayMap.isNotEmpty()) && now - lastDeviceListMs < 200L) return
         lastDeviceListMs = now
 
         val sorted = entries
@@ -1396,14 +1549,31 @@ class BleService : LifecycleService() {
             sb.append(level).append('\u001F').append(rssi).append('\u001F').append(name)
         }
 
+        // [v1.0.49 #3] 게이트 보류 기기 병합 — alertState 미등록(경보 발령 전) 기기를 SAFE 레벨 행으로 추가.
+        //   MainActivity 가 SAFE 레벨을 '감지됨'(연청·축소) 스타일로 렌더하므로 UI 수정 없이 시각 구분된다.
+        //   경보 행 우선, 잔여 슬롯에 RSSI 강한(가까운) 순으로 채움 — 합계 10개 cap 유지.
+        //   구분자는 기존 직렬화와 동일: 30.toChar()=U+001E(레코드), 31.toChar()=U+001F(필드).
+        var mergedCount = sorted.size
+        pendingDisplayMap.keys
+            .filter { it !in alertState }
+            .sortedByDescending { deviceRssiMap[it] ?: -100 }
+            .take(10 - sorted.size)
+            .forEach { id ->
+                val rssi = deviceRssiMap[id] ?: -99
+                val name = suddenLabelMap[id] ?: makeApproachLabel(id)
+                if (sb.isNotEmpty()) sb.append(30.toChar())
+                sb.append(BleConstants.LEVEL_SAFE).append(31.toChar()).append(rssi).append(31.toChar()).append(name)
+                mergedCount++
+            }
+
         // [v1.0.42] 폴백 동기화 소스 갱신 — 브로드캐스트가 누락돼도 MainActivity 폴링이 이 값을 읽는다.
         detectedSnapshot = sb.toString()
-        detectedCount    = sorted.size
+        detectedCount    = mergedCount
 
         // [v1.0.42] setPackage 로 '명시적' 브로드캐스트화 → RECEIVER_NOT_EXPORTED 수신자와 확실히 호환.
         sendBroadcast(Intent(BROADCAST_DETECTED).setPackage(packageName).apply {
             putExtra(EXTRA_DEVICE_LIST, sb.toString())
-            putExtra(EXTRA_DEVICE_COUNT, sorted.size)
+            putExtra(EXTRA_DEVICE_COUNT, mergedCount)
         })
     }
 
@@ -1497,7 +1667,13 @@ class BleService : LifecycleService() {
     private fun applyLiveSettings(changedKey: String?) {
         val preset = DevSettings.kalmanPreset
         kalmanFilters.values.forEach { it.updatePreset(preset) }
-        Log.d(TAG, "[Req5] 설정 라이브 반영(key=$changedKey): KF프리셋=$preset 위험=${BleConstants.rssiDanger}dBm 경고=${BleConstants.rssiWarning}dBm TimeGate=${DevSettings.timeGateMs}ms")
+        // [v1.0.48 #5] 스캔 주기·광고 간격도 라이브 반영 — 죽은 설정이던 scanPeriodMs/advertiseInterval 이
+        //   이제 스캔/광고 모드에 매핑되므로(BleScanner/BleAdvertiser) 저장 즉시 라디오에 적용한다.
+        //   키 필터링 없이 무조건 호출 — 양쪽 모두 내부에서 '매핑 모드가 실제로 바뀐 경우'에만
+        //   재시작하는 no-op 가드가 있어 저비용이고, resetToDefault(clear) 의 null key 도 자연 커버.
+        bleScanner?.refreshScanMode()
+        bleAdvertiser?.refreshAdvertiseMode()
+        Log.d(TAG, "[Req5] 설정 라이브 반영(key=$changedKey): KF프리셋=$preset 위험=${BleConstants.rssiDanger}dBm 경고=${BleConstants.rssiWarning}dBm TimeGate=${DevSettings.timeGateMs}ms 스캔주기=${BleConstants.scanPeriodMs}ms 광고간격=${BleConstants.advertiseInterval}ms")
         sendStatusBroadcast("설정 라이브 반영됨")
     }
 
@@ -1532,6 +1708,7 @@ class BleService : LifecycleService() {
         suddenLabelMap.clear()
         deviceCategoryMap.clear()
         deviceStateMap.clear()
+        deviceSpeedMap.clear()   // [v1.0.51 #3]
         broadcastDeviceList(force = true)   // [v1.0.26 Req2] 서비스 중지 → 빈 목록 송출('감지 없음' 반영)
         localSnapshot = ""; lastLocalSnapshot = ""   // [v1.0.42 Req2] 내 장비(Local) 스냅샷 초기화
         rssiPreFilter.clearAll()
@@ -1548,11 +1725,14 @@ class BleService : LifecycleService() {
         peakAlertRssiMap.clear()
         deviceRssiMap.clear()
         approachStreakStartMap.clear()   // [v1.0.35] Time-Gate 접근 추적 정리
+        pendingDisplayMap.clear()        // [v1.0.49 #3] 보류 표시 정리
         mutedDevices.clear()
         firebaseLastSaveMap.clear()
         testRunnable?.let { testHandler.removeCallbacks(it) }
         testRunnable = null
         muteHandler.removeCallbacksAndMessages(null)
+        volumeGuardHandler.removeCallbacksAndMessages(null)   // [v1.0.46 #11] 볼륨가드 해제 예약 정리
+        ignoringVolumeChange = false
         isMuted = false
         isMutedPublic = false
         healthCheckHandler.removeCallbacksAndMessages(null)

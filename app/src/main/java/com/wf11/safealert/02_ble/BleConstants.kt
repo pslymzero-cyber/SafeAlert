@@ -16,11 +16,12 @@ object BleConstants {
 
     // RSSI >= 임계값 → 경보 (가까울수록 RSSI가 0에 가까워짐)
     // 경고: 더 멀리서(더 음수), 위험: 더 가까이서(덜 음수)
-    // 기본값: txPower=-38, n=2.53, 경고 12m, 위험 6m 기준으로 계산된 RSSI
-    // 경고 12m: -38 - 10*2.53*log10(12) = -65 dBm
-    // 위험  6m: -38 - 10*2.53*log10(6)  = -58 dBm
-    const val DEFAULT_RSSI_WARNING       = -65
-    const val DEFAULT_RSSI_DANGER        = -58
+    // [v1.0.48 #6] (구) txPower=-38/n=2.53 거리 환산 주석 폐기 — v1.0.39 에서 거리계산 파생을
+    //   걷어내고 v1.0.40 부터 dBm 슬라이더 직접 저장이라 환산식은 더 이상 사실이 아니었다.
+    //   임계 기본값의 단일 출처는 DevSettings.DEFAULT_RSSI_*_ABS(-75/-55)이며, 아래 상수는
+    //   DevSettings 초기화 전 runCatching 폴백 전용이라 같은 값으로 정렬한다(불일치 해소).
+    const val DEFAULT_RSSI_WARNING       = -75
+    const val DEFAULT_RSSI_DANGER        = -55
     const val DEFAULT_SCAN_PERIOD_MS     = 3000L
     const val DEFAULT_ADVERTISE_INTERVAL = 200
 
