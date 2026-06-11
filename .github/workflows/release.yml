@@ -1,0 +1,56 @@
+name: Build & Release
+
+# v1.0.52 형식의 태그를 push하면 자동 실행
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # GitHub Release 생성·업로드 권한
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Restore google-services.json
+        run: echo "${{ secrets.GOOGLE_SERVICES_JSON }}" | base64 --decode > app/google-services.json
+
+      - name: Grant execute permission
+        run: chmod +x gradlew
+
+      # 태그명에서 v 제거 → 버전 번호 추출 (예: v1.0.52 → 1.0.52)
+      - name: Extract version
+        id: ver
+        run: echo "name=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+
+      - name: Build debug APK
+        run: ./gradlew assembleDebug --no-daemon --console=plain
+
+      - name: Rename APK
+        run: mv app/build/outputs/apk/debug/app-debug.apk safealert-${{ steps.ver.outputs.name }}.apk
+
+      - name: Create GitHub Release & Upload APK
+        uses: softprops/action-gh-release@v2
+        with:
+          name: SafeAlert v${{ steps.ver.outputs.name }}
+          files: safealert-${{ steps.ver.outputs.name }}.apk
+          generate_release_notes: true   # 마지막 릴리즈 이후 커밋 자동 정리
+
+      - name: Update Firebase Realtime DB
+        run: |
+          VER="${{ steps.ver.outputs.name }}"
+          APK_URL="https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/safealert-${VER}.apk"
+          curl -fsSX PATCH \
+            "${{ secrets.FIREBASE_DB_URL }}/wf11/version.json?auth=${{ secrets.FIREBASE_DB_SECRET }}" \
+            -H "Content-Type: application/json" \
+            -d "{\"latest\":\"${VER}\",\"apk_url\":\"${APK_URL}\",\"force_update\":false,\"changelog\":\"\"}"
