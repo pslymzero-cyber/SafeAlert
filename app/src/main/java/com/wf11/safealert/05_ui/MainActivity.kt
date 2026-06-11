@@ -230,6 +230,18 @@ class MainActivity : AppCompatActivity() {
         window.statusBarColor = 0xFF0B1220.toInt()
         window.navigationBarColor = 0xFF0B1220.toInt()
 
+        // [v1.1.1] 시작 스플래시 — 신규 실행 시 1.5초 표시 후 페이드아웃. 화면 재생성(회전 등)은
+        //   savedInstanceState 가 남아 있으므로 다시 띄우지 않고 즉시 숨긴다.
+        if (savedInstanceState == null) {
+            binding.ivSplash.postDelayed({
+                binding.ivSplash.animate().alpha(0f).setDuration(300L)
+                    .withEndAction { binding.ivSplash.visibility = View.GONE }
+                    .start()
+            }, 1500L)
+        } else {
+            binding.ivSplash.visibility = View.GONE
+        }
+
         // [v1.0.54] 선택 화면 배경 — 창고 전경(bg_main) + 스크림. 실행 전환 시 applyRoleVisual 이
         //   역할별 배경으로 덮어쓰고, 중지 복귀 시 stopServiceImmediately 가 bg_main 으로 되돌린다.
         binding.ivRoleBackground.setImageResource(R.drawable.bg_main)

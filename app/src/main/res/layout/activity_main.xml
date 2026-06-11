@@ -733,4 +733,17 @@
 
 </LinearLayout>
 
+    <!-- [v1.1.1] 시작 스플래시 — 1.5초 표시 후 MainActivity 가 페이드아웃. clickable 로 하단 UI
+         터치 차단, 화면 재생성(회전 등) 시에는 onCreate 가 즉시 숨김 -->
+    <ImageView
+        android:id="@+id/iv_splash"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:scaleType="centerCrop"
+        android:src="@drawable/bg_splash"
+        android:background="#0B1220"
+        android:clickable="true"
+        android:focusable="true"
+        android:contentDescription="@null" />
+
 </FrameLayout>
