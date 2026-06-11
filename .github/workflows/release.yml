@@ -32,6 +32,14 @@ jobs:
           mkdir -p $HOME/.android
           echo "${{ secrets.DEBUG_KEYSTORE }}" | base64 --decode > $HOME/.android/debug.keystore
 
+      # 복원된 keystore 가 로컬 키와 다르면 즉시 실패 — 잘못된 서명 APK 배포 차단
+      - name: Verify keystore fingerprint
+        run: |
+          OUT=$(keytool -list -keystore $HOME/.android/debug.keystore -storepass android -alias androiddebugkey)
+          echo "$OUT"
+          echo "$OUT" | grep -q "4C:40:F0:35:E4:2C:78:D0:71:34:5F:EB:B6:23:4E:F7:56:F9:11:6B:7C:92:05:00:0A:14:5B:D0:F7:DF:19:21" \
+            || { echo "::error::복원된 keystore 가 로컬 키와 다름 — DEBUG_KEYSTORE secret 확인 필요"; exit 1; }
+
       - name: Grant execute permission
         run: chmod +x gradlew
 

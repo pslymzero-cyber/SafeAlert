@@ -12,12 +12,26 @@ android {
         applicationId "com.wf11.safealert"
         minSdk 26
         targetSdk 34
-        versionCode 55
-        versionName "1.0.54"
+        versionCode 56
+        versionName "1.0.55"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    // 디버그 keystore 경로 명시 — CI 러너가 자동 생성한 임의 키 대신 ~/.android/debug.keystore 를
+    //   강제 사용 (로컬·GitHub Actions 서명 일치 → 덮어쓰기 설치 가능)
+    signingConfigs {
+        debug {
+            storeFile file("${System.properties['user.home']}/.android/debug.keystore")
+            storePassword "android"
+            keyAlias "androiddebugkey"
+            keyPassword "android"
+        }
+    }
+
     buildTypes {
+        debug {
+            signingConfig signingConfigs.debug
+        }
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
