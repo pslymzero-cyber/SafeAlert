@@ -84,7 +84,9 @@ object UpdateManager {
                         Log.d(TAG, "다운로드 완료, 설치 시작")
                         installApk(ctx, destFile)
                     } else {
-                        Log.e(TAG, "다운로드 실패 status=$status")
+                        val reason = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_REASON))
+                        Log.e(TAG, "다운로드 실패 status=$status reason=$reason")
+                        android.widget.Toast.makeText(ctx, "다운로드 실패 (오류: $reason)", android.widget.Toast.LENGTH_LONG).show()
                     }
                 }
                 cursor.close()
