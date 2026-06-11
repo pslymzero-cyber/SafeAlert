@@ -280,7 +280,6 @@ class MainActivity : AppCompatActivity() {
         }
         registerReceiver(alertReceiver, filter, RECEIVER_NOT_EXPORTED)
         restoreRunningState()
-        checkUpdate()
         checkBluetoothStatus()
         requestBatteryOptimizationOnStart()
         requestOverlayPermissionIfNeeded()  // 오버레이 권한 요청
@@ -304,6 +303,11 @@ class MainActivity : AppCompatActivity() {
             "UUID ${beaconCount}개 등록됨 · iOS/앱 없는 보행자 감지 중"
         else
             "iOS/앱 없는 보행자 감지 설정"
+
+        // [v1.1.2] 버전 체크를 onCreate → onResume 으로 이동 — 앱이 백그라운드에 살아 있다가
+        //   메인 화면에 재진입할 때도 매번 확인한다. (onCreate 단독이던 시절엔 프로세스가 죽기
+        //   전까지 재체크가 없어 새 버전 팝업을 놓침. 중복 팝업은 showUpdateDialog 가드가 차단)
+        checkUpdate()
     }
 
     override fun onPause() {
@@ -783,6 +787,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ── 자동 업데이트 ──────────────────────────────────────────
+    // [v1.1.2] onResume 마다 체크하므로 다이얼로그 참조를 들고 중복 표시를 막는다
+    private var updateDialog: AlertDialog? = null
+
     private fun checkUpdate() {
         UpdateManager.checkForUpdate(this) { info ->
             info ?: return@checkForUpdate
@@ -791,6 +798,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showUpdateDialog(info: UpdateManager.UpdateInfo) {
+        // [v1.1.2] 이미 떠 있으면 재표시 금지 + 비동기 콜백이 종료 중 액티비티에 닿는 크래시 방지
+        if (updateDialog?.isShowing == true) return
+        if (isFinishing || isDestroyed) return
         val msg = "v${UpdateManager.CURRENT_VERSION}  →  v${info.latest}" +
                 if (info.changelog.isNotBlank()) "\n\n${info.changelog}" else ""
         val builder = AlertDialog.Builder(this)
@@ -800,7 +810,7 @@ class MainActivity : AppCompatActivity() {
                 UpdateManager.downloadAndInstall(this, info.apkUrl)
             }
         if (!info.forceUpdate) builder.setNegativeButton("나중에", null)
-        builder.setCancelable(!info.forceUpdate).show()
+        updateDialog = builder.setCancelable(!info.forceUpdate).show()
     }
 
     // ── PIN 다이얼로그 ──────────────────────────────────────────
