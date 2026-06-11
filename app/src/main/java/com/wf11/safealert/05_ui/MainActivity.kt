@@ -230,6 +230,12 @@ class MainActivity : AppCompatActivity() {
         window.statusBarColor = 0xFF0B1220.toInt()
         window.navigationBarColor = 0xFF0B1220.toInt()
 
+        // [v1.0.54] 선택 화면 배경 — 창고 전경(bg_main) + 스크림. 실행 전환 시 applyRoleVisual 이
+        //   역할별 배경으로 덮어쓰고, 중지 복귀 시 stopServiceImmediately 가 bg_main 으로 되돌린다.
+        binding.ivRoleBackground.setImageResource(R.drawable.bg_main)
+        binding.ivRoleBackground.visibility = View.VISIBLE
+        binding.viewBgScrim.visibility      = View.VISIBLE
+
         // 하단 버전 표시 — BuildConfig에서 읽어 항상 최신값 반영
         binding.tvVersionFooter.text = "v${BuildConfig.VERSION_NAME}  ·  Created by Ian"
         // 저장된 이름 복원
@@ -604,9 +610,10 @@ class MainActivity : AppCompatActivity() {
         muteAnimator?.cancel()
         binding.tvMutedIndicator.visibility = View.GONE
 
-        // [v1.0.50 #3] 역할 배경 사진/스크림 숨김 — 선택 화면은 다크 단색 배경
-        binding.ivRoleBackground.visibility = View.GONE
-        binding.viewBgScrim.visibility      = View.GONE
+        // [v1.0.54] 선택 화면 복귀 — 역할 배경을 창고 전경(bg_main)으로 전환 (스크림 유지)
+        binding.ivRoleBackground.setImageResource(R.drawable.bg_main)
+        binding.ivRoleBackground.visibility = View.VISIBLE
+        binding.viewBgScrim.visibility      = View.VISIBLE
 
         binding.cardRunning.visibility  = View.GONE
         binding.layoutSelect.visibility = View.VISIBLE
