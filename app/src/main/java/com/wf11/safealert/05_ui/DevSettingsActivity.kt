@@ -53,23 +53,24 @@ class DevSettingsActivity : AppCompatActivity() {
         binding.tvSimRssiVal.text = "${DevSettings.simulatedRssi} dBm"
         binding.switchVerbose.isChecked = DevSettings.logVerbose
         // 판정 파라미터 (고급) — 저장값 표시(미설정 시 기본값 = 기존 하드코딩값)
-        binding.etTtcThreshold.setText(DevSettings.ttcThresholdSec.toString())
-        binding.etMinApproachVel.setText(DevSettings.minApproachVelDbm.toString())
+        //   소수 항목은 5단계 민감도 Spinner: 저장값과 가장 가까운 프리셋을 선택
+        binding.spTtcThreshold.setSelection(presetIndex(ttcPresets, DevSettings.ttcThresholdSec))
+        binding.spMinApproachVel.setSelection(presetIndex(approachVelPresets, DevSettings.minApproachVelDbm))
         binding.etTimegateMs.setText(DevSettings.timeGateMs.toString())
         binding.etTimegateCornering.setText(DevSettings.corneringTimeGateMs.toString())
-        binding.etTimegateVel.setText(DevSettings.timeGateVelDbm.toString())
+        binding.spTimegateVel.setSelection(presetIndex(gateVelPresets, DevSettings.timeGateVelDbm))
         binding.etWarningCooldown.setText(DevSettings.warningCooldownMs.toString())
         binding.etDangerCooldown.setText(DevSettings.dangerCooldownMs.toString())
         binding.etHysteresis.setText(DevSettings.hysteresisDbm.toString())
         binding.etDepartingHysteresis.setText(DevSettings.departingHysteresisDbm.toString())
         binding.etRecedingClearMs.setText(DevSettings.recedingClearMs.toString())
         binding.etRecedingDrop.setText(DevSettings.recedingDbmDrop.toString())
-        binding.etClosingFactor.setText(DevSettings.closingKmhToDbms.toString())
-        binding.etHeadonRatio.setText(DevSettings.collisionHeadOnRatio.toString())
-        binding.etSideRatio.setText(DevSettings.collisionSideRatio.toString())
-        binding.etEmaRise.setText(DevSettings.emaAlphaRise.toString())
-        binding.etEmaFall.setText(DevSettings.emaAlphaFall.toString())
-        binding.etEmaDboost.setText(DevSettings.emaAlphaDBoost.toString())
+        binding.spClosingFactor.setSelection(presetIndex(closingPresets, DevSettings.closingKmhToDbms))
+        binding.spHeadonRatio.setSelection(presetIndex(headOnPresets, DevSettings.collisionHeadOnRatio))
+        binding.spSideRatio.setSelection(presetIndex(sidePresets, DevSettings.collisionSideRatio))
+        binding.spEmaRise.setSelection(presetIndex(emaRisePresets, DevSettings.emaAlphaRise))
+        binding.spEmaFall.setSelection(presetIndex(emaFallPresets, DevSettings.emaAlphaFall))
+        binding.spEmaDboost.setSelection(presetIndex(emaDBoostPresets, DevSettings.emaAlphaDBoost))
         binding.etPreserveBand.setText(DevSettings.filterPreserveBandDb.toString())
         binding.etWakeRssi.setText(DevSettings.wakeRssiDbm.toString())
         binding.etStaleMs.setText(DevSettings.signalStaleMs.toString())
@@ -119,24 +120,25 @@ class DevSettingsActivity : AppCompatActivity() {
         DevSettings.debugMode            = binding.switchDebug.isChecked
         DevSettings.simulatedRssi        = binding.seekSimRssi.progress - 100
         DevSettings.logVerbose           = binding.switchVerbose.isChecked
-        // 판정 파라미터 (고급) — 파싱 실패 시 기존값 유지, 범위 제한(clamp)은 DevSettings setter 담당
-        DevSettings.ttcThresholdSec        = binding.etTtcThreshold.text.toString().toDoubleOrNull() ?: DevSettings.ttcThresholdSec
-        DevSettings.minApproachVelDbm      = binding.etMinApproachVel.text.toString().toDoubleOrNull() ?: DevSettings.minApproachVelDbm
+        // 판정 파라미터 (고급) — Spinner 는 프리셋값 직저장, EditText 는 파싱 실패 시 기존값 유지.
+        //   범위 제한(clamp)은 DevSettings setter 담당
+        DevSettings.ttcThresholdSec        = ttcPresets[binding.spTtcThreshold.selectedItemPosition]
+        DevSettings.minApproachVelDbm      = approachVelPresets[binding.spMinApproachVel.selectedItemPosition]
         DevSettings.timeGateMs             = binding.etTimegateMs.text.toString().toLongOrNull() ?: DevSettings.timeGateMs
         DevSettings.corneringTimeGateMs    = binding.etTimegateCornering.text.toString().toLongOrNull() ?: DevSettings.corneringTimeGateMs
-        DevSettings.timeGateVelDbm         = binding.etTimegateVel.text.toString().toDoubleOrNull() ?: DevSettings.timeGateVelDbm
+        DevSettings.timeGateVelDbm         = gateVelPresets[binding.spTimegateVel.selectedItemPosition]
         DevSettings.warningCooldownMs      = binding.etWarningCooldown.text.toString().toLongOrNull() ?: DevSettings.warningCooldownMs
         DevSettings.dangerCooldownMs       = binding.etDangerCooldown.text.toString().toLongOrNull() ?: DevSettings.dangerCooldownMs
         DevSettings.hysteresisDbm          = binding.etHysteresis.text.toString().toIntOrNull() ?: DevSettings.hysteresisDbm
         DevSettings.departingHysteresisDbm = binding.etDepartingHysteresis.text.toString().toIntOrNull() ?: DevSettings.departingHysteresisDbm
         DevSettings.recedingClearMs        = binding.etRecedingClearMs.text.toString().toLongOrNull() ?: DevSettings.recedingClearMs
         DevSettings.recedingDbmDrop        = binding.etRecedingDrop.text.toString().toIntOrNull() ?: DevSettings.recedingDbmDrop
-        DevSettings.closingKmhToDbms       = binding.etClosingFactor.text.toString().toDoubleOrNull() ?: DevSettings.closingKmhToDbms
-        DevSettings.collisionHeadOnRatio   = binding.etHeadonRatio.text.toString().toDoubleOrNull() ?: DevSettings.collisionHeadOnRatio
-        DevSettings.collisionSideRatio     = binding.etSideRatio.text.toString().toDoubleOrNull() ?: DevSettings.collisionSideRatio
-        DevSettings.emaAlphaRise           = binding.etEmaRise.text.toString().toDoubleOrNull() ?: DevSettings.emaAlphaRise
-        DevSettings.emaAlphaFall           = binding.etEmaFall.text.toString().toDoubleOrNull() ?: DevSettings.emaAlphaFall
-        DevSettings.emaAlphaDBoost         = binding.etEmaDboost.text.toString().toDoubleOrNull() ?: DevSettings.emaAlphaDBoost
+        DevSettings.closingKmhToDbms       = closingPresets[binding.spClosingFactor.selectedItemPosition]
+        DevSettings.collisionHeadOnRatio   = headOnPresets[binding.spHeadonRatio.selectedItemPosition]
+        DevSettings.collisionSideRatio     = sidePresets[binding.spSideRatio.selectedItemPosition]
+        DevSettings.emaAlphaRise           = emaRisePresets[binding.spEmaRise.selectedItemPosition]
+        DevSettings.emaAlphaFall           = emaFallPresets[binding.spEmaFall.selectedItemPosition]
+        DevSettings.emaAlphaDBoost         = emaDBoostPresets[binding.spEmaDboost.selectedItemPosition]
         DevSettings.filterPreserveBandDb   = binding.etPreserveBand.text.toString().toIntOrNull() ?: DevSettings.filterPreserveBandDb
         DevSettings.wakeRssiDbm            = binding.etWakeRssi.text.toString().toIntOrNull() ?: DevSettings.wakeRssiDbm
         DevSettings.signalStaleMs          = binding.etStaleMs.text.toString().toLongOrNull() ?: DevSettings.signalStaleMs
@@ -176,6 +178,21 @@ class DevSettingsActivity : AppCompatActivity() {
     private fun advertiseIndex(v: Int)    = advertiseValues.indexOfFirst { it == v }.coerceAtLeast(1)
     private fun vibWarningIndex(v: Long)  = vibWarningValues.indexOfFirst { it == v }.coerceAtLeast(1)
     private fun vibCountIndex(v: Int)     = vibCountValues.indexOfFirst { it == v }.coerceAtLeast(1)
+
+    // 판정 파라미터 소수 항목 — 5단계 민감도 프리셋 (arrays.xml 라벨과 순서 일치, [2]=보통=기본값)
+    private val ttcPresets         = doubleArrayOf(5.0, 4.0, 3.0, 2.0, 1.0)
+    private val approachVelPresets = doubleArrayOf(0.2, 0.3, 0.5, 1.0, 1.5)
+    private val gateVelPresets     = doubleArrayOf(0.2, 0.3, 0.5, 1.0, 1.5)
+    private val closingPresets     = doubleArrayOf(0.2, 0.35, 0.5, 0.8, 1.2)
+    private val headOnPresets      = doubleArrayOf(0.4, 0.5, 0.6, 0.7, 0.8)
+    private val sidePresets        = doubleArrayOf(0.1, 0.2, 0.3, 0.4, 0.5)
+    private val emaRisePresets     = doubleArrayOf(0.6, 0.45, 0.3, 0.2, 0.1)
+    private val emaFallPresets     = doubleArrayOf(0.2, 0.1, 0.05, 0.03, 0.01)
+    private val emaDBoostPresets   = doubleArrayOf(0.7, 0.55, 0.4, 0.25, 0.1)
+
+    // 저장값과 가장 가까운 프리셋 단계 선택 (프리셋 외 값이 저장돼 있어도 안전)
+    private fun presetIndex(presets: DoubleArray, v: Double) =
+        presets.indices.minByOrNull { kotlin.math.abs(presets[it] - v) } ?: 2
 
     private fun seekListener(onChange: (Int) -> Unit) = object : android.widget.SeekBar.OnSeekBarChangeListener {
         override fun onProgressChanged(sb: android.widget.SeekBar, v: Int, b: Boolean) = onChange(v)

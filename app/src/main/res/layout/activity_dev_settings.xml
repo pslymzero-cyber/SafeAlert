@@ -247,45 +247,51 @@
                     android:layout_width="wrap_content" android:layout_height="wrap_content"
                     android:layout_marginTop="12dp"/>
 
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="6dp">
-                    <TextView android:text="TTC 선발령 임계 (초)" android:layout_width="0dp" android:layout_height="wrap_content"
-                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
-                    <EditText android:id="@+id/et_ttc_threshold" android:layout_width="96dp" android:layout_height="wrap_content"
-                        android:inputType="number|numberDecimal" android:gravity="end" android:textSize="13sp"/>
-                </LinearLayout>
+                <TextView android:text="TTC 선발령 임계" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:textSize="13sp" android:textColor="#111827" android:layout_marginTop="10dp"/>
+                <TextView android:text="예상 충돌까지 남은 시간(초)이 임계 이하면 위험 경보를 선발령. 민감할수록 멀리서 일찍 울리고(오탐 증가), 둔감할수록 임박해야 울립니다."
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:textSize="11sp" android:textColor="#9CA3AF" android:layout_marginTop="2dp"/>
+                <Spinner android:id="@+id/sp_ttc_threshold" android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:entries="@array/ttc_threshold_labels"/>
+
+                <TextView android:text="TTC 최소 접근속도 (dBm/s)" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:textSize="13sp" android:textColor="#111827" android:layout_marginTop="10dp"/>
+                <TextView android:text="이보다 느린 접근은 충돌 시간 계산에서 제외. 민감할수록 천천히 오는 대상까지 감지하고(오탐 증가), 둔감할수록 확실히 빠른 접근만 봅니다."
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:textSize="11sp" android:textColor="#9CA3AF" android:layout_marginTop="2dp"/>
+                <Spinner android:id="@+id/sp_min_approach_vel" android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:entries="@array/min_approach_vel_labels"/>
 
                 <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="6dp">
-                    <TextView android:text="TTC 최소 접근속도 (dBm/s)" android:layout_width="0dp" android:layout_height="wrap_content"
-                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
-                    <EditText android:id="@+id/et_min_approach_vel" android:layout_width="96dp" android:layout_height="wrap_content"
-                        android:inputType="number|numberDecimal" android:gravity="end" android:textSize="13sp"/>
-                </LinearLayout>
-
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="6dp">
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="10dp">
                     <TextView android:text="Time-Gate 평상 (ms)" android:layout_width="0dp" android:layout_height="wrap_content"
                         android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
                     <EditText android:id="@+id/et_timegate_ms" android:layout_width="96dp" android:layout_height="wrap_content"
                         android:inputType="number" android:gravity="end" android:textSize="13sp"/>
                 </LinearLayout>
+                <TextView android:text="유효 0~3000 ms (기본 500). 접근이 이 시간 이상 지속돼야 경보 확정. 높이면 스침 오탐이 줄지만 반응이 느려지고, 낮추면 즉각 울리는 대신 오탐이 늘어납니다."
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:textSize="11sp" android:textColor="#9CA3AF"/>
 
                 <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="6dp">
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="10dp">
                     <TextView android:text="Time-Gate 코너링 (ms)" android:layout_width="0dp" android:layout_height="wrap_content"
                         android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
                     <EditText android:id="@+id/et_timegate_cornering" android:layout_width="96dp" android:layout_height="wrap_content"
                         android:inputType="number" android:gravity="end" android:textSize="13sp"/>
                 </LinearLayout>
+                <TextView android:text="유효 0~5000 ms (기본 1000). 회전(코너링) 중에 적용되는 더 긴 확인 시간. 높이면 교차로 스침 오탐이 줄고, 낮추면 코너 상황 반응이 빨라집니다."
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:textSize="11sp" android:textColor="#9CA3AF"/>
 
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="6dp">
-                    <TextView android:text="Time-Gate 접근 판정속도 (dBm/s)" android:layout_width="0dp" android:layout_height="wrap_content"
-                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
-                    <EditText android:id="@+id/et_timegate_vel" android:layout_width="96dp" android:layout_height="wrap_content"
-                        android:inputType="number|numberDecimal" android:gravity="end" android:textSize="13sp"/>
-                </LinearLayout>
+                <TextView android:text="Time-Gate 접근 판정속도 (dBm/s)" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:textSize="13sp" android:textColor="#111827" android:layout_marginTop="10dp"/>
+                <TextView android:text="Time-Gate에서 '접근 중'으로 인정하는 최소 속도. 민감할수록 느린 접근도 게이트 시간을 채워 경보가 빨라지고, 둔감할수록 확실한 접근만 인정합니다."
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:textSize="11sp" android:textColor="#9CA3AF" android:layout_marginTop="2dp"/>
+                <Spinner android:id="@+id/sp_timegate_vel" android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:entries="@array/timegate_vel_labels"/>
 
                 <View android:layout_width="match_parent" android:layout_height="1dp"
                     android:background="#F3F4F6" android:layout_marginTop="12dp"/>
@@ -296,52 +302,70 @@
                     android:layout_marginTop="8dp"/>
 
                 <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="6dp">
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="10dp">
                     <TextView android:text="경고 재알람 쿨다운 (ms)" android:layout_width="0dp" android:layout_height="wrap_content"
                         android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
                     <EditText android:id="@+id/et_warning_cooldown" android:layout_width="96dp" android:layout_height="wrap_content"
                         android:inputType="number" android:gravity="end" android:textSize="13sp"/>
                 </LinearLayout>
+                <TextView android:text="유효 500~10000 ms (기본 3000). 경고 경보 후 재알람까지 최소 간격. 높이면 알림 피로가 줄고, 낮추면 재알람이 잦아집니다."
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:textSize="11sp" android:textColor="#9CA3AF"/>
 
                 <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="6dp">
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="10dp">
                     <TextView android:text="위험 재알람 쿨다운 (ms)" android:layout_width="0dp" android:layout_height="wrap_content"
                         android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
                     <EditText android:id="@+id/et_danger_cooldown" android:layout_width="96dp" android:layout_height="wrap_content"
                         android:inputType="number" android:gravity="end" android:textSize="13sp"/>
                 </LinearLayout>
+                <TextView android:text="유효 500~10000 ms (기본 2000). 위험 경보 후 재알람까지 최소 간격. 높이면 조용해지고, 낮추면 연속으로 울립니다."
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:textSize="11sp" android:textColor="#9CA3AF"/>
 
                 <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="6dp">
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="10dp">
                     <TextView android:text="격하 히스테리시스 (dB)" android:layout_width="0dp" android:layout_height="wrap_content"
                         android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
                     <EditText android:id="@+id/et_hysteresis" android:layout_width="96dp" android:layout_height="wrap_content"
                         android:inputType="number" android:gravity="end" android:textSize="13sp"/>
                 </LinearLayout>
+                <TextView android:text="유효 0~15 dB (기본 5). 경보 단계를 내릴 때 요구하는 여유폭. 높이면 경보가 잘 안 풀려 깜빡임이 줄고, 낮추면 멀어지자마자 금방 해제됩니다."
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:textSize="11sp" android:textColor="#9CA3AF"/>
 
                 <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="6dp">
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="10dp">
                     <TextView android:text="이탈 중 재경보 마진 (dB)" android:layout_width="0dp" android:layout_height="wrap_content"
                         android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
                     <EditText android:id="@+id/et_departing_hysteresis" android:layout_width="96dp" android:layout_height="wrap_content"
                         android:inputType="number" android:gravity="end" android:textSize="13sp"/>
                 </LinearLayout>
+                <TextView android:text="유효 0~20 dB (기본 8). 멀어지는 대상이 다시 경보를 올리려면 필요한 추가 신호. 높이면 이탈 중 재경보가 억제되고, 낮추면 재경보가 쉬워집니다."
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:textSize="11sp" android:textColor="#9CA3AF"/>
 
                 <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="6dp">
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="10dp">
                     <TextView android:text="페이드아웃 지속시간 (ms)" android:layout_width="0dp" android:layout_height="wrap_content"
                         android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
                     <EditText android:id="@+id/et_receding_clear_ms" android:layout_width="96dp" android:layout_height="wrap_content"
                         android:inputType="number" android:gravity="end" android:textSize="13sp"/>
                 </LinearLayout>
+                <TextView android:text="유효 500~10000 ms (기본 2500). 멀어짐이 이 시간 지속되면 경보 해제. 높이면 해제가 신중해지고, 낮추면 빨리 조용해집니다."
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:textSize="11sp" android:textColor="#9CA3AF"/>
 
                 <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="6dp">
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="10dp">
                     <TextView android:text="페이드아웃 하락폭 (dB)" android:layout_width="0dp" android:layout_height="wrap_content"
                         android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
                     <EditText android:id="@+id/et_receding_drop" android:layout_width="96dp" android:layout_height="wrap_content"
                         android:inputType="number" android:gravity="end" android:textSize="13sp"/>
                 </LinearLayout>
+                <TextView android:text="유효 1~20 dB (기본 5). 최고 신호에서 이만큼 떨어지면 '멀어짐'으로 판단. 높이면 이탈 판정이 신중해지고, 낮추면 해제가 빨리 시작됩니다."
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:textSize="11sp" android:textColor="#9CA3AF"/>
 
                 <View android:layout_width="match_parent" android:layout_height="1dp"
                     android:background="#F3F4F6" android:layout_marginTop="12dp"/>
@@ -351,29 +375,29 @@
                     android:layout_width="wrap_content" android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"/>
 
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="6dp">
-                    <TextView android:text="속도 환산계수 (km/h → dBm/s)" android:layout_width="0dp" android:layout_height="wrap_content"
-                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
-                    <EditText android:id="@+id/et_closing_factor" android:layout_width="96dp" android:layout_height="wrap_content"
-                        android:inputType="number|numberDecimal" android:gravity="end" android:textSize="13sp"/>
-                </LinearLayout>
+                <TextView android:text="속도 환산계수 (km/h → dBm/s)" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:textSize="13sp" android:textColor="#111827" android:layout_marginTop="10dp"/>
+                <TextView android:text="GPS 상대속도를 예상 신호 상승률로 바꾸는 계수. 민감할수록 정면충돌 판정이 쉬워져 즉시 경보가 늘고, 둔감할수록 판정이 엄격해집니다."
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:textSize="11sp" android:textColor="#9CA3AF" android:layout_marginTop="2dp"/>
+                <Spinner android:id="@+id/sp_closing_factor" android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:entries="@array/closing_factor_labels"/>
 
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="6dp">
-                    <TextView android:text="정면충돌 접근비 (이상)" android:layout_width="0dp" android:layout_height="wrap_content"
-                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
-                    <EditText android:id="@+id/et_headon_ratio" android:layout_width="96dp" android:layout_height="wrap_content"
-                        android:inputType="number|numberDecimal" android:gravity="end" android:textSize="13sp"/>
-                </LinearLayout>
+                <TextView android:text="정면충돌 접근비 (이상)" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:textSize="13sp" android:textColor="#111827" android:layout_marginTop="10dp"/>
+                <TextView android:text="실측/예상 접근 비율이 이 이상이면 정면충돌로 보고 대기 없이 즉시 경보. 민감할수록 즉시 경보가 잦고, 둔감할수록 확실할 때만 통과시킵니다."
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:textSize="11sp" android:textColor="#9CA3AF" android:layout_marginTop="2dp"/>
+                <Spinner android:id="@+id/sp_headon_ratio" android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:entries="@array/headon_ratio_labels"/>
 
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="6dp">
-                    <TextView android:text="측면 접근비 (이하)" android:layout_width="0dp" android:layout_height="wrap_content"
-                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
-                    <EditText android:id="@+id/et_side_ratio" android:layout_width="96dp" android:layout_height="wrap_content"
-                        android:inputType="number|numberDecimal" android:gravity="end" android:textSize="13sp"/>
-                </LinearLayout>
+                <TextView android:text="측면 접근비 (이하)" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:textSize="13sp" android:textColor="#111827" android:layout_marginTop="10dp"/>
+                <TextView android:text="접근 비율이 이 이하면 측면 통과·나란히 주행으로 보고 경보를 보류. 민감할수록 보류가 줄어 경보가 늘고, 둔감할수록 오탐이 줄어듭니다."
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:textSize="11sp" android:textColor="#9CA3AF" android:layout_marginTop="2dp"/>
+                <Spinner android:id="@+id/sp_side_ratio" android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:entries="@array/side_ratio_labels"/>
 
                 <View android:layout_width="match_parent" android:layout_height="1dp"
                     android:background="#F3F4F6" android:layout_marginTop="12dp"/>
@@ -383,37 +407,40 @@
                     android:layout_width="wrap_content" android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"/>
 
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="6dp">
-                    <TextView android:text="상승 알파 (접근 추종)" android:layout_width="0dp" android:layout_height="wrap_content"
-                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
-                    <EditText android:id="@+id/et_ema_rise" android:layout_width="96dp" android:layout_height="wrap_content"
-                        android:inputType="number|numberDecimal" android:gravity="end" android:textSize="13sp"/>
-                </LinearLayout>
+                <TextView android:text="상승 알파 (접근 추종)" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:textSize="13sp" android:textColor="#111827" android:layout_marginTop="10dp"/>
+                <TextView android:text="신호가 세질 때(접근) 필터가 따라가는 속도. 민감할수록 접근 반응이 빠르지만 노이즈도 타고, 둔감할수록 부드럽지만 늦습니다."
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:textSize="11sp" android:textColor="#9CA3AF" android:layout_marginTop="2dp"/>
+                <Spinner android:id="@+id/sp_ema_rise" android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:entries="@array/ema_rise_labels"/>
+
+                <TextView android:text="하강 알파 (난수 무시)" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:textSize="13sp" android:textColor="#111827" android:layout_marginTop="10dp"/>
+                <TextView android:text="신호가 약해질 때(이탈) 따라가는 속도. 민감할수록 이탈을 빨리 반영해 해제가 빠르고, 둔감할수록 순간적인 신호 요동을 무시합니다."
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:textSize="11sp" android:textColor="#9CA3AF" android:layout_marginTop="2dp"/>
+                <Spinner android:id="@+id/sp_ema_fall" android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:entries="@array/ema_fall_labels"/>
+
+                <TextView android:text="D-Boost 알파 (돌진 개방)" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:textSize="13sp" android:textColor="#111827" android:layout_marginTop="10dp"/>
+                <TextView android:text="강한 돌진을 감지했을 때 필터를 여는 정도. 민감할수록 돌진에 최대 속도로 반응하고, 둔감할수록 평소 필터를 유지합니다."
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:textSize="11sp" android:textColor="#9CA3AF" android:layout_marginTop="2dp"/>
+                <Spinner android:id="@+id/sp_ema_dboost" android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:entries="@array/ema_dboost_labels"/>
 
                 <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="6dp">
-                    <TextView android:text="하강 알파 (난수 무시)" android:layout_width="0dp" android:layout_height="wrap_content"
-                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
-                    <EditText android:id="@+id/et_ema_fall" android:layout_width="96dp" android:layout_height="wrap_content"
-                        android:inputType="number|numberDecimal" android:gravity="end" android:textSize="13sp"/>
-                </LinearLayout>
-
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="6dp">
-                    <TextView android:text="D-Boost 알파 (돌진 개방)" android:layout_width="0dp" android:layout_height="wrap_content"
-                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
-                    <EditText android:id="@+id/et_ema_dboost" android:layout_width="96dp" android:layout_height="wrap_content"
-                        android:inputType="number|numberDecimal" android:gravity="end" android:textSize="13sp"/>
-                </LinearLayout>
-
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="6dp">
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="10dp">
                     <TextView android:text="필터 보존 밴드 (dB)" android:layout_width="0dp" android:layout_height="wrap_content"
                         android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
                     <EditText android:id="@+id/et_preserve_band" android:layout_width="96dp" android:layout_height="wrap_content"
                         android:inputType="number" android:gravity="end" android:textSize="13sp"/>
                 </LinearLayout>
+                <TextView android:text="유효 0~30 dB (기본 10). 경고 임계 아래 이 구간에서는 필터 상태를 미리 데워 둠. 높이면 경고권 진입 즉시 판정이 빠르고, 낮추면 진입 직후 몇 초 늦을 수 있습니다."
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:textSize="11sp" android:textColor="#9CA3AF"/>
 
                 <View android:layout_width="match_parent" android:layout_height="1dp"
                     android:background="#F3F4F6" android:layout_marginTop="12dp"/>
@@ -424,36 +451,48 @@
                     android:layout_marginTop="8dp"/>
 
                 <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="6dp">
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="10dp">
                     <TextView android:text="광고 웨이크 RSSI (dBm)" android:layout_width="0dp" android:layout_height="wrap_content"
                         android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
                     <EditText android:id="@+id/et_wake_rssi" android:layout_width="96dp" android:layout_height="wrap_content"
                         android:inputType="number|numberSigned" android:gravity="end" android:textSize="13sp"/>
                 </LinearLayout>
+                <TextView android:text="유효 -100~-60 dBm (기본 -89). 이 신호 이상이 잡히면 절전 해제. 0에 가깝게 하면 절전이 늘지만 감지가 늦고, -100 쪽이면 멀리서도 깨어납니다."
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:textSize="11sp" android:textColor="#9CA3AF"/>
 
                 <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="6dp">
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="10dp">
                     <TextView android:text="신호 부재 간주 (ms)" android:layout_width="0dp" android:layout_height="wrap_content"
                         android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
                     <EditText android:id="@+id/et_stale_ms" android:layout_width="96dp" android:layout_height="wrap_content"
                         android:inputType="number" android:gravity="end" android:textSize="13sp"/>
                 </LinearLayout>
+                <TextView android:text="유효 2000~30000 ms (기본 6000). 이 시간 동안 신호가 없으면 대상을 목록에서 정리. 높이면 끊겨도 오래 추적하고, 낮추면 빨리 정리합니다."
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:textSize="11sp" android:textColor="#9CA3AF"/>
 
                 <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="6dp">
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="10dp">
                     <TextView android:text="Firebase 저장 스로틀 (ms)" android:layout_width="0dp" android:layout_height="wrap_content"
                         android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
                     <EditText android:id="@+id/et_fb_throttle" android:layout_width="96dp" android:layout_height="wrap_content"
                         android:inputType="number" android:gravity="end" android:textSize="13sp"/>
                 </LinearLayout>
+                <TextView android:text="유효 5000~600000 ms (기본 60000). 같은 기기 이벤트를 서버에 다시 저장하기까지 최소 간격. 높이면 통신량이 줄고, 낮추면 기록이 촘촘해집니다."
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:textSize="11sp" android:textColor="#9CA3AF"/>
 
                 <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="6dp">
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="10dp">
                     <TextView android:text="속도 송신 주기 (ms)" android:layout_width="0dp" android:layout_height="wrap_content"
                         android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
                     <EditText android:id="@+id/et_speed_push" android:layout_width="96dp" android:layout_height="wrap_content"
                         android:inputType="number" android:gravity="end" android:textSize="13sp"/>
                 </LinearLayout>
+                <TextView android:text="유효 500~10000 ms (기본 1500). 내 속도를 상대에게 송출하는 주기. 높이면 배터리를 아끼고, 낮추면 상대방의 충돌 판정이 정밀해집니다."
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:textSize="11sp" android:textColor="#9CA3AF"/>
 
             </LinearLayout>
         </androidx.cardview.widget.CardView>
