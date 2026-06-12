@@ -171,8 +171,9 @@ class BleService : LifecycleService() {
 
     private val alertState = mutableMapOf<String, Pair<Int, Long>>()
 
-    private val WARNING_COOLDOWN_MS    = 3000L
-    private val DANGER_COOLDOWN_MS     = 2000L
+    // [판정 파라미터] 쿨다운 — DevSettings 라이브 읽기(기본값=기존 하드코딩값, timeGateMs 선례)
+    private val WARNING_COOLDOWN_MS: Long get() = DevSettings.warningCooldownMs
+    private val DANGER_COOLDOWN_MS:  Long get() = DevSettings.dangerCooldownMs
     private val SCAN_HEALTH_CHECK_MS   = 15_000L
 
     @Volatile private var lastScanResultMs = 0L
@@ -205,9 +206,10 @@ class BleService : LifecycleService() {
 
     // ── TTC 파라미터 ──────────────────────────────────────────────────
     // [v1.0.25 Req2] 현장 초민감 오발령 해결 — 8.0초 → 3.0초로 대폭 강화 (충돌 임박 시에만 선발령)
-    private val TTC_THRESHOLD_SEC      = 3.0
+    // [판정 파라미터] DevSettings 라이브 읽기(기본 3.0/0.5 = 기존값)
+    private val TTC_THRESHOLD_SEC: Double get() = DevSettings.ttcThresholdSec
     // ★ RSSI 공간 부호 규칙: vel > 0 = RSSI 증가 = 접근 / vel < 0 = RSSI 감소 = 이탈
-    private val MIN_APPROACH_VEL_DBM   = 0.5  // TTC 계산 최소 접근 속도 (dBm/s)
+    private val MIN_APPROACH_VEL_DBM: Double get() = DevSettings.minApproachVelDbm  // TTC 계산 최소 접근 속도 (dBm/s)
 
     // ── 기기별 추적 상태 머신 (v1.0.20) ──────────────────────────────
     enum class TrackingState { APPROACHING, CROSSING, DEPARTING }
@@ -219,7 +221,8 @@ class BleService : LifecycleService() {
     private val CPA_VEL_THRESHOLD             = 0.5   // CPA 판정 속도 임계 (dBm/s)
     private val CROSSING_CONFIRM_MS           = 1500L // CROSSING → DEPARTING 확정 대기
     private val DEPARTING_REENTRY_COOLDOWN_MS = 5000L // DEPARTING 후 재진입 최소 대기
-    private val DEPARTING_HYSTERESIS_DBM      = 8     // DEPARTING 중 재경보 추가 마진 (dBm)
+    // [판정 파라미터] DevSettings 라이브 읽기(기본 8 = 기존값)
+    private val DEPARTING_HYSTERESIS_DBM: Int get() = DevSettings.departingHysteresisDbm // DEPARTING 중 재경보 추가 마진 (dBm)
 
     // ── 1초 평균 버퍼 ──────────────────────────────────────────────
     private val oneSecBuffer = mutableMapOf<String, ArrayDeque<Pair<Long, Int>>>()
@@ -245,10 +248,11 @@ class BleService : LifecycleService() {
     // [v1.0.42] ttcFeedbackMap / LEARN_RATE 제거 — pathLossExp 온라인 학습(거리 모델 자가학습) 폐지.
 
     private val recedingStartMap = mutableMapOf<String, Long>()
-    private val RECEDING_CLEAR_MS = 2500L
+    // [판정 파라미터] 페이드아웃 해제 — DevSettings 라이브 읽기(기본 2500L/5 = 기존값)
+    private val RECEDING_CLEAR_MS: Long get() = DevSettings.recedingClearMs
 
     private val peakAlertRssiMap  = mutableMapOf<String, Int>()
-    private val RECEDING_DBM_DROP = 5
+    private val RECEDING_DBM_DROP: Int get() = DevSettings.recedingDbmDrop
     // 기기별 마지막 avgRssi 보관 — 플로팅 위젯 최우선 기기 선정·정렬에 사용
     private val deviceRssiMap     = mutableMapOf<String, Int>()
 
@@ -256,9 +260,12 @@ class BleService : LifecycleService() {
     //   모든 타겟 RSSI ≤ SLEEP_RSSI_DBM(-90)/신호 없음 → 광고 슬립(연속 송출 중단, 하트비트만).
     //   하나라도 RSSI ≥ WAKE_RSSI_DBM(-89) → 0ms 즉시 웨이크(연속 광고 재개 + LocalState 강송출).
     //   스캔(RX)은 절대 멈추지 않으므로 접근 감지/웨이크는 항상 살아 있다.
-    private val WAKE_RSSI_DBM    = -89          // 이 값 이상(가까움)이면 즉시 웨이크
-    private val SLEEP_RSSI_DBM   = -90          // 모든 신호가 이 값 이하면 슬립 (경계: -89/-90 정수 간격 0)
-    private val SIGNAL_STALE_MS  = 6_000L       // 이보다 오래된 RSSI 표본은 '신호 없음'으로 간주
+    // [판정 파라미터] WAKE/STALE — DevSettings 라이브 읽기(기본 -89/6000L = 기존값).
+    //   슬립 판정은 '웨이크 조건 불충족'(아래 evalAdvPower)으로 구현돼 SLEEP_RSSI_DBM 은 실코드 미사용
+    //   (문서 경계값) — 설정 노출에서 제외하고 상수로 둔다.
+    private val WAKE_RSSI_DBM: Int get() = DevSettings.wakeRssiDbm  // 이 값 이상(가까움)이면 즉시 웨이크
+    private val SLEEP_RSSI_DBM   = -90          // 모든 신호가 이 값 이하면 슬립 (경계: 웨이크-1, 정수 간격 0)
+    private val SIGNAL_STALE_MS: Long get() = DevSettings.signalStaleMs  // 이보다 오래된 RSSI 표본은 '신호 없음'으로 간주
     private val ADV_POWER_EVAL_MS = 2_500L      // 송출 전력 주기 평가 간격
     // deviceId → (최근 effectiveRssi, 기록 시각ms). 웨이크 판단/슬립 평가의 단일 소스.
     private val wakeRssiMap = mutableMapOf<String, Pair<Int, Long>>()
@@ -294,9 +301,10 @@ class BleService : LifecycleService() {
     // [v1.0.30 Req3] Firebase 경보 저장 모바일데이터 방어 — 기기별 마지막 저장 시각(ms).
     //   같은 기기에 대해 FIREBASE_SAVE_THROTTLE_MS(1분) 안에는 재업로드하지 않는다.
     private val firebaseLastSaveMap = mutableMapOf<String, Long>()
-    private val FIREBASE_SAVE_THROTTLE_MS = 60_000L
+    // [판정 파라미터] DevSettings 라이브 읽기(기본 60_000L/5 = 기존값)
+    private val FIREBASE_SAVE_THROTTLE_MS: Long get() = DevSettings.firebaseThrottleMs
 
-    private val HYSTERESIS_DBM = 5
+    private val HYSTERESIS_DBM: Int get() = DevSettings.hysteresisDbm
 
     // ── [v1.0.35 민감도 지연(Time-Gate)] + [v1.0.36 코너링 연장 · 충돌 기하학 필터] ──────────
     // Time-Gate: 위험권 진입 후에도 2D 칼만 미분(kfVel, dBm/s)이 APPROACH_TIMEGATE_VEL_DBM 이상
@@ -307,17 +315,18 @@ class BleService : LifecycleService() {
     //   기본 500L=기존값 그대로). 게이트 판정 로직(아래 processAlert)은 일절 손대지 않고 '값의 출처'만
     //   상수→설정으로 옮긴다 → 칼만/3중 하드게이트/기하학 판정 보존.
     private val APPROACH_TIMEGATE_MS: Long get() = DevSettings.timeGateMs   // 신규/격상 경보 전 최소 연속 접근 시간(평상)
-    private val APPROACH_TIMEGATE_VEL_DBM = 0.5    // '가까워짐' 판정 최소 접근속도(dBm/s)
+    private val APPROACH_TIMEGATE_VEL_DBM: Double get() = DevSettings.timeGateVelDbm  // '가까워짐' 판정 최소 접근속도(dBm/s)
     // [v1.0.36] 코너링 중 Time-Gate 연장 — 내 장비가 급회전 중이면 전파가 일시 출렁이므로
     //   오작동 방지를 위해 0.5초 → 1.0초로 일시 연장한다(ImuFusion.isCornering 으로 판정).
-    private val APPROACH_TIMEGATE_CORNERING_MS = 1000L
+    private val APPROACH_TIMEGATE_CORNERING_MS: Long get() = DevSettings.corneringTimeGateMs
     // [v1.0.36] 충돌 기하학 필터(Collision Geometry) 파라미터.
     //   합산 접근속도(내속도+상대속도, km/h)를 RSSI 변화율(dBm/s)로 환산해 실제 kfVel 과 대조한다.
     //   단위 환산계수는 위험권(~6m)·경로손실지수(n≈2.5) 근사 — 현장 튜닝 대상.
-    private val CLOSING_KMH_TO_DBMS        = 0.5   // 합산속도(km/h) → 예상 접근(dBm/s) 환산계수
+    //   [판정 파라미터] 환산계수·접근비 2종 — DevSettings 라이브 읽기(기본 0.5/0.6/0.3 = 기존값)
+    private val CLOSING_KMH_TO_DBMS: Double get() = DevSettings.closingKmhToDbms  // 합산속도(km/h) → 예상 접근(dBm/s) 환산계수
     private val COLLISION_MIN_CLOSING_KMH  = 1.0   // 합산속도 이 미만이면 기하 판정 불가(보류 안 함)
-    private val COLLISION_HEAD_ON_RATIO    = 0.6   // 실제/예상 접근비 이상 → 정면충돌(Time-Gate 즉시통과)
-    private val COLLISION_SIDE_RATIO       = 0.3   // 실제/예상 접근비 이하 → 측면/나란히(보류 후보)
+    private val COLLISION_HEAD_ON_RATIO: Double get() = DevSettings.collisionHeadOnRatio  // 실제/예상 접근비 이상 → 정면충돌(Time-Gate 즉시통과)
+    private val COLLISION_SIDE_RATIO:    Double get() = DevSettings.collisionSideRatio    // 실제/예상 접근비 이하 → 측면/나란히(보류 후보)
     private val COLLISION_ABS_SAFE_VEL_DBM = 2.0   // 이 이상 빠른 접근이면 측면판정 무시(false negative 방지)
 
     // ── [v1.0.49 A/B 신규 기기 경보 지연 수정] ──────────────────────────────────────
@@ -329,7 +338,7 @@ class BleService : LifecycleService() {
     //    (Median·EMA·칼만·P-EMA)를 삭제하지 않고 보존 — 경고권 진입 '전'에 미리 수렴시켜 신규 기기의
     //    콜드스타트(Median 3프레임 + 칼만 vel 수렴 수초)를 제거한다. 경보 로직은 여전히 스킵(return)
     //    하므로 오경보 없음. 밴드 밖(원거리)은 기존대로 전삭제. 소실 기기 정리는 onDeviceLost 담당.
-    private val FILTER_PRESERVE_BAND_DB = 10
+    private val FILTER_PRESERVE_BAND_DB: Int get() = DevSettings.filterPreserveBandDb  // [판정 파라미터] 기본 10 = 기존값
     // #3 게이트 보류 기기 목록 표시: 워밍업/기하학 보류로 alertState 등록 전인 기기를 '감지됨(SAFE)'
     //    행으로 하단 목록에 노출 — 경보 발령 전 불가시 구간 제거. 오버레이(topPriorityDevice)는
     //    경보 전용 의미를 지키기 위해 제외. TTL(스캐너 타임아웃 정렬) 경과 시 목록에서 자동 제거.
@@ -340,7 +349,7 @@ class BleService : LifecycleService() {
 
     // [v1.0.36] 속도 송신 폴링 — ImuFusion.estimatedSpeedKmh 를 주기적으로 advertiser(Speed 4비트)에 push.
     //   advertiser 내부 2초 throttle·미세변화 무시와 맞물려 실제 재광고는 드물게 일어난다.
-    private val SPEED_PUSH_INTERVAL_MS    = 1500L
+    private val SPEED_PUSH_INTERVAL_MS: Long get() = DevSettings.speedPushIntervalMs  // [판정 파라미터] 기본 1500L = 기존값
     private val speedPushHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private val speedPushRunnable = object : Runnable {
         override fun run() {
@@ -406,6 +415,9 @@ class BleService : LifecycleService() {
         // [v1.0.36] 속도 송신 폴링 시작 — 주기적으로 내 예상속도를 광고 Speed 4비트로 공유.
         speedPushHandler.post(speedPushRunnable)
         DevSettings.registerOnChange(devPrefsListener)   // [v1.0.42 Req5] 설정 라이브 전파 구독
+        // [판정 파라미터] 전단 EMA 알파는 게터가 아닌 인스턴스 필드라 시작 시 1회 명시 주입 필요
+        //   (이후 변경은 devPrefsListener → applyLiveSettings 가 갱신)
+        applyEmaAlphas()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -1667,6 +1679,9 @@ class BleService : LifecycleService() {
     private fun applyLiveSettings(changedKey: String?) {
         val preset = DevSettings.kalmanPreset
         kalmanFilters.values.forEach { it.updatePreset(preset) }
+        // [판정 파라미터] 전단 EMA 알파 라이브 갱신 — emaState(수렴 상태)는 보존한 채 α만 교체.
+        //   다른 판정 파라미터는 'private val 게터'가 매 프레임 DevSettings 를 직접 읽어 별도 처리 불요.
+        applyEmaAlphas()
         // [v1.0.48 #5] 스캔 주기·광고 간격도 라이브 반영 — 죽은 설정이던 scanPeriodMs/advertiseInterval 이
         //   이제 스캔/광고 모드에 매핑되므로(BleScanner/BleAdvertiser) 저장 즉시 라디오에 적용한다.
         //   키 필터링 없이 무조건 호출 — 양쪽 모두 내부에서 '매핑 모드가 실제로 바뀐 경우'에만
@@ -1675,6 +1690,14 @@ class BleService : LifecycleService() {
         bleAdvertiser?.refreshAdvertiseMode()
         Log.d(TAG, "[Req5] 설정 라이브 반영(key=$changedKey): KF프리셋=$preset 위험=${BleConstants.rssiDanger}dBm 경고=${BleConstants.rssiWarning}dBm TimeGate=${DevSettings.timeGateMs}ms 스캔주기=${BleConstants.scanPeriodMs}ms 광고간격=${BleConstants.advertiseInterval}ms")
         sendStatusBroadcast("설정 라이브 반영됨")
+    }
+
+    // [판정 파라미터] 전단 EMA(rssiPreFilter) 비대칭 알파를 DevSettings 값으로 주입.
+    //   후처리 P-EMA(pEmaFilter, 0.4/0.15)는 칼만 P항 평활 전용 설계값이라 고정 유지.
+    private fun applyEmaAlphas() {
+        rssiPreFilter.alphaRise   = DevSettings.emaAlphaRise
+        rssiPreFilter.alphaFall   = DevSettings.emaAlphaFall
+        rssiPreFilter.alphaDBoost = DevSettings.emaAlphaDBoost
     }
 
     private fun sendAlertBroadcast(deviceId: String, level: Int) {

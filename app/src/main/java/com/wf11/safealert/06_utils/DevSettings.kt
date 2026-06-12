@@ -204,6 +204,165 @@ object DevSettings {
         get() = prefs.getBoolean(KEY_WALKER_DETECTS_WALKER, false)
         set(v) = prefs.edit().putBoolean(KEY_WALKER_DETECTS_WALKER, v).apply()
 
+    // ── 판정 파라미터 — BleService 하드코딩 상수의 설정 전환 ─────────────────
+    //   기본값은 모두 '기존 하드코딩값과 동일'(거동 보존). BleService 가 같은 이름의
+    //   private 게터로 매 프레임 라이브로 읽어 앱 재시작 없이 반영한다(timeGateMs 선례).
+    //   소수(Double) 값은 SharedPreferences 제약상 Float 로 저장하고 Double 로 노출.
+    //   resetToDefault()의 prefs.clear() 가 아래 항목도 일괄 기본값 복원한다.
+
+    // [판정 게이트] TTC 선발령 임계(s) — 이 값 이하로 충돌 임박 시 긴급 발령
+    private const val KEY_TTC_THRESHOLD_SEC = "ttc_threshold_sec"
+    const val DEFAULT_TTC_THRESHOLD_SEC = 3.0
+    var ttcThresholdSec: Double
+        get() = prefs.getFloat(KEY_TTC_THRESHOLD_SEC, DEFAULT_TTC_THRESHOLD_SEC.toFloat())
+                    .toDouble().coerceIn(0.5, 10.0)
+        set(v) = prefs.edit().putFloat(KEY_TTC_THRESHOLD_SEC, v.coerceIn(0.5, 10.0).toFloat()).apply()
+
+    // TTC 계산 최소 접근속도(dBm/s) — 이보다 느리면 TTC 산출 안 함
+    private const val KEY_MIN_APPROACH_VEL = "min_approach_vel_dbm"
+    const val DEFAULT_MIN_APPROACH_VEL = 0.5
+    var minApproachVelDbm: Double
+        get() = prefs.getFloat(KEY_MIN_APPROACH_VEL, DEFAULT_MIN_APPROACH_VEL.toFloat())
+                    .toDouble().coerceIn(0.1, 3.0)
+        set(v) = prefs.edit().putFloat(KEY_MIN_APPROACH_VEL, v.coerceIn(0.1, 3.0).toFloat()).apply()
+
+    // Time-Gate '가까워짐' 판정 최소 접근속도(dBm/s)
+    private const val KEY_TIMEGATE_VEL = "timegate_vel_dbm"
+    const val DEFAULT_TIMEGATE_VEL = 0.5
+    var timeGateVelDbm: Double
+        get() = prefs.getFloat(KEY_TIMEGATE_VEL, DEFAULT_TIMEGATE_VEL.toFloat())
+                    .toDouble().coerceIn(0.1, 3.0)
+        set(v) = prefs.edit().putFloat(KEY_TIMEGATE_VEL, v.coerceIn(0.1, 3.0).toFloat()).apply()
+
+    // 코너링 중 Time-Gate 연장 시간(ms) — 급회전 시 전파 출렁임 방어
+    private const val KEY_TIMEGATE_CORNERING_MS = "timegate_cornering_ms"
+    const val DEFAULT_TIMEGATE_CORNERING_MS = 1000L
+    var corneringTimeGateMs: Long
+        get() = prefs.getLong(KEY_TIMEGATE_CORNERING_MS, DEFAULT_TIMEGATE_CORNERING_MS).coerceIn(0L, 5000L)
+        set(v) = prefs.edit().putLong(KEY_TIMEGATE_CORNERING_MS, v.coerceIn(0L, 5000L)).apply()
+
+    // [쿨다운·해제] 경고/위험 재알람 쿨다운(ms)
+    private const val KEY_WARNING_COOLDOWN_MS = "warning_cooldown_ms"
+    const val DEFAULT_WARNING_COOLDOWN_MS = 3000L
+    var warningCooldownMs: Long
+        get() = prefs.getLong(KEY_WARNING_COOLDOWN_MS, DEFAULT_WARNING_COOLDOWN_MS).coerceIn(500L, 10_000L)
+        set(v) = prefs.edit().putLong(KEY_WARNING_COOLDOWN_MS, v.coerceIn(500L, 10_000L)).apply()
+
+    private const val KEY_DANGER_COOLDOWN_MS = "danger_cooldown_ms"
+    const val DEFAULT_DANGER_COOLDOWN_MS = 2000L
+    var dangerCooldownMs: Long
+        get() = prefs.getLong(KEY_DANGER_COOLDOWN_MS, DEFAULT_DANGER_COOLDOWN_MS).coerceIn(500L, 10_000L)
+        set(v) = prefs.edit().putLong(KEY_DANGER_COOLDOWN_MS, v.coerceIn(500L, 10_000L)).apply()
+
+    // 경보 격하 히스테리시스(dB) — 임계 미만 이 폭 안은 현 등급 유지(채터링 방지)
+    private const val KEY_HYSTERESIS_DBM = "hysteresis_dbm"
+    const val DEFAULT_HYSTERESIS_DBM = 5
+    var hysteresisDbm: Int
+        get() = prefs.getInt(KEY_HYSTERESIS_DBM, DEFAULT_HYSTERESIS_DBM).coerceIn(0, 15)
+        set(v) = prefs.edit().putInt(KEY_HYSTERESIS_DBM, v.coerceIn(0, 15)).apply()
+
+    // DEPARTING(이탈) 중 재경보 추가 마진(dB)
+    private const val KEY_DEPARTING_HYSTERESIS_DBM = "departing_hysteresis_dbm"
+    const val DEFAULT_DEPARTING_HYSTERESIS_DBM = 8
+    var departingHysteresisDbm: Int
+        get() = prefs.getInt(KEY_DEPARTING_HYSTERESIS_DBM, DEFAULT_DEPARTING_HYSTERESIS_DBM).coerceIn(0, 20)
+        set(v) = prefs.edit().putInt(KEY_DEPARTING_HYSTERESIS_DBM, v.coerceIn(0, 20)).apply()
+
+    // 페이드아웃: 피크 대비 하락(dB)이 지속(ms)되면 경보 해제
+    private const val KEY_RECEDING_CLEAR_MS = "receding_clear_ms"
+    const val DEFAULT_RECEDING_CLEAR_MS = 2500L
+    var recedingClearMs: Long
+        get() = prefs.getLong(KEY_RECEDING_CLEAR_MS, DEFAULT_RECEDING_CLEAR_MS).coerceIn(500L, 10_000L)
+        set(v) = prefs.edit().putLong(KEY_RECEDING_CLEAR_MS, v.coerceIn(500L, 10_000L)).apply()
+
+    private const val KEY_RECEDING_DBM_DROP = "receding_dbm_drop"
+    const val DEFAULT_RECEDING_DBM_DROP = 5
+    var recedingDbmDrop: Int
+        get() = prefs.getInt(KEY_RECEDING_DBM_DROP, DEFAULT_RECEDING_DBM_DROP).coerceIn(1, 20)
+        set(v) = prefs.edit().putInt(KEY_RECEDING_DBM_DROP, v.coerceIn(1, 20)).apply()
+
+    // [충돌 기하학] 합산속도(km/h) → 예상 접근속도(dBm/s) 환산계수
+    private const val KEY_CLOSING_KMH_TO_DBMS = "closing_kmh_to_dbms"
+    const val DEFAULT_CLOSING_KMH_TO_DBMS = 0.5
+    var closingKmhToDbms: Double
+        get() = prefs.getFloat(KEY_CLOSING_KMH_TO_DBMS, DEFAULT_CLOSING_KMH_TO_DBMS.toFloat())
+                    .toDouble().coerceIn(0.1, 2.0)
+        set(v) = prefs.edit().putFloat(KEY_CLOSING_KMH_TO_DBMS, v.coerceIn(0.1, 2.0).toFloat()).apply()
+
+    // 실제/예상 접근비 — 이상이면 정면충돌(Time-Gate 즉시통과)
+    private const val KEY_COLLISION_HEAD_ON_RATIO = "collision_head_on_ratio"
+    const val DEFAULT_COLLISION_HEAD_ON_RATIO = 0.6
+    var collisionHeadOnRatio: Double
+        get() = prefs.getFloat(KEY_COLLISION_HEAD_ON_RATIO, DEFAULT_COLLISION_HEAD_ON_RATIO.toFloat())
+                    .toDouble().coerceIn(0.1, 1.0)
+        set(v) = prefs.edit().putFloat(KEY_COLLISION_HEAD_ON_RATIO, v.coerceIn(0.1, 1.0).toFloat()).apply()
+
+    // 실제/예상 접근비 — 이하면 측면/나란히(보류 후보)
+    private const val KEY_COLLISION_SIDE_RATIO = "collision_side_ratio"
+    const val DEFAULT_COLLISION_SIDE_RATIO = 0.3
+    var collisionSideRatio: Double
+        get() = prefs.getFloat(KEY_COLLISION_SIDE_RATIO, DEFAULT_COLLISION_SIDE_RATIO.toFloat())
+                    .toDouble().coerceIn(0.0, 0.9)
+        set(v) = prefs.edit().putFloat(KEY_COLLISION_SIDE_RATIO, v.coerceIn(0.0, 0.9).toFloat()).apply()
+
+    // [전처리 필터] 전단 EMA 비대칭 알파(상승/하강/D-Boost) — RssiPreFilter 전단 인스턴스 전용
+    private const val KEY_EMA_ALPHA_RISE = "ema_alpha_rise"
+    const val DEFAULT_EMA_ALPHA_RISE = 0.3
+    var emaAlphaRise: Double
+        get() = prefs.getFloat(KEY_EMA_ALPHA_RISE, DEFAULT_EMA_ALPHA_RISE.toFloat())
+                    .toDouble().coerceIn(0.05, 1.0)
+        set(v) = prefs.edit().putFloat(KEY_EMA_ALPHA_RISE, v.coerceIn(0.05, 1.0).toFloat()).apply()
+
+    private const val KEY_EMA_ALPHA_FALL = "ema_alpha_fall"
+    const val DEFAULT_EMA_ALPHA_FALL = 0.05
+    var emaAlphaFall: Double
+        get() = prefs.getFloat(KEY_EMA_ALPHA_FALL, DEFAULT_EMA_ALPHA_FALL.toFloat())
+                    .toDouble().coerceIn(0.01, 1.0)
+        set(v) = prefs.edit().putFloat(KEY_EMA_ALPHA_FALL, v.coerceIn(0.01, 1.0).toFloat()).apply()
+
+    private const val KEY_EMA_ALPHA_DBOOST = "ema_alpha_dboost"
+    const val DEFAULT_EMA_ALPHA_DBOOST = 0.4
+    var emaAlphaDBoost: Double
+        get() = prefs.getFloat(KEY_EMA_ALPHA_DBOOST, DEFAULT_EMA_ALPHA_DBOOST.toFloat())
+                    .toDouble().coerceIn(0.05, 1.0)
+        set(v) = prefs.edit().putFloat(KEY_EMA_ALPHA_DBOOST, v.coerceIn(0.05, 1.0).toFloat()).apply()
+
+    // 경고권 밖 필터 보존 밴드(dB) — rssiWarning 미달이라도 이 폭 안이면 필터 상태 보존
+    private const val KEY_FILTER_PRESERVE_BAND_DB = "filter_preserve_band_db"
+    const val DEFAULT_FILTER_PRESERVE_BAND_DB = 10
+    var filterPreserveBandDb: Int
+        get() = prefs.getInt(KEY_FILTER_PRESERVE_BAND_DB, DEFAULT_FILTER_PRESERVE_BAND_DB).coerceIn(0, 30)
+        set(v) = prefs.edit().putInt(KEY_FILTER_PRESERVE_BAND_DB, v.coerceIn(0, 30)).apply()
+
+    // [전력·통신] 광고 웨이크 RSSI(dBm) — 하나라도 이 값 이상이면 즉시 웨이크
+    //   (슬립 경계 SLEEP_RSSI_DBM 은 실코드 미사용 — 웨이크 임계 단일 판정이라 함께 노출 안 함)
+    private const val KEY_WAKE_RSSI_DBM = "wake_rssi_dbm"
+    const val DEFAULT_WAKE_RSSI_DBM = -89
+    var wakeRssiDbm: Int
+        get() = prefs.getInt(KEY_WAKE_RSSI_DBM, DEFAULT_WAKE_RSSI_DBM).coerceIn(-100, -60)
+        set(v) = prefs.edit().putInt(KEY_WAKE_RSSI_DBM, v.coerceIn(-100, -60)).apply()
+
+    // 신호 부재 간주 시간(ms) — 이보다 오래된 RSSI 표본은 '신호 없음'
+    private const val KEY_SIGNAL_STALE_MS = "signal_stale_ms"
+    const val DEFAULT_SIGNAL_STALE_MS = 6000L
+    var signalStaleMs: Long
+        get() = prefs.getLong(KEY_SIGNAL_STALE_MS, DEFAULT_SIGNAL_STALE_MS).coerceIn(2000L, 30_000L)
+        set(v) = prefs.edit().putLong(KEY_SIGNAL_STALE_MS, v.coerceIn(2000L, 30_000L)).apply()
+
+    // Firebase 경보 저장 스로틀(ms) — 같은 기기 재업로드 최소 간격
+    private const val KEY_FIREBASE_THROTTLE_MS = "firebase_throttle_ms"
+    const val DEFAULT_FIREBASE_THROTTLE_MS = 60_000L
+    var firebaseThrottleMs: Long
+        get() = prefs.getLong(KEY_FIREBASE_THROTTLE_MS, DEFAULT_FIREBASE_THROTTLE_MS).coerceIn(5000L, 600_000L)
+        set(v) = prefs.edit().putLong(KEY_FIREBASE_THROTTLE_MS, v.coerceIn(5000L, 600_000L)).apply()
+
+    // 속도 송신 폴링 주기(ms) — ImuFusion 속도를 advertiser 에 push 하는 간격
+    private const val KEY_SPEED_PUSH_INTERVAL_MS = "speed_push_interval_ms"
+    const val DEFAULT_SPEED_PUSH_INTERVAL_MS = 1500L
+    var speedPushIntervalMs: Long
+        get() = prefs.getLong(KEY_SPEED_PUSH_INTERVAL_MS, DEFAULT_SPEED_PUSH_INTERVAL_MS).coerceIn(500L, 10_000L)
+        set(v) = prefs.edit().putLong(KEY_SPEED_PUSH_INTERVAL_MS, v.coerceIn(500L, 10_000L)).apply()
+
     fun toDebugString(): String =
         "rssiWarning=$rssiWarning | rssiDanger=$rssiDanger | scanPeriod=${scanPeriodMs}ms | " +
         "advertise=${advertiseInterval}ms | vib=$vibrationEnabled | sound=$soundEnabled | " +

@@ -229,6 +229,235 @@
             </LinearLayout>
         </androidx.cardview.widget.CardView>
 
+        <!-- 판정 파라미터 (고급) — BleService 핵심 상수의 라이브 조절. 기본값 = 기존 하드코딩값 -->
+        <TextView android:text="판정 파라미터 (고급)" android:textStyle="bold" android:textSize="16sp"
+            android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="16dp"/>
+        <androidx.cardview.widget.CardView
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginTop="8dp">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="vertical" android:padding="16dp">
+
+                <TextView android:text="경보 판정·필터의 핵심 수치. 기본값은 현장 검증값이며 저장 즉시 서비스에 반영됩니다. '기본값으로 초기화'로 전체 복원."
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:textSize="11sp" android:textColor="#9CA3AF"/>
+
+                <TextView android:text="경보 판정" android:textStyle="bold"
+                    android:textSize="13sp" android:textColor="#374151"
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"/>
+
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="6dp">
+                    <TextView android:text="TTC 선발령 임계 (초)" android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
+                    <EditText android:id="@+id/et_ttc_threshold" android:layout_width="96dp" android:layout_height="wrap_content"
+                        android:inputType="number|numberDecimal" android:gravity="end" android:textSize="13sp"/>
+                </LinearLayout>
+
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="6dp">
+                    <TextView android:text="TTC 최소 접근속도 (dBm/s)" android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
+                    <EditText android:id="@+id/et_min_approach_vel" android:layout_width="96dp" android:layout_height="wrap_content"
+                        android:inputType="number|numberDecimal" android:gravity="end" android:textSize="13sp"/>
+                </LinearLayout>
+
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="6dp">
+                    <TextView android:text="Time-Gate 평상 (ms)" android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
+                    <EditText android:id="@+id/et_timegate_ms" android:layout_width="96dp" android:layout_height="wrap_content"
+                        android:inputType="number" android:gravity="end" android:textSize="13sp"/>
+                </LinearLayout>
+
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="6dp">
+                    <TextView android:text="Time-Gate 코너링 (ms)" android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
+                    <EditText android:id="@+id/et_timegate_cornering" android:layout_width="96dp" android:layout_height="wrap_content"
+                        android:inputType="number" android:gravity="end" android:textSize="13sp"/>
+                </LinearLayout>
+
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="6dp">
+                    <TextView android:text="Time-Gate 접근 판정속도 (dBm/s)" android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
+                    <EditText android:id="@+id/et_timegate_vel" android:layout_width="96dp" android:layout_height="wrap_content"
+                        android:inputType="number|numberDecimal" android:gravity="end" android:textSize="13sp"/>
+                </LinearLayout>
+
+                <View android:layout_width="match_parent" android:layout_height="1dp"
+                    android:background="#F3F4F6" android:layout_marginTop="12dp"/>
+
+                <TextView android:text="쿨다운·해제" android:textStyle="bold"
+                    android:textSize="13sp" android:textColor="#374151"
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"/>
+
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="6dp">
+                    <TextView android:text="경고 재알람 쿨다운 (ms)" android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
+                    <EditText android:id="@+id/et_warning_cooldown" android:layout_width="96dp" android:layout_height="wrap_content"
+                        android:inputType="number" android:gravity="end" android:textSize="13sp"/>
+                </LinearLayout>
+
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="6dp">
+                    <TextView android:text="위험 재알람 쿨다운 (ms)" android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
+                    <EditText android:id="@+id/et_danger_cooldown" android:layout_width="96dp" android:layout_height="wrap_content"
+                        android:inputType="number" android:gravity="end" android:textSize="13sp"/>
+                </LinearLayout>
+
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="6dp">
+                    <TextView android:text="격하 히스테리시스 (dB)" android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
+                    <EditText android:id="@+id/et_hysteresis" android:layout_width="96dp" android:layout_height="wrap_content"
+                        android:inputType="number" android:gravity="end" android:textSize="13sp"/>
+                </LinearLayout>
+
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="6dp">
+                    <TextView android:text="이탈 중 재경보 마진 (dB)" android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
+                    <EditText android:id="@+id/et_departing_hysteresis" android:layout_width="96dp" android:layout_height="wrap_content"
+                        android:inputType="number" android:gravity="end" android:textSize="13sp"/>
+                </LinearLayout>
+
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="6dp">
+                    <TextView android:text="페이드아웃 지속시간 (ms)" android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
+                    <EditText android:id="@+id/et_receding_clear_ms" android:layout_width="96dp" android:layout_height="wrap_content"
+                        android:inputType="number" android:gravity="end" android:textSize="13sp"/>
+                </LinearLayout>
+
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="6dp">
+                    <TextView android:text="페이드아웃 하락폭 (dB)" android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
+                    <EditText android:id="@+id/et_receding_drop" android:layout_width="96dp" android:layout_height="wrap_content"
+                        android:inputType="number" android:gravity="end" android:textSize="13sp"/>
+                </LinearLayout>
+
+                <View android:layout_width="match_parent" android:layout_height="1dp"
+                    android:background="#F3F4F6" android:layout_marginTop="12dp"/>
+
+                <TextView android:text="충돌 기하학" android:textStyle="bold"
+                    android:textSize="13sp" android:textColor="#374151"
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"/>
+
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="6dp">
+                    <TextView android:text="속도 환산계수 (km/h → dBm/s)" android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
+                    <EditText android:id="@+id/et_closing_factor" android:layout_width="96dp" android:layout_height="wrap_content"
+                        android:inputType="number|numberDecimal" android:gravity="end" android:textSize="13sp"/>
+                </LinearLayout>
+
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="6dp">
+                    <TextView android:text="정면충돌 접근비 (이상)" android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
+                    <EditText android:id="@+id/et_headon_ratio" android:layout_width="96dp" android:layout_height="wrap_content"
+                        android:inputType="number|numberDecimal" android:gravity="end" android:textSize="13sp"/>
+                </LinearLayout>
+
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="6dp">
+                    <TextView android:text="측면 접근비 (이하)" android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
+                    <EditText android:id="@+id/et_side_ratio" android:layout_width="96dp" android:layout_height="wrap_content"
+                        android:inputType="number|numberDecimal" android:gravity="end" android:textSize="13sp"/>
+                </LinearLayout>
+
+                <View android:layout_width="match_parent" android:layout_height="1dp"
+                    android:background="#F3F4F6" android:layout_marginTop="12dp"/>
+
+                <TextView android:text="전처리 필터 (EMA)" android:textStyle="bold"
+                    android:textSize="13sp" android:textColor="#374151"
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"/>
+
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="6dp">
+                    <TextView android:text="상승 알파 (접근 추종)" android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
+                    <EditText android:id="@+id/et_ema_rise" android:layout_width="96dp" android:layout_height="wrap_content"
+                        android:inputType="number|numberDecimal" android:gravity="end" android:textSize="13sp"/>
+                </LinearLayout>
+
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="6dp">
+                    <TextView android:text="하강 알파 (난수 무시)" android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
+                    <EditText android:id="@+id/et_ema_fall" android:layout_width="96dp" android:layout_height="wrap_content"
+                        android:inputType="number|numberDecimal" android:gravity="end" android:textSize="13sp"/>
+                </LinearLayout>
+
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="6dp">
+                    <TextView android:text="D-Boost 알파 (돌진 개방)" android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
+                    <EditText android:id="@+id/et_ema_dboost" android:layout_width="96dp" android:layout_height="wrap_content"
+                        android:inputType="number|numberDecimal" android:gravity="end" android:textSize="13sp"/>
+                </LinearLayout>
+
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="6dp">
+                    <TextView android:text="필터 보존 밴드 (dB)" android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
+                    <EditText android:id="@+id/et_preserve_band" android:layout_width="96dp" android:layout_height="wrap_content"
+                        android:inputType="number" android:gravity="end" android:textSize="13sp"/>
+                </LinearLayout>
+
+                <View android:layout_width="match_parent" android:layout_height="1dp"
+                    android:background="#F3F4F6" android:layout_marginTop="12dp"/>
+
+                <TextView android:text="전력·통신" android:textStyle="bold"
+                    android:textSize="13sp" android:textColor="#374151"
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"/>
+
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="6dp">
+                    <TextView android:text="광고 웨이크 RSSI (dBm)" android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
+                    <EditText android:id="@+id/et_wake_rssi" android:layout_width="96dp" android:layout_height="wrap_content"
+                        android:inputType="number|numberSigned" android:gravity="end" android:textSize="13sp"/>
+                </LinearLayout>
+
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="6dp">
+                    <TextView android:text="신호 부재 간주 (ms)" android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
+                    <EditText android:id="@+id/et_stale_ms" android:layout_width="96dp" android:layout_height="wrap_content"
+                        android:inputType="number" android:gravity="end" android:textSize="13sp"/>
+                </LinearLayout>
+
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="6dp">
+                    <TextView android:text="Firebase 저장 스로틀 (ms)" android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
+                    <EditText android:id="@+id/et_fb_throttle" android:layout_width="96dp" android:layout_height="wrap_content"
+                        android:inputType="number" android:gravity="end" android:textSize="13sp"/>
+                </LinearLayout>
+
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="6dp">
+                    <TextView android:text="속도 송신 주기 (ms)" android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
+                    <EditText android:id="@+id/et_speed_push" android:layout_width="96dp" android:layout_height="wrap_content"
+                        android:inputType="number" android:gravity="end" android:textSize="13sp"/>
+                </LinearLayout>
+
+            </LinearLayout>
+        </androidx.cardview.widget.CardView>
+
         <!-- BLE 비콘 관리 -->
         <TextView android:text="BLE 비콘 (앱 없는 사용자 지원)" android:textStyle="bold" android:textSize="16sp"
             android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="16dp"/>

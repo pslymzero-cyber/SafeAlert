@@ -33,9 +33,10 @@ import kotlin.math.roundToInt
  *     칼만이 이미 속도(D)를 반영하므로 P-EMA 단계의 D-Boost 는 비활성화한다(거리 P항 전용 평활).
  */
 class RssiPreFilter(
-    private val alphaRise:     Double  = ALPHA_RISE,
-    private val alphaFall:     Double  = ALPHA_FALL,
-    private val alphaDBoost:   Double  = ALPHA_DBOOST,
+    // 알파 3종은 var — 개발자 설정(DevSettings)에서 라이브 조절 가능(emaState 보존한 채 즉시 반영)
+    var alphaRise:     Double  = ALPHA_RISE,
+    var alphaFall:     Double  = ALPHA_FALL,
+    var alphaDBoost:   Double  = ALPHA_DBOOST,
     private val dBoostEnabled: Boolean = true,
 ) {
 
