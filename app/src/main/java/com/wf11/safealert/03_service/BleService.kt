@@ -657,6 +657,32 @@ class BleService : LifecycleService() {
         }
     }
 
+    /**
+     * v1.1.10 디코드된 16진수(역할·상태)로 경보 임계 위험 오프셋(dB)을 산출한다.
+     *   반환값(+) 만큼 경고·위험 임계를 '먼 거리'로 당겨 조기 경보한다(fail-safe 방향).
+     *   · Phase1(역할): 내가 보행자 ↔ 상대가 중장비(지게차/EPJ), 또는 그 반대면 walkerVsEquipBiasDb 가산(상호 보호).
+     *   · Phase2(상태): 상대가 전진(FORWARD)하며 접근(kfVel≥Time-Gate 임계) 중이면 forwardApproachBiasDb 추가 가산.
+     *   토글(categoryBiasEnabled/stateModulationEnabled)이 꺼져 있거나 해당 쌍·상태가 아니면 0(기존 거동).
+     */
+    private fun computePayloadRiskOffset(rCategory: Int, rState: Int, kfVel: Double): Int {
+        var offset = 0
+        if (DevSettings.categoryBiasEnabled) {
+            val iAmWalker = myCategory == BleConstants.CAT_WALKER
+            val iAmEquip  = myCategory == BleConstants.CAT_FORKLIFT || myCategory == BleConstants.CAT_EPJ
+            val rIsWalker = rCategory == BleConstants.CAT_WALKER
+            val rIsEquip  = rCategory == BleConstants.CAT_FORKLIFT || rCategory == BleConstants.CAT_EPJ
+            if ((iAmWalker && rIsEquip) || (iAmEquip && rIsWalker)) {
+                offset += DevSettings.walkerVsEquipBiasDb
+            }
+        }
+        if (DevSettings.stateModulationEnabled &&
+            rState == BleConstants.PSTATE_FORWARD &&
+            kfVel >= APPROACH_TIMEGATE_VEL_DBM) {
+            offset += DevSettings.forwardApproachBiasDb
+        }
+        return offset
+    }
+
     private val wasStationaryMap  = mutableMapOf<String, Boolean>()
 
     /**
@@ -860,6 +886,20 @@ class BleService : LifecycleService() {
         deviceRssiMap[deviceId] = kalmanRssi
         if (!alertState.containsKey(deviceId)) pendingDisplayMap[deviceId] = now
 
+        // ── [v1.1.10] 16진수(역할·상태) 적극 활용 — 페이로드 기반 경보 임계 비대칭 시프트 ──────────
+        //   디코드된 CAT(역할)·STATE(상태)로 위험 오프셋을 산출해 모든 임계 게이트(하드게이트·특수·
+        //   TTC·calcLevel·SAFE강제)에 effWarning/effDanger 로 '일관' 적용한다. 한 곳만 시프트하면
+        //   게이트끼리 충돌(조기경보하려 해도 하드게이트가 차단)하므로 단일 effective 임계로 통일한다.
+        //   payloadOffset>0 = 더 약한 신호(먼 거리)에서 경보(fail-safe). 0 이면 기존 거동과 완전 동일.
+        val payloadOffset = computePayloadRiskOffset(rCategory, rState, kfVel)
+        val effWarning = BleConstants.rssiWarning - payloadOffset
+        val effDanger  = BleConstants.rssiDanger  - payloadOffset
+        // [Phase2] IDLE-IDLE 가청 억제 — 내 IMU 정지 + 상대 IDLE 송신(둘 다 정지=충돌동역학 없음)이면
+        //   아래 정규 WARNING 가청경보를 억제(표시·목록·위젯은 유지). DANGER 는 억제 대상이 아니며,
+        //   둘 중 하나라도 움직이면(rState≠IDLE 또는 IMU 이동) 다음 프레임 즉시 해제된다.
+        val idleIdleQuiet = DevSettings.idleIdleSuppressEnabled &&
+            ImuFusion.isStationary && rState == BleConstants.PSTATE_IDLE
+
         // ── [v1.0.30 → v1.0.31 raw 이중가드] 최상단 하드 게이트 (절대 거리 선차단 · 음수 부호 주의) ─────
         // RSSI는 음수다. '칼만 정제값(kalmanRssi)'과 'raw 1초평균(avg1sec)' 중 더 먼(더 음수) 쪽을
         // 기준(gateRssi)으로 잡아, 둘 중 하나라도 경고 임계(rssiWarning, 예 -65)보다 멀면 차단한다.
@@ -884,12 +924,12 @@ class BleService : LifecycleService() {
         //   단발 dip 1개는 무시하되, 거짓근접에는 여전히 2개 경로 합의를 요구한다(avg1sec raw 교차검증은
         //   투표자로 보존 = MASTER 불변식 유지). (오름차순 정렬 후 가운데 1개)
         val gateRssi = listOf(kalmanRssi, avg1sec, medianValue).sorted()[1]
-        if (gateRssi < BleConstants.rssiWarning && !alertState.containsKey(deviceId)) {
+        if (gateRssi < effWarning && !alertState.containsKey(deviceId)) {   // [v1.1.10] effWarning(페이로드 시프트)로 일관
             // [v1.0.49 #2] 필터 보존 밴드 — 경고 임계 바로 아래(밴드 내) 기기는 필터 상태를 지우지 않고
             //   경보 로직만 스킵한다. 위에서 Median·EMA·칼만·P-EMA·1초버퍼가 이미 이번 프레임 값으로
             //   갱신됐으므로 밴드 체류 중 자동 워밍업 → 경고권 진입 프레임부터 웜 상태로 즉시 판정 가능.
             //   (구버전: 매 프레임 전삭제 → 진입 시 콜드스타트로 경보 수초 지연 — A/B 교차 직전 표시의 주원인)
-            if (gateRssi >= BleConstants.rssiWarning - FILTER_PRESERVE_BAND_DB) return
+            if (gateRssi >= effWarning - FILTER_PRESERVE_BAND_DB) return
             // [v1.1.9 R1/R3] 표시-경보 분리 — 경보권 밖(밴드 밖) 이라도 deviceRssiMap(목록 정렬)·deviceStateMap
             //   (이동/정지 라벨)·pendingDisplayMap(표시 멤버십) 은 보존해 목록엔 계속 SAFE 행으로 노출한다.
             //   여기서는 '경보 추적' 상태(suddenLabel·필터·칼만 등)만 정리한다. (진짜 소실은 onDeviceLost 가 전삭제)
@@ -925,8 +965,8 @@ class BleService : LifecycleService() {
         // 표시문자열을 makeStateLabel(후진·하역 경보 문구)로 덮어써 오버레이·목록에 출력.
         if ((rState == BleConstants.PSTATE_REVERSE || rState == BleConstants.PSTATE_LOADING)
             && !warmingUp                                   // [v1.0.45] 콜드스타트 임펄스 발령 보류
-            && pEma    >= BleConstants.rssiDanger           // [v1.0.45] 거리판정: 후처리 P-EMA(거리 P항)
-            && avg1sec >= BleConstants.rssiDanger) {
+            && pEma    >= effDanger                          // [v1.0.45/v1.1.10] 거리판정: P-EMA, effDanger(페이로드 시프트)
+            && avg1sec >= effDanger) {
             deviceRssiMap[deviceId]  = kalmanRssi
             suddenLabelMap[deviceId] = makeStateLabel(extractDisplayName(deviceId), rCategory, rState)
             alertState[deviceId]     = Pair(BleConstants.LEVEL_DANGER, now)
@@ -982,9 +1022,9 @@ class BleService : LifecycleService() {
         //   유지를 위해 Time-Gate/TTC 에 kfVel 직결로 별도 우회(여기서 평활하지 않음).
         avgRssi = pEma
         val beaconOffset = runCatching { BeaconRegistry.getRssiOffsetForFullId(deviceId) }.getOrDefault(0)
-        val rawLevel = calcLevelWithHysteresis(deviceId, pEma, beaconOffset)
+        val rawLevel = calcLevelWithHysteresis(deviceId, pEma, beaconOffset + payloadOffset)   // [v1.1.10] 페이로드 오프셋 합산
         distanceLevel = rawLevel   // [v1.1.6 R4-SIL-1] 이탈히스테리시스·격하 이전 거리 권위값 보존(이탈 가드용)
-        val afterHysteresis = applyDepartingHysteresis(deviceId, rawLevel, pEma, beaconOffset, now)
+        val afterHysteresis = applyDepartingHysteresis(deviceId, rawLevel, pEma, beaconOffset + payloadOffset, now)
         // ── 정지 격하 방어 ([v1.0.47 #2] 보행자+활동 장비 접근은 예외 — 위 demoteWhileStationary) ──
         stableLevel = if (demoteWhileStationary && afterHysteresis >= BleConstants.LEVEL_DANGER)
             BleConstants.LEVEL_WARNING else afterHysteresis
@@ -997,7 +1037,7 @@ class BleService : LifecycleService() {
         // (avg1sec) 중 하나라도 경고 임계(rssiWarning)보다 멀면 stableLevel을 SAFE로 강제 → 아래
         // 이탈 페이드아웃/SAFE 처리로 흘려보낸다. 접근 속도·TTC로는 절대 격상 불가.
         //   ★ [v1.1.8] avgRssi(=pEma)는 후처리 평활 지연으로 raw가 멀어도 임계 위로 떠 있을 수 있어 raw(avg1sec)를 함께 본다.
-        if (avgRssi < BleConstants.rssiWarning || avg1sec < BleConstants.rssiWarning) {
+        if (avgRssi < effWarning || avg1sec < effWarning) {   // [v1.1.10] effWarning(페이로드 시프트)로 일관
             stableLevel = BleConstants.LEVEL_SAFE
         }
 
@@ -1184,8 +1224,8 @@ class BleService : LifecycleService() {
         if (!warmingUp                                      // [v1.0.45] 콜드스타트 임펄스 선발령 보류
             && stableLevel == BleConstants.LEVEL_WARNING
             && newState == TrackingState.APPROACHING
-            && avg1sec >= BleConstants.rssiWarning
-            && (recentPeakRssi(deviceId, 500L) ?: avg1sec) >= BleConstants.rssiDanger) {
+            && avg1sec >= effWarning                                            // [v1.1.10] 페이로드 시프트
+            && (recentPeakRssi(deviceId, 500L) ?: avg1sec) >= effDanger) {       // [v1.1.10] 페이로드 시프트
             val ttc = estimateTTC(kfRssi, kfVel)
             if (ttc != null && ttc <= TTC_THRESHOLD_SEC) {
                 alertState[deviceId] = Pair(BleConstants.LEVEL_DANGER, now)  // ★ 먼저 업데이트 → 목록에 DANGER 반영
@@ -1344,9 +1384,13 @@ class BleService : LifecycleService() {
                 Log.w(TAG, "위험 발생: $deviceId ($name) avgRssi=$avgRssi state=$newState vel=%.2fdBm/s".format(kfVel))
             }
             BleConstants.LEVEL_WARNING -> {
-                if (DevSettings.vibrationEnabled)   // [v1.0.46 #7] 포그라운드(화면 켜짐)에서도 진동
+                // [v1.1.10 Phase2] IDLE-IDLE 가청 억제 — 내 IMU 정지 + 상대 IDLE 송신(둘 다 정지)이면
+                //   가청(진동·소리)만 억제하고 표시·오버레이·목록·위젯은 그대로 유지한다. DANGER 는
+                //   여기로 오지 않는다(정지 시 demoteWhileStationary 가 DANGER→WARNING 격하 → 항상 WARNING).
+                //   둘 중 하나라도 움직이면 다음 프레임 idleIdleQuiet=false 로 즉시 가청 복원. 기본 OFF(옵트인).
+                if (DevSettings.vibrationEnabled && !idleIdleQuiet)   // [v1.0.46 #7] 포그라운드(화면 켜짐)에서도 진동
                     VibrationHelper.vibrateWarning(this)
-                if (DevSettings.soundEnabled)
+                if (DevSettings.soundEnabled && !idleIdleQuiet)
                     AlertSoundPlayer.playWarning(this)
                 // [v1.0.30 Req3] Firebase 경보 저장 쓰로틀 — 같은 기기 1분 1회로 제한(모바일데이터 방어)
                 if (DevSettings.autoSaveAlerts) {
@@ -1620,8 +1664,16 @@ class BleService : LifecycleService() {
     private fun makeApproachLabel(deviceId: String): String {
         val name = extractDisplayName(deviceId)
         val moving = (deviceStateMap[deviceId] ?: BleConstants.PSTATE_IDLE) != BleConstants.PSTATE_IDLE
-        val base = if (moving) "${name}이(가) 이동 중입니다."
-                   else        "${name}이(가) 주변에 있습니다."
+        // [v1.1.10] 디코드된 16진수(역할·회전 비트)를 사람이 읽는 표시로 노출 — 수신측 팝업/오버레이/목록에서
+        //   송신자의 역할(지게차/EPJ/보행자)·회전방향을 본다. 역할 접두는 페이로드 캐시가 있을 때만(비콘 폴백 X).
+        val rolePrefix = deviceCategoryMap[deviceId]?.let { "[${categoryRoleName(it)}] " } ?: ""
+        val turnWord = if (moving) when (deviceTurnMap[deviceId] ?: BleConstants.TURN_STRAIGHT) {
+            BleConstants.TURN_LEFT  -> "좌회전하며 "
+            BleConstants.TURN_RIGHT -> "우회전하며 "
+            else -> ""
+        } else ""
+        val base = if (moving) "${rolePrefix}${name}이(가) ${turnWord}이동 중입니다."
+                   else        "${rolePrefix}${name}이(가) 주변에 있습니다."
         // [v1.1.7 #2] 후진(전진) 대비 latch 가 살아있으면 안내문을 선두에 덧붙인다(RSSI 추세 반전 감지).
         //   [v1.1.9 R6] 이중 방어 — latch 가 살아있어도 상대가 현재 정지(IDLE = !moving) 를 송신 중이면
         //   prefix 를 억제한다. latch 유지(기본 4s) 도중 상대가 정지로 전환되면 페이로드 상태를 우선한다.

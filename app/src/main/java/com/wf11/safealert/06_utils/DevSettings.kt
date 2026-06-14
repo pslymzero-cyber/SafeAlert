@@ -377,6 +377,44 @@ object DevSettings {
         get() = prefs.getLong(KEY_REVERSE_PREP_HOLD_MS, DEFAULT_REVERSE_PREP_HOLD_MS).coerceIn(1000L, 10_000L)
         set(v) = prefs.edit().putLong(KEY_REVERSE_PREP_HOLD_MS, v.coerceIn(1000L, 10_000L)).apply()
 
+    // ===== [v1.1.10] 16진수(역할·상태) 적극 활용 — 페이로드 기반 경보 임계 비대칭 =====
+    //   디코드된 CAT(역할)·STATE(상태) 비트로 경보 임계를 역할쌍·상태에 따라 비대칭 시프트한다.
+    //   양(+) 오프셋 = 더 약한 신호(먼 거리)에서 조기 경보(fail-safe 방향). BleService 가 매 프레임
+    //   같은 이름의 게터로 라이브로 읽어 앱 재시작 없이 반영(timeGateMs·reversePrep 선례).
+
+    // [Phase1] 역할 비대칭 on/off — 보행자 ↔ 중장비(지게차/EPJ) 쌍은 더 일찍 경보(상호 보호)
+    private const val KEY_CATEGORY_BIAS_ENABLED = "category_bias_enabled"
+    var categoryBiasEnabled: Boolean
+        get() = prefs.getBoolean(KEY_CATEGORY_BIAS_ENABLED, true)
+        set(v) = prefs.edit().putBoolean(KEY_CATEGORY_BIAS_ENABLED, v).apply()
+
+    // [Phase1] 보행자↔중장비 조기경보 오프셋(dB) — 경고·위험 임계를 이만큼 먼 거리로 당김. 0=비활성과 동일
+    private const val KEY_WALKER_VS_EQUIP_BIAS_DB = "walker_vs_equip_bias_db"
+    const val DEFAULT_WALKER_VS_EQUIP_BIAS_DB = 6
+    var walkerVsEquipBiasDb: Int
+        get() = prefs.getInt(KEY_WALKER_VS_EQUIP_BIAS_DB, DEFAULT_WALKER_VS_EQUIP_BIAS_DB).coerceIn(0, 15)
+        set(v) = prefs.edit().putInt(KEY_WALKER_VS_EQUIP_BIAS_DB, v.coerceIn(0, 15)).apply()
+
+    // [Phase2] 상태 기반 가감 on/off — 상대 FORWARD(전진) 접근 시 추가 조기경보, IDLE-IDLE 가청 억제
+    private const val KEY_STATE_MODULATION_ENABLED = "state_modulation_enabled"
+    var stateModulationEnabled: Boolean
+        get() = prefs.getBoolean(KEY_STATE_MODULATION_ENABLED, true)
+        set(v) = prefs.edit().putBoolean(KEY_STATE_MODULATION_ENABLED, v).apply()
+
+    // [Phase2] 상대 전진(FORWARD)+접근 시 추가 조기경보 오프셋(dB). categoryBias 와 합산. 0=비활성과 동일
+    private const val KEY_FORWARD_APPROACH_BIAS_DB = "forward_approach_bias_db"
+    const val DEFAULT_FORWARD_APPROACH_BIAS_DB = 3
+    var forwardApproachBiasDb: Int
+        get() = prefs.getInt(KEY_FORWARD_APPROACH_BIAS_DB, DEFAULT_FORWARD_APPROACH_BIAS_DB).coerceIn(0, 12)
+        set(v) = prefs.edit().putInt(KEY_FORWARD_APPROACH_BIAS_DB, v.coerceIn(0, 12)).apply()
+
+    // [Phase2] IDLE-IDLE 가청 억제 — 내 IMU 정지 + 상대 IDLE 송신이면 WARNING 가청경보를 억제(표시만).
+    //   안전상 기본 OFF(옵트인). 켜도 DANGER 는 절대 억제하지 않고, 둘 중 하나라도 움직이면 즉시 해제.
+    private const val KEY_IDLE_IDLE_SUPPRESS_ENABLED = "idle_idle_suppress_enabled"
+    var idleIdleSuppressEnabled: Boolean
+        get() = prefs.getBoolean(KEY_IDLE_IDLE_SUPPRESS_ENABLED, false)
+        set(v) = prefs.edit().putBoolean(KEY_IDLE_IDLE_SUPPRESS_ENABLED, v).apply()
+
     fun toDebugString(): String =
         "rssiWarning=$rssiWarning | rssiDanger=$rssiDanger | scanPeriod=${scanPeriodMs}ms | " +
         "advertise=${advertiseInterval}ms | vib=$vibrationEnabled | sound=$soundEnabled | " +
