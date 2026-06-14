@@ -113,12 +113,13 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
                 //   미지원(비콘/구버전): 바이트 부재 → 0x00(정지)·직진(TURN_STRAIGHT).
                 val svcData       = record.getServiceData(SERVICE_DATA_UUID)
                 val payloadByte   = svcData?.getOrNull(0)?.toInt()?.and(0xFF)
+                val payloadPresent = payloadByte != null   // [v1.1.11 C2] 실제 1바이트 자기-신고 수신 여부(비콘/구버전=false)
                 val remoteState   = payloadByte ?: BleConstants.MOTION_STATE_STATIONARY
                 val remoteTurn    = if (payloadByte != null) BleConstants.decodeTurn(payloadByte) else BleConstants.TURN_STRAIGHT
 
                 BleService.safeAlertFound++
                 detectedDevices[fullId] = System.currentTimeMillis()
-                scanCallback?.onDeviceDetected(fullId, rssi, alertLevel, remoteState, remoteTurn)
+                scanCallback?.onDeviceDetected(fullId, rssi, alertLevel, remoteState, remoteTurn, payloadPresent)
 
                 // UWB 주소 스캔 응답 파싱 (지원 기기 한정)
                 val uwbData = record.getManufacturerSpecificData(BleConstants.COMPANY_ID_UWB_EXT)

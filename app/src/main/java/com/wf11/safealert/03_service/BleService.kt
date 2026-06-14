@@ -358,6 +358,13 @@ class BleService : LifecycleService() {
 
     private val approachStreakStartMap    = mutableMapOf<String, Long>()  // 연속 접근 시작 시각(ms)
 
+    // [v1.1.11 C1] 전진-접근 가산(forwardApproachBias) 히스테리시스 래치 — deviceId별 ON/OFF 상태.
+    //   kfVel 이 APPROACH_TIMEGATE_VEL_DBM 근처를 떨릴 때 payloadOffset(±3dB)이 프레임마다 토글되어
+    //   임계 부근에서 WARNING↔SAFE 가 깜빡이던 결함을 막는다. 진입은 임계 즉시(페일세이프),
+    //   해제는 임계×RELEASE_FRAC 미만(데드밴드)으로만 — 비대칭 래치.
+    private val forwardBiasLatchMap       = mutableMapOf<String, Boolean>()  // deviceId → 전진가산 래치 상태
+    private val FORWARD_BIAS_VEL_RELEASE_FRAC = 0.5  // 해제 데드밴드 = 임계속도의 50%
+
     // [v1.0.36→v1.1.7 #1] 송신 폴링 — STATE(정지/이동) + Turn(좌/우/직진)을 주기적으로 advertiser 에 push.
     //   (구: Speed 4비트 → v1.1.7 회전 2비트로 재패킹. 상수명 SPEED_PUSH_* 는 폴링 주기 의미로 유지.)
     //   advertiser 내부 2초 throttle·미세변화 무시와 맞물려 실제 재광고는 드물게 일어난다.
@@ -573,7 +580,7 @@ class BleService : LifecycleService() {
                 bleScanner = BleScanner(scanner).also { s ->
                     s.onStatusUpdate = { msg -> sendStatusBroadcast(msg) }
                     s.startScanning(object : BleScanCallback {
-                        override fun onDeviceDetected(deviceId: String, rssi: Int, alertLevel: Int, remoteState: Int, remoteTurn: Int) {
+                        override fun onDeviceDetected(deviceId: String, rssi: Int, alertLevel: Int, remoteState: Int, remoteTurn: Int, payloadPresent: Boolean) {
                             lastScanResultMs = System.currentTimeMillis()
 
                             if (myMode == "WALKER"
@@ -582,7 +589,7 @@ class BleService : LifecycleService() {
 
                             val effectiveRssi = if (DevSettings.debugMode) DevSettings.simulatedRssi else rssi
                             noteRssiForWake(deviceId, effectiveRssi)   // [v1.0.42 Req3] 근접 신호 → 즉시 웨이크 판단
-                            processAlert(deviceId, effectiveRssi, remoteState, remoteTurn)
+                            processAlert(deviceId, effectiveRssi, remoteState, remoteTurn, payloadPresent)
                             // [v1.0.26 Req2] processAlert 가 alertState 를 어떻게 바꿨든(추가·격상·SAFE 제거·TTC 선발령)
                             // 그 직후 전체 스냅샷을 한 번에 송출 → 하단 목록이 플로팅·알람과 절대 어긋나지 않는다.
                             broadcastDeviceList()
@@ -606,6 +613,7 @@ class BleService : LifecycleService() {
                             deviceRssiMap.remove(deviceId)
                             wakeRssiMap.remove(deviceId)              // [v1.0.42 Req3] 슬립/웨이크 표본 정리
                             approachStreakStartMap.remove(deviceId)   // [v1.0.35] Time-Gate 접근 추적 정리
+                            forwardBiasLatchMap.remove(deviceId)      // [v1.1.11 C1] 전진가산 래치 정리(소실 → 누수 방지)
                             oneSecBuffer.remove(deviceId)   // [v1.0.31] 게이트가 raw도 push → 신호소실 시 함께 정리
                             mutedDevices.remove(deviceId)
                             suddenLabelMap.remove(deviceId)
@@ -661,10 +669,14 @@ class BleService : LifecycleService() {
      * v1.1.10 디코드된 16진수(역할·상태)로 경보 임계 위험 오프셋(dB)을 산출한다.
      *   반환값(+) 만큼 경고·위험 임계를 '먼 거리'로 당겨 조기 경보한다(fail-safe 방향).
      *   · Phase1(역할): 내가 보행자 ↔ 상대가 중장비(지게차/EPJ), 또는 그 반대면 walkerVsEquipBiasDb 가산(상호 보호).
-     *   · Phase2(상태): 상대가 전진(FORWARD)하며 접근(kfVel≥Time-Gate 임계) 중이면 forwardApproachBiasDb 추가 가산.
+     *   · Phase2(상태): 상대가 전진(FORWARD)하며 접근(kfVel) 중이면 forwardApproachBiasDb 추가 가산.
+     * v1.1.11 C1: Phase2 가산을 deviceId별 히스테리시스 래치로 보호 — kfVel 이 임계 부근을 떨려도
+     *   forwardBiasLatchMap 으로 가산이 한 번 켜지면 임계×RELEASE_FRAC 미만으로 떨어질 때까지 유지된다.
+     *   payloadOffset(±forwardApproachBiasDb)이 프레임마다 토글되어 WARNING↔SAFE 가 깜빡이던 결함 제거.
+     *   진입은 임계 즉시(페일세이프), 해제는 데드밴드 통과로만 — 비대칭.
      *   토글(categoryBiasEnabled/stateModulationEnabled)이 꺼져 있거나 해당 쌍·상태가 아니면 0(기존 거동).
      */
-    private fun computePayloadRiskOffset(rCategory: Int, rState: Int, kfVel: Double): Int {
+    private fun computePayloadRiskOffset(deviceId: String, rCategory: Int, rState: Int, kfVel: Double): Int {
         var offset = 0
         if (DevSettings.categoryBiasEnabled) {
             val iAmWalker = myCategory == BleConstants.CAT_WALKER
@@ -675,10 +687,18 @@ class BleService : LifecycleService() {
                 offset += DevSettings.walkerVsEquipBiasDb
             }
         }
-        if (DevSettings.stateModulationEnabled &&
-            rState == BleConstants.PSTATE_FORWARD &&
-            kfVel >= APPROACH_TIMEGATE_VEL_DBM) {
-            offset += DevSettings.forwardApproachBiasDb
+        // [v1.1.11 C1] 전진-접근 가산: kfVel 임계를 히스테리시스 래치로 감싼다.
+        if (DevSettings.stateModulationEnabled && rState == BleConstants.PSTATE_FORWARD) {
+            val wasLatched = forwardBiasLatchMap[deviceId] ?: false
+            val latched = when {
+                kfVel >= APPROACH_TIMEGATE_VEL_DBM                              -> true   // 진입: 임계 즉시(fail-safe)
+                kfVel <  APPROACH_TIMEGATE_VEL_DBM * FORWARD_BIAS_VEL_RELEASE_FRAC -> false  // 해제: 데드밴드 통과
+                else                                                           -> wasLatched  // 중간: 유지
+            }
+            forwardBiasLatchMap[deviceId] = latched
+            if (latched) offset += DevSettings.forwardApproachBiasDb
+        } else {
+            forwardBiasLatchMap.remove(deviceId)  // FORWARD 아님/토글 OFF → 래치 리셋
         }
         return offset
     }
@@ -778,7 +798,7 @@ class BleService : LifecycleService() {
         }
     }
 
-    private fun processAlert(deviceId: String, rssi: Int, remoteState: Int = 0x00, remoteTurn: Int = BleConstants.TURN_STRAIGHT) {
+    private fun processAlert(deviceId: String, rssi: Int, remoteState: Int = 0x00, remoteTurn: Int = BleConstants.TURN_STRAIGHT, payloadPresent: Boolean = false) {
         // [v1.0.36→v1.1.7 #1] 수신 1바이트 페이로드 언패킹 → Category / State / Turn(2비트).
         //   remoteState 는 BleScanner 가 ServiceData 1바이트를 0~255 로 그대로 넘긴 값.
         //   remoteTurn = 상대 송신 회전 방향(TURN_*, bits 3:2). 표시 라벨/디버그용(속도 비트는 제거됨).
@@ -891,13 +911,16 @@ class BleService : LifecycleService() {
         //   TTC·calcLevel·SAFE강제)에 effWarning/effDanger 로 '일관' 적용한다. 한 곳만 시프트하면
         //   게이트끼리 충돌(조기경보하려 해도 하드게이트가 차단)하므로 단일 effective 임계로 통일한다.
         //   payloadOffset>0 = 더 약한 신호(먼 거리)에서 경보(fail-safe). 0 이면 기존 거동과 완전 동일.
-        val payloadOffset = computePayloadRiskOffset(rCategory, rState, kfVel)
+        val payloadOffset = computePayloadRiskOffset(deviceId, rCategory, rState, kfVel)
         val effWarning = BleConstants.rssiWarning - payloadOffset
         val effDanger  = BleConstants.rssiDanger  - payloadOffset
         // [Phase2] IDLE-IDLE 가청 억제 — 내 IMU 정지 + 상대 IDLE 송신(둘 다 정지=충돌동역학 없음)이면
         //   아래 정규 WARNING 가청경보를 억제(표시·목록·위젯은 유지). DANGER 는 억제 대상이 아니며,
         //   둘 중 하나라도 움직이면(rState≠IDLE 또는 IMU 이동) 다음 프레임 즉시 해제된다.
-        val idleIdleQuiet = DevSettings.idleIdleSuppressEnabled &&
+        // [v1.1.11 C2] payloadPresent 필수 — 비콘·구버전(페이로드 부재)은 rState 가 무조건 IDLE 로 디코드되어
+        //   '이동 중인 비콘 장비'가 영구 IDLE 로 오인, DANGER 가 WARNING 강등→무음화되는 구멍이 있었다.
+        //   실제 1바이트 자기-신고를 보낸 기기에만 억제를 허용해 그 구멍을 막는다.
+        val idleIdleQuiet = DevSettings.idleIdleSuppressEnabled && payloadPresent &&
             ImuFusion.isStationary && rState == BleConstants.PSTATE_IDLE
 
         // ── [v1.0.30 → v1.0.31 raw 이중가드] 최상단 하드 게이트 (절대 거리 선차단 · 음수 부호 주의) ─────
@@ -1037,7 +1060,12 @@ class BleService : LifecycleService() {
         // (avg1sec) 중 하나라도 경고 임계(rssiWarning)보다 멀면 stableLevel을 SAFE로 강제 → 아래
         // 이탈 페이드아웃/SAFE 처리로 흘려보낸다. 접근 속도·TTC로는 절대 격상 불가.
         //   ★ [v1.1.8] avgRssi(=pEma)는 후처리 평활 지연으로 raw가 멀어도 임계 위로 떠 있을 수 있어 raw(avg1sec)를 함께 본다.
-        if (avgRssi < effWarning || avg1sec < effWarning) {   // [v1.1.10] effWarning(페이로드 시프트)로 일관
+        // [v1.1.11 C1] 이미 추적 중(alertState 존재)인 기기는 강제-SAFE 바닥을 calcLevel 의 하향 히스테리시스
+        //   대역(effWarning - HYSTERESIS_DBM)에 맞춘다. 안 그러면 이 가드가 calcLevel 의 자체 히스테리시스를
+        //   덮어써 effWarning 부근에서 WARNING↔SAFE 가 깜빡인다. 신규(미추적) 기기는 기존 effWarning 진입
+        //   바닥을 유지(더 엄격 = 페일세이프 진입).
+        val safeForceFloor = if (alertState.containsKey(deviceId)) effWarning - HYSTERESIS_DBM else effWarning
+        if (avgRssi < safeForceFloor || avg1sec < safeForceFloor) {   // [v1.1.10] effWarning(페이로드 시프트)로 일관 / [v1.1.11 C1] 추적중 floor 정렬
             stableLevel = BleConstants.LEVEL_SAFE
         }
 
@@ -1058,6 +1086,7 @@ class BleService : LifecycleService() {
                 crossingStartMap.remove(deviceId)
                 departingStartMap.remove(deviceId)
                 approachStreakStartMap.remove(deviceId)   // [v1.0.46 #4] stale 시작시각 → 재접근 시 Time-Gate 즉시통과 방지
+                forwardBiasLatchMap.remove(deviceId)      // [v1.1.11 C1] SAFE 강등 → 래치 리셋(재접근 시 fresh)
                 wasStationaryMap.remove(deviceId)
                 recedingStartMap.remove(deviceId)
                 recedeRefMap.remove(deviceId)
@@ -1188,6 +1217,7 @@ class BleService : LifecycleService() {
                 crossingStartMap.remove(deviceId)
                 departingStartMap.remove(deviceId)
                 approachStreakStartMap.remove(deviceId)   // [v1.0.46 #4]
+                forwardBiasLatchMap.remove(deviceId)      // [v1.1.11 C1] 이탈 정리 → 래치 리셋
                 deviceRssiMap.remove(deviceId)
                 firebaseLastSaveMap.remove(deviceId)
                 pendingDisplayMap.remove(deviceId)   // [v1.0.49 #3]
