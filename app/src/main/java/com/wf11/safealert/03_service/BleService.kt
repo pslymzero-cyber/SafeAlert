@@ -826,7 +826,11 @@ class BleService : LifecycleService() {
         //   윈도우를 시간 기준 전·후반으로 나눠 ① 전반부 추세(olderTrend)가 안정/약화(≤tol),
         //   ② 전반부 저점 대비 현재 상승폭(rise)이 임계(riseDbm) 이상이면 latch(now+holdMs).
         //   단조 접근(내가 A 로 다가가는 정상 상황)은 olderTrend 가 큰 양수라 자동 배제된다.
-        if (DevSettings.reversePrepEnabled) {
+        // [v1.1.9 R6] 상대가 16진수 페이로드로 '정지(IDLE)'를 송신 중이면 후진/전진 추론 자체가 모순이므로
+        //   reversePrep 진입을 차단한다. 이 추론은 어디까지나 '상대가 이동(FORWARD) 중'일 때 RSSI 추세
+        //   반전으로 접근 시작을 조기 포착하려는 보조 수단 — 상대의 자기-신고 상태(rState, L760 디코드)를
+        //   판단 근거로 우선한다. (내가 움직이고 상대는 정지인 상황의 거짓 "후진 대비" 오발 제거.)
+        if (DevSettings.reversePrepEnabled && rState != BleConstants.PSTATE_IDLE) {
             val hist = reverseRssiHist.getOrPut(deviceId) { ArrayDeque() }
             hist.addLast(now to avg1sec)
             val cutoff = now - DevSettings.reverseWindowMs
@@ -846,6 +850,15 @@ class BleService : LifecycleService() {
                 }
             }
         }
+
+        // [v1.1.9 R1/R3] 표시-경보 분리 — 감지된 모든 SafeAlert 기기는 신호세기와 무관하게 '표시 풀'에 등록한다.
+        //   · deviceRssiMap : 목록 강도순 정렬용 RSSI(평활 kalmanRssi). 아래 하드게이트에서 경보가 차단돼도
+        //     목록엔 남도록 게이트 '앞'에서 채운다. (경보 기기는 이후 일반/특수 경로에서 avgRssi 등으로 덮어씀)
+        //   · pendingDisplayMap : 비경보 기기의 표시 멤버십(+TTL). alertState 미등록 기기만 등록.
+        //   경보 발령은 아래 하드게이트·판정옵션이 독립 결정(R4/R5). 위젯 최우선(topPriorityDevice)은
+        //   alertState 만 보므로 약신호는 위젯에 뜨지 않고 목록에만 SAFE 행으로 노출된다.
+        deviceRssiMap[deviceId] = kalmanRssi
+        if (!alertState.containsKey(deviceId)) pendingDisplayMap[deviceId] = now
 
         // ── [v1.0.30 → v1.0.31 raw 이중가드] 최상단 하드 게이트 (절대 거리 선차단 · 음수 부호 주의) ─────
         // RSSI는 음수다. '칼만 정제값(kalmanRssi)'과 'raw 1초평균(avg1sec)' 중 더 먼(더 음수) 쪽을
@@ -877,10 +890,11 @@ class BleService : LifecycleService() {
             //   갱신됐으므로 밴드 체류 중 자동 워밍업 → 경고권 진입 프레임부터 웜 상태로 즉시 판정 가능.
             //   (구버전: 매 프레임 전삭제 → 진입 시 콜드스타트로 경보 수초 지연 — A/B 교차 직전 표시의 주원인)
             if (gateRssi >= BleConstants.rssiWarning - FILTER_PRESERVE_BAND_DB) return
-            deviceRssiMap.remove(deviceId)
+            // [v1.1.9 R1/R3] 표시-경보 분리 — 경보권 밖(밴드 밖) 이라도 deviceRssiMap(목록 정렬)·deviceStateMap
+            //   (이동/정지 라벨)·pendingDisplayMap(표시 멤버십) 은 보존해 목록엔 계속 SAFE 행으로 노출한다.
+            //   여기서는 '경보 추적' 상태(suddenLabel·필터·칼만 등)만 정리한다. (진짜 소실은 onDeviceLost 가 전삭제)
             suddenLabelMap.remove(deviceId)
             deviceCategoryMap.remove(deviceId)
-            deviceStateMap.remove(deviceId)
             deviceTurnMap.remove(deviceId); reverseRssiHist.remove(deviceId); reversePrepUntil.remove(deviceId)   // [v1.1.7 #1/#2]
             firebaseLastSaveMap.remove(deviceId)
             rssiPreFilter.clear(deviceId)     // [v1.0.38 클린업] 미추적 기기 EMA 전처리 상태 정리
@@ -891,7 +905,7 @@ class BleService : LifecycleService() {
             recedingStartMap.remove(deviceId)    // [v1.1.6 검증 보강] 이탈 판정 상태 누수·stale 피크 재출현 방지
             recedeRefMap.remove(deviceId)        // [v1.1.6 검증 보강] 미추적 기기 중간평활 EMA 정리
             recedePeakMap.remove(deviceId)       // [v1.1.6 검증 보강] 미추적 기기 피크 홀드 정리
-            pendingDisplayMap.remove(deviceId)   // [v1.0.49 #3] 밴드 밖 원거리 — 보류 표시도 함께 정리
+            // [v1.1.9 R1/R3] pendingDisplayMap 보존 — 경보권 밖 약신호도 목록(SAFE 행)에 계속 노출.
             return
         }
 
@@ -1353,7 +1367,38 @@ class BleService : LifecycleService() {
     private val isScreenOn: Boolean
         get() = (getSystemService(Context.POWER_SERVICE) as PowerManager).isInteractive
 
+    // ── [v1.1.9 화면 꺼짐 웨이크업] 알림 구간 한정 PARTIAL_WAKE_LOCK ──────────────────
+    //   배경(현장 "웨이크업이 늦어"): 화면을 끄면 기기가 Doze 로 진입해 CPU 가 간헐 수면한다.
+    //     포그라운드 스캔은 계속 살아 있지만, 콜백 처리(Median→EMA→칼만→발령→진동·소리·오버레이)
+    //     도중 CPU 가 자버리면 경보 체감이 늦어진다. WAKE_LOCK 권한은 선언돼 있으나 acquire 가
+    //     한 번도 호출되지 않은 것이 근본 원인이었다.
+    //   설계: 상시 점유 대신 '경보가 실제로 발령되는 순간'(forceAlarmVolume — 특수·TTC·무음복구·
+    //     정규·테스트 모든 발령의 단일 길목)에만 짧게 잡고, timeout 으로 OS 가 자동 해제하게 한다
+    //     (release 누락에도 배터리 누수 0). 위험 기기가 계속 근처면 매 발령마다 timeout 이 갱신돼
+    //     알림 구간 동안만 유지된다 → 보행자 휴대기기에 적합한 near-zero idle 비용.
+    private val ALERT_WAKELOCK_MS = 3000L   // 발령~사용자 인지(화면 켜기) 보장 구간
+    private val alertWakeLock: PowerManager.WakeLock by lazy {
+        (getSystemService(Context.POWER_SERVICE) as PowerManager)
+            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "SafeAlert:AlertWakeLock")
+            .apply { setReferenceCounted(false) }
+    }
+
+    // [v1.1.9] 경보 발령 순간 CPU 를 ALERT_WAKELOCK_MS 만큼 깨워 진동·소리·오버레이 완주를 보장.
+    //   화면 켜짐(사용자 인지·조작 중 = Doze 아님)이면 불필요하므로 잡지 않는다. timeout 기반이라
+    //   재호출하면 새 timeout 으로 연장되고, 위험 소실 후엔 자동 해제된다(reference-count 미사용).
+    private fun acquireAlertWakeLock() {
+        if (isScreenOn) return
+        try { alertWakeLock.acquire(ALERT_WAKELOCK_MS) } catch (e: Exception) { Log.w(TAG, "WakeLock 획득 실패: ${e.message}") }
+    }
+
+    // [v1.1.9] 보유 중인 WakeLock 즉시 해제 — 알림 전체 종료(stopAll/onDestroy) 시 timeout 을
+    //   기다리지 않고 곧바로 풀어 배터리를 아낀다. 미보유면 무동작.
+    private fun releaseAlertWakeLock() {
+        try { if (alertWakeLock.isHeld) alertWakeLock.release() } catch (e: Exception) { Log.w(TAG, "WakeLock 해제 실패: ${e.message}") }
+    }
+
     private fun forceAlarmVolume() {
+        acquireAlertWakeLock()   // [v1.1.9] 화면 꺼짐(Doze) 시 진동·소리·오버레이 완주 보장
         ignoringVolumeChange = true
         try {
             val am     = getSystemService(AUDIO_SERVICE) as AudioManager
@@ -1578,7 +1623,9 @@ class BleService : LifecycleService() {
         val base = if (moving) "${name}이(가) 이동 중입니다."
                    else        "${name}이(가) 주변에 있습니다."
         // [v1.1.7 #2] 후진(전진) 대비 latch 가 살아있으면 안내문을 선두에 덧붙인다(RSSI 추세 반전 감지).
-        return if ((reversePrepUntil[deviceId] ?: 0L) > System.currentTimeMillis())
+        //   [v1.1.9 R6] 이중 방어 — latch 가 살아있어도 상대가 현재 정지(IDLE = !moving) 를 송신 중이면
+        //   prefix 를 억제한다. latch 유지(기본 4s) 도중 상대가 정지로 전환되면 페이로드 상태를 우선한다.
+        return if (moving && (reversePrepUntil[deviceId] ?: 0L) > System.currentTimeMillis())
                    "후진(전진)을 대비해주세요 · $base"
                else base
     }
@@ -1808,6 +1855,7 @@ class BleService : LifecycleService() {
         uwbRanger?.stop(); uwbRanger = null
         AlertSoundPlayer.stopSound()
         VibrationHelper.stopVibration(this)
+        releaseAlertWakeLock()   // [v1.1.9] 알림 종료 → WakeLock 즉시 해제(timeout 대기 없이)
         alertState.clear()
         suddenLabelMap.clear()
         deviceCategoryMap.clear()
@@ -1859,6 +1907,7 @@ class BleService : LifecycleService() {
     override fun onDestroy() {
         DevSettings.unregisterOnChange(devPrefsListener)   // [v1.0.42 Req5] 설정 라이브 전파 해제
         if (isRunning) stopAll()
+        releaseAlertWakeLock()   // [v1.1.9] !isRunning 경로 등 stopAll 미경유 시에도 확실히 해제
         super.onDestroy()
     }
 
