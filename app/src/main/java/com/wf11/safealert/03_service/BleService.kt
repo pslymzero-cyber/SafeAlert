@@ -1034,13 +1034,18 @@ class BleService : LifecycleService() {
             Log.d(TAG, "IMU 정지→이동 전환 [$deviceId]")
         }
 
-        // 피크 RSSI 갱신
+        // 피크 RSSI 갱신 — raw 1초평균(avg1sec) 기준.
+        //   [버그수정] 기존엔 피크·하락을 avgRssi(평활값 = KALMAN 모드 blendRatio=0 시 pEma)로 측정했다.
+        //   '강한 평활' 프리셋(Kalman q0.05/R10)에서는 이탈해도 avgRssi 가 거의 안 내려가, 피크 대비
+        //   하락이 RECEDING_DBM_DROP 에 도달하지 못해 이탈 페이드아웃이 시작조차 안 됐다(폰을 들고 뒤로
+        //   걸어가도 경보 지속). 반응 빠른 raw(avg1sec, 1초평균)로 피크·하락을 재면 평활 강도와 무관하게
+        //   이탈을 ~1초 안에 감지한다. 단발 노이즈는 1초평균 + 2.5초 연속이탈 조건(RECEDING_CLEAR_MS)이 흡수.
         val peakPrev = peakAlertRssiMap[deviceId]
-        if (peakPrev == null || avgRssi > peakPrev) peakAlertRssiMap[deviceId] = avgRssi
+        if (peakPrev == null || avg1sec > peakPrev) peakAlertRssiMap[deviceId] = avg1sec
         val peakRssi = peakAlertRssiMap[deviceId]!!
 
-        // 이탈 방향 감지: 피크 대비 RECEDING_DBM_DROP 하락
-        val isReceding = (peakRssi - avgRssi) >= RECEDING_DBM_DROP
+        // 이탈 방향 감지: raw 피크 대비 RECEDING_DBM_DROP 하락
+        val isReceding = (peakRssi - avg1sec) >= RECEDING_DBM_DROP
 
         if (isReceding) {
             val justStartedReceding = !recedingStartMap.containsKey(deviceId)
@@ -1055,7 +1060,7 @@ class BleService : LifecycleService() {
                     OverlayManager.hideOverlay()
                     activeSoundLevel = BleConstants.LEVEL_SAFE
                 }
-                Log.d(TAG, "이탈 감지 즉시 소리 중지: $deviceId (peak=$peakRssi, curr=$avgRssi, drop=${peakRssi - avgRssi} dBm)")
+                Log.d(TAG, "이탈 감지 즉시 소리 중지: $deviceId (peak=$peakRssi, curr=$avg1sec, drop=${peakRssi - avg1sec} dBm)")
                 sendStatusBroadcast("↗ 이탈 감지 → 경보 일시 해제: ${extractDisplayName(deviceId)}")
             }
             val recedingMs = now - (recedingStartMap[deviceId] ?: now)
