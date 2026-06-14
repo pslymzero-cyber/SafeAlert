@@ -73,7 +73,7 @@ class BleService : LifecycleService() {
         @Volatile var detectedSnapshot: String = ""   // "levelrssiname" 레코드, 구분 
         @Volatile var detectedCount: Int       = 0    // 현재 경보 중(alertState) 기기 수
         // [v1.0.42 Req2] 내 장비(Local) 상태 스냅샷 — 수신(Target) 경로와 완전 분리된 단일 소스.
-        //   직렬화 필드 순서 = category / state / speedKmh (필드 구분 U+001F).
+        //   직렬화 필드 순서 = category / state / turnDir (필드 구분 U+001F).   // [v1.1.7 #1] 속도→회전
         //   오직 내 송출 상태(myCategory + bleAdvertiser TX)에서만 갱신 — 상대 페이로드가 절대 못 건드린다.
         @Volatile var localSnapshot: String    = ""
     }
@@ -299,10 +299,15 @@ class BleService : LifecycleService() {
     //   ※ 후진/하역(특수경보)은 suddenLabelMap(makeStateLabel)이 우선하므로 이 캐시에 의존하지 않는다.
     private val deviceStateMap    = mutableMapOf<String, Int>()
 
-    // [v1.0.51 #3] 수신한 상대 기기의 Speed(4비트 디코드, km/h) 캐시.
-    //   표시문구 이동 판정을 STATE 단독 → 'STATE!=IDLE 또는 속도>0' 으로 확장 — 송신측 STATE 가
-    //   고착·지연돼도 같은 패킷의 속도 비트로 '이동 중'을 놓치지 않는다(경보 격하 예외와 동일 기준).
-    private val deviceSpeedMap    = mutableMapOf<String, Double>()
+    // [v1.1.7 #1] 수신한 상대 기기의 회전 방향(TURN_*, bits 3:2 디코드) 캐시.
+    //   (구 deviceSpeedMap: 속도 4비트 → v1.1.7 에서 회전 2비트로 재패킹. 표시 라벨/디버그용.)
+    private val deviceTurnMap     = mutableMapOf<String, Int>()
+
+    // [v1.1.7 #2] 후진(전진) 대비 — RX 측 RSSI 추세 반전 추론용 상태.
+    //   reverseRssiHist: 기기별 (시각ms, avg1sec) 표본 윈도우. '안정/약화 → 급강세' 패턴 탐지.
+    //   reversePrepUntil: 감지 시 now+holdMs 로 latch — 그 시각까지 "후진(전진)을 대비해주세요" 표시.
+    private val reverseRssiHist   = mutableMapOf<String, ArrayDeque<Pair<Long, Int>>>()
+    private val reversePrepUntil  = mutableMapOf<String, Long>()
 
     // [v1.0.30 Req3] Firebase 경보 저장 모바일데이터 방어 — 기기별 마지막 저장 시각(ms).
     //   같은 기기에 대해 FIREBASE_SAVE_THROTTLE_MS(1분) 안에는 재업로드하지 않는다.
@@ -353,7 +358,8 @@ class BleService : LifecycleService() {
 
     private val approachStreakStartMap    = mutableMapOf<String, Long>()  // 연속 접근 시작 시각(ms)
 
-    // [v1.0.36] 속도 송신 폴링 — ImuFusion.estimatedSpeedKmh 를 주기적으로 advertiser(Speed 4비트)에 push.
+    // [v1.0.36→v1.1.7 #1] 송신 폴링 — STATE(정지/이동) + Turn(좌/우/직진)을 주기적으로 advertiser 에 push.
+    //   (구: Speed 4비트 → v1.1.7 회전 2비트로 재패킹. 상수명 SPEED_PUSH_* 는 폴링 주기 의미로 유지.)
     //   advertiser 내부 2초 throttle·미세변화 무시와 맞물려 실제 재광고는 드물게 일어난다.
     private val SPEED_PUSH_INTERVAL_MS: Long get() = DevSettings.speedPushIntervalMs  // [판정 파라미터] 기본 1500L = 기존값
     private val speedPushHandler = android.os.Handler(android.os.Looper.getMainLooper())
@@ -363,19 +369,16 @@ class BleService : LifecycleService() {
             //   유실되면 다음 전이까지 낡은 상태로 고착될 수 있다. 매 폴링마다 최신 motionState 를
             //   다시 밀어 넣는다(동일 상태면 advertiser 내부에서 no-op → 재광고 비용 없음).
             //   단, 수동 주입 특수상태(후진/하역 — ACTION_TEST_STATE)는 자동 동기화가 덮지 않는다.
-            //   updateSpeed 보다 '먼저' 호출 — 공용 2초 throttle 슬롯을 STATE 변화가 우선 차지.
+            //   updateTurn 보다 '먼저' 호출 — 공용 2초 throttle 슬롯을 STATE 변화가 우선 차지.
             val tx = bleAdvertiser?.txState ?: BleConstants.PSTATE_IDLE
             if (tx != BleConstants.PSTATE_REVERSE && tx != BleConstants.PSTATE_LOADING) {
                 val pState = if (ImuFusion.motionState == BleConstants.MOTION_STATE_STATIONARY)
                     BleConstants.PSTATE_IDLE else BleConstants.PSTATE_FORWARD
                 bleAdvertiser?.updateState(pState)
             }
-            // [v1.0.39] EPJ 는 물리 최고속도 3km/h 가정 → 송출 속도를 cap (충돌예측 과대추정 방지).
-            val txSpeed = if (myCategory == BleConstants.CAT_EPJ)
-                minOf(ImuFusion.estimatedSpeedKmh, BleConstants.EPJ_MAX_SPEED_KMH.toFloat())
-            else ImuFusion.estimatedSpeedKmh
-            bleAdvertiser?.updateSpeed(txSpeed)
-            broadcastLocalState()   // [v1.0.42 Req2] 주기 갱신 — Local UI(상태/속도) 폴링 소스 최신 유지
+            // [v1.1.7 #1] 속도 비트 제거 → IMU 회전(좌/우/직진) 추정값을 송출 페이로드에 탑재.
+            bleAdvertiser?.updateTurn(ImuFusion.turnDirection)
+            broadcastLocalState()   // [v1.0.42 Req2] 주기 갱신 — Local UI(상태/회전) 폴링 소스 최신 유지
             speedPushHandler.postDelayed(this, SPEED_PUSH_INTERVAL_MS)
         }
     }
@@ -573,7 +576,7 @@ class BleService : LifecycleService() {
                 bleScanner = BleScanner(scanner).also { s ->
                     s.onStatusUpdate = { msg -> sendStatusBroadcast(msg) }
                     s.startScanning(object : BleScanCallback {
-                        override fun onDeviceDetected(deviceId: String, rssi: Int, alertLevel: Int, remoteState: Int, remoteSpeedKmh: Double) {
+                        override fun onDeviceDetected(deviceId: String, rssi: Int, alertLevel: Int, remoteState: Int, remoteTurn: Int) {
                             lastScanResultMs = System.currentTimeMillis()
 
                             if (myMode == "WALKER"
@@ -582,7 +585,7 @@ class BleService : LifecycleService() {
 
                             val effectiveRssi = if (DevSettings.debugMode) DevSettings.simulatedRssi else rssi
                             noteRssiForWake(deviceId, effectiveRssi)   // [v1.0.42 Req3] 근접 신호 → 즉시 웨이크 판단
-                            processAlert(deviceId, effectiveRssi, remoteState, remoteSpeedKmh)
+                            processAlert(deviceId, effectiveRssi, remoteState, remoteTurn)
                             // [v1.0.26 Req2] processAlert 가 alertState 를 어떻게 바꿨든(추가·격상·SAFE 제거·TTC 선발령)
                             // 그 직후 전체 스냅샷을 한 번에 송출 → 하단 목록이 플로팅·알람과 절대 어긋나지 않는다.
                             broadcastDeviceList()
@@ -611,7 +614,7 @@ class BleService : LifecycleService() {
                             suddenLabelMap.remove(deviceId)
                             deviceCategoryMap.remove(deviceId)
                             deviceStateMap.remove(deviceId)
-                            deviceSpeedMap.remove(deviceId)   // [v1.0.51 #3]
+                            deviceTurnMap.remove(deviceId); reverseRssiHist.remove(deviceId); reversePrepUntil.remove(deviceId)   // [v1.1.7 #1/#2]
                             firebaseLastSaveMap.remove(deviceId)
                             pendingDisplayMap.remove(deviceId)   // [v1.0.49 #3] 소실 기기 보류 표시 정리
                             sendAlertBroadcast(deviceId, BleConstants.LEVEL_SAFE)
@@ -752,15 +755,15 @@ class BleService : LifecycleService() {
         }
     }
 
-    private fun processAlert(deviceId: String, rssi: Int, remoteState: Int = 0x00, remoteSpeedKmh: Double = 0.0) {
-        // [v1.0.36] 수신 1바이트 페이로드 언패킹 → Category / State / Speed(4비트).
+    private fun processAlert(deviceId: String, rssi: Int, remoteState: Int = 0x00, remoteTurn: Int = BleConstants.TURN_STRAIGHT) {
+        // [v1.0.36→v1.1.7 #1] 수신 1바이트 페이로드 언패킹 → Category / State / Turn(2비트).
         //   remoteState 는 BleScanner 가 ServiceData 1바이트를 0~255 로 그대로 넘긴 값.
-        //   remoteSpeedKmh = 상대 송신 예상속도(km/h). 충돌 기하학 필터의 합산속도에 사용.
+        //   remoteTurn = 상대 송신 회전 방향(TURN_*, bits 3:2). 표시 라벨/디버그용(속도 비트는 제거됨).
         val rCategory = BleConstants.decodeCategory(remoteState)
         val rState    = BleConstants.decodeState(remoteState)
         deviceCategoryMap[deviceId] = rCategory   // 표시 라벨(보행자/EPJ/지게차) 판별용 캐시
         deviceStateMap[deviceId]    = rState      // [v1.0.44] 표시문구 분기용(정지=대기/이동=접근) 상태 캐시
-        deviceSpeedMap[deviceId]    = remoteSpeedKmh   // [v1.0.51 #3] 표시문구 이동 판정 보조(속도>0=이동)
+        deviceTurnMap[deviceId]     = remoteTurn   // [v1.1.7 #1] 회전 방향 캐시(표시/디버그)
 
         // [v1.0.42] UWB 거리→RSSI 환산(calibRssiAt1m/pathLossExp 의존) 제거.
         //   거리 추정은 칼만 필터(RSSI)만으로 수행 — 수신 raw RSSI 를 그대로 전처리 파이프라인에 투입.
@@ -819,6 +822,33 @@ class BleService : LifecycleService() {
         //   oneSecAvgRssi 는 호출마다 버퍼에 push(부작용) → 프레임당 1회 호출 후 변수 재사용한다.
         val avg1sec = oneSecAvgRssi(deviceId, inputRssi)   // 1초 평균은 raw 기준 유지
 
+        // ── [v1.1.7 #2] 후진(전진) 대비 — RX 측 RSSI 추세 반전 추론 ──────────────
+        //   상대 차량 A 에 접근 중, A 의 신호가 '안정/약화'였다가 윈도우(기본 1.2s) 안에서 갑자기
+        //   '급강세(가까워짐)'로 반전되면 → A 가 후진/전진으로 내 쪽으로 움직이기 시작했을 가능성.
+        //   윈도우를 시간 기준 전·후반으로 나눠 ① 전반부 추세(olderTrend)가 안정/약화(≤tol),
+        //   ② 전반부 저점 대비 현재 상승폭(rise)이 임계(riseDbm) 이상이면 latch(now+holdMs).
+        //   단조 접근(내가 A 로 다가가는 정상 상황)은 olderTrend 가 큰 양수라 자동 배제된다.
+        if (DevSettings.reversePrepEnabled) {
+            val hist = reverseRssiHist.getOrPut(deviceId) { ArrayDeque() }
+            hist.addLast(now to avg1sec)
+            val cutoff = now - DevSettings.reverseWindowMs
+            while (hist.isNotEmpty() && hist.first().first < cutoff) hist.removeFirst()
+            val spanMs = if (hist.size >= 2) hist.last().first - hist.first().first else 0L
+            if (hist.size >= 3 && spanMs >= DevSettings.reverseWindowMs / 2) {
+                val midTime   = hist.first().first + spanMs / 2
+                val firstHalf = hist.filter { it.first <= midTime }
+                if (firstHalf.size >= 2) {
+                    val olderTrend = firstHalf.last().second - firstHalf.first().second  // 양수=강해짐(접근)
+                    val troughRssi = firstHalf.minOf { it.second }                        // 전반부 저점
+                    val rise       = avg1sec - troughRssi                                 // 저점→현재 상승폭
+                    if (olderTrend <= DevSettings.reverseStableTolDb && rise >= DevSettings.reverseRiseDbm) {
+                        reversePrepUntil[deviceId] = now + DevSettings.reversePrepHoldMs
+                        Log.d(TAG, "후진대비 감지 $deviceId trend=$olderTrend rise=$rise (avg1sec=$avg1sec)")
+                    }
+                }
+            }
+        }
+
         // ── [v1.0.30 → v1.0.31 raw 이중가드] 최상단 하드 게이트 (절대 거리 선차단 · 음수 부호 주의) ─────
         // RSSI는 음수다. '칼만 정제값(kalmanRssi)'과 'raw 1초평균(avg1sec)' 중 더 먼(더 음수) 쪽을
         // 기준(gateRssi)으로 잡아, 둘 중 하나라도 경고 임계(rssiWarning, 예 -65)보다 멀면 차단한다.
@@ -847,7 +877,7 @@ class BleService : LifecycleService() {
             suddenLabelMap.remove(deviceId)
             deviceCategoryMap.remove(deviceId)
             deviceStateMap.remove(deviceId)
-            deviceSpeedMap.remove(deviceId)   // [v1.0.51 #3]
+            deviceTurnMap.remove(deviceId); reverseRssiHist.remove(deviceId); reversePrepUntil.remove(deviceId)   // [v1.1.7 #1/#2]
             firebaseLastSaveMap.remove(deviceId)
             rssiPreFilter.clear(deviceId)     // [v1.0.38 클린업] 미추적 기기 EMA 전처리 상태 정리
             medianFilter.clear(deviceId)      // [v1.0.45] Median 윈도우 정리(워밍업 상태 리셋)
@@ -914,11 +944,11 @@ class BleService : LifecycleService() {
         //   기존엔 내 IMU 가 정지면 상대가 누구든 무조건 격하 → 가만히 서 있는 보행자가 움직이는
         //   장비의 접근에도 사이렌(DANGER)을 못 받았다(정지/이동 여부에 따라 기기별로 울림·침묵이
         //   갈리는 비대칭의 직접 원인). 예외(격하 금지): 내가 보행자 + 상대가 장비(지게차/EPJ)
-        //   + 상대가 활동 중(속도>0 또는 비IDLE 상태). 유지(계속 격하): 장비 운전자 폰의 정지 격하
+        //   + 상대가 활동 중(비IDLE 상태). 유지(계속 격하): 장비 운전자 폰의 정지 격하
         //   (주차·대기 중 오발 억제), 보행자끼리 정지 근접(잡담), 주차된 장비(속도0·IDLE) 옆 정지.
         val movingEquipApproach = myCategory == BleConstants.CAT_WALKER &&
             (rCategory == BleConstants.CAT_FORKLIFT || rCategory == BleConstants.CAT_EPJ) &&
-            (remoteSpeedKmh > 0.0 || rState != BleConstants.PSTATE_IDLE)
+            rState != BleConstants.PSTATE_IDLE
         val demoteWhileStationary = ImuFusion.isStationary && !movingEquipApproach
 
         var stableLevel: Int
@@ -1018,7 +1048,7 @@ class BleService : LifecycleService() {
                 suddenLabelMap.remove(deviceId)
                 deviceCategoryMap.remove(deviceId)
                 deviceStateMap.remove(deviceId)
-                deviceSpeedMap.remove(deviceId)   // [v1.0.51 #3]
+                deviceTurnMap.remove(deviceId); reverseRssiHist.remove(deviceId); reversePrepUntil.remove(deviceId)   // [v1.1.7 #1/#2]
                 firebaseLastSaveMap.remove(deviceId)
                 pendingDisplayMap.remove(deviceId)   // [v1.0.49 #3]
                 sendAlertBroadcast(deviceId, BleConstants.LEVEL_SAFE)
@@ -1269,15 +1299,10 @@ class BleService : LifecycleService() {
         }
         val approachStreakMs = if (kfApproaching) now - (approachStreakStartMap[deviceId] ?: now) else 0L
 
-        // [v1.0.36] 충돌 기하학 — 합산 접근속도(km/h)를 dBm/s 로 환산해 실제 kfVel 과 대조.
-        // [v1.0.39] EPJ 3km/h cap — 내가 EPJ면 내 속도를, 상대가 EPJ면 상대 속도를 3km/h 로 가정해
-        //   합산 접근속도를 과대추정하지 않도록 양단 모두 제한한다.
-        val mySpeedKmh      = (if (myCategory == BleConstants.CAT_EPJ)
-                                  minOf(ImuFusion.estimatedSpeedKmh, BleConstants.EPJ_MAX_SPEED_KMH.toFloat())
-                              else ImuFusion.estimatedSpeedKmh).toDouble()
-        val remoteSpeedCap  = if (rCategory == BleConstants.CAT_EPJ)
-                                  minOf(remoteSpeedKmh, BleConstants.EPJ_MAX_SPEED_KMH) else remoteSpeedKmh
-        val closingSpeedKmh = mySpeedKmh + remoteSpeedCap                      // 예상 최대 접근속도(km/h)
+        // [v1.0.36→v1.1.7 #1] 충돌 기하학 — 속도 비트 제거로 합산 접근속도를 산출할 수 없다.
+        //   closingSpeedKmh=0 → geometryValid=false → 기하학 필터 자동 비활성, 순수 Time-Gate 동작.
+        //   (회전 2비트는 방향 표시용일 뿐 접근속도 추정엔 쓰지 않는다.)
+        val closingSpeedKmh = 0.0                                             // 예상 최대 접근속도(km/h) — 미산출
         val expectedKfVel   = closingSpeedKmh * CLOSING_KMH_TO_DBMS            // → 예상 RSSI 접근속도(dBm/s)
         val closingRatio    = if (expectedKfVel > 0.01) kfVel / expectedKfVel else 0.0
         val geometryValid   = closingSpeedKmh >= COLLISION_MIN_CLOSING_KMH     // 양쪽 거의 정지면 판정 불가
@@ -1578,18 +1603,19 @@ class BleService : LifecycleService() {
     /**
      * v1.0.34 평상(NORMAL) 접근 표시문자열.
      *   ※ 특수상태(후진·하역)는 suddenLabelMap(makeStateLabel)이 우선하며, 이 함수는 그 폴백.
-     *   [v1.0.51 #3] 이동 판정을 STATE 단독 → 'STATE!=IDLE 또는 수신 속도>0' 으로 확장하고
-     *     문구를 이동="{이름}이(가) 이동 중입니다." / 정지="{이름}이(가) 주변에 있습니다." 로 통일.
-     *     (구: 정지='주변에 대기 중입니다' / 이동=EPJ만 '접근 중!'·그 외 '{이름} ({역할})'.
-     *      송신측 STATE 가 고착되면 이동 중에도 '대기 중'으로 보이던 문제 — 속도 비트는
-     *      1.5초 폴링으로 갱신돼 더 신선하므로 둘 중 하나만 이동을 가리켜도 '이동 중' 표기.)
+     *   [v1.0.51 #3→v1.1.7 #1] 이동 판정은 STATE 기준(STATE!=IDLE=이동). 속도 비트 제거로
+     *     문구는 이동="{이름}이(가) 이동 중입니다." / 정지="{이름}이(가) 주변에 있습니다." 로 통일.
+     *   [v1.1.7 #2] reversePrepUntil latch 가 살아있으면 "후진(전진)을 대비해주세요 · {기본문구}" 로 선두 안내.
      */
     private fun makeApproachLabel(deviceId: String): String {
         val name = extractDisplayName(deviceId)
-        val moving = (deviceStateMap[deviceId] ?: BleConstants.PSTATE_IDLE) != BleConstants.PSTATE_IDLE ||
-                     (deviceSpeedMap[deviceId] ?: 0.0) > 0.0
-        return if (moving) "${name}이(가) 이동 중입니다."
-               else        "${name}이(가) 주변에 있습니다."
+        val moving = (deviceStateMap[deviceId] ?: BleConstants.PSTATE_IDLE) != BleConstants.PSTATE_IDLE
+        val base = if (moving) "${name}이(가) 이동 중입니다."
+                   else        "${name}이(가) 주변에 있습니다."
+        // [v1.1.7 #2] 후진(전진) 대비 latch 가 살아있으면 안내문을 선두에 덧붙인다(RSSI 추세 반전 감지).
+        return if ((reversePrepUntil[deviceId] ?: 0L) > System.currentTimeMillis())
+                   "후진(전진)을 대비해주세요 · $base"
+               else base
     }
 
     /**
@@ -1684,7 +1710,7 @@ class BleService : LifecycleService() {
 
     /**
      * 내 장비(Local) 상태 스냅샷 갱신 + 전파.
-     *   bleAdvertiser 가 '실제 송출 중'인 category/state/speed 를 읽어 직렬화한다(필드 구분 U+001F).
+     *   bleAdvertiser 가 '실제 송출 중'인 category/state/turn 을 읽어 직렬화한다(필드 구분 U+001F).
      *   값 변화가 있을 때만 브로드캐스트(중복 억제). 폴백용 static localSnapshot 은 항상 최신으로 유지.
      *   ※ 이 함수는 오직 내 송출 상태에서만 값을 만든다 — 상대 페이로드(Target)가 끼어들 여지가 구조적으로 없다.
      */
@@ -1692,8 +1718,8 @@ class BleService : LifecycleService() {
         val adv = bleAdvertiser
         val cat = adv?.txCategory ?: myCategory
         val st  = adv?.txState   ?: BleConstants.PSTATE_IDLE
-        val sp  = adv?.txSpeedKmh ?: 0.0
-        val snap = "$cat${31.toChar()}$st${31.toChar()}${"%.1f".format(sp)}"
+        val turn = adv?.txTurnDir ?: BleConstants.TURN_STRAIGHT
+        val snap = "$cat${31.toChar()}$st${31.toChar()}$turn"
         localSnapshot = snap
         if (snap == lastLocalSnapshot) return
         lastLocalSnapshot = snap
@@ -1821,7 +1847,7 @@ class BleService : LifecycleService() {
         suddenLabelMap.clear()
         deviceCategoryMap.clear()
         deviceStateMap.clear()
-        deviceSpeedMap.clear()   // [v1.0.51 #3]
+        deviceTurnMap.clear(); reverseRssiHist.clear(); reversePrepUntil.clear()   // [v1.1.7 #1/#2]
         broadcastDeviceList(force = true)   // [v1.0.26 Req2] 서비스 중지 → 빈 목록 송출('감지 없음' 반영)
         localSnapshot = ""; lastLocalSnapshot = ""   // [v1.0.42 Req2] 내 장비(Local) 스냅샷 초기화
         rssiPreFilter.clearAll()

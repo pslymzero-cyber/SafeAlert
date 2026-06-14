@@ -552,6 +552,83 @@
             </LinearLayout>
         </androidx.cardview.widget.CardView>
 
+        <!-- [v1.1.7 #2] 후진(전진) 대비 감지 -->
+        <TextView android:text="후진(전진) 대비 감지" android:textStyle="bold" android:textSize="16sp"
+            android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="16dp"/>
+        <androidx.cardview.widget.CardView
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginTop="8dp">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="vertical" android:padding="16dp">
+
+                <!-- 감지 on/off -->
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
+                    <TextView android:text="후진(전진) 대비 감지 사용" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"/>
+                    <Switch android:id="@+id/switch_reverse_prep" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                </LinearLayout>
+                <TextView android:text="접근 중인 차량 신호가 정체/약화 상태에서 약 1초 내 갑자기 강해지면 '후진(전진)을 대비해주세요'를 표시합니다."
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:textSize="11sp" android:textColor="#9CA3AF" android:layout_marginTop="2dp"/>
+
+                <!-- 반전 상승폭 -->
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="12dp">
+                    <TextView android:text="반전 상승폭 (dB)" android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
+                    <TextView android:id="@+id/tv_reverse_rise_val" android:layout_width="64dp" android:layout_height="wrap_content"
+                        android:gravity="end" android:textSize="13sp" android:textColor="#374151"/>
+                </LinearLayout>
+                <SeekBar android:id="@+id/seek_reverse_rise" android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp" android:max="18"/>
+                <TextView android:text="유효 2~20 dB (추천 6). 윈도 전반 최저점 대비 현재 신호가 이만큼 강해지면 후보. 낮출수록 민감(오탐↑)."
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:textSize="11sp" android:textColor="#9CA3AF"/>
+
+                <!-- 관측 윈도 -->
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="10dp">
+                    <TextView android:text="추세 관측 윈도 (ms)" android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
+                    <TextView android:id="@+id/tv_reverse_window_val" android:layout_width="64dp" android:layout_height="wrap_content"
+                        android:gravity="end" android:textSize="13sp" android:textColor="#374151"/>
+                </LinearLayout>
+                <SeekBar android:id="@+id/seek_reverse_window" android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp" android:max="25"/>
+                <TextView android:text="유효 500~3000 ms (추천 1200). 이 구간을 시간 기준 전/후반으로 나눠 반전을 판정합니다."
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:textSize="11sp" android:textColor="#9CA3AF"/>
+
+                <!-- 전반 안정 허용치 -->
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="10dp">
+                    <TextView android:text="전반 안정 허용치 (dB)" android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
+                    <TextView android:id="@+id/tv_reverse_stabletol_val" android:layout_width="64dp" android:layout_height="wrap_content"
+                        android:gravity="end" android:textSize="13sp" android:textColor="#374151"/>
+                </LinearLayout>
+                <SeekBar android:id="@+id/seek_reverse_stabletol" android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp" android:max="10"/>
+                <TextView android:text="유효 0~10 dB (추천 2). 전반부 변화량이 이하라야 '정체/약화'로 인정 — 단조 접근은 자동 제외됩니다."
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:textSize="11sp" android:textColor="#9CA3AF"/>
+
+                <!-- 라벨 유지 -->
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="10dp">
+                    <TextView android:text="감지 후 라벨 유지 (ms)" android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
+                    <TextView android:id="@+id/tv_reverse_hold_val" android:layout_width="64dp" android:layout_height="wrap_content"
+                        android:gravity="end" android:textSize="13sp" android:textColor="#374151"/>
+                </LinearLayout>
+                <SeekBar android:id="@+id/seek_reverse_hold" android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp" android:max="9"/>
+                <TextView android:text="유효 1000~10000 ms (추천 4000). 감지 시점부터 이 시간 동안 경고 라벨을 유지합니다."
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:textSize="11sp" android:textColor="#9CA3AF"/>
+
+            </LinearLayout>
+        </androidx.cardview.widget.CardView>
+
         <!-- 버튼 -->
         <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
             android:orientation="horizontal" android:layout_marginTop="24dp">

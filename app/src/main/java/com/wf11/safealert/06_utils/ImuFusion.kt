@@ -57,11 +57,13 @@ object ImuFusion {
     private const val CORNERING_RATE_THRESHOLD = 60f
     // [v1.0.36] 코너링 회전율 EMA 평활 계수(노이즈 억제). 1에 가까울수록 즉응, 0이면 둔감.
     private const val TURN_RATE_EMA          = 0.4f
-    // [v1.0.36] 예상속도 환산 계수 — motionScore(가속도 RMS, m/s²) → km/h 거친 비례 매핑.
-    //   보행 RMS≈1.0 → ~4km/h, 빠른이동 RMS≈2.5 → ~10km/h. 정밀 속도계 아님(예상치).
-    private const val SPEED_ACCEL_TO_KMH     = 4.0f
-    // [v1.0.36] 예상속도 송출 상한 (BleConstants.SPEED_MAX_KMH 와 일치)
-    private const val EST_SPEED_MAX_KMH      = 15f
+    // [v1.1.7 #1] 회전 방향 송출 임계(deg/s) — heading 변화율 절댓값이 이 값 이상이면 좌/우 회전 판정.
+    //   코너링 임계(60°/s)보다 낮춰 완만한 차선변경·회전 진입도 조기 송출(상대 표시·경보 대비).
+    private const val TURN_DETECT_THRESHOLD  = 20f
+    // [v1.1.7 #1] BleConstants TURN_* 로컬 미러 (ImuFusion 는 BleConstants 를 import 하지 않음).
+    private const val TURN_STRAIGHT = 0b00
+    private const val TURN_LEFT     = 0b01
+    private const val TURN_RIGHT    = 0b10
 
     private var sensorManager: SensorManager? = null
     @Volatile private var isRunning = false
@@ -278,17 +280,21 @@ object ImuFusion {
         }
 
     /**
-     * v1.0.36 예상 진행속도(km/h, 0~15) — 가속도 RMS(motionScore) 기반 거친 추정값.
-     *   실내 GPS 음영 환경이라 정확한 속도계가 없어, IMU 진동 강도를 속도로 비례 환산한다.
-     *   확정 정지면 0, 그 외엔 motionScore×SPEED_ACCEL_TO_KMH 를 0~EST_SPEED_MAX_KMH 로 clamp.
-     *   BleAdvertiser.updateSpeed() 로 송출 → 수신단 충돌 기하학 필터의 '합산 접근속도' 재료.
-     *   ※ 정밀 속도계가 아닌 '예상치'. 충돌 판정은 이 값과 RSSI 미분을 비율로만 대조한다.
+     * [v1.1.7 #1] 회전 방향(TURN_*) — GAME_ROTATION_VECTOR 방위각 미분(turnRateDegPerSec) 기반.
+     *   게임회전벡터 미지원(hasGameRotation=false)이면 직진으로 폴백(오검출 방지).
+     *   |회전율| ≥ TURN_DETECT_THRESHOLD 일 때만 좌/우 판정. 부호는 장착 방향 의존 → 현장 검증.
+     *   (시계방향/우회전을 양수로 가정; 반대면 아래 부호만 뒤집으면 됨)
+     *   BleAdvertiser.updateTurn() 로 송출 → 수신단이 상대 회전 진입 표시·경보에 활용.
      */
-    val estimatedSpeedKmh: Float
-        get() = if (isStationary) 0f
-                else (motionScore * SPEED_ACCEL_TO_KMH).coerceIn(0f, EST_SPEED_MAX_KMH)
+    val turnDirection: Int
+        get() = when {
+            !hasGameRotation                            -> TURN_STRAIGHT
+            turnRateDegPerSec >=  TURN_DETECT_THRESHOLD -> TURN_RIGHT
+            turnRateDegPerSec <= -TURN_DETECT_THRESHOLD -> TURN_LEFT
+            else                                        -> TURN_STRAIGHT
+        }
 
     fun debugString(): String =
-        "score=%.2f isStationary=$isStationary Q×=%.1f turn=%.0f°/s spd=%.1fkm/h".format(
-            motionScore, adaptiveQFactor, turnRateDegPerSec, estimatedSpeedKmh)
+        "score=%.2f isStationary=$isStationary Q×=%.1f turn=%.0f°/s dir=%d".format(
+            motionScore, adaptiveQFactor, turnRateDegPerSec, turnDirection)
 }

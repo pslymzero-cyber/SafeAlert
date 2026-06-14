@@ -120,8 +120,10 @@ object DevSettings {
         get() = prefs.getInt(KEY_RSSI_DANGER, DEFAULT_RSSI_DANGER_ABS).coerceIn(RSSI_THRESH_MIN, RSSI_THRESH_MAX)
         set(v) = prefs.edit().putInt(KEY_RSSI_DANGER, v.coerceIn(RSSI_THRESH_MIN, RSSI_THRESH_MAX)).apply()
 
+    // [v1.1.7 #3] 기본 스캔 주기 3000ms→1000ms. BleScanner.mapScanMode 가 ≤1000ms 를
+    //   LOW_LATENCY(거의 연속 스캔)로 매핑 → 감지 blind window 제거(알람 지연/누락 방지).
     var scanPeriodMs: Long
-        get() = prefs.getLong(KEY_SCAN_PERIOD_MS, 3000L)
+        get() = prefs.getLong(KEY_SCAN_PERIOD_MS, 1000L)
         set(v) = prefs.edit().putLong(KEY_SCAN_PERIOD_MS, v).apply()
 
     var advertiseInterval: Int
@@ -362,6 +364,44 @@ object DevSettings {
     var speedPushIntervalMs: Long
         get() = prefs.getLong(KEY_SPEED_PUSH_INTERVAL_MS, DEFAULT_SPEED_PUSH_INTERVAL_MS).coerceIn(500L, 10_000L)
         set(v) = prefs.edit().putLong(KEY_SPEED_PUSH_INTERVAL_MS, v.coerceIn(500L, 10_000L)).apply()
+
+    // ===== [v1.1.7 #2] 후진(전진) 대비 — RX측 RSSI 추세 반전 감지 =====
+    //   접근 중인 차량 A의 신호가 '정체/약화' 상태에서 ~1초 내 갑자기 강해지면
+    //   상대 차량의 후진(또는 정지 후 전진) 출발로 보고 "후진(전진)을 대비해주세요" 표시.
+
+    // 감지 on/off
+    private const val KEY_REVERSE_PREP_ENABLED = "reverse_prep_enabled"
+    var reversePrepEnabled: Boolean
+        get() = prefs.getBoolean(KEY_REVERSE_PREP_ENABLED, true)
+        set(v) = prefs.edit().putBoolean(KEY_REVERSE_PREP_ENABLED, v).apply()
+
+    // 반전 트리거 상승폭(dB) — 윈도 전반 최저점 대비 현재 avg1sec 가 이만큼 강해지면 후보
+    private const val KEY_REVERSE_RISE_DBM = "reverse_rise_dbm"
+    const val DEFAULT_REVERSE_RISE_DBM = 6
+    var reverseRiseDbm: Int
+        get() = prefs.getInt(KEY_REVERSE_RISE_DBM, DEFAULT_REVERSE_RISE_DBM).coerceIn(2, 20)
+        set(v) = prefs.edit().putInt(KEY_REVERSE_RISE_DBM, v.coerceIn(2, 20)).apply()
+
+    // 추세 관측 윈도(ms) — 이 구간을 시간 기준 전/후반으로 나눠 반전 판정
+    private const val KEY_REVERSE_WINDOW_MS = "reverse_window_ms"
+    const val DEFAULT_REVERSE_WINDOW_MS = 1200L
+    var reverseWindowMs: Long
+        get() = prefs.getLong(KEY_REVERSE_WINDOW_MS, DEFAULT_REVERSE_WINDOW_MS).coerceIn(500L, 3000L)
+        set(v) = prefs.edit().putLong(KEY_REVERSE_WINDOW_MS, v.coerceIn(500L, 3000L)).apply()
+
+    // 전반 추세 안정 허용치(dB) — 전반부 변화량이 이하라야 '정체/약화'로 인정(단조 접근 자동 제외)
+    private const val KEY_REVERSE_STABLE_TOL_DB = "reverse_stable_tol_db"
+    const val DEFAULT_REVERSE_STABLE_TOL_DB = 2
+    var reverseStableTolDb: Int
+        get() = prefs.getInt(KEY_REVERSE_STABLE_TOL_DB, DEFAULT_REVERSE_STABLE_TOL_DB).coerceIn(0, 10)
+        set(v) = prefs.edit().putInt(KEY_REVERSE_STABLE_TOL_DB, v.coerceIn(0, 10)).apply()
+
+    // 감지 후 라벨 유지(ms) — 트리거 시점부터 이 시간 동안 "후진(전진) 대비" 라벨 유지
+    private const val KEY_REVERSE_PREP_HOLD_MS = "reverse_prep_hold_ms"
+    const val DEFAULT_REVERSE_PREP_HOLD_MS = 4000L
+    var reversePrepHoldMs: Long
+        get() = prefs.getLong(KEY_REVERSE_PREP_HOLD_MS, DEFAULT_REVERSE_PREP_HOLD_MS).coerceIn(1000L, 10_000L)
+        set(v) = prefs.edit().putLong(KEY_REVERSE_PREP_HOLD_MS, v.coerceIn(1000L, 10_000L)).apply()
 
     fun toDebugString(): String =
         "rssiWarning=$rssiWarning | rssiDanger=$rssiDanger | scanPeriod=${scanPeriodMs}ms | " +

@@ -108,17 +108,17 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
                 val rssi       = result.rssi
                 val alertLevel = calcAlertLevel(rssi)
 
-                // [v1.0.36 1바이트 페이로드 복구] 상대 ServiceData 1바이트 → Category/State/Speed 해독.
-                //   v1.0.35 방위각(Byte 2)은 지자기 교란으로 롤백. 이제 Speed 4비트로 상대 예상속도 수신.
-                //   미지원(비콘/구버전): 바이트 부재 → 0x00(정지)·속도 0.0(충돌 기하 판정서 안전 제외).
+                // [v1.1.7 #1 1바이트 페이로드] 상대 ServiceData 1바이트 → Category/State/Turn 해독.
+                //   기존 Speed 4비트(bits 3:0) 폐기 → Turn 2비트(bits 3:2)로 상대 회전 방향 수신.
+                //   미지원(비콘/구버전): 바이트 부재 → 0x00(정지)·직진(TURN_STRAIGHT).
                 val svcData       = record.getServiceData(SERVICE_DATA_UUID)
                 val payloadByte   = svcData?.getOrNull(0)?.toInt()?.and(0xFF)
                 val remoteState   = payloadByte ?: BleConstants.MOTION_STATE_STATIONARY
-                val remoteSpeed   = if (payloadByte != null) BleConstants.decodeSpeedKmh(payloadByte) else 0.0
+                val remoteTurn    = if (payloadByte != null) BleConstants.decodeTurn(payloadByte) else BleConstants.TURN_STRAIGHT
 
                 BleService.safeAlertFound++
                 detectedDevices[fullId] = System.currentTimeMillis()
-                scanCallback?.onDeviceDetected(fullId, rssi, alertLevel, remoteState, remoteSpeed)
+                scanCallback?.onDeviceDetected(fullId, rssi, alertLevel, remoteState, remoteTurn)
 
                 // UWB 주소 스캔 응답 파싱 (지원 기기 한정)
                 val uwbData = record.getManufacturerSpecificData(BleConstants.COMPANY_ID_UWB_EXT)

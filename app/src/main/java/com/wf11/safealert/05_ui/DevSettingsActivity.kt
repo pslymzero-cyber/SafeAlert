@@ -76,8 +76,19 @@ class DevSettingsActivity : AppCompatActivity() {
         binding.etStaleMs.setText(DevSettings.signalStaleMs.toString())
         binding.etFbThrottle.setText(DevSettings.firebaseThrottleMs.toString())
         binding.etSpeedPush.setText(DevSettings.speedPushIntervalMs.toString())
+        // [v1.1.7 #2] 후진(전진) 대비 감지 — Switch + 슬라이더(추천값 기본)
+        binding.switchReversePrep.isChecked      = DevSettings.reversePrepEnabled
+        binding.seekReverseRise.progress         = DevSettings.reverseRiseDbm - 2
+        binding.tvReverseRiseVal.text            = "${DevSettings.reverseRiseDbm} dB"
+        binding.seekReverseWindow.progress       = ((DevSettings.reverseWindowMs - 500L) / 100L).toInt()
+        binding.tvReverseWindowVal.text          = "${DevSettings.reverseWindowMs} ms"
+        binding.seekReverseStabletol.progress    = DevSettings.reverseStableTolDb
+        binding.tvReverseStabletolVal.text       = "${DevSettings.reverseStableTolDb} dB"
+        binding.seekReverseHold.progress         = ((DevSettings.reversePrepHoldMs - 1000L) / 1000L).toInt()
+        binding.tvReverseHoldVal.text            = "${DevSettings.reversePrepHoldMs} ms"
         updateDebugBadge()
         updateSimRssiEnabled()
+        updateReversePrepEnabled()
     }
 
     private fun setupListeners() {
@@ -90,6 +101,20 @@ class DevSettingsActivity : AppCompatActivity() {
         binding.switchDebug.setOnCheckedChangeListener { _, _ ->
             updateDebugBadge(); updateSimRssiEnabled()
         }
+        // [v1.1.7 #2] 후진(전진) 대비 슬라이더 — progress↔실제값 변환 후 라벨 갱신
+        binding.seekReverseRise.setOnSeekBarChangeListener(seekListener { v ->
+            binding.tvReverseRiseVal.text = "${v + 2} dB"
+        })
+        binding.seekReverseWindow.setOnSeekBarChangeListener(seekListener { v ->
+            binding.tvReverseWindowVal.text = "${v * 100 + 500} ms"
+        })
+        binding.seekReverseStabletol.setOnSeekBarChangeListener(seekListener { v ->
+            binding.tvReverseStabletolVal.text = "$v dB"
+        })
+        binding.seekReverseHold.setOnSeekBarChangeListener(seekListener { v ->
+            binding.tvReverseHoldVal.text = "${v * 1000 + 1000} ms"
+        })
+        binding.switchReversePrep.setOnCheckedChangeListener { _, _ -> updateReversePrepEnabled() }
         binding.btnSave.setOnClickListener { saveValues() }
         binding.btnReset.setOnClickListener { resetValues() }
 
@@ -144,6 +169,12 @@ class DevSettingsActivity : AppCompatActivity() {
         DevSettings.signalStaleMs          = binding.etStaleMs.text.toString().toLongOrNull() ?: DevSettings.signalStaleMs
         DevSettings.firebaseThrottleMs     = binding.etFbThrottle.text.toString().toLongOrNull() ?: DevSettings.firebaseThrottleMs
         DevSettings.speedPushIntervalMs    = binding.etSpeedPush.text.toString().toLongOrNull() ?: DevSettings.speedPushIntervalMs
+        // [v1.1.7 #2] 후진(전진) 대비 — progress→실제값(setter 가 범위 clamp)
+        DevSettings.reversePrepEnabled     = binding.switchReversePrep.isChecked
+        DevSettings.reverseRiseDbm         = binding.seekReverseRise.progress + 2
+        DevSettings.reverseWindowMs        = (binding.seekReverseWindow.progress * 100L + 500L)
+        DevSettings.reverseStableTolDb     = binding.seekReverseStabletol.progress
+        DevSettings.reversePrepHoldMs      = (binding.seekReverseHold.progress * 1000L + 1000L)
         loadValues()   // 저장 직후 재로드 — clamp 적용된 실제 저장값을 입력란에 반영
 
         Toast.makeText(this, "설정이 저장되었습니다\n변경 사항은 다음 스캔 사이클부터 적용됩니다",
@@ -166,6 +197,17 @@ class DevSettingsActivity : AppCompatActivity() {
         binding.seekSimRssi.alpha = if (enabled) 1f else 0.4f
     }
 
+    // [v1.1.7 #2] 후진 대비 스위치 OFF → 하위 슬라이더 4종 비활성·흐리게
+    private fun updateReversePrepEnabled() {
+        val enabled = binding.switchReversePrep.isChecked
+        val a = if (enabled) 1f else 0.4f
+        for (sb in arrayOf(binding.seekReverseRise, binding.seekReverseWindow,
+                           binding.seekReverseStabletol, binding.seekReverseHold)) {
+            sb.isEnabled = enabled
+            sb.alpha = a
+        }
+    }
+
     override fun onSupportNavigateUp(): Boolean { finish(); return true }
 
     // Spinner 인덱스 헬퍼
@@ -174,25 +216,29 @@ class DevSettingsActivity : AppCompatActivity() {
     private val vibWarningValues = longArrayOf(300, 500, 1000)
     private val vibCountValues   = intArrayOf(1, 3, 5)
 
-    private fun scanPeriodIndex(v: Long)  = scanPeriodValues.indexOfFirst { it == v }.coerceAtLeast(2)
-    private fun advertiseIndex(v: Int)    = advertiseValues.indexOfFirst { it == v }.coerceAtLeast(1)
-    private fun vibWarningIndex(v: Long)  = vibWarningValues.indexOfFirst { it == v }.coerceAtLeast(1)
-    private fun vibCountIndex(v: Int)     = vibCountValues.indexOfFirst { it == v }.coerceAtLeast(1)
+    // [v1.1.7 #3] coerceAtLeast 버그 수정: indexOfFirst 가 유효한 낮은 인덱스(0·1)를 반환해도
+    //   기본 인덱스로 강제 승격돼, 빠른 스캔(1000ms·idx0)·짧은 진동 선택이 느린 값으로 되돌아가던
+    //   문제. '못 찾음(-1)'일 때만 기본 인덱스로 폴백하도록 교정.
+    private fun scanPeriodIndex(v: Long)  = scanPeriodValues.indexOfFirst { it == v }.let { if (it < 0) 0 else it }
+    private fun advertiseIndex(v: Int)    = advertiseValues.indexOfFirst { it == v }.let { if (it < 0) 1 else it }
+    private fun vibWarningIndex(v: Long)  = vibWarningValues.indexOfFirst { it == v }.let { if (it < 0) 1 else it }
+    private fun vibCountIndex(v: Int)     = vibCountValues.indexOfFirst { it == v }.let { if (it < 0) 1 else it }
 
-    // 판정 파라미터 소수 항목 — 5단계 민감도 프리셋 (arrays.xml 라벨과 순서 일치, [2]=보통=기본값)
-    private val ttcPresets         = doubleArrayOf(5.0, 4.0, 3.0, 2.0, 1.0)
-    private val approachVelPresets = doubleArrayOf(0.2, 0.3, 0.5, 1.0, 1.5)
-    private val gateVelPresets     = doubleArrayOf(0.2, 0.3, 0.5, 1.0, 1.5)
-    private val closingPresets     = doubleArrayOf(0.2, 0.35, 0.5, 0.8, 1.2)
-    private val headOnPresets      = doubleArrayOf(0.4, 0.5, 0.6, 0.7, 0.8)
-    private val sidePresets        = doubleArrayOf(0.1, 0.2, 0.3, 0.4, 0.5)
-    private val emaRisePresets     = doubleArrayOf(0.6, 0.45, 0.3, 0.2, 0.1)
-    private val emaFallPresets     = doubleArrayOf(0.2, 0.1, 0.05, 0.03, 0.01)
-    private val emaDBoostPresets   = doubleArrayOf(0.7, 0.55, 0.4, 0.25, 0.1)
+    // 판정 파라미터 소수 항목 — [v1.1.7 #4] 5단계→9단계 민감도 프리셋 (arrays.xml 라벨과 순서 일치).
+    //   중심 [4]=보통=기본값. 각 배열 index4 는 기존 5단계의 기본값([2])과 동일 → 회귀 없음.
+    private val ttcPresets         = doubleArrayOf(5.0, 4.5, 4.0, 3.5, 3.0, 2.5, 2.0, 1.5, 1.0)
+    private val approachVelPresets = doubleArrayOf(0.2, 0.25, 0.3, 0.4, 0.5, 0.7, 1.0, 1.25, 1.5)
+    private val gateVelPresets     = doubleArrayOf(0.2, 0.25, 0.3, 0.4, 0.5, 0.7, 1.0, 1.25, 1.5)
+    private val closingPresets     = doubleArrayOf(0.2, 0.3, 0.35, 0.42, 0.5, 0.65, 0.8, 1.0, 1.2)
+    private val headOnPresets      = doubleArrayOf(0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8)
+    private val sidePresets        = doubleArrayOf(0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5)
+    private val emaRisePresets     = doubleArrayOf(0.6, 0.52, 0.45, 0.37, 0.3, 0.25, 0.2, 0.15, 0.1)
+    private val emaFallPresets     = doubleArrayOf(0.2, 0.15, 0.1, 0.07, 0.05, 0.04, 0.03, 0.02, 0.01)
+    private val emaDBoostPresets   = doubleArrayOf(0.7, 0.62, 0.55, 0.47, 0.4, 0.32, 0.25, 0.17, 0.1)
 
-    // 저장값과 가장 가까운 프리셋 단계 선택 (프리셋 외 값이 저장돼 있어도 안전)
+    // 저장값과 가장 가까운 프리셋 단계 선택 (프리셋 외 값이 저장돼 있어도 안전). 폴백=중심 index4.
     private fun presetIndex(presets: DoubleArray, v: Double) =
-        presets.indices.minByOrNull { kotlin.math.abs(presets[it] - v) } ?: 2
+        presets.indices.minByOrNull { kotlin.math.abs(presets[it] - v) } ?: 4
 
     private fun seekListener(onChange: (Int) -> Unit) = object : android.widget.SeekBar.OnSeekBarChangeListener {
         override fun onProgressChanged(sb: android.widget.SeekBar, v: Int, b: Boolean) = onChange(v)

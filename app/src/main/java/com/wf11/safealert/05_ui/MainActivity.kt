@@ -346,27 +346,27 @@ class MainActivity : AppCompatActivity() {
 
     /**
      * [v1.0.42 Req2] 내 장비(Local) 스냅샷 파서 — BleService.localSnapshot / EXTRA_LOCAL_STATE 전용.
-     *   형식: "category / state / speedKmh" (U+001F 필드 구분, BleService.broadcastLocalState 와 동일).
+     *   형식: "category / state / turnDir" (U+001F 필드 구분, BleService.broadcastLocalState 와 동일).
      *   수신 타겟 파서(applyDeviceListSnapshot)와 의도적으로 분리 — 두 채널이 절대 섞이지 않는다.
      */
     private fun parseLocalSnapshot(raw: String): LocalState? {
         if (raw.isEmpty()) return null
         val f = raw.split(31.toChar())   // U+001F 필드 구분자
         if (f.size < 3) return null
-        val cat = f[0].toIntOrNull() ?: return null
-        val st  = f[1].toIntOrNull() ?: return null
-        val sp  = f[2].toDoubleOrNull() ?: 0.0
-        return LocalState(cat, st, sp)
+        val cat     = f[0].toIntOrNull() ?: return null
+        val st      = f[1].toIntOrNull() ?: return null
+        val turnDir = f[2].toIntOrNull() ?: BleConstants.TURN_STRAIGHT   // [v1.1.7 #1] 속도→회전
+        return LocalState(cat, st, turnDir)
     }
 
     /**
-     * [v1.0.42 Req2] 내 장비(Local) 상태/속도를 tv_local_state 에만 출력.
-     *   역할(Category)은 tv_running_mode(roleDisplayName)가 담당 → 여기선 상태·속도만 표시(중복 방지).
+     * [v1.0.42 Req2→v1.1.7 #1] 내 장비(Local) 상태/회전을 tv_local_state 에만 출력.
+     *   역할(Category)은 tv_running_mode(roleDisplayName)가 담당 → 여기선 상태·회전만 표시(중복 방지).
      *   이 메서드는 tv_ble_status(수신 타겟)·detectedDevices 를 절대 건드리지 않는다.
      */
     private fun updateLocalDisplay(local: LocalState) {
         binding.tvLocalState.text =
-            "상태: ${local.stateLabel} · 속도: ${local.speedKmh.toInt()} km/h"
+            "상태: ${local.stateLabel} · 회전: ${local.turnLabel}"
     }
 
     /**
@@ -657,7 +657,7 @@ class MainActivity : AppCompatActivity() {
         binding.layoutPermissionWarning.visibility = View.GONE
         updateDetectedDisplay()  // 초기 안내("감지 기기 없음") 표시
         // [v1.0.42 Req2] 내 장비 상태 라인 초기화 — 서비스 첫 localSnapshot 수신 전 기본값.
-        binding.tvLocalState.text = "상태: 정지·일반 · 속도: 0 km/h"
+        binding.tvLocalState.text = "상태: 정지·일반 · 회전: 직진"
         lastLocalSnapshot = ""
         binding.tvRunningMode.text  = roleDisplayName(currentCategory)   // [v1.0.34] 3-Role 라벨
         binding.tvRunningSince.text = SimpleDateFormat("HH:mm 시작", Locale.KOREA).format(Date(since))

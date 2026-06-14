@@ -22,7 +22,9 @@ object BleConstants {
     //   DevSettings 초기화 전 runCatching 폴백 전용이라 같은 값으로 정렬한다(불일치 해소).
     const val DEFAULT_RSSI_WARNING       = -75
     const val DEFAULT_RSSI_DANGER        = -55
-    const val DEFAULT_SCAN_PERIOD_MS     = 3000L
+    // [v1.1.7 #3] 3000ms→1000ms: BleScanner.mapScanMode 가 ≤1000ms 를 LOW_LATENCY(연속 스캔)로
+    //   매핑 → 감지 blind window 제거(알람 지연/누락 방지). DevSettings.scanPeriodMs 기본값과 일치.
+    const val DEFAULT_SCAN_PERIOD_MS     = 1000L
     const val DEFAULT_ADVERTISE_INTERVAL = 200
 
     val rssiWarning: Int       get() = runCatching { DevSettings.rssiWarning }.getOrDefault(DEFAULT_RSSI_WARNING)
@@ -49,12 +51,13 @@ object BleConstants {
     //   사용처(BleService 특수경보 분기)에서 BleConstants.rssiDanger 를 직접 참조한다.
 
     // ───────────────────────────────────────────────────────────────
-    // [v1.0.34 다이나믹 페이로드 — 1Byte 비트패킹 프로토콜 (2-2-4 Split)]
-    //   ServiceData 1바이트를 3개 필드로 분할 패킹/언패킹한다.
+    // [v1.1.7 #1 다이나믹 페이로드 — 1Byte 비트패킹 프로토콜 (2-2-2-2 Split)]
+    //   ServiceData 1바이트를 4개 필드로 분할 패킹/언패킹한다.
+    //   [v1.1.7 #1] SPEED(4bit) 폐기 → TURN(회전, 2bit) 탑재. 하위 2bit는 예약.
     //
-    //   Bit:  7  6 | 5  4 | 3  2  1  0
-    //         [ CAT ]|[STATE]|[   SPEED   ]
-    //          2bit    2bit    4bit(0~15)
+    //   Bit:  7  6 | 5  4 | 3  2 | 1  0
+    //         [ CAT ]|[STATE]|[TURN]|[RSV]
+    //          2bit    2bit    2bit   2bit
     //
     //   CAT  (Category, 송신자 역할 — bits 7:6):
     //     00 보행자(WALKER) / 01 EPJ / 10 지게차·리치·오더피커(FORKLIFT) / 11 예약
@@ -63,12 +66,13 @@ object BleConstants {
     //     01 전진·주행(FORWARD)   - 평상 주행(특수경보 아님)
     //     10 후진(REVERSE)        - 특수경보 트리거
     //     11 하역·작업(LOADING)   - 특수경보 트리거 / 지게차는 '상부 고소 작업'
-    //   SPEED (bits 3:0): 0~15 km/h 를 1km/h 단위로 양자화 → 코드 0~15 (4비트 full).
-    //          공식: encode = (kmh / 1.0).toInt(),  decode = code * 1.0 (km/h).
-    //          [v1.0.36] 송신단(ImuFusion.estimatedSpeedKmh, 가속도 RMS 기반 예상속도)이
-    //          실시간 송출 → 수신단 '충돌 기하학 필터'가 합산 접근속도 산출에 사용한다.
+    //   TURN (회전 방향 — bits 3:2) [v1.1.7 #1 신설, 기존 SPEED 4bit 대체]:
+    //     00 직진(STRAIGHT) / 01 좌회전(LEFT) / 10 우회전(RIGHT) / 11 예약
+    //          송신단(ImuFusion.turnDirection, GAME_ROTATION_VECTOR 방위각 미분 기반)이
+    //          실시간 송출 → 수신단이 상대의 회전 진입을 표시·경보에 활용한다.
+    //   RSV  (bits 1:0): 예약(항상 0). 향후 확장용.
     //
-    //   ※ 호환성: 보행자 평상(CAT=00,STATE=00,SPEED=0) = 0x00 →
+    //   ※ 호환성: 보행자 평상(CAT=00,STATE=00,TURN=00) = 0x00 →
     //     페이로드를 싣지 않는 iBeacon/MAC 비콘의 기본 0x00 과 자연 일치(안전한 기본값).
     // ───────────────────────────────────────────────────────────────
 
@@ -84,36 +88,32 @@ object BleConstants {
     const val PSTATE_REVERSE = 0b10   // 후진 (특수경보 트리거)
     const val PSTATE_LOADING = 0b11   // 하역·작업 (특수경보 / 지게차 상부 고소 작업)
 
-    // Speed (bits 3:0) — 1km/h 단위 양자화 [v1.0.36: 0~6 0.5단위 → 0~15 1단위 확장]
-    const val SPEED_UNIT_KMH = 1.0      // 1코드 = 1km/h
-    const val SPEED_MAX_KMH  = 15.0     // 송출 상한 (코드 15, 4비트 full)
-    // [v1.0.39] EPJ(전동 파레트 잭) 물리 최고속도 가정 — 송수신 양단에서 속도를 이 값으로 cap.
-    //   송신: 내 카테고리가 EPJ면 송출 속도를 3km/h 로 제한.
-    //   수신: 내가/상대가 EPJ면 충돌 기하학 합산 접근속도 계산 시 해당 속도를 3km/h 로 제한.
-    const val EPJ_MAX_SPEED_KMH = 3.0
+    // Turn (bits 3:2) — [v1.1.7 #1] 회전 방향. 기존 SPEED 4bit 폐기 후 재배치.
+    const val TURN_STRAIGHT = 0b00   // 직진
+    const val TURN_LEFT     = 0b01   // 좌회전
+    const val TURN_RIGHT    = 0b10   // 우회전
+    const val TURN_RESERVED = 0b11   // 예약
 
-    // 비트 필드 마스크/시프트  (2-2-4: CAT 상위 → SPEED 하위)
+    // 비트 필드 마스크/시프트  (2-2-2-2: CAT 상위 → TURN → 예약 하위)
     private const val CAT_SHIFT   = 6
     private const val CAT_MASK    = 0b11
     private const val STATE_SHIFT = 4
     private const val STATE_MASK  = 0b11
-    private const val SPEED_SHIFT = 0
-    private const val SPEED_MASK  = 0b1111
+    private const val TURN_SHIFT  = 2
+    private const val TURN_MASK   = 0b11
 
     /**
-     * 3개 필드(Category 2bit + State 2bit + Speed 4bit)를 1바이트로 패킹한다. (2-2-4 Split)
-     * 레이아웃: bits[7:6]=CAT, bits[5:4]=STATE, bits[3:0]=SPEED.
+     * 4개 필드(Category 2bit + State 2bit + Turn 2bit + 예약 2bit)를 1바이트로 패킹한다. (2-2-2-2 Split)
+     * 레이아웃: bits[7:6]=CAT, bits[5:4]=STATE, bits[3:2]=TURN, bits[1:0]=예약(0).
      * @param category CAT_* (0~3) — 범위 밖 상위 비트는 마스킹돼 버려진다.
      * @param state    PSTATE_* (0~3)
-     * @param speedKmh 0~15 km/h (범위 밖은 clamp). 1km/h 단위 양자화: (kmh / 1.0).toInt().
-     *                 v1.0.36 송신단은 ImuFusion.estimatedSpeedKmh(가속도 RMS 추정)를 송출.
+     * @param turn     TURN_* (0~3). [v1.1.7 #1] 송신단은 ImuFusion.turnDirection(방위각 미분)를 송출.
      */
-    fun encodePayload(category: Int, state: Int, speedKmh: Double = 0.0): Byte {
+    fun encodePayload(category: Int, state: Int, turn: Int = TURN_STRAIGHT): Byte {
         val c = (category and CAT_MASK) shl CAT_SHIFT
         val s = (state and STATE_MASK) shl STATE_SHIFT
-        val units = (speedKmh.coerceIn(0.0, SPEED_MAX_KMH) / SPEED_UNIT_KMH).toInt().coerceIn(0, SPEED_MASK)
-        val v = (units and SPEED_MASK) shl SPEED_SHIFT
-        return (c or s or v).toByte()
+        val t = (turn and TURN_MASK) shl TURN_SHIFT
+        return (c or s or t).toByte()
     }
 
     /** 패킹된 1바이트에서 Category(bits 7:6) 추출. */
@@ -122,11 +122,8 @@ object BleConstants {
     /** 패킹된 1바이트에서 State(bits 5:4) 추출. */
     fun decodeState(payload: Int): Int = ((payload and 0xFF) shr STATE_SHIFT) and STATE_MASK
 
-    /** 패킹된 1바이트에서 Speed 코드(bits 3:0, 0~15) 추출. */
-    fun decodeSpeed(payload: Int): Int = ((payload and 0xFF) shr SPEED_SHIFT) and SPEED_MASK
-
-    /** 패킹된 1바이트에서 Speed 를 km/h 실측값으로 환산 (코드 * 1.0). */
-    fun decodeSpeedKmh(payload: Int): Double = decodeSpeed(payload) * SPEED_UNIT_KMH
+    /** 패킹된 1바이트에서 Turn 코드(bits 3:2, TURN_*) 추출. [v1.1.7 #1] */
+    fun decodeTurn(payload: Int): Int = ((payload and 0xFF) shr TURN_SHIFT) and TURN_MASK
 
     // ── [v1.0.42 Req2] 표시용 한글 라벨 (Local/Target 양쪽 UI 가 공유하는 단일 소스) ──
     /** Category(CAT_*) -> 표시용 한글 라벨. */
@@ -145,6 +142,14 @@ object BleConstants {
         PSTATE_LOADING -> "하역·작업"
         else           -> "정지·일반"
     }
+
+    /** Turn(TURN_*) -> 표시용 한글 라벨. [v1.1.7 #1] */
+    fun turnLabel(turn: Int): String = when (turn) {
+        TURN_LEFT     -> "좌회전"
+        TURN_RIGHT    -> "우회전"
+        TURN_STRAIGHT -> "직진"
+        else          -> "-"
+    }
 }
 
 /**
@@ -153,12 +158,13 @@ object BleConstants {
  *   이 값을 절대 덮어쓰지 않도록 데이터 모델 자체를 분리한다(received hex → local UI 오염 차단).
  */
 data class LocalState(
-    val category: Int    = BleConstants.CAT_WALKER,    // 내 역할 (CAT_*)
-    val state: Int       = BleConstants.PSTATE_IDLE,    // 내 동적 상태 (PSTATE_*)
-    val speedKmh: Double = 0.0                          // 내 송출 예상속도 (0~15)
+    val category: Int  = BleConstants.CAT_WALKER,       // 내 역할 (CAT_*)
+    val state: Int     = BleConstants.PSTATE_IDLE,       // 내 동적 상태 (PSTATE_*)
+    val turnDir: Int   = BleConstants.TURN_STRAIGHT      // 내 송출 회전 방향 (TURN_*)
 ) {
     val categoryLabel: String get() = BleConstants.categoryLabel(category)
     val stateLabel: String    get() = BleConstants.stateLabel(state)
+    val turnLabel: String     get() = BleConstants.turnLabel(turnDir)
 }
 
 /**
@@ -170,10 +176,11 @@ data class TargetState(
     val displayName: String,
     val category: Int,        // 상대 역할 (CAT_*)
     val state: Int,           // 상대 동적 상태 (PSTATE_*)
-    val speedKmh: Double,     // 상대 송출 속도 (km/h)
+    val turnDir: Int,         // 상대 송출 회전 방향 (TURN_*)
     val level: Int,           // 경보 레벨 (LEVEL_*)
     val rssi: Int             // 최근 RSSI (dBm)
 ) {
     val categoryLabel: String get() = BleConstants.categoryLabel(category)
     val stateLabel: String    get() = BleConstants.stateLabel(state)
+    val turnLabel: String     get() = BleConstants.turnLabel(turnDir)
 }

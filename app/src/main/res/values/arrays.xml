@@ -13,33 +13,33 @@
         <item>1회</item><item>3회</item><item>5회</item>
     </string-array>
 
-    <!-- 판정 파라미터(고급) 소수 항목 — 5단계 민감도 프리셋.
-         항목 순서·수치는 DevSettingsActivity 의 *Presets 배열과 반드시 일치해야 함 ([2]=보통=기본값) -->
+    <!-- [v1.1.7 #4] 판정 파라미터(고급) 소수 항목 — 5단계→9단계 민감도 프리셋.
+         항목 순서·수치는 DevSettingsActivity 의 *Presets 배열과 반드시 일치해야 함 ([4]=보통=기본값) -->
     <string-array name="ttc_threshold_labels">
-        <item>초민감 (5.0)</item><item>민감 (4.0)</item><item>보통 (3.0 · 기본)</item><item>둔감 (2.0)</item><item>아주 둔감 (1.0)</item>
+        <item>초민감 (5.0)</item><item>매우 민감 (4.5)</item><item>민감 (4.0)</item><item>약간 민감 (3.5)</item><item>보통 (3.0 · 기본)</item><item>약간 둔감 (2.5)</item><item>둔감 (2.0)</item><item>매우 둔감 (1.5)</item><item>초둔감 (1.0)</item>
     </string-array>
     <string-array name="min_approach_vel_labels">
-        <item>초민감 (0.2)</item><item>민감 (0.3)</item><item>보통 (0.5 · 기본)</item><item>둔감 (1.0)</item><item>아주 둔감 (1.5)</item>
+        <item>초민감 (0.2)</item><item>매우 민감 (0.25)</item><item>민감 (0.3)</item><item>약간 민감 (0.4)</item><item>보통 (0.5 · 기본)</item><item>약간 둔감 (0.7)</item><item>둔감 (1.0)</item><item>매우 둔감 (1.25)</item><item>초둔감 (1.5)</item>
     </string-array>
     <string-array name="timegate_vel_labels">
-        <item>초민감 (0.2)</item><item>민감 (0.3)</item><item>보통 (0.5 · 기본)</item><item>둔감 (1.0)</item><item>아주 둔감 (1.5)</item>
+        <item>초민감 (0.2)</item><item>매우 민감 (0.25)</item><item>민감 (0.3)</item><item>약간 민감 (0.4)</item><item>보통 (0.5 · 기본)</item><item>약간 둔감 (0.7)</item><item>둔감 (1.0)</item><item>매우 둔감 (1.25)</item><item>초둔감 (1.5)</item>
     </string-array>
     <string-array name="closing_factor_labels">
-        <item>초민감 (0.2)</item><item>민감 (0.35)</item><item>보통 (0.5 · 기본)</item><item>둔감 (0.8)</item><item>아주 둔감 (1.2)</item>
+        <item>초민감 (0.2)</item><item>매우 민감 (0.3)</item><item>민감 (0.35)</item><item>약간 민감 (0.42)</item><item>보통 (0.5 · 기본)</item><item>약간 둔감 (0.65)</item><item>둔감 (0.8)</item><item>매우 둔감 (1.0)</item><item>초둔감 (1.2)</item>
     </string-array>
     <string-array name="headon_ratio_labels">
-        <item>초민감 (0.4)</item><item>민감 (0.5)</item><item>보통 (0.6 · 기본)</item><item>둔감 (0.7)</item><item>아주 둔감 (0.8)</item>
+        <item>초민감 (0.4)</item><item>매우 민감 (0.45)</item><item>민감 (0.5)</item><item>약간 민감 (0.55)</item><item>보통 (0.6 · 기본)</item><item>약간 둔감 (0.65)</item><item>둔감 (0.7)</item><item>매우 둔감 (0.75)</item><item>초둔감 (0.8)</item>
     </string-array>
     <string-array name="side_ratio_labels">
-        <item>초민감 (0.1)</item><item>민감 (0.2)</item><item>보통 (0.3 · 기본)</item><item>둔감 (0.4)</item><item>아주 둔감 (0.5)</item>
+        <item>초민감 (0.1)</item><item>매우 민감 (0.15)</item><item>민감 (0.2)</item><item>약간 민감 (0.25)</item><item>보통 (0.3 · 기본)</item><item>약간 둔감 (0.35)</item><item>둔감 (0.4)</item><item>매우 둔감 (0.45)</item><item>초둔감 (0.5)</item>
     </string-array>
     <string-array name="ema_rise_labels">
-        <item>초민감 (0.6)</item><item>민감 (0.45)</item><item>보통 (0.3 · 기본)</item><item>둔감 (0.2)</item><item>아주 둔감 (0.1)</item>
+        <item>초민감 (0.6)</item><item>매우 민감 (0.52)</item><item>민감 (0.45)</item><item>약간 민감 (0.37)</item><item>보통 (0.3 · 기본)</item><item>약간 둔감 (0.25)</item><item>둔감 (0.2)</item><item>매우 둔감 (0.15)</item><item>초둔감 (0.1)</item>
     </string-array>
     <string-array name="ema_fall_labels">
-        <item>초민감 (0.2)</item><item>민감 (0.1)</item><item>보통 (0.05 · 기본)</item><item>둔감 (0.03)</item><item>아주 둔감 (0.01)</item>
+        <item>초민감 (0.2)</item><item>매우 민감 (0.15)</item><item>민감 (0.1)</item><item>약간 민감 (0.07)</item><item>보통 (0.05 · 기본)</item><item>약간 둔감 (0.04)</item><item>둔감 (0.03)</item><item>매우 둔감 (0.02)</item><item>초둔감 (0.01)</item>
     </string-array>
     <string-array name="ema_dboost_labels">
-        <item>초민감 (0.7)</item><item>민감 (0.55)</item><item>보통 (0.4 · 기본)</item><item>둔감 (0.25)</item><item>아주 둔감 (0.1)</item>
+        <item>초민감 (0.7)</item><item>매우 민감 (0.62)</item><item>민감 (0.55)</item><item>약간 민감 (0.47)</item><item>보통 (0.4 · 기본)</item><item>약간 둔감 (0.32)</item><item>둔감 (0.25)</item><item>매우 둔감 (0.17)</item><item>초둔감 (0.1)</item>
     </string-array>
 </resources>

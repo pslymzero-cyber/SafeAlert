@@ -21,12 +21,10 @@ class BleAdvertiser(
     companion object {
         private const val TAG = "BleAdvertiser"
         // [v1.0.29] 상태 갱신 최소 주기 — 안드로이드 OS Advertising Rate-Limit 회피
-        //   [v1.0.36] STATE 와 Speed(bits 3:0) 재광고가 이 throttle 을 '공유'한다.
+        //   [v1.1.7 #1] STATE 와 Turn(bits 3:2) 재광고가 이 throttle 을 '공유'한다.
         private const val MIN_STATE_UPDATE_INTERVAL_MS = 2000L
         // 상태 변경 시 stopAdvertising 후 재시작까지 대기 (OS 정리 시간 확보)
         private const val STATE_RESTART_DELAY_MS = 50L
-        // [v1.0.36] 속도 미세 변화 무시 임계(km/h). 1km/h 미만 변화는 재광고 생략(stop/start 폭주 방지).
-        private const val MIN_SPEED_DELTA_KMH = 1.0
         // [v1.0.43 Req3] (구) 하트비트 버스트 상수 폐지 — 슬립을 'stop + 700ms/4s 버스트'에서
         //   'LOW_POWER(~1s) 연속 광고'로 전환(깨어남 지연 제거). 완전 정지하지 않고 저빈도로 상시
         //   송출하므로 상대 스캐너가 항상 나를 잡아 즉시 재발견한다. 재광고 정리 대기는 STATE_RESTART_DELAY_MS 공용.
@@ -86,12 +84,12 @@ class BleAdvertiser(
     //   재광고해 stop/start 폭주를 막는다. -1 = 아직 광고 시작 전.
     @Volatile private var lastAppliedAdvertiseMode: Int = -1
 
-    // [v1.0.34 다이나믹 페이로드] 현재 송신자 STATE(2bit, PSTATE_*) — Category·Speed 와 함께
+    // [v1.0.34 다이나믹 페이로드] 현재 송신자 STATE(2bit, PSTATE_*) — Category·Turn 와 함께
     //   encodePayload() 로 1바이트로 패킹되어 ServiceData 로 탑재된다.
     @Volatile private var currentState: Int = BleConstants.PSTATE_IDLE
-    // [v1.0.36] 현재 송신 예상속도(km/h, 0~15) — startAdvertising 이 Speed 4비트로 패킹해 싣는다.
-    //   BleService 가 ImuFusion.estimatedSpeedKmh 를 주기적으로 updateSpeed() 로 밀어 넣는다.
-    @Volatile private var currentSpeedKmh: Double = 0.0
+    // [v1.1.7 #1] 현재 송신 회전 방향(TURN_*, bits 3:2) — startAdvertising 이 Turn 2비트로 패킹해 싣는다.
+    //   BleService 가 ImuFusion.turnDirection 을 주기적으로 updateTurn() 으로 밀어 넣는다.
+    @Volatile private var currentTurnDir: Int = BleConstants.TURN_STRAIGHT
     // [v1.0.36] STATE·Speed 재광고 공용 throttle 타임스탬프 (구 lastStateUpdateMs)
     private var lastPayloadUpdateMs = 0L
     // 재광고 시 UWB 주소 유지 (updateState / restartWithUwbAddress 공용)
@@ -128,7 +126,7 @@ class BleAdvertiser(
     //   수신(Target) 경로와 완전히 분리 — 외부에서 쓰기 불가(읽기 전용 getter).
     val txCategory: Int  get() = category
     val txState: Int     get() = currentState
-    val txSpeedKmh: Double get() = currentSpeedKmh
+    val txTurnDir: Int   get() = currentTurnDir
 
     /**
      * @param uwbLocalAddress 이 기기의 UWB 주소 2바이트 (null = UWB 미지원/미초기화)
@@ -163,13 +161,13 @@ class BleAdvertiser(
         // ── Primary 광고 패킷 (ServiceUUID 포함 → 화면 꺼짐에도 스캔 필터 작동) ──
         val advertiseData = AdvertiseData.Builder()
             .addServiceUuid(ParcelUuid(UUID.fromString(BleConstants.SERVICE_UUID)))
-            // [v1.0.36] 1바이트 ServiceData 복구: Category+State+Speed(2-2-4 패킹) 단일 바이트.
-            //   v1.0.35 의 2번째 방위각 바이트는 지자기 자기장 교란 문제로 전면 롤백됐다.
+            // [v1.1.7 #1] 1바이트 ServiceData: Category+State+Turn(2-2-2-2 패킹) 단일 바이트.
+            //   기존 Speed 4비트 폐기 → Turn 2비트(bits 3:2) 탑재, 하위 2비트 예약.
             //   SERVICE_UUID 가 16비트 short UUID(0x1234) 패턴 → ServiceData 약 5바이트.
             .addServiceData(
                 ParcelUuid(UUID.fromString(BleConstants.SERVICE_UUID)),
                 byteArrayOf(
-                    BleConstants.encodePayload(category, currentState, currentSpeedKmh)
+                    BleConstants.encodePayload(category, currentState, currentTurnDir)
                 )
             )
             .addManufacturerData(companyId, idBytes)
@@ -197,8 +195,8 @@ class BleAdvertiser(
     /**
      * [v1.0.34 다이나믹 페이로드] 송신자 STATE(2bit, PSTATE_*) 갱신.
      * 변경이 있을 때만, 그리고 최소 2초 간격(OS Rate-Limit 회피)으로
-     * 기존 광고를 멈추고 약 50ms 뒤 새 페이로드(Category+State+Speed)로 다시 켠다.
-     * Category 는 생성자 고정, Speed 는 updateSpeed() 가 갱신 — 여기선 STATE 만 바뀐다.
+     * 기존 광고를 멈추고 약 50ms 뒤 새 페이로드(Category+State+Turn)로 다시 켠다.
+     * Category 는 생성자 고정, Turn 은 updateTurn() 이 갱신 — 여기선 STATE 만 바뀐다.
      * [v1.0.51 #1] Rate-Limit 에 걸린 갱신을 버리지 않고 보류(pendingState) 후 잔여 시간 뒤
      *   자동 재시도한다. (구버전: 드롭 → IMU 가 전이 순간에만 통지하는 특성과 겹쳐 실제와
      *   반대 상태로 고착 — 이동 중인데 '대기 중'으로 보이는 현상의 원인)
@@ -233,26 +231,25 @@ class BleAdvertiser(
     }
 
     /**
-     * v1.0.36 송신 예상속도(Speed 4비트) 갱신. ImuFusion.estimatedSpeedKmh 를 BleService 가 주기적으로 민다.
-     *  - 미세 변화(±MIN_SPEED_DELTA_KMH 미만)는 무시 — 불필요한 stop/start 폭주 방지.
+     * [v1.1.7 #1] 송신 회전 방향(Turn 2비트) 갱신. ImuFusion.turnDirection 을 BleService 가 주기적으로 민다.
+     *  - 동일 방향이면 무시 — 불필요한 stop/start 폭주 방지(회전은 이산값이라 정확 비교).
      *  - STATE 와 동일한 2초 Rate-Limit throttle 을 공유한다(동시 재광고 충돌 방지).
      *    throttle 에 걸리면 이번 갱신은 생략하고 다음 폴링(BleService ~1.5초)에서 재시도.
-     *  - 재광고 시 startAdvertising 이 최신 currentState + currentSpeedKmh 를 함께 패킹해 싣는다.
+     *  - 재광고 시 startAdvertising 이 최신 currentState + currentTurnDir 를 함께 패킹해 싣는다.
      */
-    fun updateSpeed(speedKmh: Float) {
-        val v = speedKmh.toDouble().coerceIn(0.0, BleConstants.SPEED_MAX_KMH)
-        if (abs(v - currentSpeedKmh) < MIN_SPEED_DELTA_KMH) return
+    fun updateTurn(turn: Int) {
+        if (turn == currentTurnDir) return
         val now = SystemClock.elapsedRealtime()
         if (now - lastPayloadUpdateMs < MIN_STATE_UPDATE_INTERVAL_MS) return
         lastPayloadUpdateMs = now
-        currentSpeedKmh = v
-        Log.d(TAG, "속도 갱신 → %.1fkm/h 재광고".format(v))
+        currentTurnDir = turn
+        Log.d(TAG, "회전 갱신 → ${BleConstants.turnLabel(turn)} 재광고")
         restartAdvertise()
     }
 
-    /** v1.0.36 광고 정지 후 STATE_RESTART_DELAY_MS 뒤 최신 페이로드로 재광고 (updateState/updateSpeed 공용). */
+    /** v1.0.36 광고 정지 후 STATE_RESTART_DELAY_MS 뒤 최신 페이로드로 재광고 (updateState/updateTurn 공용). */
     private fun restartAdvertise() {
-        if (stopped || paused) return   // [v1.0.42 Req3] 슬립 중엔 STATE/Speed 갱신이 광고를 깨우지 않음
+        if (stopped || paused) return   // [v1.0.42 Req3] 슬립 중엔 STATE/Turn 갱신이 광고를 깨우지 않음
         try { advertiser.stopAdvertising(callback) } catch (_: Exception) {}
         stateHandler.postDelayed({
             startAdvertising(currentDeviceId, lastUwbAddress)
@@ -308,7 +305,7 @@ class BleAdvertiser(
     /**
      * [v1.0.42 Req3 · v1.0.43 개선] RSSI 웨이크 — 0ms 즉시 BALANCED 연속 광고로 승격.
      * paused=false 로 둔 뒤 재광고하면 startAdvertising 이 BALANCED 모드로 올린다. 재개 시점의 최신
-     * currentState/currentSpeedKmh 가 그대로 패킹돼 나가 '강한 LocalState 송출' 효과를 낸다(postDelayed 없음).
+     * currentState/currentTurnDir 가 그대로 패킹돼 나가 '강한 LocalState 송출' 효과를 낸다(postDelayed 없음).
      */
     fun resumeAdvertising() {
         if (stopped) return
@@ -321,7 +318,7 @@ class BleAdvertiser(
     }
 
     fun stopAdvertising() {
-        // [v1.0.41] 핵심 수정 — 예약된 재광고(restartAdvertise/updateState/updateSpeed/
+        // [v1.0.41] 핵심 수정 — 예약된 재광고(restartAdvertise/updateState/updateTurn/
         //   restartWithUwbAddress 의 postDelayed)가 stop 직후 광고를 되살리는 누수를 차단.
         stopped = true
         stateHandler.removeCallbacksAndMessages(null)
