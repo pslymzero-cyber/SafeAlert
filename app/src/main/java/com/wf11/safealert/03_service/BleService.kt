@@ -251,7 +251,13 @@ class BleService : LifecycleService() {
     // [판정 파라미터] 페이드아웃 해제 — DevSettings 라이브 읽기(기본 2500L/5 = 기존값)
     private val RECEDING_CLEAR_MS: Long get() = DevSettings.recedingClearMs
 
-    private val peakAlertRssiMap  = mutableMapOf<String, Int>()
+    // [v1.1.6] 이탈 판정 재설계 — raw 절대최대 피크는 초근접 BLE 노이즈(±5~10dBm)에 고착돼
+    //   '위험 시 가짜 이탈 → 소리 꺼짐'(v1.1.5 회귀)을 유발했다. 중간평활 EMA 레퍼런스(recedeRefMap)
+    //   로 노이즈를 흡수하고, 피크는 정체 시 ref 로 느리게 감쇠(recedePeakMap)시켜 가짜 이탈을 자동 해소.
+    private val recedeRefMap   = mutableMapOf<String, Double>()  // 이탈 판정 전용 중간평활(EMA)
+    private val recedePeakMap  = mutableMapOf<String, Double>()  // 피크 홀드 + 느린 감쇠
+    private val RECEDE_REF_ALPHA = 0.3   // avg1sec → 중간평활 EMA 계수(초근접 노이즈 흡수)
+    private val PEAK_DECAY_ALPHA = 0.05  // 피크 정체 시 ref 로 수렴하는 감쇠 계수(가짜 이탈 자동 해소)
     private val RECEDING_DBM_DROP: Int get() = DevSettings.recedingDbmDrop
     // 기기별 마지막 avgRssi 보관 — 플로팅 위젯 최우선 기기 선정·정렬에 사용
     private val deviceRssiMap     = mutableMapOf<String, Int>()
@@ -595,7 +601,8 @@ class BleService : LifecycleService() {
                             departingStartMap.remove(deviceId)
                             wasStationaryMap.remove(deviceId)
                             recedingStartMap.remove(deviceId)
-                            peakAlertRssiMap.remove(deviceId)
+                            recedeRefMap.remove(deviceId)
+                            recedePeakMap.remove(deviceId)
                             deviceRssiMap.remove(deviceId)
                             wakeRssiMap.remove(deviceId)              // [v1.0.42 Req3] 슬립/웨이크 표본 정리
                             approachStreakStartMap.remove(deviceId)   // [v1.0.35] Time-Gate 접근 추적 정리
@@ -847,6 +854,9 @@ class BleService : LifecycleService() {
             pEmaFilter.clear(deviceId)        // [v1.0.45] 후처리 P-EMA 상태 정리
             rushFrameMap.remove(deviceId)     // [v1.0.45] 돌진 프레임 카운터 정리
             kalmanFilters.remove(deviceId)    // [v1.0.38 클린업] 미추적 기기 칼만 인스턴스 정리(stale 재등장 방지)
+            recedingStartMap.remove(deviceId)    // [v1.1.6 검증 보강] 이탈 판정 상태 누수·stale 피크 재출현 방지
+            recedeRefMap.remove(deviceId)        // [v1.1.6 검증 보강] 미추적 기기 중간평활 EMA 정리
+            recedePeakMap.remove(deviceId)       // [v1.1.6 검증 보강] 미추적 기기 피크 홀드 정리
             pendingDisplayMap.remove(deviceId)   // [v1.0.49 #3] 밴드 밖 원거리 — 보류 표시도 함께 정리
             return
         }
@@ -912,6 +922,11 @@ class BleService : LifecycleService() {
         val demoteWhileStationary = ImuFusion.isStationary && !movingEquipApproach
 
         var stableLevel: Int
+        // [v1.1.6 R4-SIL-1] demote/이탈히스테리시스 '이전'의 순수 거리 권위값(pEma 기반, 노이즈 견고).
+        //   demoteWhileStationary 가 물리적 DANGER 를 WARNING 으로 인위 격하하면 stableLevel 만으로는
+        //   '위험권 밖'으로 오판 → isReceding 오발 → 근접인데 전체 무음(R4-SIL-1). 이탈 가드는 격하 전
+        //   거리값(distanceLevel)으로 판정해 무음을 막는다. 복구 게이트는 stableLevel 유지(격하 의도 존중).
+        var distanceLevel: Int
         val avgRssi: Int
 
         if (mode == DevSettings.MODE_FIXED_AVG) {
@@ -948,6 +963,7 @@ class BleService : LifecycleService() {
                 blended >= effWarning -> BleConstants.LEVEL_WARNING
                 else                  -> BleConstants.LEVEL_SAFE
             }
+            distanceLevel = rawLevel   // [v1.1.6 R4-SIL-1] 격하 이전 거리 권위값 보존(이탈 가드용)
             // ── 정지 격하 방어 ([v1.0.47 #2] 보행자+활동 장비 접근은 예외 — 위 demoteWhileStationary) ──
             stableLevel = if (demoteWhileStationary && rawLevel >= BleConstants.LEVEL_DANGER)
                 BleConstants.LEVEL_WARNING else rawLevel
@@ -957,6 +973,7 @@ class BleService : LifecycleService() {
             avgRssi = blended
             val beaconOffset = runCatching { BeaconRegistry.getRssiOffsetForFullId(deviceId) }.getOrDefault(0)
             val rawLevel = calcLevelWithHysteresis(deviceId, blended, beaconOffset)
+            distanceLevel = rawLevel   // [v1.1.6 R4-SIL-1] 이탈히스테리시스·격하 이전 거리 권위값 보존(이탈 가드용)
             val afterHysteresis = applyDepartingHysteresis(deviceId, rawLevel, blended, beaconOffset, now)
             // ── 정지 격하 방어 ([v1.0.47 #2] 보행자+활동 장비 접근은 예외 — 위 demoteWhileStationary) ──
             stableLevel = if (demoteWhileStationary && afterHysteresis >= BleConstants.LEVEL_DANGER)
@@ -994,7 +1011,8 @@ class BleService : LifecycleService() {
                 approachStreakStartMap.remove(deviceId)   // [v1.0.46 #4] stale 시작시각 → 재접근 시 Time-Gate 즉시통과 방지
                 wasStationaryMap.remove(deviceId)
                 recedingStartMap.remove(deviceId)
-                peakAlertRssiMap.remove(deviceId)
+                recedeRefMap.remove(deviceId)
+                recedePeakMap.remove(deviceId)
                 deviceRssiMap.remove(deviceId)
                 mutedDevices.remove(deviceId)
                 suddenLabelMap.remove(deviceId)
@@ -1034,18 +1052,59 @@ class BleService : LifecycleService() {
             Log.d(TAG, "IMU 정지→이동 전환 [$deviceId]")
         }
 
-        // 피크 RSSI 갱신 — raw 1초평균(avg1sec) 기준.
-        //   [버그수정] 기존엔 피크·하락을 avgRssi(평활값 = KALMAN 모드 blendRatio=0 시 pEma)로 측정했다.
-        //   '강한 평활' 프리셋(Kalman q0.05/R10)에서는 이탈해도 avgRssi 가 거의 안 내려가, 피크 대비
-        //   하락이 RECEDING_DBM_DROP 에 도달하지 못해 이탈 페이드아웃이 시작조차 안 됐다(폰을 들고 뒤로
-        //   걸어가도 경보 지속). 반응 빠른 raw(avg1sec, 1초평균)로 피크·하락을 재면 평활 강도와 무관하게
-        //   이탈을 ~1초 안에 감지한다. 단발 노이즈는 1초평균 + 2.5초 연속이탈 조건(RECEDING_CLEAR_MS)이 흡수.
-        val peakPrev = peakAlertRssiMap[deviceId]
-        if (peakPrev == null || avg1sec > peakPrev) peakAlertRssiMap[deviceId] = avg1sec
-        val peakRssi = peakAlertRssiMap[deviceId]!!
+        // ── [v1.1.6] 노이즈 견고 이탈 판정 — 중간평활 EMA 레퍼런스 + 느린 감쇠 피크 ──────────────
+        //   [회귀 배경] v1.1.5 는 피크·하락을 raw avg1sec(1초평균) 절대최대로 쟀다. 초근접(위험권)에서는
+        //   BLE 멀티패스 노이즈로 avg1sec 가 ±5~10dBm 출렁여, 피크가 순간 최댓값에 고착 → (peak-avg1sec)
+        //   가 거의 항상 RECEDING_DBM_DROP 를 넘겨 '가짜 이탈'로 판정 → 위험한데도 소리가 꺼졌다.
+        //   [수정] avg1sec 를 EMA(RECEDE_REF_ALPHA)로 평활한 recedeRef 로 노이즈를 흡수해 판정한다.
+        //   피크는 ref 상승 시 즉시 따라가고(접근), 정체·이탈 시엔 PEAK_DECAY_ALPHA 로 ref 를 향해 느리게
+        //   감쇠한다 → '한 번 가까웠다 약간 멀어져 안정'이면 피크가 새 거리에 적응해 가짜 이탈이 풀린다.
+        //   진짜 이탈은 ref 가 피크보다 빨리 내려가 (peak-ref) 차가 벌어져 ~1~2초 안에 잡힌다.
+        //   Kalman 평활 강도와 독립이라 '강한 평활에서 이탈 미해제'였던 원래 v1.1.5 버그도 함께 해결.
+        //   [v1.1.6 검증 보강] (1) 위험권 가드를 평활 권위값(stableLevel)으로 둔다 — stableLevel==DANGER 인
+        //   동안은 이탈로 판정하지 않는다. 이탈은 '위험권 밖으로 멀어졌을 때'만 의미가 있고, 위험권 안에서
+        //   접근 후 정지하면 α 비대칭(ref 0.3 vs peak 0.05)으로 (peak-ref) 차가 오래 5dBm 을 넘겨 '위험한데
+        //   무음'이 되는 경로를 차단한다. ★ raw avg1sec 가드(구버전)는 초근접 ±5~10dBm 노이즈가 -55 를
+        //   밑돌면 가짜 이탈을 latch 해 다시 '위험한데 무음'을 냈다(검증 DS-1/2) → 평활 stableLevel 로 교체.
+        //   (2) recede 계산·판정은 '이미 경보 중(alertState 등록)' 기기에만 적용한다 — 미등록
+        //   (신규·보류) 기기가 가짜 이탈로 전역 stopSound 를 호출해 다른 기기 경보까지 끄는 것을 방지하고,
+        //   미등록이면 recede 상태를 비워 재등록 시 깨끗이 재시작(stale 피크 재출현 → 재접근 즉시 가짜 이탈 차단).
+        val isReceding: Boolean
+        val recedeRef: Double
+        val recedePeak: Double
+        if (alertState.containsKey(deviceId)) {
+            val refPrev = recedeRefMap[deviceId]
+            recedeRef =
+                if (refPrev == null) avg1sec.toDouble()
+                else refPrev + RECEDE_REF_ALPHA * (avg1sec - refPrev)
+            recedeRefMap[deviceId] = recedeRef
 
-        // 이탈 방향 감지: raw 피크 대비 RECEDING_DBM_DROP 하락
-        val isReceding = (peakRssi - avg1sec) >= RECEDING_DBM_DROP
+            val peakPrev = recedePeakMap[deviceId]
+            recedePeak = when {
+                peakPrev == null     -> recedeRef                                          // 첫 표본: 현재값 초기화
+                recedeRef > peakPrev -> recedeRef                                          // 접근: 피크 즉시 상승
+                else                 -> peakPrev - PEAK_DECAY_ALPHA * (peakPrev - recedeRef)  // 정체/이탈: 느린 감쇠
+            }
+            recedePeakMap[deviceId] = recedePeak
+
+            // 이탈 방향 감지: 평활 피크 대비 RECEDING_DBM_DROP 하락 + 위험권 밖(거리 권위값 가드)
+            //   [v1.1.6 DS-1/2] 위험권 판정을 raw avg1sec → pEma 기반 평활 권위값으로 교체(노이즈 견고).
+            //   avg1sec(1초평균)은 초근접 멀티패스로 ±5~10dBm 출렁여, 한 번의 깊은 dip(~-61)이 isReceding 을
+            //   latch → 느린 피크 감쇠(~0.3dBm/frame)가 여러 프레임 '위험한데 무음'을 만들었다(검증 DS-1).
+            //   ★[v1.1.6 R4-SIL-1] 가드는 stableLevel 이 아니라 distanceLevel(=demote·이탈히스테리시스 이전
+            //   pEma 거리 레벨)로 본다. demoteWhileStationary 가 물리적 DANGER 를 WARNING 으로 인위 격하해도
+            //   distanceLevel==DANGER 인 동안은 이탈로 인정하지 않아 '근접인데 전체 무음'을 차단한다(격하된
+            //   WARNING 경보는 canonical 경로가 계속 울림). 진짜로 멀어지면 pEma 가 내려가 distanceLevel<DANGER
+            //   → 이탈 인정·해제. blendRatio 기본 0 이라 distanceLevel 은 순수 pEma 권위값(raw dip 에 불변).
+            isReceding = (recedePeak - recedeRef) >= RECEDING_DBM_DROP &&
+                distanceLevel < BleConstants.LEVEL_DANGER
+        } else {
+            recedeRefMap.remove(deviceId)
+            recedePeakMap.remove(deviceId)
+            recedeRef = avg1sec.toDouble()
+            recedePeak = avg1sec.toDouble()
+            isReceding = false
+        }
 
         if (isReceding) {
             val justStartedReceding = !recedingStartMap.containsKey(deviceId)
@@ -1060,7 +1119,7 @@ class BleService : LifecycleService() {
                     OverlayManager.hideOverlay()
                     activeSoundLevel = BleConstants.LEVEL_SAFE
                 }
-                Log.d(TAG, "이탈 감지 즉시 소리 중지: $deviceId (peak=$peakRssi, curr=$avg1sec, drop=${peakRssi - avg1sec} dBm)")
+                Log.d(TAG, "이탈 감지 즉시 소리 중지: $deviceId (peak=%.1f, ref=%.1f, drop=%.1f dBm)".format(recedePeak, recedeRef, recedePeak - recedeRef))
                 sendStatusBroadcast("↗ 이탈 감지 → 경보 일시 해제: ${extractDisplayName(deviceId)}")
             }
             val recedingMs = now - (recedingStartMap[deviceId] ?: now)
@@ -1074,7 +1133,8 @@ class BleService : LifecycleService() {
                 kalmanFilters.remove(deviceId)
                 wasStationaryMap.remove(deviceId)
                 recedingStartMap.remove(deviceId)
-                peakAlertRssiMap.remove(deviceId)
+                recedeRefMap.remove(deviceId)
+                recedePeakMap.remove(deviceId)
                 trackingStateMap.remove(deviceId)
                 crossingStartMap.remove(deviceId)
                 departingStartMap.remove(deviceId)
@@ -1095,6 +1155,10 @@ class BleService : LifecycleService() {
             }
         } else {
             recedingStartMap.remove(deviceId)
+            // [v1.1.6 검증 보강] fail-loud 무음 복구는 아래 shouldAlert 게이트(!shouldAlert 분기)로 이동.
+            //   여기서 즉시 재발령하면 같은 프레임에 격상(levelEscalated)·쿨다운경과로 canonical 발령이 또
+            //   playDanger 를 호출(비멱등 → 사이렌 끊김 stutter)할 수 있어, 발령을 건너뛰는 프레임에 한해
+            //   재발령하도록 canonical 과 상호배타인 !shouldAlert 위치로 옮겼다.
         }
 
         // ── TTC 기반 선발령 (RSSI 공간 vel 직접 사용, v1.0.20 / v1.0.31 raw 가드) ──────────
@@ -1154,6 +1218,27 @@ class BleService : LifecycleService() {
         if (!shouldAlert) {
             // [v1.0.49 #3] 워밍업 등으로 발령 보류된 '신규' 기기 — 경보는 아니지만 목록엔 '감지됨' 노출.
             if (isFirstDetection) pendingDisplayMap[deviceId] = now
+            // [v1.1.6 검증 보강] fail-loud 무음 복구 — '발령을 건너뛰는' 프레임에서만 동작(여기는 곧 return).
+            //   배경: 직전 이탈 episode 의 즉시 stopSound(L1100)로 activeSoundLevel=SAFE 가 된 뒤, 기기가
+            //   여전히/다시 위험권(stableLevel==DANGER)인데 쿨다운 미경과로 shouldAlert=false 면 최대 한
+            //   쿨다운(~2초) 무음이 생긴다. 이 경로를 '추적 중 + 평활 권위값 위험권 + 위험음 미만'일 때 즉시
+            //   위험 재발령으로 닫는다(쿨다운 무시). 정규 발령(canonical)은 이 return 이후라 상호배타 →
+            //   playDanger 중복호출(비멱등 stutter) 없음.
+            //   [v1.1.6 DS-1/3] 판정 기준을 raw avg1sec → 평활 stableLevel 로 통일. (a) canonical 과 동일한
+            //   거리 권위값(pEma 기반 stableLevel)을 써, '평활은 DANGER 인데 raw 노이즈 dip 으로 무음'이던
+            //   불일치(DS-3)를 제거한다. (b) isReceding 가드도 stableLevel<DANGER(L1085)라, 이탈 프레임은
+            //   여기 stableLevel>=DANGER 와 정확한 여집합으로 상호배타 → 진짜 이탈 즉시정지는 유지되고,
+            //   genuine 이탈로 stableLevel 이 이미 위험권 밖이면 복구가 되살리지 않아 ghost-danger 과알람도 없다.
+            if (!isMuted && !isDeviceMuted(deviceId) && alertState.containsKey(deviceId) &&
+                stableLevel >= BleConstants.LEVEL_DANGER &&
+                activeSoundLevel < BleConstants.LEVEL_DANGER) {
+                forceAlarmVolume()
+                activeSoundLevel = BleConstants.LEVEL_DANGER
+                if (DevSettings.vibrationEnabled) VibrationHelper.vibrateDanger(this)
+                if (DevSettings.soundEnabled)     AlertSoundPlayer.playDanger(this)
+                updateFloatingOverlay()
+                Log.d(TAG, "위험권 유지·무음 감지 → 즉시 재발령(쿨다운 무시): $deviceId (stableLevel=$stableLevel avg1sec=$avg1sec)")
+            }
             return
         }
 
@@ -1750,7 +1835,8 @@ class BleService : LifecycleService() {
         wasStationaryMap.clear()
         oneSecBuffer.clear()
         recedingStartMap.clear()
-        peakAlertRssiMap.clear()
+        recedeRefMap.clear()
+        recedePeakMap.clear()
         deviceRssiMap.clear()
         approachStreakStartMap.clear()   // [v1.0.35] Time-Gate 접근 추적 정리
         pendingDisplayMap.clear()        // [v1.0.49 #3] 보류 표시 정리
