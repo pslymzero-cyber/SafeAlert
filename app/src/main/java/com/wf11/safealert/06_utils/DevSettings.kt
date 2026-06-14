@@ -19,20 +19,12 @@ object DevSettings {
     private const val KEY_FIREBASE_ROOT         = "firebase_root"
     private const val KEY_AUTO_SAVE_ALERTS      = "auto_save_alerts"
 
-    // 감지 모드
-    private const val KEY_DETECTION_MODE = "detection_mode"
-    const val MODE_KALMAN    = "kalman"     // 칼만 필터 + 거리 기반
-    const val MODE_FIXED_AVG = "fixed_avg"  // 1초 평균 + 고정 RSSI 임계값
-
-    var detectionMode: String
-        get() = prefs.getString(KEY_DETECTION_MODE, MODE_KALMAN) ?: MODE_KALMAN
-        set(v) = prefs.edit().putString(KEY_DETECTION_MODE, v).apply()
-
     // ── 칼만 필터 강도 프리셋 ──────────────────────────────────────
     // 숫자가 낮을수록 RSSI 변화에 빠르게 반응 (노이즈↑), 높을수록 부드럽지만 느림
-    //   FAST  (0): Q=1.0 R=8.0  — 빠른 반응 (빠르게 접근하는 장비 추적에 적합)
-    //   NORMAL(1): Q=0.3 R=15.0 — 균형 (기본값, 일반 창고 환경)
-    //   SMOOTH(2): Q=0.1 R=25.0 — 강한 평활 (노이즈 심한 환경, 이전 기본값)
+    //   (실제 적용값은 KalmanFilter.kt processNoise/measureNoise 게터)
+    //   FAST  (0): q=0.50 R=2.0  — 빠른 반응 (빠르게 접근하는 장비 추적에 적합)
+    //   NORMAL(1): q=0.15 R=5.0  — 균형 (기본값, 일반 창고 환경)
+    //   SMOOTH(2): q=0.05 R=10.0 — 강한 평활 (노이즈 심한 환경, 이전 기본값)
     const val KALMAN_PRESET_FAST   = 0
     const val KALMAN_PRESET_NORMAL = 1
     const val KALMAN_PRESET_SMOOTH = 2
@@ -40,14 +32,6 @@ object DevSettings {
     var kalmanPreset: Int
         get() = prefs.getInt(KEY_KALMAN_PRESET, KALMAN_PRESET_NORMAL)
         set(v) = prefs.edit().putInt(KEY_KALMAN_PRESET, v.coerceIn(0, 2)).apply()
-
-    // 보조 모드 기여도 (0~50%)
-    // 0 = 순수 주 모드, 30 = 주 70% + 보조 30%
-    // 칼만 모드: 칼만(주) + 1초평균(보조) / 고정값 모드: 1초평균(주) + 칼만(보조)
-    private const val KEY_BLEND_RATIO = "blend_ratio"
-    var blendRatio: Int
-        get() = prefs.getInt(KEY_BLEND_RATIO, 0)
-        set(v) = prefs.edit().putInt(KEY_BLEND_RATIO, v.coerceIn(0, 50)).apply()
 
     // [v1.0.42 Req5] Time-Gate(민감도 지연) 지연 시간 — 신규/격상 경보 전 최소 연속 접근시간(ms).
     //   BleService.APPROACH_TIMEGATE_MS 가 이 값을 매 프레임 라이브로 읽어 앱 재시작 없이 반영한다.
@@ -58,17 +42,7 @@ object DevSettings {
         get() = prefs.getLong(KEY_TIMEGATE_MS, DEFAULT_TIMEGATE_MS).coerceIn(0L, 3000L)
         set(v) = prefs.edit().putLong(KEY_TIMEGATE_MS, v.coerceIn(0L, 3000L)).apply()
 
-    // 고정값 모드 임계값 (절댓값으로 저장, 예: 65 → RSSI -65)
-    private const val KEY_FIXED_DANGER_ABS  = "fixed_danger_abs"   // 기본 65  → RSSI ≥ -65
-    private const val KEY_FIXED_WARNING_ABS = "fixed_warning_abs"  // 기본 80  → RSSI ≥ -80
-
-    var fixedDangerAbs: Int
-        get() = prefs.getInt(KEY_FIXED_DANGER_ABS, 65)
-        set(v) = prefs.edit().putInt(KEY_FIXED_DANGER_ABS, v.coerceIn(30, 100)).apply()
-
-    var fixedWarningAbs: Int
-        get() = prefs.getInt(KEY_FIXED_WARNING_ABS, 80)
-        set(v) = prefs.edit().putInt(KEY_FIXED_WARNING_ABS, v.coerceIn(30, 100)).apply()
+    // [v1.1.8] 고정값(1초 평균 고정) 모드 임계값(fixedDangerAbs/fixedWarningAbs) 전면 제거 — 칼만 단일화.
 
     // 알람 볼륨 게인 (0-100%)
     private const val KEY_ALARM_VOLUME = "alarm_volume"

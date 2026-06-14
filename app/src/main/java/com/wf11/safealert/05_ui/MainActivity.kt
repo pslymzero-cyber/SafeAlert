@@ -291,13 +291,9 @@ class MainActivity : AppCompatActivity() {
         //   백그라운드 감시는 BleService 단독 책임이라 Activity 폴링은 순수 전력 낭비였다.
         statusHandler.removeCallbacks(statusRunnable)
         statusHandler.post(statusRunnable)
-        // BLE 설정 요약 업데이트
-        binding.tvBleModeSummary.text = when (DevSettings.detectionMode) {
-            DevSettings.MODE_FIXED_AVG ->
-                "1초 평균 고정값 · 위험 ${DevSettings.fixedDangerAbs} / 경고 ${DevSettings.fixedWarningAbs}"
-            else ->
-                "칼만 필터 · 위험 ${DevSettings.rssiDanger}dBm / 경고 ${DevSettings.rssiWarning}dBm"
-        }
+        // BLE 설정 요약 업데이트 — [v1.1.8] 칼만 단일화(고정값·혼합 제거)
+        binding.tvBleModeSummary.text =
+            "칼만 필터 · 위험 ${DevSettings.rssiDanger}dBm / 경고 ${DevSettings.rssiWarning}dBm"
         val beaconCount = BeaconRegistry.count()
         binding.tvBeaconSummary.text = if (beaconCount > 0)
             "UUID ${beaconCount}개 등록됨 · iOS/앱 없는 보행자 감지 중"

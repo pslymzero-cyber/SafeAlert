@@ -515,10 +515,7 @@ class BleService : LifecycleService() {
         val btManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
         val btAdapter = btManager.adapter
 
-        val modeStr = if (DevSettings.detectionMode == DevSettings.MODE_FIXED_AVG)
-            "고정값(위험|${DevSettings.fixedDangerAbs}|경고|${DevSettings.fixedWarningAbs})"
-        else
-            "칼만(위험 ${BleConstants.rssiDanger}dBm / 경고 ${BleConstants.rssiWarning}dBm)"
+        val modeStr = "칼만(위험 ${BleConstants.rssiDanger}dBm / 경고 ${BleConstants.rssiWarning}dBm)"
         Log.i(TAG, "=== BLE 임계값 확인: $modeStr ===")
         sendStatusBroadcast("설정: $modeStr")
 
@@ -770,13 +767,14 @@ class BleService : LifecycleService() {
         //   (UWB 주소 교환 세션은 유지하되, ToF 거리는 더 이상 경보 판정에 사용하지 않는다.)
         val inputRssi: Int = rssi
 
-        val mode     = DevSettings.detectionMode
-        val auxRatio = DevSettings.blendRatio / 100.0
         val now      = System.currentTimeMillis()
 
         // ── 2D 칼만 필터 가져오기 또는 생성 ──────────────────────────────
         val kf = kalmanFilters.getOrPut(deviceId) {
-            KalmanFilter(DevSettings.kalmanPreset)
+            // [v1.1.8 #3] Cold-Start 웜업 주입 — 신규/재획득 기기를 첫 raw RSSI 로 즉시 초기화(공분산↓)해
+            //   재획득 시 칼만 속도(D) 수렴 지연을 단축한다. (신규 '발령' 자체는 아래 Median N=3 워밍업
+            //   게이트가 계속 방어하므로 콜드스타트 오발 위험 없이 추정 수렴만 앞당긴다)
+            KalmanFilter(DevSettings.kalmanPreset).apply { injectWarmup(inputRssi) }
         }
         // 직전 프레임 칼만 추정속도(estimatedVel) — 돌진 FAST 판정·D-Boost 피드백 공용.
         //   ※ kf.update()는 아래에서 호출되므로 지금 값은 '직전 프레임' 속도 = 1-step 미분 피드백.
@@ -866,7 +864,13 @@ class BleService : LifecycleService() {
         //     preFiltered 는 하강 α=0.05 로 이탈 시 잔상(SAFE 복귀 지연)을 만들지만, medianValue 는
         //     raw-order(지연 약 1프레임)라 임펄스는 제거하면서도 실제 이탈에는 신속히 따라가 게이트가
         //     더 빨리 풀린다(잔상 제거). 보수적 min 원칙·avg1sec raw 교차검증은 그대로 보존.
-        val gateRssi = minOf(kalmanRssi, avg1sec, medianValue)
+        // [v1.1.8 #4] 하드게이트 3중가드 결합을 min → median(중앙값)으로 완화.
+        //   min 은 세 경로(칼만·raw1초평균·Median) 중 하나라도 BLE 출렁임(±5~10dB)으로 깊은 dip 을
+        //   찍으면 게이트가 닫혀, 임계 바로 위(예 -81 vs 경고 -85, 4dB 마진) 신규 기기가 노란 경보로
+        //   격상되지 못하는 누락을 낳았다(현장 버그). 중앙값은 세 경로 중 2개가 합의해야 '멀다'로 보아
+        //   단발 dip 1개는 무시하되, 거짓근접에는 여전히 2개 경로 합의를 요구한다(avg1sec raw 교차검증은
+        //   투표자로 보존 = MASTER 불변식 유지). (오름차순 정렬 후 가운데 1개)
+        val gateRssi = listOf(kalmanRssi, avg1sec, medianValue).sorted()[1]
         if (gateRssi < BleConstants.rssiWarning && !alertState.containsKey(deviceId)) {
             // [v1.0.49 #2] 필터 보존 밴드 — 경고 임계 바로 아래(밴드 내) 기기는 필터 상태를 지우지 않고
             //   경보 로직만 스킵한다. 위에서 Median·EMA·칼만·P-EMA·1초버퍼가 이미 이번 프레임 값으로
@@ -959,56 +963,17 @@ class BleService : LifecycleService() {
         var distanceLevel: Int
         val avgRssi: Int
 
-        if (mode == DevSettings.MODE_FIXED_AVG) {
-            // [v1.0.45] 거리(P) 항: kalmanRssi → pEma(후처리 비대칭 P-EMA)로 평활. 속도(D)는 별도 우회.
-            val blended = (avg1sec * (1.0 - auxRatio) + pEma * auxRatio).toInt()
-            avgRssi = blended
-            // [v1.0.47 #4] 기기별 RSSI 오프셋을 고정값 모드에도 적용 — 칼만 경로만 보정하던 모드 비대칭 해소.
-            //   부호 규약은 calcLevelWithHysteresis 와 동일(임계 - offset): 양수 오프셋 = 더 민감(임계 하향).
-            val beaconOffset  = runCatching { BeaconRegistry.getRssiOffsetForFullId(deviceId) }.getOrDefault(0)
-            val warningThresh = -DevSettings.fixedWarningAbs - beaconOffset
-            val dangerThresh  = -DevSettings.fixedDangerAbs - beaconOffset   // [v1.0.46 #1] 고정값 모드도 거리 DANGER 복원
-            // DEPARTING 쿨다운 중: 경보 완전 억제 / 이후: 강화된 임계 적용
-            //   [v1.0.46 #3] 억제값 Int.MIN_VALUE → MAX_VALUE 교정. MIN_VALUE 는 모든 RSSI 가
-            //   임계를 통과(비교 역전)해 '억제' 의도와 정반대로 WARNING 을 강제했다.
-            val timeDep    = now - (departingStartMap[deviceId] ?: now)
-            val suppressed = isNowDepart && timeDep < DEPARTING_REENTRY_COOLDOWN_MS
-            // [v1.0.47 #1] WARNING 재진입 마진 부호 역전 교정('-' → '+'). RSSI 는 0에 가까울수록
-            //   강함(가까움)이라 '강화'는 임계를 0쪽(+)으로 올려야 하는데, '-'가 -80→-88 로 '완화'해
-            //   이탈(DEPARTING) 중 재경보 반경이 오히려 8dBm 넓어졌다(교차 통과 후 알람 지속의 원인).
-            //   아래 DANGER 분기·applyDepartingHysteresis 와 같은 '+' 방향으로 통일.
-            val effWarning = when {
-                suppressed  -> Int.MAX_VALUE
-                isNowDepart -> warningThresh + DEPARTING_HYSTERESIS_DBM
-                else        -> warningThresh
-            }
-            // DANGER 재진입은 applyDepartingHysteresis 와 같은 '+' 마진(더 가까워야 유지).
-            val effDanger = when {
-                suppressed  -> Int.MAX_VALUE
-                isNowDepart -> dangerThresh + DEPARTING_HYSTERESIS_DBM
-                else        -> dangerThresh
-            }
-            val rawLevel = when {
-                blended >= effDanger  -> BleConstants.LEVEL_DANGER
-                blended >= effWarning -> BleConstants.LEVEL_WARNING
-                else                  -> BleConstants.LEVEL_SAFE
-            }
-            distanceLevel = rawLevel   // [v1.1.6 R4-SIL-1] 격하 이전 거리 권위값 보존(이탈 가드용)
-            // ── 정지 격하 방어 ([v1.0.47 #2] 보행자+활동 장비 접근은 예외 — 위 demoteWhileStationary) ──
-            stableLevel = if (demoteWhileStationary && rawLevel >= BleConstants.LEVEL_DANGER)
-                BleConstants.LEVEL_WARNING else rawLevel
-        } else {
-            // [v1.0.45] 거리(P) 항: kalmanRssi → pEma(후처리 비대칭 P-EMA)로 평활. 속도(D)는 별도 우회.
-            val blended = (pEma * (1.0 - auxRatio) + avg1sec * auxRatio).toInt()
-            avgRssi = blended
-            val beaconOffset = runCatching { BeaconRegistry.getRssiOffsetForFullId(deviceId) }.getOrDefault(0)
-            val rawLevel = calcLevelWithHysteresis(deviceId, blended, beaconOffset)
-            distanceLevel = rawLevel   // [v1.1.6 R4-SIL-1] 이탈히스테리시스·격하 이전 거리 권위값 보존(이탈 가드용)
-            val afterHysteresis = applyDepartingHysteresis(deviceId, rawLevel, blended, beaconOffset, now)
-            // ── 정지 격하 방어 ([v1.0.47 #2] 보행자+활동 장비 접근은 예외 — 위 demoteWhileStationary) ──
-            stableLevel = if (demoteWhileStationary && afterHysteresis >= BleConstants.LEVEL_DANGER)
-                BleConstants.LEVEL_WARNING else afterHysteresis
-        }
+        // [v1.1.8 ①②] 고정값(1초 평균 고정) 모드·모드 혼합(blend) 전면 제거 → 칼만 단일화.
+        //   거리(P) 권위값은 순수 pEma(kalmanRssi → 후처리 비대칭 P-EMA 평활). 속도(D)는 위상선행
+        //   유지를 위해 Time-Gate/TTC 에 kfVel 직결로 별도 우회(여기서 평활하지 않음).
+        avgRssi = pEma
+        val beaconOffset = runCatching { BeaconRegistry.getRssiOffsetForFullId(deviceId) }.getOrDefault(0)
+        val rawLevel = calcLevelWithHysteresis(deviceId, pEma, beaconOffset)
+        distanceLevel = rawLevel   // [v1.1.6 R4-SIL-1] 이탈히스테리시스·격하 이전 거리 권위값 보존(이탈 가드용)
+        val afterHysteresis = applyDepartingHysteresis(deviceId, rawLevel, pEma, beaconOffset, now)
+        // ── 정지 격하 방어 ([v1.0.47 #2] 보행자+활동 장비 접근은 예외 — 위 demoteWhileStationary) ──
+        stableLevel = if (demoteWhileStationary && afterHysteresis >= BleConstants.LEVEL_DANGER)
+            BleConstants.LEVEL_WARNING else afterHysteresis
 
         deviceRssiMap[deviceId] = avgRssi      // 플로팅 위젯 최우선 기기 선정·정렬에 사용
 
@@ -1017,7 +982,7 @@ class BleService : LifecycleService() {
         // 여기는 '이미 추적 중이라 1차 게이트를 통과한 기기'가 blend(avgRssi) '또는' raw 1초평균
         // (avg1sec) 중 하나라도 경고 임계(rssiWarning)보다 멀면 stableLevel을 SAFE로 강제 → 아래
         // 이탈 페이드아웃/SAFE 처리로 흘려보낸다. 접근 속도·TTC로는 절대 격상 불가.
-        //   ★ blend는 칼만 비중 때문에 raw가 멀어도 임계 위로 떠 있을 수 있어 raw를 함께 본다.
+        //   ★ [v1.1.8] avgRssi(=pEma)는 후처리 평활 지연으로 raw가 멀어도 임계 위로 떠 있을 수 있어 raw(avg1sec)를 함께 본다.
         if (avgRssi < BleConstants.rssiWarning || avg1sec < BleConstants.rssiWarning) {
             stableLevel = BleConstants.LEVEL_SAFE
         }
@@ -1125,7 +1090,7 @@ class BleService : LifecycleService() {
             //   pEma 거리 레벨)로 본다. demoteWhileStationary 가 물리적 DANGER 를 WARNING 으로 인위 격하해도
             //   distanceLevel==DANGER 인 동안은 이탈로 인정하지 않아 '근접인데 전체 무음'을 차단한다(격하된
             //   WARNING 경보는 canonical 경로가 계속 울림). 진짜로 멀어지면 pEma 가 내려가 distanceLevel<DANGER
-            //   → 이탈 인정·해제. blendRatio 기본 0 이라 distanceLevel 은 순수 pEma 권위값(raw dip 에 불변).
+            //   → 이탈 인정·해제. [v1.1.8] 혼합 제거로 distanceLevel 은 순수 pEma 권위값(raw dip 에 불변).
             isReceding = (recedePeak - recedeRef) >= RECEDING_DBM_DROP &&
                 distanceLevel < BleConstants.LEVEL_DANGER
         } else {
