@@ -592,10 +592,15 @@ class BleService : LifecycleService() {
 
                             val effectiveRssi = if (DevSettings.debugMode) DevSettings.simulatedRssi else rssi
                             noteRssiForWake(deviceId, effectiveRssi)   // [v1.0.42 Req3] 근접 신호 → 즉시 웨이크 판단
-                            processAlert(deviceId, effectiveRssi, remoteState, remoteTurn, payloadPresent)
-                            // [v1.0.26 Req2] processAlert 가 alertState 를 어떻게 바꿨든(추가·격상·SAFE 제거·TTC 선발령)
-                            // 그 직후 전체 스냅샷을 한 번에 송출 → 하단 목록이 플로팅·알람과 절대 어긋나지 않는다.
-                            broadcastDeviceList()
+                            acquireDetectionWakeLock(effectiveRssi)   // [v1.1.13] 화면 꺼짐+근접(>=WAKE) → 처리체인 완주용 짧은 CPU 점유
+                            try {
+                                processAlert(deviceId, effectiveRssi, remoteState, remoteTurn, payloadPresent)
+                                // [v1.0.26 Req2] processAlert 가 alertState 를 어떻게 바꿨든(추가·격상·SAFE 제거·TTC 선발령)
+                                // 그 직후 전체 스냅샷을 한 번에 송출 → 하단 목록이 플로팅·알람과 절대 어긋나지 않는다.
+                                broadcastDeviceList()
+                            } finally {
+                                releaseDetectionWakeLock()   // [v1.1.13] 체인 종료 즉시 해제(발령 시 alertWakeLock 이 별도 인계)
+                            }
                         }
                         override fun onDeviceLost(deviceId: String) {
                             Log.d(TAG, "신호 소실: $deviceId")
@@ -1473,6 +1478,34 @@ class BleService : LifecycleService() {
     //   기다리지 않고 곧바로 풀어 배터리를 아낀다. 미보유면 무동작.
     private fun releaseAlertWakeLock() {
         try { if (alertWakeLock.isHeld) alertWakeLock.release() } catch (e: Exception) { Log.w(TAG, "WakeLock 해제 실패: ${e.message}") }
+    }
+
+    // ── [v1.1.13 탐지단계 마이크로 wakelock] 발령 '이전' 처리체인 완주 보장 ──────────────
+    //   v1.1.9 는 발령 '순간'(forceAlarmVolume)부터 CPU 를 잡아 진동·소리·오버레이를 보장했으나,
+    //   화면 꺼짐(Doze) 시 콜백→Median→EMA→칼만→'발령 판정' 처리 구간에서 CPU 가 자면 발령 자체가
+    //   지연/누락될 수 있다(특히 콜드스타트·근접 진입 첫 프레임). 이 사각을 메운다.
+    //   설계: 화면 꺼짐 + 수신 RSSI ≥ WAKE_RSSI_DBM(상시 웨이크 경로와 동일 임계, 불변식②)일 때만
+    //     짧게 잡고 체인 종료 즉시 finally 에서 해제한다. 발령이 실제 일어나면 그 안에서
+    //     alertWakeLock(3s)이 독립적으로 인계하므로 공백 없이 이어진다(서로 다른 lock — 간섭 0).
+    //     timeout 은 release 누락 대비 안전망(주 루퍼 단일스레드라 정상 경로는 ms 내 해제).
+    private val DETECTION_WAKELOCK_MS = 500L
+    private val detectionWakeLock: PowerManager.WakeLock by lazy {
+        (getSystemService(Context.POWER_SERVICE) as PowerManager)
+            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "SafeAlert:DetectionWakeLock")
+            .apply { setReferenceCounted(false) }
+    }
+
+    // [v1.1.13] 화면 꺼짐 + 근접(>=WAKE) 수신 프레임에서만 CPU 를 짧게 확보 — 처리체인이 Doze 로
+    //   끊기지 않게 한다. 화면 켜짐(사용자 인지 중) 또는 약신호(<WAKE)면 불필요하므로 잡지 않는다.
+    private fun acquireDetectionWakeLock(rssi: Int) {
+        if (isScreenOn || rssi < WAKE_RSSI_DBM) return
+        try { detectionWakeLock.acquire(DETECTION_WAKELOCK_MS) } catch (e: Exception) { Log.w(TAG, "DetectWakeLock 획득 실패: ${e.message}") }
+    }
+
+    // [v1.1.13] 처리체인 종료 직후 즉시 해제 — 프레임 사이(스캔 간격)에는 CPU 를 재워 배터리를 아낀다.
+    //   미보유면 무동작. 경보가 발령된 경우 alertWakeLock 은 별도 lock 이라 영향받지 않는다.
+    private fun releaseDetectionWakeLock() {
+        try { if (detectionWakeLock.isHeld) detectionWakeLock.release() } catch (e: Exception) { Log.w(TAG, "DetectWakeLock 해제 실패: ${e.message}") }
     }
 
     private fun forceAlarmVolume() {
