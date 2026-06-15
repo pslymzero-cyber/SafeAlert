@@ -183,11 +183,14 @@ class BleService : LifecycleService() {
     // 정지 5초 확정 → REST 절전(휴식). 이동 즉시 → ACTIVE 원복(전투).
     private val STATIONARY_ECO_DELAY_MS = 5_000L
     private val ecoHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    // [v1.1.12 L1] 접근(kfVel>0) 마지막 관측 시각(ms). 정지 직전 다가오던 기기를 절전 진입으로 놓치지 않기 위한 영속 신호.
+    //   processAlert 가 매 프레임 갱신, isDangerPresent() 가 SIGNAL_STALE_MS 신선도로 평가. (lastScanResultMs 선례와 동일하게 @Volatile Long)
+    @Volatile private var lastApproachAtMs = 0L
     private val ecoDowngradeRunnable = Runnable {
-        // 5초 뒤에도 여전히 정지 + 활성 경보 없음일 때만 절전 진입 (위험 존재 시 전투 유지)
-        if (ImuFusion.isStationary && alertState.isEmpty()) {
+        // 5초 뒤에도 여전히 정지 + 위험 신호 전무일 때만 절전 진입 (근접/경보/접근 중이면 전투 유지)
+        if (ImuFusion.isStationary && !isDangerPresent()) {
             bleScanner?.setEcoMode(true)
-            Log.d(TAG, "정지 5초 경과 + 경보 없음 → BALANCED 절전(휴식 모드)")
+            Log.d(TAG, "정지 5초 경과 + 위험신호 없음 → BALANCED 절전(휴식 모드)")
         }
     }
 
@@ -850,6 +853,7 @@ class BleService : LifecycleService() {
         // ── 2D 칼만 필터 업데이트 (RSSI 공간) ────────────────────────────
         // kfRssi: 추정 RSSI(dBm) / kfVel: 변화율(dBm/s), 양수=접근 / 음수=이탈
         val (kfRssi, kfVel) = kf.update(preFiltered, ImuFusion.adaptiveQFactor)
+        if (kfVel > 0.0) lastApproachAtMs = System.currentTimeMillis()  // [v1.1.12 L1] 접근(다가옴) 표본 시각 기록 → isDangerPresent 절전 게이트
         val kalmanRssi = kfRssi.toInt()
 
         // ── [v1.0.45] 후처리 P-EMA: 거리(P)항 전용 평활 — kfRssi → 비대칭 P-EMA → 거리판정 ──
@@ -1876,6 +1880,23 @@ class BleService : LifecycleService() {
                 Log.d(TAG, "RSSI 슬립(평가): 근접 신호 없음 → 하트비트 모드")
             }
         }
+    }
+
+    /**
+     * [v1.1.12 L1] 절전(eco) 강등 안전 게이트 — 위험 신호가 하나라도 있으면 true → 강등 보류(전투 유지).
+     *   anyNear   : 신선한(≤SIGNAL_STALE_MS) wakeRssiMap 표본 중 RSSI ≥ WAKE → 근접 기기 존재
+     *   hasAlert  : 활성 경보(alertState) 존재
+     *   approach  : 신선한 접근(kfVel>0) 표본 존재 — 정지 직전 다가오던 기기를 절전 진입으로 놓치지 않음
+     *  ※ 읽기 전용(맵 변경 없음) — stale 표본 정리는 evaluateAdvertiserPower(2.5s 주기)가 전담.
+     *  ※ 듀티 불변: 스캔/광고 라디오 설정을 직접 바꾸지 않고, ecoDowngradeRunnable 의 '강등해도 되는가' 판정만 강화.
+     *     (기존 alertState.isEmpty() 게이트를 엄격히 더 보수적으로 — 누락위험 0, 절전 진입만 줄어든다.)
+     */
+    private fun isDangerPresent(): Boolean {
+        val now = System.currentTimeMillis()
+        val anyNear  = wakeRssiMap.values.any { (r, ts) -> now - ts <= SIGNAL_STALE_MS && r >= WAKE_RSSI_DBM }
+        val hasAlert = alertState.isNotEmpty()
+        val approach = lastApproachAtMs != 0L && now - lastApproachAtMs <= SIGNAL_STALE_MS
+        return anyNear || hasAlert || approach
     }
 
     /**
