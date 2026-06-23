@@ -245,14 +245,17 @@ object DevSettings {
         set(v) = prefs.edit().putInt(KEY_DEPARTING_HYSTERESIS_DBM, v.coerceIn(0, 20)).apply()
 
     // 페이드아웃: 피크 대비 하락(dB)이 지속(ms)되면 경보 해제
+    // [v1.1.14] 교행 후 잔존(~1~2s) 단축 — 이탈 확인 후 완전 해제까지 2500→1500ms.
+    //   위험권 가드(isReceding 의 distanceLevel<DANGER)는 불변 → '근접 무음' 회귀 없음.
     private const val KEY_RECEDING_CLEAR_MS = "receding_clear_ms"
-    const val DEFAULT_RECEDING_CLEAR_MS = 2500L
+    const val DEFAULT_RECEDING_CLEAR_MS = 1500L
     var recedingClearMs: Long
         get() = prefs.getLong(KEY_RECEDING_CLEAR_MS, DEFAULT_RECEDING_CLEAR_MS).coerceIn(500L, 10_000L)
         set(v) = prefs.edit().putLong(KEY_RECEDING_CLEAR_MS, v.coerceIn(500L, 10_000L)).apply()
 
+    // [v1.1.14] 이탈 인정 하락폭 5→4dBm — 위험권을 벗어난 직후 더 빨리 이탈 인정(소리 멈춤).
     private const val KEY_RECEDING_DBM_DROP = "receding_dbm_drop"
-    const val DEFAULT_RECEDING_DBM_DROP = 5
+    const val DEFAULT_RECEDING_DBM_DROP = 4
     var recedingDbmDrop: Int
         get() = prefs.getInt(KEY_RECEDING_DBM_DROP, DEFAULT_RECEDING_DBM_DROP).coerceIn(1, 20)
         set(v) = prefs.edit().putInt(KEY_RECEDING_DBM_DROP, v.coerceIn(1, 20)).apply()
@@ -388,12 +391,22 @@ object DevSettings {
         get() = prefs.getBoolean(KEY_CATEGORY_BIAS_ENABLED, true)
         set(v) = prefs.edit().putBoolean(KEY_CATEGORY_BIAS_ENABLED, v).apply()
 
-    // [Phase1] 보행자↔중장비 조기경보 오프셋(dB) — 경고·위험 임계를 이만큼 먼 거리로 당김. 0=비활성과 동일
+    // [Phase1] 보행자↔지게차 조기경보 오프셋(dB) — 경고·위험 임계를 이만큼 먼 거리로 당김. 0=비활성과 동일
+    //   [v1.1.14] 의미 명확화: 이 값은 '보행자↔지게차' 전용. EPJ 는 아래 walkerVsEpjBiasDb 로 분리.
     private const val KEY_WALKER_VS_EQUIP_BIAS_DB = "walker_vs_equip_bias_db"
     const val DEFAULT_WALKER_VS_EQUIP_BIAS_DB = 6
     var walkerVsEquipBiasDb: Int
         get() = prefs.getInt(KEY_WALKER_VS_EQUIP_BIAS_DB, DEFAULT_WALKER_VS_EQUIP_BIAS_DB).coerceIn(0, 15)
         set(v) = prefs.edit().putInt(KEY_WALKER_VS_EQUIP_BIAS_DB, v.coerceIn(0, 15)).apply()
+
+    // [Phase1/v1.1.14] 보행자↔EPJ 전용 조기경보 오프셋(dB) — 지게차와 분리(완화).
+    //   EPJ(전동 파레트 잭)는 저속·동일 공간 협업이 많아 지게차 기준(+6)을 그대로 쓰면 과경보.
+    //   기본 +2 로 더 가까이서만 울리게 한다. 0=중립(일반 임계와 동일). categoryBiasEnabled 토글 공유.
+    private const val KEY_WALKER_VS_EPJ_BIAS_DB = "walker_vs_epj_bias_db"
+    const val DEFAULT_WALKER_VS_EPJ_BIAS_DB = 2
+    var walkerVsEpjBiasDb: Int
+        get() = prefs.getInt(KEY_WALKER_VS_EPJ_BIAS_DB, DEFAULT_WALKER_VS_EPJ_BIAS_DB).coerceIn(0, 15)
+        set(v) = prefs.edit().putInt(KEY_WALKER_VS_EPJ_BIAS_DB, v.coerceIn(0, 15)).apply()
 
     // [Phase2] 상태 기반 가감 on/off — 상대 FORWARD(전진) 접근 시 추가 조기경보, IDLE-IDLE 가청 억제
     private const val KEY_STATE_MODULATION_ENABLED = "state_modulation_enabled"

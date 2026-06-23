@@ -14,8 +14,11 @@ import android.os.Looper
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.ArrayAdapter
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.Spinner
+import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
@@ -115,25 +118,41 @@ class BeaconManagerActivity : AppCompatActivity() {
             setText(prefillUuid)
             textSize = 12f
         }
+        // [v1.1.14] 유형·감지범위를 모두 한 다이얼로그의 Spinner 로 통합.
+        //   구버전은 setSingleChoiceItems(유형)+setMultiChoiceItems(placeholder) 충돌로 유형 리스트가 깨지고,
+        //   '감지 범위…' NeutralButton 이 showManualAddDialog 를 재귀 호출 → 새 호출의 selectedRange 가 0 으로
+        //   리셋되어 범위 선택이 저장되지 않던 버그(= 감지범위 설정이 안 먹던 원인)를 제거한다.
         val typeOptions  = arrayOf("iBeacon (Proximity UUID)", "Service UUID (Eddystone 등)")
-        var selectedType = if (prefillType == "IBEACON") 0 else 1
-
-        // 감지 범위 선택
+        val spType = Spinner(this).apply {
+            adapter = ArrayAdapter(this@BeaconManagerActivity,
+                android.R.layout.simple_spinner_item, typeOptions).apply {
+                setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+            }
+            setSelection(if (prefillType == "IBEACON") 0 else 1)
+        }
         val rangeOptions = arrayOf(
-            "기본 (전역 설정)",
+            "기본 범위 (전역 설정)",
             "넓게 +10dBm (약 2배, SmartTag 권장)",
             "매우 넓게 +20dBm (약 4배)"
         )
-        var selectedRange = 0
+        val spRange = Spinner(this).apply {
+            adapter = ArrayAdapter(this@BeaconManagerActivity,
+                android.R.layout.simple_spinner_item, rangeOptions).apply {
+                setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+            }
+            setSelection(0)
+        }
 
         layout.addView(etLabel)
         layout.addView(etUuid)
+        layout.addView(TextView(this).apply { text = "유형"; setPadding(0, 24, 0, 4) })
+        layout.addView(spType)
+        layout.addView(TextView(this).apply { text = "감지 범위 (이 UUID 그룹 전체)"; setPadding(0, 24, 0, 4) })
+        layout.addView(spRange)
 
         AlertDialog.Builder(this)
             .setTitle("UUID 프로파일 추가")
             .setView(layout)
-            .setSingleChoiceItems(typeOptions, selectedType) { _, which -> selectedType = which }
-            .setMultiChoiceItems(null, null, null)  // placeholder
             .setPositiveButton("등록") { _, _ ->
                 val label = etLabel.text.toString().trim().ifEmpty { "비콘 그룹" }
                 val uuid  = etUuid.text.toString().trim().uppercase()
@@ -142,8 +161,8 @@ class BeaconManagerActivity : AppCompatActivity() {
                     Toast.makeText(this, "UUID 형식이 올바르지 않습니다", Toast.LENGTH_SHORT).show()
                     return@setPositiveButton
                 }
-                val type   = if (selectedType == 0) "IBEACON" else "SERVICE_UUID"
-                val offset = when (selectedRange) { 1 -> 10; 2 -> 20; else -> 0 }
+                val type   = if (spType.selectedItemPosition == 0) "IBEACON" else "SERVICE_UUID"
+                val offset = when (spRange.selectedItemPosition) { 1 -> 10; 2 -> 20; else -> 0 }
                 val ok = BeaconRegistry.add(BeaconProfile(uuid, label, type, rssiOffset = offset))
                 if (ok) {
                     val rangeNote = if (offset > 0) " (범위 +${offset}dBm)" else ""
@@ -152,15 +171,6 @@ class BeaconManagerActivity : AppCompatActivity() {
                 } else Toast.makeText(this, "이미 등록되어 있거나 한도 초과", Toast.LENGTH_SHORT).show()
             }
             .setNegativeButton("취소", null)
-            .setNeutralButton("감지 범위…") { _, _ ->
-                AlertDialog.Builder(this)
-                    .setTitle("감지 범위 조정")
-                    .setSingleChoiceItems(rangeOptions, selectedRange) { d, which ->
-                        selectedRange = which; d.dismiss()
-                        showManualAddDialog(prefillUuid, prefillType)
-                    }
-                    .show()
-            }
             .show()
     }
 

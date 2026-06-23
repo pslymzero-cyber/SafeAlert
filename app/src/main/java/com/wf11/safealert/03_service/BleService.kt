@@ -251,7 +251,7 @@ class BleService : LifecycleService() {
     // [v1.0.42] ttcFeedbackMap / LEARN_RATE 제거 — pathLossExp 온라인 학습(거리 모델 자가학습) 폐지.
 
     private val recedingStartMap = mutableMapOf<String, Long>()
-    // [판정 파라미터] 페이드아웃 해제 — DevSettings 라이브 읽기(기본 2500L/5 = 기존값)
+    // [판정 파라미터] 페이드아웃 해제 — DevSettings 라이브 읽기(기본 1500L/4, v1.1.14 교행후 잔존 단축)
     private val RECEDING_CLEAR_MS: Long get() = DevSettings.recedingClearMs
 
     // [v1.1.6] 이탈 판정 재설계 — raw 절대최대 피크는 초근접 BLE 노이즈(±5~10dBm)에 고착돼
@@ -388,6 +388,9 @@ class BleService : LifecycleService() {
             }
             // [v1.1.7 #1] 속도 비트 제거 → IMU 회전(좌/우/직진) 추정값을 송출 페이로드에 탑재.
             bleAdvertiser?.updateTurn(ImuFusion.turnDirection)
+            // [v1.1.14] 폴링 안전망 — 스캔이 잠시 끊겨도 내 최고 경보레벨을 위험상태(RISK)로 유지 송출.
+            //   (주 송출은 onDeviceDetected 스캔주기. 동일레벨 no-op 라 중복 호출 무해.)
+            bleAdvertiser?.updateRisk(getCurrentMaxLevel())
             broadcastLocalState()   // [v1.0.42 Req2] 주기 갱신 — Local UI(상태/회전) 폴링 소스 최신 유지
             speedPushHandler.postDelayed(this, SPEED_PUSH_INTERVAL_MS)
         }
@@ -598,6 +601,10 @@ class BleService : LifecycleService() {
                                 // [v1.0.26 Req2] processAlert 가 alertState 를 어떻게 바꿨든(추가·격상·SAFE 제거·TTC 선발령)
                                 // 그 직후 전체 스냅샷을 한 번에 송출 → 하단 목록이 플로팅·알람과 절대 어긋나지 않는다.
                                 broadcastDeviceList()
+                                // [v1.1.14] 내가 감지한 최고 경보레벨을 위험상태(RISK)로 즉시 재광고 → 상대 기기가
+                                //   '교행 전에' 협력 격상(절충)으로 먼저 울리도록. 폴링(1.5s)보다 빠른 스캔주기 송출(onset↑).
+                                //   updateRisk 는 동일레벨 no-op·상승 즉시·하강 0.5s throttle 라 매 스캔 호출 안전.
+                                bleAdvertiser?.updateRisk(getCurrentMaxLevel())
                             } finally {
                                 releaseDetectionWakeLock()   // [v1.1.13] 체인 종료 즉시 해제(발령 시 alertWakeLock 이 별도 인계)
                             }
@@ -640,6 +647,8 @@ class BleService : LifecycleService() {
                             } else {
                                 updateFloatingOverlay()   // 다른 위험 기기로 플로팅 전환
                             }
+                            // [v1.1.14] 소실로 alertState 가 줄었으니 위험상태(RISK)도 즉시 갱신 송출(비었으면 SAFE).
+                            bleAdvertiser?.updateRisk(getCurrentMaxLevel())
                             // [v1.0.26 Req2] 신호 소실 직후 목록 재송출(빈 목록도 강제 전송 → '감지 없음' 즉시 반영)
                             broadcastDeviceList(force = true)
                         }
@@ -687,12 +696,20 @@ class BleService : LifecycleService() {
     private fun computePayloadRiskOffset(deviceId: String, rCategory: Int, rState: Int, kfVel: Double): Int {
         var offset = 0
         if (DevSettings.categoryBiasEnabled) {
-            val iAmWalker = myCategory == BleConstants.CAT_WALKER
-            val iAmEquip  = myCategory == BleConstants.CAT_FORKLIFT || myCategory == BleConstants.CAT_EPJ
-            val rIsWalker = rCategory == BleConstants.CAT_WALKER
-            val rIsEquip  = rCategory == BleConstants.CAT_FORKLIFT || rCategory == BleConstants.CAT_EPJ
-            if ((iAmWalker && rIsEquip) || (iAmEquip && rIsWalker)) {
+            val iAmWalker   = myCategory == BleConstants.CAT_WALKER
+            val iAmForklift = myCategory == BleConstants.CAT_FORKLIFT
+            val iAmEpj      = myCategory == BleConstants.CAT_EPJ
+            val rIsWalker   = rCategory == BleConstants.CAT_WALKER
+            val rIsForklift = rCategory == BleConstants.CAT_FORKLIFT
+            val rIsEpj      = rCategory == BleConstants.CAT_EPJ
+            // [v1.1.14] 역할쌍 분리: 보행자↔지게차는 강한 조기경보(+6), 보행자↔EPJ는 완화(+2).
+            //   EPJ 는 저속·동일공간 작업이라 지게차와 같은 임계를 쓰면 과경보 → 별도 오프셋으로 분리.
+            //   장비↔장비·보행자↔보행자는 어느 쌍에도 안 걸려 0(기존과 동일).
+            if ((iAmWalker && rIsForklift) || (iAmForklift && rIsWalker)) {
                 offset += DevSettings.walkerVsEquipBiasDb
+            }
+            if ((iAmWalker && rIsEpj) || (iAmEpj && rIsWalker)) {
+                offset += DevSettings.walkerVsEpjBiasDb
             }
         }
         // [v1.1.11 C1] 전진-접근 가산: kfVel 임계를 히스테리시스 래치로 감싼다.
@@ -812,6 +829,7 @@ class BleService : LifecycleService() {
         //   remoteTurn = 상대 송신 회전 방향(TURN_*, bits 3:2). 표시 라벨/디버그용(속도 비트는 제거됨).
         val rCategory = BleConstants.decodeCategory(remoteState)
         val rState    = BleConstants.decodeState(remoteState)
+        val rRisk     = BleConstants.decodeRisk(remoteState)   // [v1.1.14] 상대가 송출한 위험 감지 레벨(LEVEL_*) — 양방향 협력 알림 수신측
         deviceCategoryMap[deviceId] = rCategory   // 표시 라벨(보행자/EPJ/지게차) 판별용 캐시
         deviceStateMap[deviceId]    = rState      // [v1.0.44] 표시문구 분기용(정지=대기/이동=접근) 상태 캐시
         deviceTurnMap[deviceId]     = remoteTurn   // [v1.1.7 #1] 회전 방향 캐시(표시/디버그)
@@ -1078,6 +1096,19 @@ class BleService : LifecycleService() {
             stableLevel = BleConstants.LEVEL_SAFE
         }
 
+        // ── [v1.1.14] 양방향 협력 알림(절충): 상대 위험송출(rRisk) + 내 RSSI 게이트로 경보 '격상' ──
+        //   상대가 위험/경고를 '먼저' 감지해 송출(decodeRisk)하고, '내' RSSI(pEma·raw 둘 다)도
+        //   경고권(effWarning) 이상으로 가까울 때만 상대가 보낸 레벨까지 끌어올린다(격상 전용 — 절대 격하 안 함).
+        //   - onset(교행 전 발령): 양쪽이 접근 중이면 내 RSSI 가 DANGER 임계(-55)에 '닿기 전'에 상대 송출로 먼저 울린다.
+        //   - 안전: 먼 곳 상대의 오발(false alarm)은 내 RSSI 게이트(effWarning)가 차단(절충 = 상대송출 ∧ 내 RSSI 근접).
+        //   - 하이브리드(avgRssi ∧ avg1sec) 교차검증 → 이탈 잔상 위 거짓 격상도 막는다(특수경보·safeForceFloor 선례).
+        if (rRisk > BleConstants.LEVEL_SAFE && rRisk > stableLevel &&
+            avgRssi >= effWarning && avg1sec >= effWarning) {
+            val beforeCoop = stableLevel
+            stableLevel = rRisk.coerceAtMost(BleConstants.LEVEL_DANGER)
+            Log.w(TAG, "협력 격상(절충): $deviceId rRisk=$rRisk 내RSSI(pEma=$avgRssi raw=$avg1sec) → $beforeCoop→$stableLevel")
+        }
+
         // [v1.0.26 Req2] 개별 sendDetectedBroadcast 폐지 — 목록은 onDeviceDetected 처리 직후
         // broadcastDeviceList() 가 alertState 전체를 한 번에 송출한다(단일 진실 공급원).
 
@@ -1258,13 +1289,17 @@ class BleService : LifecycleService() {
         //     remaining<=0 이 되어 'TTC 0초' 오발이 났다. raw 실측(avg1sec)이 경고권(rssiWarning)
         //     이상으로 실제 가까울 때만 선발령을 허용해, 원거리에서의 TTC 0초 오발을 차단한다.
         //   ★ v1.0.39: 긴급(DANGER) 선발령 게이트 추가 — '직전 0.5초 동안 받은 RSSI 중 최댓값(피크)'이
-        //     위험권(rssiDanger=-55) 이상일 때만 긴급을 허용한다. 이로써 멀리(-75 부근)서 칼만 속도
-        //     추정만으로 긴급이 새어 나오던 문제를 차단한다. (버퍼 비면 avg1sec 로 폴백)
+        //     일정 거리 이상일 때만 긴급을 허용해, 멀리서 칼만 속도 추정만으로 긴급이 새어 나오던
+        //     문제를 차단한다. (버퍼 비면 avg1sec 로 폴백)
+        //   ★ v1.1.14: 그 피크 게이트를 effDanger(-55, 코앞)→effWarning(경고거리 설정값)으로 연동.
+        //     '코앞에 와야 발령'이 예측을 무력화하던 병목 해소 — 경고거리 안에서 빠르게 접근하면
+        //     (TTC≤ttcThresholdSec·vel>minApproachVelDbm) 위험거리 닿기 전 먼저 발령한다.
+        //     오발은 그 두 다이얼(개발자 설정 스피너)이 방어한다.
         if (!warmingUp                                      // [v1.0.45] 콜드스타트 임펄스 선발령 보류
             && stableLevel == BleConstants.LEVEL_WARNING
             && newState == TrackingState.APPROACHING
             && avg1sec >= effWarning                                            // [v1.1.10] 페이로드 시프트
-            && (recentPeakRssi(deviceId, 500L) ?: avg1sec) >= effDanger) {       // [v1.1.10] 페이로드 시프트
+            && (recentPeakRssi(deviceId, 500L) ?: avg1sec) >= effWarning) {      // [v1.1.14] 피크 게이트=경고거리 설정값(effWarning) 연동
             val ttc = estimateTTC(kfRssi, kfVel)
             if (ttc != null && ttc <= TTC_THRESHOLD_SEC) {
                 alertState[deviceId] = Pair(BleConstants.LEVEL_DANGER, now)  // ★ 먼저 업데이트 → 목록에 DANGER 반영

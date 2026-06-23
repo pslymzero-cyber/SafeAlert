@@ -23,6 +23,10 @@ class BleAdvertiser(
         // [v1.0.29] 상태 갱신 최소 주기 — 안드로이드 OS Advertising Rate-Limit 회피
         //   [v1.1.7 #1] STATE 와 Turn(bits 3:2) 재광고가 이 throttle 을 '공유'한다.
         private const val MIN_STATE_UPDATE_INTERVAL_MS = 2000L
+        // [v1.1.14] 위험상태(RISK) 전용 최소 재광고 간격 — STATE/TURN(2초)과 독립.
+        //   위험은 안전 critical 이라 빠르게 전파한다: 상승(위험↑)은 이 간격도 무시하고 즉시 재광고,
+        //   하강(위험↓)만 0.5초 최소간격으로 stop/start 폭주(레벨 토글)를 막는다.
+        private const val MIN_RISK_UPDATE_INTERVAL_MS = 500L
         // 상태 변경 시 stopAdvertising 후 재시작까지 대기 (OS 정리 시간 확보)
         private const val STATE_RESTART_DELAY_MS = 50L
         // [v1.0.43 Req3] (구) 하트비트 버스트 상수 폐지 — 슬립을 'stop + 700ms/4s 버스트'에서
@@ -90,8 +94,14 @@ class BleAdvertiser(
     // [v1.1.7 #1] 현재 송신 회전 방향(TURN_*, bits 3:2) — startAdvertising 이 Turn 2비트로 패킹해 싣는다.
     //   BleService 가 ImuFusion.turnDirection 을 주기적으로 updateTurn() 으로 밀어 넣는다.
     @Volatile private var currentTurnDir: Int = BleConstants.TURN_STRAIGHT
+    // [v1.1.14] 현재 송신 위험상태(RISK 2bit, LEVEL_*) — encodePayload bits[1:0] 에 패킹.
+    //   BleService 가 자신의 alertState 최대 경보레벨을 updateRisk() 로 주기적으로 민다.
+    //   상대 수신단이 decodeRisk 로 풀어 '자신 RSSI 게이트와 결합'(절충)해 경보를 격상 → 양방향 협력 알림.
+    @Volatile private var currentRisk: Int = BleConstants.LEVEL_SAFE
     // [v1.0.36] STATE·Speed 재광고 공용 throttle 타임스탬프 (구 lastStateUpdateMs)
     private var lastPayloadUpdateMs = 0L
+    // [v1.1.14] 위험상태(RISK) 전용 throttle 타임스탬프 — STATE/TURN throttle 과 독립.
+    private var lastRiskUpdateMs = 0L
     // 재광고 시 UWB 주소 유지 (updateState / restartWithUwbAddress 공용)
     private var lastUwbAddress: ByteArray? = null
     private val stateHandler = android.os.Handler(android.os.Looper.getMainLooper())
@@ -127,6 +137,7 @@ class BleAdvertiser(
     val txCategory: Int  get() = category
     val txState: Int     get() = currentState
     val txTurnDir: Int   get() = currentTurnDir
+    val txRisk: Int      get() = currentRisk      // [v1.1.14] 현재 송출 중인 위험상태(LEVEL_*)
 
     /**
      * @param uwbLocalAddress 이 기기의 UWB 주소 2바이트 (null = UWB 미지원/미초기화)
@@ -161,13 +172,14 @@ class BleAdvertiser(
         // ── Primary 광고 패킷 (ServiceUUID 포함 → 화면 꺼짐에도 스캔 필터 작동) ──
         val advertiseData = AdvertiseData.Builder()
             .addServiceUuid(ParcelUuid(UUID.fromString(BleConstants.SERVICE_UUID)))
-            // [v1.1.7 #1] 1바이트 ServiceData: Category+State+Turn(2-2-2-2 패킹) 단일 바이트.
-            //   기존 Speed 4비트 폐기 → Turn 2비트(bits 3:2) 탑재, 하위 2비트 예약.
+            // [v1.1.7 #1] 1바이트 ServiceData: Category+State+Turn+Risk(2-2-2-2 패킹) 단일 바이트.
+            //   기존 Speed 4비트 폐기 → Turn 2비트(bits 3:2) 탑재.
+            //   [v1.1.14] 하위 2비트(예약)→ Risk(위험 감지 상태, bits 1:0) 탑재 — 양방향 협력 알림.
             //   SERVICE_UUID 가 16비트 short UUID(0x1234) 패턴 → ServiceData 약 5바이트.
             .addServiceData(
                 ParcelUuid(UUID.fromString(BleConstants.SERVICE_UUID)),
                 byteArrayOf(
-                    BleConstants.encodePayload(category, currentState, currentTurnDir)
+                    BleConstants.encodePayload(category, currentState, currentTurnDir, currentRisk)
                 )
             )
             .addManufacturerData(companyId, idBytes)
@@ -244,6 +256,28 @@ class BleAdvertiser(
         lastPayloadUpdateMs = now
         currentTurnDir = turn
         Log.d(TAG, "회전 갱신 → ${BleConstants.turnLabel(turn)} 재광고")
+        restartAdvertise()
+    }
+
+    /**
+     * [v1.1.14] 송신 위험상태(RISK 2비트, LEVEL_*) 갱신 — BleService 가 자신의 alertState 최대
+     *  경보레벨을 주기적으로 민다. STATE/TURN(2초 throttle)과 '독립'된 throttle 을 쓴다(안전 critical).
+     *  - 상승(위험↑, 예: SAFE→DANGER)은 throttle 을 무시하고 '즉시' 재광고 — 전파 지연 0.
+     *  - 하강(위험↓)은 0.5초 최소간격(레벨 토글 시 stop/start 폭주 차단). 걸리면 이번 호출은 생략하고
+     *    currentRisk 도 그대로 둔다 → BleService 송신 폴링(~1.5초)이 매번 다시 호출하므로
+     *    throttle 풀린 다음 호출에서 자연 반영된다(보류 runnable 불필요). 하강이 최대 ~1.5초 늦어도
+     *    '더 위험하게'가 아니라 '안전측으로 더 오래 울림'이라 무해.
+     *  - restartAdvertise 가 최신 currentState+currentTurnDir+currentRisk 를 함께 패킹해 싣는다.
+     */
+    fun updateRisk(level: Int) {
+        val r = level.coerceIn(BleConstants.LEVEL_SAFE, BleConstants.LEVEL_DANGER)
+        if (r == currentRisk) return
+        val now = SystemClock.elapsedRealtime()
+        val rising = r > currentRisk
+        if (!rising && now - lastRiskUpdateMs < MIN_RISK_UPDATE_INTERVAL_MS) return  // 하강 비긴급 — 다음 폴링서 재시도
+        currentRisk = r
+        lastRiskUpdateMs = now
+        Log.d(TAG, "위험상태 송출 갱신 → $r (상승=$rising) 재광고")
         restartAdvertise()
     }
 

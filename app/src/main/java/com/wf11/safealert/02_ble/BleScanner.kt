@@ -229,6 +229,23 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
             BeaconRegistry.getAll().filter { it.type == "MAC" }.forEach { profile ->
                 runCatching { filters.add(ScanFilter.Builder().setDeviceAddress(profile.uuid).build()) }
             }
+            // [v1.1.14] iBeacon 등록 비콘 — 제조사데이터(0x004C) 패턴 필터.
+            //   iBeacon 은 SERVICE_UUID·MAC 을 광고하지 않으므로 위 두 필터로는 칩셋 단에서
+            //   폐기된다(= 등록해도 신호를 못 잡던 원인, 화면 꺼짐·Doze 에서 특히 치명적).
+            //   [0x02,0x15, UUID 16바이트] 패턴 + 전체 마스크로 '등록 UUID 의 iBeacon 만'
+            //   통과시킨다(주변 타사 0x004C 광고는 칩셋이 폐기 → 잡음 유입 0).
+            BeaconRegistry.getAll().filter { it.type == "IBEACON" }.forEach { profile ->
+                runCatching {
+                    val u  = java.util.UUID.fromString(profile.uuid)
+                    val bb = java.nio.ByteBuffer.allocate(16)
+                    bb.putLong(u.mostSignificantBits); bb.putLong(u.leastSignificantBits)
+                    val pattern = byteArrayOf(0x02, 0x15) + bb.array()      // iBeacon 프리픽스 + UUID
+                    val mask    = ByteArray(pattern.size) { 0xFF.toByte() } // 전 바이트 정확 매칭
+                    filters.add(ScanFilter.Builder()
+                        .setManufacturerData(0x004C, pattern, mask)
+                        .build())
+                }
+            }
         }
         return filters
     }

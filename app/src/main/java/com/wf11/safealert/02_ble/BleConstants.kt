@@ -70,7 +70,11 @@ object BleConstants {
     //     00 직진(STRAIGHT) / 01 좌회전(LEFT) / 10 우회전(RIGHT) / 11 예약
     //          송신단(ImuFusion.turnDirection, GAME_ROTATION_VECTOR 방위각 미분 기반)이
     //          실시간 송출 → 수신단이 상대의 회전 진입을 표시·경보에 활용한다.
-    //   RSV  (bits 1:0): 예약(항상 0). 향후 확장용.
+    //   RISK (bits 1:0) [v1.1.14 — 기존 RSV 예약 2비트 활용]:
+    //     00 안전(미감지) / 01 경고 감지 / 10 위험 감지 / 11 예약
+    //          송신단(BleService 가 자신의 alertState 최대 경보레벨)을 송출 →
+    //          수신단이 decodeRisk 로 풀어 '자신 RSSI 게이트와 결합'(절충)해 경보를 격상한다.
+    //          → 한쪽이 먼저 감지하면 양쪽이 함께 울리는 양방향 협력 알림(fail-safe).
     //
     //   ※ 호환성: 보행자 평상(CAT=00,STATE=00,TURN=00) = 0x00 →
     //     페이로드를 싣지 않는 iBeacon/MAC 비콘의 기본 0x00 과 자연 일치(안전한 기본값).
@@ -94,26 +98,31 @@ object BleConstants {
     const val TURN_RIGHT    = 0b10   // 우회전
     const val TURN_RESERVED = 0b11   // 예약
 
-    // 비트 필드 마스크/시프트  (2-2-2-2: CAT 상위 → TURN → 예약 하위)
+    // 비트 필드 마스크/시프트  (2-2-2-2: CAT 상위 → STATE → TURN → RISK 하위)
     private const val CAT_SHIFT   = 6
     private const val CAT_MASK    = 0b11
     private const val STATE_SHIFT = 4
     private const val STATE_MASK  = 0b11
     private const val TURN_SHIFT  = 2
     private const val TURN_MASK   = 0b11
+    // [v1.1.14] RISK(위험 감지 상태) — bits[1:0]. LEVEL_*(0~2) 를 그대로 2비트에 싣는다.
+    private const val RISK_SHIFT  = 0
+    private const val RISK_MASK   = 0b11
 
     /**
-     * 4개 필드(Category 2bit + State 2bit + Turn 2bit + 예약 2bit)를 1바이트로 패킹한다. (2-2-2-2 Split)
-     * 레이아웃: bits[7:6]=CAT, bits[5:4]=STATE, bits[3:2]=TURN, bits[1:0]=예약(0).
+     * 4개 필드(Category 2bit + State 2bit + Turn 2bit + Risk 2bit)를 1바이트로 패킹한다. (2-2-2-2 Split)
+     * 레이아웃: bits[7:6]=CAT, bits[5:4]=STATE, bits[3:2]=TURN, bits[1:0]=RISK.
      * @param category CAT_* (0~3) — 범위 밖 상위 비트는 마스킹돼 버려진다.
      * @param state    PSTATE_* (0~3)
      * @param turn     TURN_* (0~3). [v1.1.7 #1] 송신단은 ImuFusion.turnDirection(방위각 미분)를 송출.
+     * @param risk     LEVEL_* (0~2). [v1.1.14] 송신자 위험 감지 상태(기본 SAFE). 수신단이 격상에 활용.
      */
-    fun encodePayload(category: Int, state: Int, turn: Int = TURN_STRAIGHT): Byte {
+    fun encodePayload(category: Int, state: Int, turn: Int = TURN_STRAIGHT, risk: Int = LEVEL_SAFE): Byte {
         val c = (category and CAT_MASK) shl CAT_SHIFT
         val s = (state and STATE_MASK) shl STATE_SHIFT
         val t = (turn and TURN_MASK) shl TURN_SHIFT
-        return (c or s or t).toByte()
+        val r = (risk and RISK_MASK) shl RISK_SHIFT      // [v1.1.14] 위험 감지 상태(RSV→RISK)
+        return (c or s or t or r).toByte()
     }
 
     /** 패킹된 1바이트에서 Category(bits 7:6) 추출. */
@@ -124,6 +133,9 @@ object BleConstants {
 
     /** 패킹된 1바이트에서 Turn 코드(bits 3:2, TURN_*) 추출. [v1.1.7 #1] */
     fun decodeTurn(payload: Int): Int = ((payload and 0xFF) shr TURN_SHIFT) and TURN_MASK
+
+    /** 패킹된 1바이트에서 Risk(bits 1:0, LEVEL_*) 추출. [v1.1.14] 송신자 위험 감지 상태(0 SAFE/1 경고/2 위험). */
+    fun decodeRisk(payload: Int): Int = ((payload and 0xFF) shr RISK_SHIFT) and RISK_MASK
 
     // ── [v1.0.42 Req2] 표시용 한글 라벨 (Local/Target 양쪽 UI 가 공유하는 단일 소스) ──
     /** Category(CAT_*) -> 표시용 한글 라벨. */
