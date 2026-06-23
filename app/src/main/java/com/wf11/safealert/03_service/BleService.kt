@@ -207,6 +207,12 @@ class BleService : LifecycleService() {
     private val RUSH_FAST_MIN_FRAMES  = 2     // 연속 N프레임 지속 시에만 FAST 승격(임펄스 차단)
     private val RUSH_FAST_IMU_QFACTOR = 2.0   // IMU 실가속 동반: adaptiveQFactor 이 이 값 이상이면 즉시 허용
 
+    // ── [v1.1.16 D] 첫 접촉 DANGER 고속 발령(2프레임 확증) ────────────────────
+    //   비콘은 페이로드가 없어 워밍업(Median 미충전, 약 1프레임) 중 신규 DANGER 진입이 발령 보류된다.
+    //   raw(칼만·1초평균)가 2연속 프레임 위험권이면(단발 임펄스 차단) 워밍업·접근속도 게이트를 우회해
+    //   즉시 1회 발령을 허용한다 → '가까이 두면 늦게/안 울림'을 근접 즉시 발령으로 전환.
+    private val dangerContactStreakMap = mutableMapOf<String, Int>()
+
     // ── TTC 파라미터 ──────────────────────────────────────────────────
     // [v1.0.25 Req2] 현장 초민감 오발령 해결 — 8.0초 → 3.0초로 대폭 강화 (충돌 임박 시에만 선발령)
     // [판정 파라미터] DevSettings 라이브 읽기(기본 3.0/0.5 = 기존값)
@@ -616,6 +622,7 @@ class BleService : LifecycleService() {
                             medianFilter.clear(deviceId)      // [v1.0.45] Median 윈도우 정리
                             pEmaFilter.clear(deviceId)        // [v1.0.45] 후처리 P-EMA 상태 정리
                             rushFrameMap.remove(deviceId)     // [v1.0.45] 돌진 프레임 카운터 정리
+                            dangerContactStreakMap.remove(deviceId)   // [v1.1.16 D] 첫접촉 DANGER 카운터 정리
                             kalmanFilters[deviceId]?.reset()
                             kalmanFilters.remove(deviceId)
                             trackingStateMap.remove(deviceId)
@@ -939,8 +946,20 @@ class BleService : LifecycleService() {
         //   게이트끼리 충돌(조기경보하려 해도 하드게이트가 차단)하므로 단일 effective 임계로 통일한다.
         //   payloadOffset>0 = 더 약한 신호(먼 거리)에서 경보(fail-safe). 0 이면 기존 거동과 완전 동일.
         val payloadOffset = computePayloadRiskOffset(deviceId, rCategory, rState, kfVel)
-        val effWarning = BleConstants.rssiWarning - payloadOffset
-        val effDanger  = BleConstants.rssiDanger  - payloadOffset
+        // [v1.1.16 C] 비콘별 보정(rssiOffset)을 페이로드 오프셋과 합산 → 단일 effective 임계로 통일.
+        //   기존엔 calcLevel·이탈히스테리시스(거리판정)에만 beaconOffset 이 반영돼, 하드게이트·후진특수·
+        //   safeForceFloor·협력격상·TTC피크게이트가 비콘 보정을 무시했다(비콘 관리 보정이 반쪽만 적용).
+        //   여기서 합산해 모든 게이트가 같은 totalOffset 을 쓰게 한다. 보정 0 이면 기존 거동과 완전 동일.
+        val beaconOffset = runCatching { BeaconRegistry.getRssiOffsetForFullId(deviceId) }.getOrDefault(0)
+        val totalOffset = payloadOffset + beaconOffset
+        val effWarning = BleConstants.rssiWarning - totalOffset
+        val effDanger  = BleConstants.rssiDanger  - totalOffset
+        // [v1.1.16 D] 첫 접촉 고속 발령용 raw 위험권 2프레임 확증 카운터(워밍업·접근속도 게이트 우회).
+        //   칼만·raw 1초평균이 '둘 다' effDanger 이상이어야 +1, 하나라도 미달이면 0 리셋 → 단발 임펄스는
+        //   streak 1 에서 끊겨 못 켠다(연속 2프레임 합의 = Median 워밍업과 동등한 임펄스 방어).
+        val inDangerRaw = kalmanRssi >= effDanger && avg1sec >= effDanger
+        val dangerStreak = if (inDangerRaw) (dangerContactStreakMap[deviceId] ?: 0) + 1 else 0
+        dangerContactStreakMap[deviceId] = dangerStreak
         // [Phase2] IDLE-IDLE 가청 억제 — 내 IMU 정지 + 상대 IDLE 송신(둘 다 정지=충돌동역학 없음)이면
         //   아래 정규 WARNING 가청경보를 억제(표시·목록·위젯은 유지). DANGER 는 억제 대상이 아니며,
         //   둘 중 하나라도 움직이면(rState≠IDLE 또는 IMU 이동) 다음 프레임 즉시 해제된다.
@@ -991,6 +1010,7 @@ class BleService : LifecycleService() {
             medianFilter.clear(deviceId)      // [v1.0.45] Median 윈도우 정리(워밍업 상태 리셋)
             pEmaFilter.clear(deviceId)        // [v1.0.45] 후처리 P-EMA 상태 정리
             rushFrameMap.remove(deviceId)     // [v1.0.45] 돌진 프레임 카운터 정리
+            dangerContactStreakMap.remove(deviceId)   // [v1.1.16 D] 첫접촉 DANGER 카운터 정리
             kalmanFilters.remove(deviceId)    // [v1.0.38 클린업] 미추적 기기 칼만 인스턴스 정리(stale 재등장 방지)
             recedingStartMap.remove(deviceId)    // [v1.1.6 검증 보강] 이탈 판정 상태 누수·stale 피크 재출현 방지
             recedeRefMap.remove(deviceId)        // [v1.1.6 검증 보강] 미추적 기기 중간평활 EMA 정리
@@ -1071,12 +1091,17 @@ class BleService : LifecycleService() {
         //   거리(P) 권위값은 순수 pEma(kalmanRssi → 후처리 비대칭 P-EMA 평활). 속도(D)는 위상선행
         //   유지를 위해 Time-Gate/TTC 에 kfVel 직결로 별도 우회(여기서 평활하지 않음).
         avgRssi = pEma
-        val beaconOffset = runCatching { BeaconRegistry.getRssiOffsetForFullId(deviceId) }.getOrDefault(0)
-        val rawLevel = calcLevelWithHysteresis(deviceId, pEma, beaconOffset + payloadOffset)   // [v1.1.10] 페이로드 오프셋 합산
+        val rawLevel = calcLevelWithHysteresis(deviceId, pEma, totalOffset)   // [v1.1.16 C] 비콘+페이로드 합산(상단 totalOffset)
         distanceLevel = rawLevel   // [v1.1.6 R4-SIL-1] 이탈히스테리시스·격하 이전 거리 권위값 보존(이탈 가드용)
-        val afterHysteresis = applyDepartingHysteresis(deviceId, rawLevel, pEma, beaconOffset + payloadOffset, now)
+        val afterHysteresis = applyDepartingHysteresis(deviceId, rawLevel, pEma, totalOffset, now)
         // ── 정지 격하 방어 ([v1.0.47 #2] 보행자+활동 장비 접근은 예외 — 위 demoteWhileStationary) ──
-        stableLevel = if (demoteWhileStationary && afterHysteresis >= BleConstants.LEVEL_DANGER)
+        // [v1.1.16 B] 내가 장비(지게차/EPJ)이고 상대가 위험권(DANGER) 보행자/비콘이면 내 IMU 가 정지여도
+        //   DANGER→WARNING 강등 금지(작업자 위에 멈춘 지게차는 정지여도 위험). 위에서 보존한 distanceLevel
+        //   (격하·히스테리시스 이전 순수 거리 권위값)을 기준 삼아 강등 루프 오염을 피한다.
+        val iAmEquip = myCategory == BleConstants.CAT_FORKLIFT || myCategory == BleConstants.CAT_EPJ
+        val closeWalkerHazard = iAmEquip && rCategory == BleConstants.CAT_WALKER &&
+            distanceLevel >= BleConstants.LEVEL_DANGER
+        stableLevel = if (demoteWhileStationary && !closeWalkerHazard && afterHysteresis >= BleConstants.LEVEL_DANGER)
             BleConstants.LEVEL_WARNING else afterHysteresis
 
         deviceRssiMap[deviceId] = avgRssi      // 플로팅 위젯 최우선 기기 선정·정렬에 사용
@@ -1092,7 +1117,11 @@ class BleService : LifecycleService() {
         //   덮어써 effWarning 부근에서 WARNING↔SAFE 가 깜빡인다. 신규(미추적) 기기는 기존 effWarning 진입
         //   바닥을 유지(더 엄격 = 페일세이프 진입).
         val safeForceFloor = if (alertState.containsKey(deviceId)) effWarning - HYSTERESIS_DBM else effWarning
-        if (avgRssi < safeForceFloor || avg1sec < safeForceFloor) {   // [v1.1.10] effWarning(페이로드 시프트)로 일관 / [v1.1.11 C1] 추적중 floor 정렬
+        // [v1.1.16 A] 단일표본 노이즈로 인한 강제-SAFE 방지 — raw avg1sec(1프레임 dip 에 취약)를
+        //   gateRssi(median(칼만,raw1초,Median)=3경로 중앙값)로 교체. 비콘이 단발 −80 dip 을 찍어도
+        //   3경로 중앙값이 위험권이면 SAFE 로 떨구지 않는다(정지근접 무음·재워밍업 churn 제거 = 주력 픽스).
+        //   여전히 avgRssi(pEma 평활값)와 OR 교차검증하므로 실제 이탈(둘 다 멀어짐)은 정상적으로 SAFE 처리.
+        if (avgRssi < safeForceFloor || gateRssi < safeForceFloor) {
             stableLevel = BleConstants.LEVEL_SAFE
         }
 
@@ -1120,6 +1149,7 @@ class BleService : LifecycleService() {
                 medianFilter.clear(deviceId)      // [v1.0.45]
                 pEmaFilter.clear(deviceId)        // [v1.0.45]
                 rushFrameMap.remove(deviceId)     // [v1.0.45]
+                dangerContactStreakMap.remove(deviceId)   // [v1.1.16 D]
                 kf.reset()
                 kalmanFilters.remove(deviceId)
                 trackingStateMap.remove(deviceId)
@@ -1247,6 +1277,7 @@ class BleService : LifecycleService() {
                 medianFilter.clear(deviceId)      // [v1.0.45]
                 pEmaFilter.clear(deviceId)        // [v1.0.45]
                 rushFrameMap.remove(deviceId)     // [v1.0.45]
+                dangerContactStreakMap.remove(deviceId)   // [v1.1.16 D]
                 kalmanFilters[deviceId]?.reset()
                 kalmanFilters.remove(deviceId)
                 wasStationaryMap.remove(deviceId)
@@ -1337,7 +1368,10 @@ class BleService : LifecycleService() {
         val levelEscalated   = stableLevel > prevLevel
         val cooldownPassed   = now - lastAlertTime >= cooldown
         // [v1.0.45] 워밍업(Median 미충전) 구간은 신규/격상 발령 보류 — 콜드스타트 임펄스 오염 방어.
-        val shouldAlert = !warmingUp && (isFirstDetection || levelEscalated || (cooldownPassed && !isReceding))
+        // [v1.1.16 D] 단, raw 2프레임 확증된 신규 DANGER 진입은 워밍업이어도 즉시 1회 발령 허용
+        //   (비콘이 위험거리로 '쑥' 들어오는 첫 접촉을 Median 충전 대기 없이 선발령). 아래 Time-Gate 도 면제.
+        val fastDangerContact = warmingUp && dangerStreak >= 2 && stableLevel >= BleConstants.LEVEL_DANGER
+        val shouldAlert = (!warmingUp || fastDangerContact) && (isFirstDetection || levelEscalated || (cooldownPassed && !isReceding))
         if (!shouldAlert) {
             // [v1.0.49 #3] 워밍업 등으로 발령 보류된 '신규' 기기 — 경보는 아니지만 목록엔 '감지됨' 노출.
             if (isFirstDetection) pendingDisplayMap[deviceId] = now
@@ -1417,7 +1451,7 @@ class BleService : LifecycleService() {
         //   수신 감도가 낮은 폰(RSSI 동특성 작음 → kfVel 미달)은 위험권에 들어와도 승급이 무기 보류됐다
         //   (위험 경보 지연·기기별 비대칭의 원인). 스파이크 오발은 Median→EMA→칼만→P-EMA 다단 평활과
         //   3중 하드게이트, raw 2차 방어선이 이미 막으므로 격상까지 게이트하는 것은 중복 보수였다.
-        if (isFirstDetection && (sideCourse || !approachSustained)) {
+        if (isFirstDetection && !fastDangerContact && (sideCourse || !approachSustained)) {   // [v1.1.16 D] 2프레임 확증 DANGER 첫접촉은 접근속도 게이트 면제(근접 즉시 발령)
             pendingDisplayMap[deviceId] = now   // [v1.0.49 #3] 보류 중에도 목록엔 '감지됨' 노출
             Log.d(TAG, "[v1.0.36] 경보 보류 ${extractDisplayName(deviceId)}: side=$sideCourse 접근지속=${approachStreakMs}ms(<${timeGateMs}) ratio=%.2f 합산=%.1fkm/h vel=%.2f".format(closingRatio, closingSpeedKmh, kfVel))
             return   // 소리/화면 경보 보류 — 다음 프레임 재평가(접근지속 충족 또는 정면충돌 코스 시 발령)
@@ -2038,6 +2072,7 @@ class BleService : LifecycleService() {
         medianFilter.clearAll()    // [v1.0.45]
         pEmaFilter.clearAll()      // [v1.0.45]
         rushFrameMap.clear()       // [v1.0.45]
+        dangerContactStreakMap.clear()   // [v1.1.16 D]
         kalmanFilters.clear()
         trackingStateMap.clear()
         crossingStartMap.clear()
