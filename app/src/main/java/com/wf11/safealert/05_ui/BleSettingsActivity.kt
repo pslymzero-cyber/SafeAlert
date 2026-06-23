@@ -1,7 +1,6 @@
 package com.wf11.safealert.ui
 
 import android.os.Bundle
-import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.wf11.safealert.databinding.ActivityBleSettingsBinding
 import com.wf11.safealert.utils.DevSettings
@@ -39,29 +38,40 @@ class BleSettingsActivity : AppCompatActivity() {
     }
 
     private fun setupListeners() {
-        binding.seekWarnDist.setOnSeekBarChangeListener(seek { updateDistLabels() })
-        binding.seekDangDist.setOnSeekBarChangeListener(seek { updateDistLabels() })
-        binding.btnSave.setOnClickListener { saveAndClose() }
-    }
-
-    private fun saveAndClose() {
-        // 슬라이더 progress=절댓값(30~100). 위험은 경고보다 가까움 → 절댓값이 더 작아야.
-        val warnAbs = binding.seekWarnDist.progress
-        val dangAbs = binding.seekDangDist.progress
-        if (dangAbs >= warnAbs) {
-            Toast.makeText(this, "위험 임계는 경고보다 가까워야 합니다 (절댓값을 더 작게)", Toast.LENGTH_SHORT).show()
-            return
+        // [v1.1.15] 저장 버튼 제거 — 위젯을 만지는 즉시 DevSettings 에 기록(라이브 반영).
+        //   BleService 가 SharedPreferences 변경을 구독(registerOnChange→applyLiveSettings)하므로
+        //   라디오/슬라이더를 움직이는 즉시 필터 강도·감지 임계가 반영된다. 화면 종료는 기기 뒤로가기.
+        binding.rgKalmanPreset.setOnCheckedChangeListener { _, checkedId ->
+            DevSettings.kalmanPreset = when (checkedId) {
+                binding.rbKfFast.id   -> DevSettings.KALMAN_PRESET_FAST
+                binding.rbKfNormal.id -> DevSettings.KALMAN_PRESET_NORMAL
+                else                  -> DevSettings.KALMAN_PRESET_SMOOTH
+            }
         }
-        DevSettings.rssiWarning = -warnAbs
-        DevSettings.rssiDanger  = -dangAbs
-        DevSettings.kalmanPreset = when (binding.rgKalmanPreset.checkedRadioButtonId) {
-            binding.rbKfFast.id   -> DevSettings.KALMAN_PRESET_FAST
-            binding.rbKfNormal.id -> DevSettings.KALMAN_PRESET_NORMAL
-            else                  -> DevSettings.KALMAN_PRESET_SMOOTH
-        }
-
-        Toast.makeText(this, "저장됨", Toast.LENGTH_SHORT).show()
-        finish()
+        // 경고/위험 신호세기(dBm). 슬라이더 progress=절댓값(30~100), 저장은 음수 dBm.
+        //   위험은 경고보다 가까워야(절댓값이 더 작아야) → 역전되면 방금 움직인 슬라이더를
+        //   경계값으로 자가 보정(clamp). setProgress 재진입은 역전 조건이 깨져 즉시 수렴.
+        //   (양 끝단 30/100 에서는 같아질 수 있으나 경고·위험 임계가 겹치는 무해한 설정)
+        binding.seekWarnDist.setOnSeekBarChangeListener(seek {
+            val dangAbs = binding.seekDangDist.progress
+            var warnAbs = binding.seekWarnDist.progress
+            if (warnAbs <= dangAbs) {
+                warnAbs = (dangAbs + 1).coerceAtMost(100)
+                binding.seekWarnDist.progress = warnAbs
+            }
+            DevSettings.rssiWarning = -warnAbs
+            updateDistLabels()
+        })
+        binding.seekDangDist.setOnSeekBarChangeListener(seek {
+            val warnAbs = binding.seekWarnDist.progress
+            var dangAbs = binding.seekDangDist.progress
+            if (dangAbs >= warnAbs) {
+                dangAbs = (warnAbs - 1).coerceAtLeast(30)
+                binding.seekDangDist.progress = dangAbs
+            }
+            DevSettings.rssiDanger = -dangAbs
+            updateDistLabels()
+        })
     }
 
     private fun updateDistLabels() {

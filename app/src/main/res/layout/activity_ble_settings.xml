@@ -92,13 +92,4 @@
         </LinearLayout>
     </ScrollView>
 
-    <!-- 저장 버튼 -->
-    <Button android:id="@+id/btn_save"
-        android:layout_width="match_parent" android:layout_height="52dp"
-        android:layout_marginStart="16dp" android:layout_marginEnd="16dp" android:layout_marginBottom="16dp"
-        android:text="저장" android:textSize="15sp" android:textColor="#FFFFFF"
-        android:backgroundTint="#2563EB" android:stateListAnimator="@null"
-        style="@style/Widget.MaterialComponents.Button.UnelevatedButton"
-        app:cornerRadius="14dp"/>
-
 </LinearLayout>

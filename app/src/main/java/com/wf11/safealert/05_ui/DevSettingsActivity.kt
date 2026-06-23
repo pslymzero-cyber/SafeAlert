@@ -12,6 +12,8 @@ import com.wf11.safealert.databinding.ActivityDevSettingsBinding
 class DevSettingsActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityDevSettingsBinding
+    // [v1.1.15] 저장 버튼 제거에 따른 EditText 지연 확정용 — 포커스 아웃/onPause 시 일괄 commit
+    private val editCommitters = mutableListOf<() -> Unit>()
 
     // [v1.0.42] 거리 교정(calibRssiAt1m/pathLossExp)·거리 교정 마법사 전면 제거.
     //   거리 추정은 칼만 필터(RSSI)만으로 수행 — RSSI→거리 변환·교정 UI/핸들러 모두 폐지.
@@ -92,30 +94,93 @@ class DevSettingsActivity : AppCompatActivity() {
     }
 
     private fun setupListeners() {
+        // [v1.1.15] 저장 버튼 제거 — 모든 위젯 변경을 즉시 DevSettings 에 기록(라이브 반영).
+        //   BleService 가 SharedPreferences 변경을 구독(registerOnChange→applyLiveSettings)하므로,
+        //   슬라이더/스위치/스피너는 만지는 즉시, EditText 는 포커스가 빠질 때(또는 화면 이탈 시
+        //   onPause 안전망) 반영된다. 값 변환식은 이전 saveValues 와 동일. 화면 종료는 기기 뒤로가기.
+
+        // ── SeekBar : 라벨 갱신 + 즉시 기록 ──────────────────────────────
         binding.seekAlarmVolume.setOnSeekBarChangeListener(seekListener { v ->
             binding.tvAlarmVolumeVal.text = "$v%"
+            DevSettings.alarmVolume = v
         })
         binding.seekSimRssi.setOnSeekBarChangeListener(seekListener { v ->
             binding.tvSimRssiVal.text = "${v - 100} dBm"
+            DevSettings.simulatedRssi = v - 100
         })
-        binding.switchDebug.setOnCheckedChangeListener { _, _ ->
-            updateDebugBadge(); updateSimRssiEnabled()
-        }
-        // [v1.1.7 #2] 후진(전진) 대비 슬라이더 — progress↔실제값 변환 후 라벨 갱신
+        // [v1.1.7 #2] 후진(전진) 대비 슬라이더 — progress↔실제값 변환 후 라벨 갱신 + 기록
         binding.seekReverseRise.setOnSeekBarChangeListener(seekListener { v ->
             binding.tvReverseRiseVal.text = "${v + 2} dB"
+            DevSettings.reverseRiseDbm = v + 2
         })
         binding.seekReverseWindow.setOnSeekBarChangeListener(seekListener { v ->
             binding.tvReverseWindowVal.text = "${v * 100 + 500} ms"
+            DevSettings.reverseWindowMs = v * 100L + 500L
         })
         binding.seekReverseStabletol.setOnSeekBarChangeListener(seekListener { v ->
             binding.tvReverseStabletolVal.text = "$v dB"
+            DevSettings.reverseStableTolDb = v
         })
         binding.seekReverseHold.setOnSeekBarChangeListener(seekListener { v ->
             binding.tvReverseHoldVal.text = "${v * 1000 + 1000} ms"
+            DevSettings.reversePrepHoldMs = v * 1000L + 1000L
         })
-        binding.switchReversePrep.setOnCheckedChangeListener { _, _ -> updateReversePrepEnabled() }
-        binding.btnSave.setOnClickListener { saveValues() }
+
+        // ── Switch : 즉시 기록 (+ 의존 UI 갱신) ─────────────────────────
+        binding.switchWalkerDetectsWalker.setOnCheckedChangeListener { _, c -> DevSettings.walkerDetectsWalker = c }
+        binding.switchDeviceTx.setOnCheckedChangeListener { _, c -> DevSettings.deviceTx = c }
+        binding.switchDeviceRx.setOnCheckedChangeListener { _, c -> DevSettings.deviceRx = c }
+        binding.switchWalkerTx.setOnCheckedChangeListener { _, c -> DevSettings.walkerTx = c }
+        binding.switchWalkerRx.setOnCheckedChangeListener { _, c -> DevSettings.walkerRx = c }
+        binding.switchVibration.setOnCheckedChangeListener { _, c -> DevSettings.vibrationEnabled = c }
+        binding.switchSound.setOnCheckedChangeListener { _, c -> DevSettings.soundEnabled = c }
+        binding.switchAutoSave.setOnCheckedChangeListener { _, c -> DevSettings.autoSaveAlerts = c }
+        binding.switchVerbose.setOnCheckedChangeListener { _, c -> DevSettings.logVerbose = c }
+        binding.switchDebug.setOnCheckedChangeListener { _, c ->
+            DevSettings.debugMode = c; updateDebugBadge(); updateSimRssiEnabled()
+        }
+        binding.switchReversePrep.setOnCheckedChangeListener { _, c ->
+            DevSettings.reversePrepEnabled = c; updateReversePrepEnabled()
+        }
+
+        // ── Spinner : 선택 즉시 기록 ────────────────────────────────────
+        //   scanPeriod·advertise 는 적용 시 스캐너/광고 재구성을 유발 → 값이 실제로 바뀔 때만 기록
+        //   (화면 진입 시 복원 선택으로 인한 불필요한 스캔/광고 재시작 방지). 그 외는 라이브 read 라 무해.
+        bindSpinner(binding.spinnerScanPeriod) { val nv = scanPeriodValues[it]; if (DevSettings.scanPeriodMs != nv) DevSettings.scanPeriodMs = nv }
+        bindSpinner(binding.spinnerAdvertise)  { val nv = advertiseValues[it];  if (DevSettings.advertiseInterval != nv) DevSettings.advertiseInterval = nv }
+        bindSpinner(binding.spinnerVibWarning) { DevSettings.vibrationWarningMs = vibWarningValues[it] }
+        bindSpinner(binding.spinnerVibCount)   { DevSettings.vibrationDangerCount = vibCountValues[it] }
+        bindSpinner(binding.spTtcThreshold)    { DevSettings.ttcThresholdSec = ttcPresets[it] }
+        bindSpinner(binding.spMinApproachVel)  { DevSettings.minApproachVelDbm = approachVelPresets[it] }
+        bindSpinner(binding.spTimegateVel)     { DevSettings.timeGateVelDbm = gateVelPresets[it] }
+        bindSpinner(binding.spClosingFactor)   { DevSettings.closingKmhToDbms = closingPresets[it] }
+        bindSpinner(binding.spHeadonRatio)     { DevSettings.collisionHeadOnRatio = headOnPresets[it] }
+        bindSpinner(binding.spSideRatio)       { DevSettings.collisionSideRatio = sidePresets[it] }
+        bindSpinner(binding.spEmaRise)         { DevSettings.emaAlphaRise = emaRisePresets[it] }
+        bindSpinner(binding.spEmaFall)         { DevSettings.emaAlphaFall = emaFallPresets[it] }
+        bindSpinner(binding.spEmaDboost)       { DevSettings.emaAlphaDBoost = emaDBoostPresets[it] }
+
+        // ── EditText : 포커스 아웃 시 확정(+clamp 반영) · onPause 안전망(editCommitters) ──
+        run {
+            val et = binding.etFirebaseRoot
+            val commit = { DevSettings.firebaseRoot = et.text.toString().trim().ifEmpty { "wf11" } }
+            editCommitters += commit
+            et.setOnFocusChangeListener { _, hasFocus -> if (!hasFocus) { commit(); et.setText(DevSettings.firebaseRoot) } }
+        }
+        bindLongField(binding.etTimegateMs,          { DevSettings.timeGateMs },             { DevSettings.timeGateMs = it })
+        bindLongField(binding.etTimegateCornering,   { DevSettings.corneringTimeGateMs },    { DevSettings.corneringTimeGateMs = it })
+        bindLongField(binding.etWarningCooldown,     { DevSettings.warningCooldownMs },      { DevSettings.warningCooldownMs = it })
+        bindLongField(binding.etDangerCooldown,      { DevSettings.dangerCooldownMs },       { DevSettings.dangerCooldownMs = it })
+        bindIntField (binding.etHysteresis,          { DevSettings.hysteresisDbm },          { DevSettings.hysteresisDbm = it })
+        bindIntField (binding.etDepartingHysteresis, { DevSettings.departingHysteresisDbm }, { DevSettings.departingHysteresisDbm = it })
+        bindLongField(binding.etRecedingClearMs,     { DevSettings.recedingClearMs },        { DevSettings.recedingClearMs = it })
+        bindIntField (binding.etRecedingDrop,        { DevSettings.recedingDbmDrop },        { DevSettings.recedingDbmDrop = it })
+        bindIntField (binding.etPreserveBand,        { DevSettings.filterPreserveBandDb },   { DevSettings.filterPreserveBandDb = it })
+        bindIntField (binding.etWakeRssi,            { DevSettings.wakeRssiDbm },            { DevSettings.wakeRssiDbm = it })
+        bindLongField(binding.etStaleMs,             { DevSettings.signalStaleMs },          { DevSettings.signalStaleMs = it })
+        bindLongField(binding.etFbThrottle,          { DevSettings.firebaseThrottleMs },     { DevSettings.firebaseThrottleMs = it })
+        bindLongField(binding.etSpeedPush,           { DevSettings.speedPushIntervalMs },    { DevSettings.speedPushIntervalMs = it })
+
         binding.btnReset.setOnClickListener { resetValues() }
 
         // 앱 정보 — 버전 표시 + 오픈소스 라이선스 이동
@@ -124,61 +189,6 @@ class DevSettingsActivity : AppCompatActivity() {
             startActivity(Intent(this, OpenSourceLicensesActivity::class.java))
         }
         // 비콘 관리는 메인 화면으로 이동됨
-    }
-
-    private fun saveValues() {
-        DevSettings.alarmVolume          = binding.seekAlarmVolume.progress
-        DevSettings.walkerDetectsWalker  = binding.switchWalkerDetectsWalker.isChecked
-        DevSettings.deviceTx             = binding.switchDeviceTx.isChecked
-        DevSettings.deviceRx             = binding.switchDeviceRx.isChecked
-        DevSettings.walkerTx             = binding.switchWalkerTx.isChecked
-        DevSettings.walkerRx             = binding.switchWalkerRx.isChecked
-        // rssiWarning / rssiDanger 는 BLE 설정 화면의 dBm 슬라이더에서 직접 저장 (여기선 건드리지 않음)
-        DevSettings.scanPeriodMs         = scanPeriodValues[binding.spinnerScanPeriod.selectedItemPosition]
-        DevSettings.advertiseInterval    = advertiseValues[binding.spinnerAdvertise.selectedItemPosition]
-        DevSettings.vibrationEnabled     = binding.switchVibration.isChecked
-        DevSettings.vibrationWarningMs   = vibWarningValues[binding.spinnerVibWarning.selectedItemPosition]
-        DevSettings.vibrationDangerCount = vibCountValues[binding.spinnerVibCount.selectedItemPosition]
-        DevSettings.soundEnabled         = binding.switchSound.isChecked
-        DevSettings.firebaseRoot         = binding.etFirebaseRoot.text.toString().trim().ifEmpty { "wf11" }
-        DevSettings.autoSaveAlerts       = binding.switchAutoSave.isChecked
-        DevSettings.debugMode            = binding.switchDebug.isChecked
-        DevSettings.simulatedRssi        = binding.seekSimRssi.progress - 100
-        DevSettings.logVerbose           = binding.switchVerbose.isChecked
-        // 판정 파라미터 (고급) — Spinner 는 프리셋값 직저장, EditText 는 파싱 실패 시 기존값 유지.
-        //   범위 제한(clamp)은 DevSettings setter 담당
-        DevSettings.ttcThresholdSec        = ttcPresets[binding.spTtcThreshold.selectedItemPosition]
-        DevSettings.minApproachVelDbm      = approachVelPresets[binding.spMinApproachVel.selectedItemPosition]
-        DevSettings.timeGateMs             = binding.etTimegateMs.text.toString().toLongOrNull() ?: DevSettings.timeGateMs
-        DevSettings.corneringTimeGateMs    = binding.etTimegateCornering.text.toString().toLongOrNull() ?: DevSettings.corneringTimeGateMs
-        DevSettings.timeGateVelDbm         = gateVelPresets[binding.spTimegateVel.selectedItemPosition]
-        DevSettings.warningCooldownMs      = binding.etWarningCooldown.text.toString().toLongOrNull() ?: DevSettings.warningCooldownMs
-        DevSettings.dangerCooldownMs       = binding.etDangerCooldown.text.toString().toLongOrNull() ?: DevSettings.dangerCooldownMs
-        DevSettings.hysteresisDbm          = binding.etHysteresis.text.toString().toIntOrNull() ?: DevSettings.hysteresisDbm
-        DevSettings.departingHysteresisDbm = binding.etDepartingHysteresis.text.toString().toIntOrNull() ?: DevSettings.departingHysteresisDbm
-        DevSettings.recedingClearMs        = binding.etRecedingClearMs.text.toString().toLongOrNull() ?: DevSettings.recedingClearMs
-        DevSettings.recedingDbmDrop        = binding.etRecedingDrop.text.toString().toIntOrNull() ?: DevSettings.recedingDbmDrop
-        DevSettings.closingKmhToDbms       = closingPresets[binding.spClosingFactor.selectedItemPosition]
-        DevSettings.collisionHeadOnRatio   = headOnPresets[binding.spHeadonRatio.selectedItemPosition]
-        DevSettings.collisionSideRatio     = sidePresets[binding.spSideRatio.selectedItemPosition]
-        DevSettings.emaAlphaRise           = emaRisePresets[binding.spEmaRise.selectedItemPosition]
-        DevSettings.emaAlphaFall           = emaFallPresets[binding.spEmaFall.selectedItemPosition]
-        DevSettings.emaAlphaDBoost         = emaDBoostPresets[binding.spEmaDboost.selectedItemPosition]
-        DevSettings.filterPreserveBandDb   = binding.etPreserveBand.text.toString().toIntOrNull() ?: DevSettings.filterPreserveBandDb
-        DevSettings.wakeRssiDbm            = binding.etWakeRssi.text.toString().toIntOrNull() ?: DevSettings.wakeRssiDbm
-        DevSettings.signalStaleMs          = binding.etStaleMs.text.toString().toLongOrNull() ?: DevSettings.signalStaleMs
-        DevSettings.firebaseThrottleMs     = binding.etFbThrottle.text.toString().toLongOrNull() ?: DevSettings.firebaseThrottleMs
-        DevSettings.speedPushIntervalMs    = binding.etSpeedPush.text.toString().toLongOrNull() ?: DevSettings.speedPushIntervalMs
-        // [v1.1.7 #2] 후진(전진) 대비 — progress→실제값(setter 가 범위 clamp)
-        DevSettings.reversePrepEnabled     = binding.switchReversePrep.isChecked
-        DevSettings.reverseRiseDbm         = binding.seekReverseRise.progress + 2
-        DevSettings.reverseWindowMs        = (binding.seekReverseWindow.progress * 100L + 500L)
-        DevSettings.reverseStableTolDb     = binding.seekReverseStabletol.progress
-        DevSettings.reversePrepHoldMs      = (binding.seekReverseHold.progress * 1000L + 1000L)
-        loadValues()   // 저장 직후 재로드 — clamp 적용된 실제 저장값을 입력란에 반영
-
-        Toast.makeText(this, "설정이 저장되었습니다\n변경 사항은 다음 스캔 사이클부터 적용됩니다",
-            Toast.LENGTH_LONG).show()
     }
 
     private fun resetValues() {
@@ -209,6 +219,12 @@ class DevSettingsActivity : AppCompatActivity() {
     }
 
     override fun onSupportNavigateUp(): Boolean { finish(); return true }
+
+    // [v1.1.15] 포커스 아웃을 거치지 않고 화면을 떠나는 경우의 안전망 — 입력란 전체 확정
+    override fun onPause() {
+        super.onPause()
+        editCommitters.forEach { it() }
+    }
 
     // Spinner 인덱스 헬퍼
     private val scanPeriodValues = longArrayOf(1000, 2000, 3000, 5000)
@@ -244,5 +260,27 @@ class DevSettingsActivity : AppCompatActivity() {
         override fun onProgressChanged(sb: android.widget.SeekBar, v: Int, b: Boolean) = onChange(v)
         override fun onStartTrackingTouch(sb: android.widget.SeekBar) {}
         override fun onStopTrackingTouch(sb: android.widget.SeekBar) {}
+    }
+
+    // [v1.1.15] 즉시 반영 바인딩 헬퍼 — 새 import 없이 정규화된 위젯 타입 사용
+    private fun bindSpinner(sp: android.widget.Spinner, onSelect: (Int) -> Unit) {
+        sp.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: android.view.View?, position: Int, id: Long) = onSelect(position)
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
+        }
+    }
+
+    // EditText 는 입력 도중 매 글자 반영 시 빈칸/부분입력 오염이 생기므로 포커스 아웃 시 확정.
+    //   파싱 실패(빈칸 등) → 기존값 유지 후 setter 가 clamp 한 실제값을 다시 표시. onPause 안전망 등록.
+    private fun bindLongField(et: android.widget.EditText, getter: () -> Long, setter: (Long) -> Unit) {
+        val commit = { setter(et.text.toString().toLongOrNull() ?: getter()) }
+        editCommitters += commit
+        et.setOnFocusChangeListener { _, hasFocus -> if (!hasFocus) { commit(); et.setText(getter().toString()) } }
+    }
+
+    private fun bindIntField(et: android.widget.EditText, getter: () -> Int, setter: (Int) -> Unit) {
+        val commit = { setter(et.text.toString().toIntOrNull() ?: getter()) }
+        editCommitters += commit
+        et.setOnFocusChangeListener { _, hasFocus -> if (!hasFocus) { commit(); et.setText(getter().toString()) } }
     }
 }
