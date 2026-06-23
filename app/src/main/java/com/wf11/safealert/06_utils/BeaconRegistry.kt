@@ -8,7 +8,7 @@ import org.json.JSONObject
 
 object BeaconRegistry {
 
-    const val MAX_PROFILES = 50  // UUID 프로파일 최대 50개 (각 UUID당 비콘 수 무제한)
+    const val MAX_PROFILES = 200  // UUID 프로파일 최대 200개 (각 UUID당 비콘 수 무제한)
     private const val PREF_NAME = "beacon_registry"
     private const val KEY_LIST  = "beacon_profiles"
 
@@ -64,6 +64,13 @@ object BeaconRegistry {
     fun count(): Int = getAll().size
 
     private fun save(list: List<BeaconProfile>) {
+        prefs.edit().putString(KEY_LIST, exportToJson(list)).apply()
+    }
+
+    // ── 기기 간 공유 (export / import) ──────────────────────────
+
+    /** 프로파일 목록을 공유용 JSON 배열 문자열로 직렬화 (저장 포맷과 동일) */
+    fun exportToJson(list: List<BeaconProfile>): String {
         val arr = JSONArray()
         list.forEach { p ->
             arr.put(JSONObject().apply {
@@ -74,7 +81,49 @@ object BeaconRegistry {
                 put("rssiOffset", p.rssiOffset)
             })
         }
-        prefs.edit().putString(KEY_LIST, arr.toString()).apply()
+        return arr.toString()
+    }
+
+    /** 공유받은 JSON 배열 문자열을 BeaconProfile 목록으로 파싱 (불량 항목은 건너뜀) */
+    fun parseProfiles(json: String): List<BeaconProfile> = runCatching {
+        val arr = JSONArray(json)
+        (0 until arr.length()).mapNotNull { i ->
+            val obj = arr.optJSONObject(i) ?: return@mapNotNull null
+            val uuid = obj.optString("uuid", "").trim().uppercase()
+            if (uuid.isEmpty()) return@mapNotNull null
+            BeaconProfile(
+                uuid       = uuid,
+                label      = obj.optString("label", uuid),
+                type       = obj.optString("type", "IBEACON"),
+                addedAt    = obj.optLong("addedAt", 0L),
+                rssiOffset = obj.optInt("rssiOffset", 0)
+            )
+        }
+    }.getOrDefault(emptyList())
+
+    /** 공유 병합 결과 (추가·갱신·한도초과 건수) */
+    data class MergeResult(val added: Int, val updated: Int, val skipped: Int)
+
+    /**
+     * 받은 프로파일을 로컬에 병합. 같은 UUID 는 받은 값으로 갱신,
+     * 신규는 MAX_PROFILES 한도 내에서 추가, 로컬 고유 프로파일은 보존.
+     */
+    fun mergeProfiles(incoming: List<BeaconProfile>): MergeResult {
+        val list = getAll().toMutableList()
+        var added = 0; var updated = 0; var skipped = 0
+        incoming.forEach { p ->
+            val uuid = p.uuid.trim().uppercase()
+            if (uuid.isEmpty()) return@forEach
+            val norm = p.copy(uuid = uuid)
+            val idx = list.indexOfFirst { it.uuid.equals(uuid, ignoreCase = true) }
+            when {
+                idx >= 0                 -> { list[idx] = norm.copy(addedAt = list[idx].addedAt); updated++ }
+                list.size < MAX_PROFILES -> { list.add(norm); added++ }
+                else                     -> skipped++
+            }
+        }
+        save(list)
+        return MergeResult(added, updated, skipped)
     }
 
     /** BleService의 fullId (예: SAFEALERT_WALKER_BEA_AABBCCDDEEFF)에서 rssiOffset 조회 */

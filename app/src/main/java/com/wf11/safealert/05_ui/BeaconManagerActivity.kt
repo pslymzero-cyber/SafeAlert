@@ -30,6 +30,12 @@ import com.wf11.safealert.databinding.ItemBeaconFoundBinding
 import com.wf11.safealert.databinding.ItemBeaconProfileBinding
 import com.wf11.safealert.model.BeaconProfile
 import com.wf11.safealert.utils.BeaconRegistry
+import com.wf11.safealert.firebase.FirebaseManager
+import android.widget.CheckBox
+import android.widget.ScrollView
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class BeaconManagerActivity : AppCompatActivity() {
 
@@ -66,6 +72,8 @@ class BeaconManagerActivity : AppCompatActivity() {
         binding.btnAddUuid.setOnClickListener { showManualAddDialog() }
         binding.btnAddMac.setOnClickListener  { showMacAddDialog() }
         binding.btnScan.setOnClickListener    { if (isScanning) stopScan() else startScan() }
+        binding.btnShare.setOnClickListener   { showShareDialog() }
+        binding.btnReceive.setOnClickListener { showReceiveDialog() }
 
         refreshProfiles()
     }
@@ -140,7 +148,7 @@ class BeaconManagerActivity : AppCompatActivity() {
                 android.R.layout.simple_spinner_item, rangeOptions).apply {
                 setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
             }
-            setSelection(0)
+            setSelection(1)   // (v1.1.17) 신규 등록 기본 = 넓게 +10dBm (비콘이 더 먼 거리에서 알림)
         }
 
         layout.addView(etLabel)
@@ -172,6 +180,146 @@ class BeaconManagerActivity : AppCompatActivity() {
             }
             .setNegativeButton("취소", null)
             .show()
+    }
+
+    // ── 기기 간 공유: 선택 후 업로드 ───────────────────────────
+    private fun showShareDialog() {
+        val profiles = BeaconRegistry.getAll()
+        if (profiles.isEmpty()) {
+            Toast.makeText(this, "공유할 비콘이 없습니다", Toast.LENGTH_SHORT).show(); return
+        }
+
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(48, 16, 48, 8)
+        }
+        val cbAll = CheckBox(this).apply {
+            text = "전체 선택"; isChecked = true
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+        }
+        root.addView(cbAll)
+        root.addView(View(this).apply {
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 1)
+            setBackgroundColor(0xFFEAECF0.toInt())
+        })
+
+        val listLayout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val checks = profiles.map { p ->
+            CheckBox(this).apply {
+                val typeStr = when (p.type) { "IBEACON" -> "iBeacon"; "MAC" -> "MAC"; else -> "SvcUUID" }
+                text = "${p.label}  ·  $typeStr"
+                isChecked = true
+                listLayout.addView(this)
+            }
+        }
+        val listH = (resources.displayMetrics.density * 220).toInt()
+        root.addView(ScrollView(this).apply {
+            addView(listLayout)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, listH)
+        })
+
+        cbAll.setOnCheckedChangeListener { _, isChecked -> checks.forEach { it.isChecked = isChecked } }
+
+        root.addView(TextView(this).apply { text = "세트 이름"; setPadding(0, 24, 0, 4) })
+        val etName = EditText(this).apply { hint = "예: 1구역, A동 입구" }
+        root.addView(etName)
+
+        AlertDialog.Builder(this)
+            .setTitle("기기 간 공유 (전송)")
+            .setView(root)
+            .setPositiveButton("전송") { _, _ ->
+                val selected = profiles.filterIndexed { i, _ -> checks[i].isChecked }
+                if (selected.isEmpty()) {
+                    Toast.makeText(this, "선택된 비콘이 없습니다", Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                }
+                val name = etName.text.toString().trim().ifEmpty { "공유세트" }
+                val json = BeaconRegistry.exportToJson(selected)
+                val sender = getSharedPreferences("safealert_prefs", MODE_PRIVATE)
+                    .getString("device_id", "기기") ?: "기기"
+                Toast.makeText(this, "전송 중...", Toast.LENGTH_SHORT).show()
+                FirebaseManager.uploadBeaconSet(name, json, selected.size, sender) { ok ->
+                    runOnUiThread {
+                        Toast.makeText(this,
+                            if (ok) "전송 완료: '$name' (${selected.size}개)"
+                            else "전송 실패 (네트워크 확인)",
+                            Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+            .setNegativeButton("취소", null)
+            .show()
+    }
+
+    // ── 받기: 세트 목록 → 미리보기 → 병합 ──────────────────────
+    private fun showReceiveDialog() {
+        Toast.makeText(this, "세트 목록 불러오는 중...", Toast.LENGTH_SHORT).show()
+        FirebaseManager.listBeaconSets { sets ->
+            runOnUiThread {
+                if (sets.isEmpty()) {
+                    Toast.makeText(this, "공유된 세트가 없습니다", Toast.LENGTH_SHORT).show()
+                    return@runOnUiThread
+                }
+                val fmt = SimpleDateFormat("MM/dd HH:mm", Locale.getDefault())
+                val labels = sets.map { s ->
+                    "${s.name}  (${s.count}개)\n${s.sender} · ${fmt.format(Date(s.timestamp))}"
+                }.toTypedArray()
+                AlertDialog.Builder(this)
+                    .setTitle("받을 세트 선택")
+                    .setItems(labels) { _, which -> showReceivePreview(sets[which]) }
+                    .setNegativeButton("취소", null)
+                    .show()
+            }
+        }
+    }
+
+    private fun showReceivePreview(set: FirebaseManager.BeaconSetMeta) {
+        FirebaseManager.downloadBeaconSet(set.key) { json ->
+            runOnUiThread {
+                if (json == null) {
+                    Toast.makeText(this, "세트를 불러오지 못했습니다", Toast.LENGTH_SHORT).show()
+                    return@runOnUiThread
+                }
+                val incoming = BeaconRegistry.parseProfiles(json)
+                if (incoming.isEmpty()) {
+                    Toast.makeText(this, "세트가 비어 있습니다", Toast.LENGTH_SHORT).show()
+                    return@runOnUiThread
+                }
+                val existing = BeaconRegistry.getAll().map { it.uuid.uppercase() }.toSet()
+                val newCnt = incoming.count { it.uuid.uppercase() !in existing }
+                val updCnt = incoming.size - newCnt
+                val msg = "세트: ${set.name}\n보낸 기기: ${set.sender}\n" +
+                          "비콘 ${incoming.size}개 (신규 $newCnt · 갱신 $updCnt)\n\n" +
+                          "받으면 같은 UUID는 받은 값으로 갱신되고, 신규는 추가됩니다. 내 기기에만 있는 비콘은 그대로 유지됩니다."
+                AlertDialog.Builder(this)
+                    .setTitle("받기 확인")
+                    .setMessage(msg)
+                    .setPositiveButton("받기") { _, _ ->
+                        val r = BeaconRegistry.mergeProfiles(incoming)
+                        refreshProfiles()
+                        Toast.makeText(this,
+                            "병합 완료 — 추가 ${r.added} · 갱신 ${r.updated}" +
+                            (if (r.skipped > 0) " · 한도초과 ${r.skipped}" else ""),
+                            Toast.LENGTH_LONG).show()
+                    }
+                    .setNeutralButton("이 세트 삭제") { _, _ ->
+                        AlertDialog.Builder(this)
+                            .setTitle("세트 삭제")
+                            .setMessage("'${set.name}' 공유 세트를 클라우드에서 삭제합니다.\n(내 기기에 등록된 비콘은 삭제되지 않습니다)")
+                            .setPositiveButton("삭제") { _, _ ->
+                                FirebaseManager.deleteBeaconSet(set.key) { ok ->
+                                    runOnUiThread {
+                                        Toast.makeText(this, if (ok) "삭제됨: ${set.name}" else "삭제 실패", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            }
+                            .setNegativeButton("취소", null)
+                            .show()
+                    }
+                    .setNegativeButton("취소", null)
+                    .show()
+            }
+        }
     }
 
     // ── BLE 스캔으로 비콘 발견 ──────────────────────────────────
