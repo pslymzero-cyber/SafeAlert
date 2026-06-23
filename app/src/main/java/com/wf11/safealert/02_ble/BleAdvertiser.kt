@@ -260,7 +260,7 @@ class BleAdvertiser(
     }
 
     /**
-     * [v1.1.14] 송신 위험상태(RISK 2비트, LEVEL_*) 갱신 — BleService 가 자신의 alertState 최대
+     * (v1.1.14) 송신 위험상태(RISK 2비트, LEVEL_*) 갱신 — BleService 가 자신의 alertState 최대
      *  경보레벨을 주기적으로 민다. STATE/TURN(2초 throttle)과 '독립'된 throttle 을 쓴다(안전 critical).
      *  - 상승(위험↑, 예: SAFE→DANGER)은 throttle 을 무시하고 '즉시' 재광고 — 전파 지연 0.
      *  - 하강(위험↓)은 0.5초 최소간격(레벨 토글 시 stop/start 폭주 차단). 걸리면 이번 호출은 생략하고

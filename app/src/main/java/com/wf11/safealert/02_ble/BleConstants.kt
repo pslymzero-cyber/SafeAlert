@@ -115,7 +115,7 @@ object BleConstants {
      * @param category CAT_* (0~3) — 범위 밖 상위 비트는 마스킹돼 버려진다.
      * @param state    PSTATE_* (0~3)
      * @param turn     TURN_* (0~3). [v1.1.7 #1] 송신단은 ImuFusion.turnDirection(방위각 미분)를 송출.
-     * @param risk     LEVEL_* (0~2). [v1.1.14] 송신자 위험 감지 상태(기본 SAFE). 수신단이 격상에 활용.
+     * @param risk     LEVEL_* (0~2). (v1.1.14) 송신자 위험 감지 상태(기본 SAFE). 수신단이 격상에 활용.
      */
     fun encodePayload(category: Int, state: Int, turn: Int = TURN_STRAIGHT, risk: Int = LEVEL_SAFE): Byte {
         val c = (category and CAT_MASK) shl CAT_SHIFT
@@ -134,7 +134,7 @@ object BleConstants {
     /** 패킹된 1바이트에서 Turn 코드(bits 3:2, TURN_*) 추출. [v1.1.7 #1] */
     fun decodeTurn(payload: Int): Int = ((payload and 0xFF) shr TURN_SHIFT) and TURN_MASK
 
-    /** 패킹된 1바이트에서 Risk(bits 1:0, LEVEL_*) 추출. [v1.1.14] 송신자 위험 감지 상태(0 SAFE/1 경고/2 위험). */
+    /** 패킹된 1바이트에서 Risk(bits 1:0, LEVEL_*) 추출. (v1.1.14) 송신자 위험 감지 상태(0 SAFE/1 경고/2 위험). */
     fun decodeRisk(payload: Int): Int = ((payload and 0xFF) shr RISK_SHIFT) and RISK_MASK
 
     // ── [v1.0.42 Req2] 표시용 한글 라벨 (Local/Target 양쪽 UI 가 공유하는 단일 소스) ──
