@@ -55,7 +55,7 @@ object FirebaseManager {
             "timestamp"    to System.currentTimeMillis()
         )
         db.child("beacon_share").child(key).setValue(data)
-            .addOnSuccessListener { Log.d(TAG, "비콘 세트 업로드: $key ($count개)"); onResult(true) }
+            .addOnSuccessListener { Log.d(TAG, "비콘 세트 업로드: $key (${count}개)"); onResult(true) }
             .addOnFailureListener { Log.e(TAG, "비콘 세트 업로드 실패: ${it.message}"); onResult(false) }
     }
 
