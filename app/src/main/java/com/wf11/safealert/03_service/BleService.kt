@@ -609,6 +609,9 @@ class BleService : LifecycleService() {
                             val effectiveRssi = if (DevSettings.debugMode) DevSettings.simulatedRssi else rssi
                             noteRssiForWake(deviceId, effectiveRssi)   // [v1.0.42 Req3] 근접 신호 → 즉시 웨이크 판단
                             acquireDetectionWakeLock(effectiveRssi)   // [v1.1.13] 화면 꺼짐+근접(>=WAKE) → 처리체인 완주용 짧은 CPU 점유
+                            // [v1.1.23] 동일 게이트로 스캔 배칭도 0ms 즉시 전달 승격 — wakelock 으로 CPU 를 깨워도
+                            //   배칭 500ms 면 BLE 칩이 0.5s 모아 효과 반감되므로 함께 0ms 로 내린다(false 복귀는 평가주기 집계).
+                            if (effectiveRssi >= WAKE_RSSI_DBM) bleScanner?.setHazardNear(true)
                             try {
                                 processAlert(deviceId, effectiveRssi, remoteState, remoteTurn, payloadPresent)
                                 // [v1.0.26 Req2] processAlert 가 alertState 를 어떻게 바꿨든(추가·격상·SAFE 제거·TTC 선발령)
@@ -2057,6 +2060,9 @@ class BleService : LifecycleService() {
                 Log.d(TAG, "RSSI 슬립(평가): 근접 신호 없음 → 하트비트 모드")
             }
         }
+        // [v1.1.23] 스캔 배칭 승격/복귀를 광고 슬립/웨이크와 동일 집계로 동기화 —
+        //   근접/경보 유지 → 0ms 유지, 모두 stale + 경보 없음 → 500ms 절전 복귀.
+        bleScanner?.setHazardNear(anyNear || hasAlert)
     }
 
     /**

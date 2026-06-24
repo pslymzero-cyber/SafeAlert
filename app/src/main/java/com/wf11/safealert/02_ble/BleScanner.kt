@@ -67,6 +67,11 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
     // 화면 상태 — false 시 500ms 하드웨어 배칭 (스캔 모드와 직교, CPU 웨이크업만 최소화)
     @Volatile var isScreenOn: Boolean = true
 
+    // [v1.1.23] 화면 꺼짐 중 위험 근접/경보 → 배칭 0ms 즉시 전달로 승격(안전 우선).
+    //   BleService 가 acquireDetectionWakeLock 과 동일 게이트(!isScreenOn && rssi>=WAKE)로 구동.
+    //   근접이 사라지면(평가 주기 anyNear=false) 절전 배칭(500ms)으로 자동 복귀.
+    @Volatile private var hazardNear: Boolean = false
+
     // [v1.0.48 #5] 전투 모드 = 설정 scanPeriodMs 의 프리셋 매핑(라이브 — 매번 설정에서 읽음).
     //   휴식 모드 = 전투가 LOW_LATENCY 면 BALANCED 로 한 단계 강하, 그 외엔 전투와 동일
     //   (BALANCED 미만으론 더 내리지 않음 — 기본 3000ms 에선 둘 다 BALANCED, 현행 거동 보존).
@@ -275,7 +280,8 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
         // [v1.0.27] 스캔 모드는 currentScanMode(동적). 기본 전투(activeScanMode),
         // IMU 정지 5초 확정 시에만 휴식(restScanMode)으로 낮춘다. 이동 즉시 원복.
         // 배칭 딜레이는 화면 상태로 별도 결정(스캔 모드와 직교).
-        val batchDelay = if (!isScreenOn) BATCH_DELAY_SCREEN_OFF_MS else BATCH_DELAY_ACTIVE_MS
+        // [v1.1.23] 화면 꺼짐이라도 위험 근접(hazardNear)이면 0ms 즉시 전달 — 안전 우선.
+        val batchDelay = if (!isScreenOn && !hazardNear) BATCH_DELAY_SCREEN_OFF_MS else BATCH_DELAY_ACTIVE_MS
         val settings = ScanSettings.Builder()
             .setScanMode(currentScanMode)
             .setReportDelay(batchDelay)
@@ -305,6 +311,19 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
     // 상대 기기에서 내가 사라지는 가시성 갭이 생기지 않는다.
     fun restartScan() {
         if (isScanning) restartScanInternal()
+    }
+
+    // [v1.1.23] 화면 꺼짐 중 위험 근접/경보 여부 통지 — true면 배칭 0ms(즉시 전달),
+    //   false면 절전 배칭(500ms) 복귀. 화면이 켜져 있으면 어차피 0ms라 재시작하지 않는다.
+    //   값이 실제로 바뀔 때만 스캔을 재시작(매 패킷 폭주 방지). true=onDeviceDetected 즉시,
+    //   false=evaluateAdvertiserPower(2.5s) 집계 — 광고 슬립/웨이크와 동일 비대칭.
+    fun setHazardNear(v: Boolean) {
+        if (hazardNear == v) return
+        hazardNear = v
+        if (!isScreenOn && isScanning) {
+            Log.d(TAG, "화면 꺼짐 위험근접=$v → 배칭 ${if (v) BATCH_DELAY_ACTIVE_MS else BATCH_DELAY_SCREEN_OFF_MS}ms 전환")
+            restartScanInternal()
+        }
     }
 
     /** 화면 꺼짐 → 500ms 하드웨어 배칭 전환 (스캔 모드는 유지, CPU 웨이크업만 최소화) */
