@@ -723,12 +723,19 @@ class BleService : LifecycleService() {
             val rIsEpj      = rCategory == BleConstants.CAT_EPJ
             // [v1.1.14] 역할쌍 분리: 보행자↔지게차는 강한 조기경보(+6), 보행자↔EPJ는 완화(+2).
             //   EPJ 는 저속·동일공간 작업이라 지게차와 같은 임계를 쓰면 과경보 → 별도 오프셋으로 분리.
-            //   장비↔장비·보행자↔보행자는 어느 쌍에도 안 걸려 0(기존과 동일).
+            //   [v1.1.24] 장비↔장비는 아래 equipVsEquipBiasDb 로 별도 부여, 보행자↔보행자만 0(기존과 동일).
             if ((iAmWalker && rIsForklift) || (iAmForklift && rIsWalker)) {
                 offset += DevSettings.walkerVsEquipBiasDb
             }
             if ((iAmWalker && rIsEpj) || (iAmEpj && rIsWalker)) {
                 offset += DevSettings.walkerVsEpjBiasDb
+            }
+            // [v1.1.24] 장비↔장비(지게차/EPJ 상호) — 양쪽 다 장비일 때만(보행자 분기와 상호배타).
+            //   보행자 오프셋이 전부 보행자 전용이라 비어 있던 사각지대를 메움. 금속 캐빈 차폐 대응.
+            val iAmEquip = iAmForklift || iAmEpj
+            val rIsEquip = rIsForklift || rIsEpj
+            if (iAmEquip && rIsEquip) {
+                offset += DevSettings.equipVsEquipBiasDb
             }
         }
         // [v1.1.11 C1] 전진-접근 가산: kfVel 임계를 히스테리시스 래치로 감싼다.

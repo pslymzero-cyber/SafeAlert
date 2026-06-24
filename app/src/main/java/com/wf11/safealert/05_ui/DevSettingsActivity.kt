@@ -78,6 +78,13 @@ class DevSettingsActivity : AppCompatActivity() {
         binding.etStaleMs.setText(DevSettings.signalStaleMs.toString())
         binding.etFbThrottle.setText(DevSettings.firebaseThrottleMs.toString())
         binding.etSpeedPush.setText(DevSettings.speedPushIntervalMs.toString())
+        // [v1.1.24] 역할별 조기경보 오프셋 — SeekBar(0~15) 값 직접 매핑
+        binding.seekWalkerEquipBias.progress = DevSettings.walkerVsEquipBiasDb
+        binding.tvWalkerEquipBiasVal.text    = "${DevSettings.walkerVsEquipBiasDb} dB"
+        binding.seekWalkerEpjBias.progress   = DevSettings.walkerVsEpjBiasDb
+        binding.tvWalkerEpjBiasVal.text      = "${DevSettings.walkerVsEpjBiasDb} dB"
+        binding.seekEquipEquipBias.progress  = DevSettings.equipVsEquipBiasDb
+        binding.tvEquipEquipBiasVal.text     = "${DevSettings.equipVsEquipBiasDb} dB"
         // [v1.1.7 #2] 후진(전진) 대비 감지 — Switch + 슬라이더(추천값 기본)
         binding.switchReversePrep.isChecked      = DevSettings.reversePrepEnabled
         binding.seekReverseRise.progress         = DevSettings.reverseRiseDbm - 2
@@ -124,6 +131,19 @@ class DevSettingsActivity : AppCompatActivity() {
         binding.seekReverseHold.setOnSeekBarChangeListener(seekListener { v ->
             binding.tvReverseHoldVal.text = "${v * 1000 + 1000} ms"
             DevSettings.reversePrepHoldMs = v * 1000L + 1000L
+        })
+        // [v1.1.24] 역할별 조기경보 오프셋 — 즉시 라이브 반영(0~15 직접 매핑)
+        binding.seekWalkerEquipBias.setOnSeekBarChangeListener(seekListener { v ->
+            binding.tvWalkerEquipBiasVal.text = "$v dB"
+            DevSettings.walkerVsEquipBiasDb = v
+        })
+        binding.seekWalkerEpjBias.setOnSeekBarChangeListener(seekListener { v ->
+            binding.tvWalkerEpjBiasVal.text = "$v dB"
+            DevSettings.walkerVsEpjBiasDb = v
+        })
+        binding.seekEquipEquipBias.setOnSeekBarChangeListener(seekListener { v ->
+            binding.tvEquipEquipBiasVal.text = "$v dB"
+            DevSettings.equipVsEquipBiasDb = v
         })
 
         // ── Switch : 즉시 기록 (+ 의존 UI 갱신) ─────────────────────────

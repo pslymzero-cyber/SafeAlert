@@ -9,6 +9,14 @@
         android:orientation="vertical"
         android:padding="16dp">
 
+        <!-- [v1.1.24] 오픈소스 라이선스 — 화면 최상단 바로가기 -->
+        <Button android:id="@+id/btn_open_source_licenses"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="오픈소스 라이선스"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:textColor="#374151" android:textSize="13sp"/>
+
         <!-- 송수신 설정 -->
         <TextView android:text="송수신 모드" android:textStyle="bold" android:textSize="16sp"
             android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="8dp"/>
@@ -241,6 +249,57 @@
                 <TextView android:text="경보 판정·필터의 핵심 수치. 기본값은 현장 검증값이며 저장 즉시 서비스에 반영됩니다. '기본값으로 초기화'로 전체 복원."
                     android:layout_width="match_parent" android:layout_height="wrap_content"
                     android:textSize="11sp" android:textColor="#9CA3AF"/>
+
+                <!-- [v1.1.24] 역할별 조기경보 오프셋 — effWarning/effDanger 를 역할쌍별로 더 먼 거리로 당김 -->
+                <TextView android:text="역할별 조기경보 오프셋" android:textStyle="bold"
+                    android:textSize="13sp" android:textColor="#374151"
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"/>
+                <TextView android:text="값이 클수록 더 먼 거리(약한 신호)에서 미리 경보합니다. 0=중립(일반 임계와 동일). 금속 캐빈 차폐로 신호가 약해지는 장비끼리도 놓치지 않도록 보정."
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:textSize="11sp" android:textColor="#9CA3AF" android:layout_marginTop="2dp"/>
+
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="10dp">
+                    <TextView android:text="보행자 ↔ 지게차 (dB)" android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
+                    <TextView android:id="@+id/tv_walker_equip_bias_val" android:layout_width="64dp" android:layout_height="wrap_content"
+                        android:gravity="end" android:textSize="13sp" android:textColor="#374151"/>
+                </LinearLayout>
+                <SeekBar android:id="@+id/seek_walker_equip_bias" android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp" android:max="15"/>
+                <TextView android:text="유효 0~15 dB (기본 6). 보행자와 지게차 사이 조기경보 강도. 가장 강하게 보호."
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:textSize="11sp" android:textColor="#9CA3AF"/>
+
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="10dp">
+                    <TextView android:text="보행자 ↔ EPJ (dB)" android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
+                    <TextView android:id="@+id/tv_walker_epj_bias_val" android:layout_width="64dp" android:layout_height="wrap_content"
+                        android:gravity="end" android:textSize="13sp" android:textColor="#374151"/>
+                </LinearLayout>
+                <SeekBar android:id="@+id/seek_walker_epj_bias" android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp" android:max="15"/>
+                <TextView android:text="유효 0~15 dB (기본 2). EPJ(전동 파레트 잭)는 저속·동일공간 작업이라 지게차보다 완화."
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:textSize="11sp" android:textColor="#9CA3AF"/>
+
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="10dp">
+                    <TextView android:text="장비 ↔ 장비 (dB)" android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
+                    <TextView android:id="@+id/tv_equip_equip_bias_val" android:layout_width="64dp" android:layout_height="wrap_content"
+                        android:gravity="end" android:textSize="13sp" android:textColor="#374151"/>
+                </LinearLayout>
+                <SeekBar android:id="@+id/seek_equip_equip_bias" android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp" android:max="15"/>
+                <TextView android:text="유효 0~15 dB (기본 8). 지게차끼리·EPJ끼리·지게차↔EPJ. 금속 캐빈 차폐로 약해진 신호를 잡으려면 가장 큰 값 필요."
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:textSize="11sp" android:textColor="#9CA3AF"/>
+
+                <View android:layout_width="match_parent" android:layout_height="1dp"
+                    android:background="#F3F4F6" android:layout_marginTop="12dp"/>
 
                 <TextView android:text="경보 판정" android:textStyle="bold"
                     android:textSize="13sp" android:textColor="#374151"
@@ -518,11 +577,6 @@
                             android:text="Copyright 2024-2026 WF11 Team"
                             android:textSize="11sp" android:textColor="#9CA3AF"/>
                     </LinearLayout>
-                    <Button android:id="@+id/btn_open_source_licenses"
-                        android:layout_width="wrap_content" android:layout_height="40dp"
-                        android:text="오픈소스"
-                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                        android:textColor="#374151" android:textSize="12sp"/>
                 </LinearLayout>
             </LinearLayout>
         </androidx.cardview.widget.CardView>

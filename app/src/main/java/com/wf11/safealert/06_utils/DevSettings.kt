@@ -433,6 +433,16 @@ object DevSettings {
         get() = prefs.getInt(KEY_WALKER_VS_EPJ_BIAS_DB, DEFAULT_WALKER_VS_EPJ_BIAS_DB).coerceIn(0, 15)
         set(v) = prefs.edit().putInt(KEY_WALKER_VS_EPJ_BIAS_DB, v.coerceIn(0, 15)).apply()
 
+    // [v1.1.24] 장비↔장비(지게차·EPJ 상호) 조기경보 오프셋(dB) — 보행자 오프셋(+6/+2)이 모두 보행자 전용이라
+    //   지게차끼리·EPJ끼리·지게차↔EPJ 쌍은 오프셋 0이었음(사각지대). 금속 캐빈 차폐로 RSSI가 약해지면
+    //   effWarning 부근을 배회 → 간헐/무음. 이 오프셋으로 장비쌍에도 조기경보를 부여한다. 0=중립(일반 임계).
+    //   기본 +8(시뮬: 강차폐 -78~-82 신뢰 포착, 먼 -88 과경보 1/20 이하). categoryBiasEnabled 토글 공유.
+    private const val KEY_EQUIP_VS_EQUIP_BIAS_DB = "equip_vs_equip_bias_db"
+    const val DEFAULT_EQUIP_VS_EQUIP_BIAS_DB = 8
+    var equipVsEquipBiasDb: Int
+        get() = prefs.getInt(KEY_EQUIP_VS_EQUIP_BIAS_DB, DEFAULT_EQUIP_VS_EQUIP_BIAS_DB).coerceIn(0, 15)
+        set(v) = prefs.edit().putInt(KEY_EQUIP_VS_EQUIP_BIAS_DB, v.coerceIn(0, 15)).apply()
+
     // [Phase2] 상태 기반 가감 on/off — 상대 FORWARD(전진) 접근 시 추가 조기경보, IDLE-IDLE 가청 억제
     private const val KEY_STATE_MODULATION_ENABLED = "state_modulation_enabled"
     var stateModulationEnabled: Boolean
