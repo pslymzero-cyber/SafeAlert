@@ -212,6 +212,9 @@ class BleService : LifecycleService() {
     //   raw(칼만·1초평균)가 2연속 프레임 위험권이면(단발 임펄스 차단) 워밍업·접근속도 게이트를 우회해
     //   즉시 1회 발령을 허용한다 → '가까이 두면 늦게/안 울림'을 근접 즉시 발령으로 전환.
     private val dangerContactStreakMap = mutableMapOf<String, Int>()
+    // [v1.1.18] WARNING 거리도 동일한 raw 2프레임 확증 카운터 — 정지 근접도 Time-Gate·워밍업 우회하고 즉시 발령.
+    //   effDanger ⊂ effWarning 이라 DANGER 거리도 자동 포함(fastDangerContact 상위호환). 단발 임펄스는 streak 1 에서 끊김.
+    private val warningContactStreakMap = mutableMapOf<String, Int>()
 
     // ── TTC 파라미터 ──────────────────────────────────────────────────
     // [v1.0.25 Req2] 현장 초민감 오발령 해결 — 8.0초 → 3.0초로 대폭 강화 (충돌 임박 시에만 선발령)
@@ -623,6 +626,7 @@ class BleService : LifecycleService() {
                             pEmaFilter.clear(deviceId)        // [v1.0.45] 후처리 P-EMA 상태 정리
                             rushFrameMap.remove(deviceId)     // [v1.0.45] 돌진 프레임 카운터 정리
                             dangerContactStreakMap.remove(deviceId)   // [v1.1.16 D] 첫접촉 DANGER 카운터 정리
+                            warningContactStreakMap.remove(deviceId)  // [v1.1.18] 첫접촉 WARNING 카운터 정리
                             kalmanFilters[deviceId]?.reset()
                             kalmanFilters.remove(deviceId)
                             trackingStateMap.remove(deviceId)
@@ -960,6 +964,11 @@ class BleService : LifecycleService() {
         val inDangerRaw = kalmanRssi >= effDanger && avg1sec >= effDanger
         val dangerStreak = if (inDangerRaw) (dangerContactStreakMap[deviceId] ?: 0) + 1 else 0
         dangerContactStreakMap[deviceId] = dangerStreak
+        // [v1.1.18] WARNING 거리(effWarning)도 동일한 raw 2프레임 확증 — 정지 근접이 Time-Gate에 막혀 '스칠 때만' 울리던 문제 해소.
+        //   칼만·1초평균이 '둘 다' effWarning 이상이어야 +1(단발 임펄스 차단). effDanger ⊂ effWarning 이라 DANGER 도 포함.
+        val inWarningRaw = kalmanRssi >= effWarning && avg1sec >= effWarning
+        val warningStreak = if (inWarningRaw) (warningContactStreakMap[deviceId] ?: 0) + 1 else 0
+        warningContactStreakMap[deviceId] = warningStreak
         // [Phase2] IDLE-IDLE 가청 억제 — 내 IMU 정지 + 상대 IDLE 송신(둘 다 정지=충돌동역학 없음)이면
         //   아래 정규 WARNING 가청경보를 억제(표시·목록·위젯은 유지). DANGER 는 억제 대상이 아니며,
         //   둘 중 하나라도 움직이면(rState≠IDLE 또는 IMU 이동) 다음 프레임 즉시 해제된다.
@@ -1011,6 +1020,7 @@ class BleService : LifecycleService() {
             pEmaFilter.clear(deviceId)        // [v1.0.45] 후처리 P-EMA 상태 정리
             rushFrameMap.remove(deviceId)     // [v1.0.45] 돌진 프레임 카운터 정리
             dangerContactStreakMap.remove(deviceId)   // [v1.1.16 D] 첫접촉 DANGER 카운터 정리
+            warningContactStreakMap.remove(deviceId)  // [v1.1.18] 첫접촉 WARNING 카운터 정리
             kalmanFilters.remove(deviceId)    // [v1.0.38 클린업] 미추적 기기 칼만 인스턴스 정리(stale 재등장 방지)
             recedingStartMap.remove(deviceId)    // [v1.1.6 검증 보강] 이탈 판정 상태 누수·stale 피크 재출현 방지
             recedeRefMap.remove(deviceId)        // [v1.1.6 검증 보강] 미추적 기기 중간평활 EMA 정리
@@ -1150,6 +1160,7 @@ class BleService : LifecycleService() {
                 pEmaFilter.clear(deviceId)        // [v1.0.45]
                 rushFrameMap.remove(deviceId)     // [v1.0.45]
                 dangerContactStreakMap.remove(deviceId)   // [v1.1.16 D]
+                warningContactStreakMap.remove(deviceId)  // [v1.1.18]
                 kf.reset()
                 kalmanFilters.remove(deviceId)
                 trackingStateMap.remove(deviceId)
@@ -1278,6 +1289,7 @@ class BleService : LifecycleService() {
                 pEmaFilter.clear(deviceId)        // [v1.0.45]
                 rushFrameMap.remove(deviceId)     // [v1.0.45]
                 dangerContactStreakMap.remove(deviceId)   // [v1.1.16 D]
+                warningContactStreakMap.remove(deviceId)  // [v1.1.18]
                 kalmanFilters[deviceId]?.reset()
                 kalmanFilters.remove(deviceId)
                 wasStationaryMap.remove(deviceId)
@@ -1371,7 +1383,11 @@ class BleService : LifecycleService() {
         // [v1.1.16 D] 단, raw 2프레임 확증된 신규 DANGER 진입은 워밍업이어도 즉시 1회 발령 허용
         //   (비콘이 위험거리로 '쑥' 들어오는 첫 접촉을 Median 충전 대기 없이 선발령). 아래 Time-Gate 도 면제.
         val fastDangerContact = warmingUp && dangerStreak >= 2 && stableLevel >= BleConstants.LEVEL_DANGER
-        val shouldAlert = (!warmingUp || fastDangerContact) && (isFirstDetection || levelEscalated || (cooldownPassed && !isReceding))
+        // [v1.1.18] WARNING 거리 첫접촉도 raw 2프레임 확증되면 워밍업·Time-Gate 우회하고 즉시 발령(정지 근접 즉시 발령).
+        //   stableLevel>=WARNING & warningStreak>=2 가 DANGER 케이스(stableLevel>=DANGER & dangerStreak>=2)를 포함 → 상위호환.
+        val fastContact = fastDangerContact ||
+            (warmingUp && warningStreak >= 2 && stableLevel >= BleConstants.LEVEL_WARNING)
+        val shouldAlert = (!warmingUp || fastContact) && (isFirstDetection || levelEscalated || (cooldownPassed && !isReceding))
         if (!shouldAlert) {
             // [v1.0.49 #3] 워밍업 등으로 발령 보류된 '신규' 기기 — 경보는 아니지만 목록엔 '감지됨' 노출.
             if (isFirstDetection) pendingDisplayMap[deviceId] = now
@@ -1451,7 +1467,7 @@ class BleService : LifecycleService() {
         //   수신 감도가 낮은 폰(RSSI 동특성 작음 → kfVel 미달)은 위험권에 들어와도 승급이 무기 보류됐다
         //   (위험 경보 지연·기기별 비대칭의 원인). 스파이크 오발은 Median→EMA→칼만→P-EMA 다단 평활과
         //   3중 하드게이트, raw 2차 방어선이 이미 막으므로 격상까지 게이트하는 것은 중복 보수였다.
-        if (isFirstDetection && !fastDangerContact && (sideCourse || !approachSustained)) {   // [v1.1.16 D] 2프레임 확증 DANGER 첫접촉은 접근속도 게이트 면제(근접 즉시 발령)
+        if (isFirstDetection && !fastContact && (sideCourse || !approachSustained)) {   // [v1.1.18] 2프레임 확증 WARNING/DANGER 첫접촉은 접근속도 게이트 면제(정지 근접 즉시 발령)
             pendingDisplayMap[deviceId] = now   // [v1.0.49 #3] 보류 중에도 목록엔 '감지됨' 노출
             Log.d(TAG, "[v1.0.36] 경보 보류 ${extractDisplayName(deviceId)}: side=$sideCourse 접근지속=${approachStreakMs}ms(<${timeGateMs}) ratio=%.2f 합산=%.1fkm/h vel=%.2f".format(closingRatio, closingSpeedKmh, kfVel))
             return   // 소리/화면 경보 보류 — 다음 프레임 재평가(접근지속 충족 또는 정면충돌 코스 시 발령)
@@ -2073,6 +2089,7 @@ class BleService : LifecycleService() {
         pEmaFilter.clearAll()      // [v1.0.45]
         rushFrameMap.clear()       // [v1.0.45]
         dangerContactStreakMap.clear()   // [v1.1.16 D]
+        warningContactStreakMap.clear()  // [v1.1.18]
         kalmanFilters.clear()
         trackingStateMap.clear()
         crossingStartMap.clear()

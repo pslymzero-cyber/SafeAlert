@@ -22,8 +22,8 @@ class BleAdvertiser(
         private const val TAG = "BleAdvertiser"
         // [v1.0.29] 상태 갱신 최소 주기 — 안드로이드 OS Advertising Rate-Limit 회피
         //   [v1.1.7 #1] STATE 와 Turn(bits 3:2) 재광고가 이 throttle 을 '공유'한다.
-        private const val MIN_STATE_UPDATE_INTERVAL_MS = 2000L
-        // [v1.1.14] 위험상태(RISK) 전용 최소 재광고 간격 — STATE/TURN(2초)과 독립.
+        private const val MIN_STATE_UPDATE_INTERVAL_MS = 1000L   // [v1.1.18] 2000→1000 디바이스 간 STATE/TURN 전파 가속(광고 stop/start 1s 간격=LOW_POWER 주기와 동급, OS Rate-Limit 안전선)
+        // [v1.1.14] 위험상태(RISK) 전용 최소 재광고 간격 — STATE/TURN(1초)과 독립.
         //   위험은 안전 critical 이라 빠르게 전파한다: 상승(위험↑)은 이 간격도 무시하고 즉시 재광고,
         //   하강(위험↓)만 0.5초 최소간격으로 stop/start 폭주(레벨 토글)를 막는다.
         private const val MIN_RISK_UPDATE_INTERVAL_MS = 500L

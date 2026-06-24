@@ -337,7 +337,7 @@ object DevSettings {
 
     // 속도 송신 폴링 주기(ms) — ImuFusion 속도를 advertiser 에 push 하는 간격
     private const val KEY_SPEED_PUSH_INTERVAL_MS = "speed_push_interval_ms"
-    const val DEFAULT_SPEED_PUSH_INTERVAL_MS = 1500L
+    const val DEFAULT_SPEED_PUSH_INTERVAL_MS = 1000L   // [v1.1.18] 1500→1000 STATE 폴링 가속(개발자설정서 라이브 조절 가능, coerce 500~10000)
     var speedPushIntervalMs: Long
         get() = prefs.getLong(KEY_SPEED_PUSH_INTERVAL_MS, DEFAULT_SPEED_PUSH_INTERVAL_MS).coerceIn(500L, 10_000L)
         set(v) = prefs.edit().putLong(KEY_SPEED_PUSH_INTERVAL_MS, v.coerceIn(500L, 10_000L)).apply()
