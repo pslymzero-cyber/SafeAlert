@@ -966,15 +966,17 @@ class BleService : LifecycleService() {
         val totalOffset = payloadOffset + beaconOffset + beaconGlobalGain
         val effWarning = BleConstants.rssiWarning - totalOffset
         val effDanger  = BleConstants.rssiDanger  - totalOffset
-        // [v1.1.16 D] 첫 접촉 고속 발령용 raw 위험권 2프레임 확증 카운터(워밍업·접근속도 게이트 우회).
-        //   칼만·raw 1초평균이 '둘 다' effDanger 이상이어야 +1, 하나라도 미달이면 0 리셋 → 단발 임펄스는
-        //   streak 1 에서 끊겨 못 켠다(연속 2프레임 합의 = Median 워밍업과 동등한 임펄스 방어).
-        val inDangerRaw = kalmanRssi >= effDanger && avg1sec >= effDanger
+        // [v1.1.16 D → v1.1.22 C-fix] 첫 접촉 고속 발령용 '근접 2프레임 확증' 카운터(워밍업·Time-Gate 우회).
+        //   ★ 게이트 신호를 칼만·1초평균(둘 다 지연) → medianValue(median-of-3, 위상지연≈0 선행)로 교체.
+        //   기존엔 칼만(평활)·1초평균(평균)이 둘 다 물리 최근접(CPA)보다 신호 정점이 뒤로 밀려, 가장 가까운
+        //   순간엔 streak 가 안 차고 '지나간 뒤(이탈측)'에야 2프레임이 채워졌다(=버그 '붙어도 안 울림/멀어질 때 울림').
+        //   medianValue 는 평활 없이 단발 스파이크만 제거 → 접근측(CPA 이전)에서 즉시 2프레임 확증된다(시뮬 검증).
+        val inDangerRaw = medianValue >= effDanger
         val dangerStreak = if (inDangerRaw) (dangerContactStreakMap[deviceId] ?: 0) + 1 else 0
         dangerContactStreakMap[deviceId] = dangerStreak
-        // [v1.1.18] WARNING 거리(effWarning)도 동일한 raw 2프레임 확증 — 정지 근접이 Time-Gate에 막혀 '스칠 때만' 울리던 문제 해소.
-        //   칼만·1초평균이 '둘 다' effWarning 이상이어야 +1(단발 임펄스 차단). effDanger ⊂ effWarning 이라 DANGER 도 포함.
-        val inWarningRaw = kalmanRssi >= effWarning && avg1sec >= effWarning
+        // [v1.1.18 → v1.1.22] WARNING 거리(effWarning)도 동일하게 medianValue 선행 기준 2프레임 확증(정지 근접 즉시 발령).
+        //   effDanger ⊂ effWarning 이라 DANGER 거리도 자동 포함. median-of-3 가 단발 임펄스를 막아 streak 오발을 방지한다.
+        val inWarningRaw = medianValue >= effWarning
         val warningStreak = if (inWarningRaw) (warningContactStreakMap[deviceId] ?: 0) + 1 else 0
         warningContactStreakMap[deviceId] = warningStreak
         // [Phase2] IDLE-IDLE 가청 억제 — 내 IMU 정지 + 상대 IDLE 송신(둘 다 정지=충돌동역학 없음)이면
@@ -1083,6 +1085,11 @@ class BleService : LifecycleService() {
         updateTrackingState(deviceId, kfVel, now)
         val newState    = trackingStateMap[deviceId] ?: TrackingState.APPROACHING
         val isNowDepart = newState == TrackingState.DEPARTING
+        // [v1.1.22 B/C] '멀어지는 중' 단일 판정 — 위상선행 kfVel(거리 권위값 pEma 보다 먼저 이탈 포착)이
+        //   CPA 임계 이하(확실히 멀어짐)이거나 추적 상태머신이 DEPARTING 확정이면 이탈로 본다. CPA 정점
+        //   (kfVel≈0)에선 false → '바로 붙어 있을 때'는 접근으로 취급(C 즉시발령 유지), CPA 를 넘겨
+        //   kfVel<-0.5 로 꺾이는 순간부터 true → 멀어지며 격상·재발령을 막아(B) '지나가고 울림'을 없앤다.
+        val isDepartingNow = kfVel < -CPA_VEL_THRESHOLD || isNowDepart
 
         // avg1sec(raw 1초평균)은 위 하드게이트 앞에서 이미 계산됨(프레임당 1회).
 
@@ -1154,6 +1161,21 @@ class BleService : LifecycleService() {
             val beforeCoop = stableLevel
             stableLevel = rRisk.coerceAtMost(BleConstants.LEVEL_DANGER)
             Log.w(TAG, "협력 격상(절충): $deviceId rRisk=$rRisk 내RSSI(pEma=$avgRssi raw=$avg1sec) → $beforeCoop→$stableLevel")
+        }
+
+        // ── [v1.1.22 C] '붙었을 때' raw 즉시 격상 — pEma 평활지연을 기다리지 않는다 ──────────────
+        //   거리 권위값(pEma)은 다단 비대칭 평활(매 단계 하강 α<상승 α)이라 물리적 최근접(CPA)보다
+        //   거리피크가 ~1초 이상 뒤로 밀린다 → 가장 가까운 순간(raw 최강)엔 pEma 가 아직 임계 밑이라
+        //   stableLevel 이 못 떠 '바로 붙어 있어도 안 울림'이 났다. 이를 medianValue 선행(평활 없는 median-of-3) 2프레임
+        //   확증(dangerStreak/warningStreak — 상단 계산, v1.1.22 C-fix 로 게이트가 medianValue 기준)으로 메운다: 멀어지는 중이 아니면(isDepartingNow
+        //   =false, 즉 접근~CPA 정점) raw 위험권을 stableLevel 에 즉시 반영해 평활 lag 없이 발령한다.
+        //   멀어지는 중이면 적용 안 함 → 이탈측 재격상(=버그 '지나가고 울림') 금지(B 와 결합).
+        if (!isDepartingNow && stableLevel < BleConstants.LEVEL_DANGER && dangerStreak >= 2) {
+            stableLevel = BleConstants.LEVEL_DANGER
+            Log.w(TAG, "[v1.1.22 C] med 즉시 격상 DANGER: $deviceId (dangerStreak=$dangerStreak med=$medianValue raw1s=$avg1sec pEma=$avgRssi kfVel=%.2f)".format(kfVel))
+        } else if (!isDepartingNow && stableLevel < BleConstants.LEVEL_WARNING && warningStreak >= 2) {
+            stableLevel = BleConstants.LEVEL_WARNING
+            Log.w(TAG, "[v1.1.22 C] med 즉시 격상 WARNING: $deviceId (warningStreak=$warningStreak med=$medianValue raw1s=$avg1sec pEma=$avgRssi kfVel=%.2f)".format(kfVel))
         }
 
         // [v1.0.26 Req2] 개별 sendDetectedBroadcast 폐지 — 목록은 onDeviceDetected 처리 직후
@@ -1264,8 +1286,12 @@ class BleService : LifecycleService() {
             //   distanceLevel==DANGER 인 동안은 이탈로 인정하지 않아 '근접인데 전체 무음'을 차단한다(격하된
             //   WARNING 경보는 canonical 경로가 계속 울림). 진짜로 멀어지면 pEma 가 내려가 distanceLevel<DANGER
             //   → 이탈 인정·해제. [v1.1.8] 혼합 제거로 distanceLevel 은 순수 pEma 권위값(raw dip 에 불변).
+            //   [v1.1.22 B] 위험권(DANGER) 안에서의 이탈도 잡도록 OR isDepartingNow 보강. 기존 가드
+            //   (distanceLevel<DANGER)만으론 pEma 평활지연으로 거리레벨이 DANGER 에 떠 있는 동안의
+            //   '멀어짐'을 못 잡아 이탈측 재발령을 허용했다. 단 정지근접(kfVel≈0·비DEPARTING)은
+            //   isDepartingNow=false 라 원래 가드로 폴백 → R4-SIL-1(위험권 정지 무음) 방어 보존.
             isReceding = (recedePeak - recedeRef) >= RECEDING_DBM_DROP &&
-                distanceLevel < BleConstants.LEVEL_DANGER
+                (distanceLevel < BleConstants.LEVEL_DANGER || isDepartingNow)
         } else {
             recedeRefMap.remove(deviceId)
             recedePeakMap.remove(deviceId)
@@ -1392,12 +1418,22 @@ class BleService : LifecycleService() {
         // [v1.0.45] 워밍업(Median 미충전) 구간은 신규/격상 발령 보류 — 콜드스타트 임펄스 오염 방어.
         // [v1.1.16 D] 단, raw 2프레임 확증된 신규 DANGER 진입은 워밍업이어도 즉시 1회 발령 허용
         //   (비콘이 위험거리로 '쑥' 들어오는 첫 접촉을 Median 충전 대기 없이 선발령). 아래 Time-Gate 도 면제.
-        val fastDangerContact = warmingUp && dangerStreak >= 2 && stableLevel >= BleConstants.LEVEL_DANGER
+        // [v1.1.22 C] warmingUp 한정 → 상시(warm 포함)로 일반화 + 멀어지는 중 제외. medianValue 선행 2프레임 확증
+        //   (median-of-3 가 위험권)된 '접근/근접' 접촉은 워밍업이든 추적중이든 Time-Gate(0.5초)를
+        //   우회해 즉시 발령한다(붙어 있어도 0.5초 안 울리던 지연 제거). isDepartingNow 면 제외(이탈측 발령 금지).
+        //   stableLevel 은 위 [v1.1.22 C] 즉시격상 블록에서 medianValue 위험권이면 이미 끌어올려진 값 → 평활 lag 비의존.
+        val fastDangerContact = !isDepartingNow && dangerStreak >= 2 && stableLevel >= BleConstants.LEVEL_DANGER
         // [v1.1.18] WARNING 거리 첫접촉도 raw 2프레임 확증되면 워밍업·Time-Gate 우회하고 즉시 발령(정지 근접 즉시 발령).
         //   stableLevel>=WARNING & warningStreak>=2 가 DANGER 케이스(stableLevel>=DANGER & dangerStreak>=2)를 포함 → 상위호환.
         val fastContact = fastDangerContact ||
-            (warmingUp && warningStreak >= 2 && stableLevel >= BleConstants.LEVEL_WARNING)
-        val shouldAlert = (!warmingUp || fastContact) && (isFirstDetection || levelEscalated || (cooldownPassed && !isReceding))
+            (!isDepartingNow && warningStreak >= 2 && stableLevel >= BleConstants.LEVEL_WARNING)
+        // [v1.1.22 B] 멀어지는 중(isDepartingNow) 격상·재발령 차단 — 물리적으로 멀어지면 위험이 커질 수
+        //   없으므로 levelEscalated 는 pEma 평활 lag 아티팩트다. 쿨다운 재알람도 이탈측에선 금지해야
+        //   '지나가고 울림'을 없앤다. isFirstDetection(브랜드 신규 접촉)만 페일세이프로 무가드 유지.
+        val shouldAlert = (!warmingUp || fastContact) &&
+            (isFirstDetection ||
+             (levelEscalated && !isDepartingNow) ||
+             (cooldownPassed && !isReceding && !isDepartingNow))
         if (!shouldAlert) {
             // [v1.0.49 #3] 워밍업 등으로 발령 보류된 '신규' 기기 — 경보는 아니지만 목록엔 '감지됨' 노출.
             if (isFirstDetection) pendingDisplayMap[deviceId] = now
@@ -1413,7 +1449,7 @@ class BleService : LifecycleService() {
             //   여기 stableLevel>=DANGER 와 정확한 여집합으로 상호배타 → 진짜 이탈 즉시정지는 유지되고,
             //   genuine 이탈로 stableLevel 이 이미 위험권 밖이면 복구가 되살리지 않아 ghost-danger 과알람도 없다.
             if (!isMuted && !isDeviceMuted(deviceId) && alertState.containsKey(deviceId) &&
-                stableLevel >= BleConstants.LEVEL_DANGER &&
+                stableLevel >= BleConstants.LEVEL_DANGER && !isDepartingNow &&   // [v1.1.22 B] 이탈측 무음복구 재발령 금지
                 activeSoundLevel < BleConstants.LEVEL_DANGER) {
                 forceAlarmVolume()
                 activeSoundLevel = BleConstants.LEVEL_DANGER
