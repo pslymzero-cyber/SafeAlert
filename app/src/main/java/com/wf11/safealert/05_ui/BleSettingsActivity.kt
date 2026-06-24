@@ -39,6 +39,10 @@ class BleSettingsActivity : AppCompatActivity() {
         // 비콘 수신 강도(%) — 슬라이더 progress = percent/10 (0~30 → 0~300%)
         binding.seekBeaconGain.progress = (DevSettings.beaconGainPercent / 10).coerceIn(0, 30)
         updateBeaconGainLabel()
+
+        // [v1.1.25] EPJ↔EPJ 오프셋 — 슬라이더 progress = 오프셋+10 (-10~+15 dB → 0~25)
+        binding.seekEpjBias.progress = (DevSettings.epjVsEpjBiasDb + 10).coerceIn(0, 25)
+        updateEpjBiasLabel()
     }
 
     private fun setupListeners() {
@@ -81,6 +85,11 @@ class BleSettingsActivity : AppCompatActivity() {
             DevSettings.beaconGainPercent = binding.seekBeaconGain.progress * 10
             updateBeaconGainLabel()
         })
+        // [v1.1.25] EPJ↔EPJ 오프셋 — progress-10 = 오프셋(-10~+15 dB) 저장(라이브 반영)
+        binding.seekEpjBias.setOnSeekBarChangeListener(seek {
+            DevSettings.epjVsEpjBiasDb = binding.seekEpjBias.progress - 10
+            updateEpjBiasLabel()
+        })
     }
 
     private fun updateDistLabels() {
@@ -97,6 +106,13 @@ class BleSettingsActivity : AppCompatActivity() {
         val dbm = (pct - 100) / 5
         val sign = if (dbm > 0) "+" else ""
         binding.tvBeaconGain.text = "${pct}% (${sign}${dbm} dBm)"
+    }
+
+    private fun updateEpjBiasLabel() {
+        // 슬라이더 progress(0~25) - 10 = 오프셋(-10~+15 dB). 음수=더 가까이서만 발령(거리 변별), 양수=더 멀리서 미리.
+        val v = binding.seekEpjBias.progress - 10
+        val sign = if (v > 0) "+" else ""
+        binding.tvEpjBias.text = "${sign}${v} dB"
     }
 
     private fun seek(onChange: () -> Unit) = object : android.widget.SeekBar.OnSeekBarChangeListener {

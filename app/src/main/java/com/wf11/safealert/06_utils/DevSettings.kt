@@ -443,6 +443,17 @@ object DevSettings {
         get() = prefs.getInt(KEY_EQUIP_VS_EQUIP_BIAS_DB, DEFAULT_EQUIP_VS_EQUIP_BIAS_DB).coerceIn(0, 15)
         set(v) = prefs.edit().putInt(KEY_EQUIP_VS_EQUIP_BIAS_DB, v.coerceIn(0, 15)).apply()
 
+    // [v1.1.25] EPJ↔EPJ 전용 오프셋(dB) — 장비↔장비(equipVsEquipBiasDb=+8)에서 EPJ끼리만 분리.
+    //   EPJ 는 금속 캐빈이 없어 차폐가 약하고 3km/h 저속이라 5m 공존이 정상 → +8(지게차 강차폐 보정)을
+    //   그대로 쓰면 5m·8m 에서도 과경보. 거리 변별(3m 발령/5m 무음)을 위해 0 근처·음수까지 허용한다.
+    //   음수 = effWarning 을 더 강한 신호(가까운 거리)로 당겨 3m 진입 시에만 발령(시뮬: 개활 -7/표준 -3 → 약차폐 EPJ 기본 -2).
+    //   지게차가 한쪽이라도 끼면 기존 equipVsEquipBiasDb(강차폐·위험원 보수적) 유지. categoryBiasEnabled 토글 공유.
+    private const val KEY_EPJ_VS_EPJ_BIAS_DB = "epj_vs_epj_bias_db"
+    const val DEFAULT_EPJ_VS_EPJ_BIAS_DB = -2
+    var epjVsEpjBiasDb: Int
+        get() = prefs.getInt(KEY_EPJ_VS_EPJ_BIAS_DB, DEFAULT_EPJ_VS_EPJ_BIAS_DB).coerceIn(-10, 15)
+        set(v) = prefs.edit().putInt(KEY_EPJ_VS_EPJ_BIAS_DB, v.coerceIn(-10, 15)).apply()
+
     // [Phase2] 상태 기반 가감 on/off — 상대 FORWARD(전진) 접근 시 추가 조기경보, IDLE-IDLE 가청 억제
     private const val KEY_STATE_MODULATION_ENABLED = "state_modulation_enabled"
     var stateModulationEnabled: Boolean

@@ -735,7 +735,14 @@ class BleService : LifecycleService() {
             val iAmEquip = iAmForklift || iAmEpj
             val rIsEquip = rIsForklift || rIsEpj
             if (iAmEquip && rIsEquip) {
-                offset += DevSettings.equipVsEquipBiasDb
+                // [v1.1.25] EPJ↔EPJ 분리: 양쪽 다 EPJ(지게차 미포함)면 거리 변별용 별도 오프셋.
+                //   EPJ 는 약차폐·저속(3km/h)·5m 공존 정상이라 +8 을 쓰면 과경보 → epjVsEpjBiasDb(기본 -2)로 낮춤.
+                //   지게차가 한쪽이라도 끼면(강차폐·위험원) 기존 equipVsEquipBiasDb(+8) 유지.
+                if (iAmEpj && rIsEpj) {
+                    offset += DevSettings.epjVsEpjBiasDb
+                } else {
+                    offset += DevSettings.equipVsEquipBiasDb
+                }
             }
         }
         // [v1.1.11 C1] 전진-접근 가산: kfVel 임계를 히스테리시스 래치로 감싼다.

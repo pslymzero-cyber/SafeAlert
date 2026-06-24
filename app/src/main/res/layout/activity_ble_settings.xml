@@ -119,6 +119,40 @@
                 </LinearLayout>
             </androidx.cardview.widget.CardView>
 
+            <!-- [v1.1.25] EPJ ↔ EPJ 근접 경보 오프셋 — 거리 변별(3m 발령/5m 무음). 음수 허용 -->
+            <TextView android:text="EPJ끼리 근접 경보" android:textStyle="bold" android:textSize="15sp"
+                android:textColor="#111827" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:layout_marginBottom="4dp"/>
+            <TextView android:text="EPJ끼리는 5m 공존이 정상 · 값을 낮출수록(음수) 더 가까이(3m) 와야 울림"
+                android:textSize="12sp" android:textColor="#9CA3AF"
+                android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:layout_marginBottom="10dp"/>
+
+            <androidx.cardview.widget.CardView
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginBottom="16dp"
+                app:cardCornerRadius="14dp" app:cardElevation="0dp"
+                app:cardBackgroundColor="#F0F4FF">
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="vertical" android:padding="16dp">
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:orientation="horizontal" android:gravity="center_vertical">
+                        <TextView android:text="조기경보 오프셋" android:layout_width="0dp"
+                            android:layout_height="wrap_content" android:layout_weight="1"
+                            android:textSize="13sp" android:textColor="#374151"/>
+                        <TextView android:id="@+id/tv_epj_bias"
+                            android:layout_width="wrap_content" android:layout_height="wrap_content"
+                            android:textSize="14sp" android:textStyle="bold" android:textColor="#2563EB"/>
+                    </LinearLayout>
+                    <SeekBar android:id="@+id/seek_epj_bias" android:layout_width="match_parent"
+                        android:layout_height="wrap_content" android:layout_marginTop="4dp" android:max="25"/>
+                    <TextView android:text="-10 ~ +15 dB (기본 -2). 0=일반 임계 · 음수=더 가까이서만(거리 변별) · 양수=더 멀리서 미리. 지게차가 끼면 장비↔장비 오프셋 적용."
+                        android:textSize="11sp" android:textColor="#9CA3AF"
+                        android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"/>
+                </LinearLayout>
+            </androidx.cardview.widget.CardView>
+
         </LinearLayout>
     </ScrollView>
 
