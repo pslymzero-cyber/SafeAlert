@@ -126,6 +126,9 @@ object BeaconRegistry {
         return MergeResult(added, updated, skipped)
     }
 
+    /** 이 fullId 가 비콘인지(BEA_ 마커 포함). 전역 비콘 수신 강도(게인)를 비콘에만 적용하기 위함. */
+    fun isBeaconFullId(fullId: String): Boolean = fullId.contains("BEA_")
+
     /** BleService의 fullId (예: SAFEALERT_WALKER_BEA_AABBCCDDEEFF)에서 rssiOffset 조회 */
     fun getRssiOffsetForFullId(fullId: String): Int {
         if (!fullId.contains("BEA_")) return 0

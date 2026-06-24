@@ -955,7 +955,10 @@ class BleService : LifecycleService() {
         //   safeForceFloor·협력격상·TTC피크게이트가 비콘 보정을 무시했다(비콘 관리 보정이 반쪽만 적용).
         //   여기서 합산해 모든 게이트가 같은 totalOffset 을 쓰게 한다. 보정 0 이면 기존 거동과 완전 동일.
         val beaconOffset = runCatching { BeaconRegistry.getRssiOffsetForFullId(deviceId) }.getOrDefault(0)
-        val totalOffset = payloadOffset + beaconOffset
+        // [전역 비콘 수신 강도] BLE설정의 비콘 게인(%)을 공통 dBm 보정으로 환산해 비콘에만 가산한다
+        //   (offset 0 비콘 포함). 게인 100%(=0dBm)면 기존 거동과 완전 동일. 일반 SafeAlert 기기엔 미적용.
+        val beaconGlobalGain = if (BeaconRegistry.isBeaconFullId(deviceId)) DevSettings.beaconGainDbm else 0
+        val totalOffset = payloadOffset + beaconOffset + beaconGlobalGain
         val effWarning = BleConstants.rssiWarning - totalOffset
         val effDanger  = BleConstants.rssiDanger  - totalOffset
         // [v1.1.16 D] 첫 접촉 고속 발령용 raw 위험권 2프레임 확증 카운터(워밍업·접근속도 게이트 우회).

@@ -35,6 +35,10 @@ class BleSettingsActivity : AppCompatActivity() {
         binding.seekWarnDist.progress = (-DevSettings.rssiWarning).coerceIn(30, 100)
         binding.seekDangDist.progress = (-DevSettings.rssiDanger ).coerceIn(30, 100)
         updateDistLabels()
+
+        // 비콘 수신 강도(%) — 슬라이더 progress = percent/10 (0~30 → 0~300%)
+        binding.seekBeaconGain.progress = (DevSettings.beaconGainPercent / 10).coerceIn(0, 30)
+        updateBeaconGainLabel()
     }
 
     private fun setupListeners() {
@@ -72,6 +76,11 @@ class BleSettingsActivity : AppCompatActivity() {
             DevSettings.rssiDanger = -dangAbs
             updateDistLabels()
         })
+        // 비콘 수신 강도(%) — progress×10 = percent 저장(라이브 반영)
+        binding.seekBeaconGain.setOnSeekBarChangeListener(seek {
+            DevSettings.beaconGainPercent = binding.seekBeaconGain.progress * 10
+            updateBeaconGainLabel()
+        })
     }
 
     private fun updateDistLabels() {
@@ -80,6 +89,14 @@ class BleSettingsActivity : AppCompatActivity() {
         val dangAbs = binding.seekDangDist.progress
         binding.tvWarnDist.text = "-${warnAbs} dBm"
         binding.tvDangDist.text = "-${dangAbs} dBm"
+    }
+
+    private fun updateBeaconGainLabel() {
+        // 슬라이더 progress(0~30)×10 = percent(0~300%), dBm = (percent-100)/10
+        val pct = binding.seekBeaconGain.progress * 10
+        val dbm = (pct - 100) / 10
+        val sign = if (dbm > 0) "+" else ""
+        binding.tvBeaconGain.text = "${pct}% (${sign}${dbm} dBm)"
     }
 
     private fun seek(onChange: () -> Unit) = object : android.widget.SeekBar.OnSeekBarChangeListener {

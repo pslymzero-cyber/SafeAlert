@@ -10,6 +10,7 @@ object DevSettings {
     // Keys
     private const val KEY_RSSI_WARNING          = "rssi_warning"
     private const val KEY_RSSI_DANGER           = "rssi_danger"
+    private const val KEY_BEACON_GAIN_PERCENT   = "beacon_gain_percent"
     private const val KEY_SCAN_PERIOD_MS        = "scan_period_ms"
     private const val KEY_ADVERTISE_INTERVAL    = "advertise_interval"
     private const val KEY_VIBRATION_ENABLED     = "vibration_enabled"
@@ -93,6 +94,19 @@ object DevSettings {
     var rssiDanger: Int
         get() = prefs.getInt(KEY_RSSI_DANGER, DEFAULT_RSSI_DANGER_ABS).coerceIn(RSSI_THRESH_MIN, RSSI_THRESH_MAX)
         set(v) = prefs.edit().putInt(KEY_RSSI_DANGER, v.coerceIn(RSSI_THRESH_MIN, RSSI_THRESH_MAX)).apply()
+
+    // 비콘 수신 강도(%) — 등록된 모든 비콘에 공통으로 가산하는 dBm 보정으로 환산한다.
+    //   100% = 0dBm(기존과 완전 동일), 10%당 1dBm. 200% = +10dBm(약 2배 먼 거리), 0% = -10dBm.
+    //   per-beacon rssiOffset 과 합산되어 BleService 의 totalOffset 에 반영(비콘만, offset 0 비콘 포함).
+    const val DEFAULT_BEACON_GAIN_PERCENT = 100
+    const val BEACON_GAIN_MIN = 0
+    const val BEACON_GAIN_MAX = 300
+    var beaconGainPercent: Int
+        get() = prefs.getInt(KEY_BEACON_GAIN_PERCENT, DEFAULT_BEACON_GAIN_PERCENT).coerceIn(BEACON_GAIN_MIN, BEACON_GAIN_MAX)
+        set(v) = prefs.edit().putInt(KEY_BEACON_GAIN_PERCENT, v.coerceIn(BEACON_GAIN_MIN, BEACON_GAIN_MAX)).apply()
+    /** 비콘 수신 강도(%)를 공통 dBm 보정으로 환산: 100%→0, 200%→+10, 0%→-10 (10%당 1dBm). */
+    val beaconGainDbm: Int
+        get() = (beaconGainPercent - 100) / 10
 
     // [v1.1.7 #3] 기본 스캔 주기 3000ms→1000ms. BleScanner.mapScanMode 가 ≤1000ms 를
     //   LOW_LATENCY(거의 연속 스캔)로 매핑 → 감지 blind window 제거(알람 지연/누락 방지).
