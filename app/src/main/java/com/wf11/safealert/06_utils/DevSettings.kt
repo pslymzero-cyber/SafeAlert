@@ -231,6 +231,17 @@ object DevSettings {
         get() = prefs.getLong(KEY_TIMEGATE_CORNERING_MS, DEFAULT_TIMEGATE_CORNERING_MS).coerceIn(0L, 5000L)
         set(v) = prefs.edit().putLong(KEY_TIMEGATE_CORNERING_MS, v.coerceIn(0L, 5000L)).apply()
 
+    // [v1.1.21] 빠른 정면접근 Time-Gate 즉시통과 임계(dBm/s) — kfVel(칼만 접근속도)이 이 값 이상이면
+    //   정면 돌진으로 간주해 Time-Gate 를 건너뛰고 즉시 발령(2프레임 연속 확증으로 단발 spike 방어).
+    //   1바이트 페이로드엔 합산속도(km/h) 비트가 없어 headOnCourse 가 영구 false 였던 공백을 메운다.
+    //   기본 2.0 = COLLISION_ABS_SAFE_VEL_DBM 과 동일한 '확실한 빠른 접근' 기준. 낮출수록 더 일찍 발령.
+    private const val KEY_FAST_APPROACH_BYPASS_VEL = "fast_approach_bypass_vel_dbm"
+    const val DEFAULT_FAST_APPROACH_BYPASS_VEL = 2.0
+    var fastApproachBypassVelDbm: Double
+        get() = prefs.getFloat(KEY_FAST_APPROACH_BYPASS_VEL, DEFAULT_FAST_APPROACH_BYPASS_VEL.toFloat())
+                    .toDouble().coerceIn(0.5, 5.0)
+        set(v) = prefs.edit().putFloat(KEY_FAST_APPROACH_BYPASS_VEL, v.coerceIn(0.5, 5.0).toFloat()).apply()
+
     // [쿨다운·해제] 경고/위험 재알람 쿨다운(ms)
     private const val KEY_WARNING_COOLDOWN_MS = "warning_cooldown_ms"
     const val DEFAULT_WARNING_COOLDOWN_MS = 3000L

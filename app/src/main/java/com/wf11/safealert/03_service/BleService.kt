@@ -351,6 +351,9 @@ class BleService : LifecycleService() {
     private val COLLISION_HEAD_ON_RATIO: Double get() = DevSettings.collisionHeadOnRatio  // 실제/예상 접근비 이상 → 정면충돌(Time-Gate 즉시통과)
     private val COLLISION_SIDE_RATIO:    Double get() = DevSettings.collisionSideRatio    // 실제/예상 접근비 이하 → 측면/나란히(보류 후보)
     private val COLLISION_ABS_SAFE_VEL_DBM = 2.0   // 이 이상 빠른 접근이면 측면판정 무시(false negative 방지)
+    // [v1.1.21] 빠른 정면접근 Time-Gate 즉시통과 임계(dBm/s) — DevSettings 라이브 읽기(기본 2.0).
+    //   headOnCourse(합산 km/h 미산출로 영구 false)를 칼만 접근속도로 대체하는 경로의 임계.
+    private val FAST_APPROACH_BYPASS_VEL_DBM: Double get() = DevSettings.fastApproachBypassVelDbm
 
     // ── [v1.0.49 A/B 신규 기기 경보 지연 수정] ──────────────────────────────────────
     // #1 콜드 칼만 기하학 유예: 칼만 update 횟수가 이 값 미만이면 vel 이 아직 초기값(0.0) 부근이라
@@ -369,6 +372,7 @@ class BleService : LifecycleService() {
     private val pendingDisplayMap = mutableMapOf<String, Long>()   // deviceId → 마지막 보류 시각(ms)
 
     private val approachStreakStartMap    = mutableMapOf<String, Long>()  // 연속 접근 시작 시각(ms)
+    private val fastApproachStreakMap     = mutableMapOf<String, Int>()   // [v1.1.21] 빠른 정면접근 연속 프레임 수(2프레임 확증)
 
     // [v1.1.11 C1] 전진-접근 가산(forwardApproachBias) 히스테리시스 래치 — deviceId별 ON/OFF 상태.
     //   kfVel 이 APPROACH_TIMEGATE_VEL_DBM 근처를 떨릴 때 payloadOffset(±3dB)이 프레임마다 토글되어
@@ -639,6 +643,7 @@ class BleService : LifecycleService() {
                             deviceRssiMap.remove(deviceId)
                             wakeRssiMap.remove(deviceId)              // [v1.0.42 Req3] 슬립/웨이크 표본 정리
                             approachStreakStartMap.remove(deviceId)   // [v1.0.35] Time-Gate 접근 추적 정리
+                            fastApproachStreakMap.remove(deviceId)    // [v1.1.21] 빠른접근 연속카운터 정리
                             forwardBiasLatchMap.remove(deviceId)      // [v1.1.11 C1] 전진가산 래치 정리(소실 → 누수 방지)
                             oneSecBuffer.remove(deviceId)   // [v1.0.31] 게이트가 raw도 push → 신호소실 시 함께 정리
                             mutedDevices.remove(deviceId)
@@ -1170,6 +1175,7 @@ class BleService : LifecycleService() {
                 crossingStartMap.remove(deviceId)
                 departingStartMap.remove(deviceId)
                 approachStreakStartMap.remove(deviceId)   // [v1.0.46 #4] stale 시작시각 → 재접근 시 Time-Gate 즉시통과 방지
+                fastApproachStreakMap.remove(deviceId)    // [v1.1.21] stale 카운터 → 재접근 시 1프레임에 즉시통과 방지
                 forwardBiasLatchMap.remove(deviceId)      // [v1.1.11 C1] SAFE 강등 → 래치 리셋(재접근 시 fresh)
                 wasStationaryMap.remove(deviceId)
                 recedingStartMap.remove(deviceId)
@@ -1303,6 +1309,7 @@ class BleService : LifecycleService() {
                 crossingStartMap.remove(deviceId)
                 departingStartMap.remove(deviceId)
                 approachStreakStartMap.remove(deviceId)   // [v1.0.46 #4]
+                fastApproachStreakMap.remove(deviceId)    // [v1.1.21]
                 forwardBiasLatchMap.remove(deviceId)      // [v1.1.11 C1] 이탈 정리 → 래치 리셋
                 deviceRssiMap.remove(deviceId)
                 firebaseLastSaveMap.remove(deviceId)
@@ -1462,8 +1469,21 @@ class BleService : LifecycleService() {
         val sideCourse      = kalmanWarm && geometryValid && closingRatio <= COLLISION_SIDE_RATIO &&
                               kfVel < COLLISION_ABS_SAFE_VEL_DBM
 
-        // headOn 이면 Time-Gate 즉시 통과, 아니면 평상/코너링 Time-Gate 충족 필요.
-        val approachSustained = headOnCourse || (kfApproaching && approachStreakMs >= timeGateMs)
+        // [v1.1.21] 빠른 정면접근 → Time-Gate 즉시통과. closingSpeedKmh(km/h)를 1바이트 페이로드로
+        //   못 구해 headOnCourse 가 영구 false 였던 공백을 칼만 접근속도(kfVel)로 메운다. kfVel 은
+        //   Median→EMA→칼만 다단 평활된 위상선행값이라 거리(pEma)·1초평균보다 먼저 접근을 포착 →
+        //   '빠르게 다가오는 지게차'가 Time-Gate(0.5초) + 평활 lag 에 막혀 CPA(최근접점)를 지난 뒤에야
+        //   울리던 지연을 제거한다. 단발 raw spike 방어: 임계를 '2프레임 연속' 넘어야 확증(다단 평활이라
+        //   1프레임 튐으론 임계까지 못 오르며, 추가 확증으로 오발을 한 겹 더 막는다). 측면/나란히 교차는
+        //   kfVel 이 낮아 안 걸려 과경보는 거의 안 는다. 임계=DevSettings.fastApproachBypassVelDbm 라이브.
+        val fastApproachFrames = if (kfVel >= FAST_APPROACH_BYPASS_VEL_DBM)
+                                     (fastApproachStreakMap[deviceId] ?: 0) + 1 else 0
+        fastApproachStreakMap[deviceId] = fastApproachFrames
+        val fastApproach = fastApproachFrames >= 2
+
+        // headOn(합산 km/h 미산출 → 영구 false) 또는 빠른 정면접근(kfVel 2프레임 확증)이면 Time-Gate
+        //   즉시 통과, 아니면 평상/코너링 Time-Gate 충족 필요.
+        val approachSustained = headOnCourse || fastApproach || (kfApproaching && approachStreakMs >= timeGateMs)
 
         // [v1.0.47 #3] 게이트 적용을 '신규(첫 감지)'로 축소 — 격상(levelEscalated)은 면제.
         //   이미 게이트를 통과해 WARNING 경보 중인 기기의 DANGER 승급에까지 kfVel≥0.5 연속을 요구하면,
@@ -1472,7 +1492,7 @@ class BleService : LifecycleService() {
         //   3중 하드게이트, raw 2차 방어선이 이미 막으므로 격상까지 게이트하는 것은 중복 보수였다.
         if (isFirstDetection && !fastContact && (sideCourse || !approachSustained)) {   // [v1.1.18] 2프레임 확증 WARNING/DANGER 첫접촉은 접근속도 게이트 면제(정지 근접 즉시 발령)
             pendingDisplayMap[deviceId] = now   // [v1.0.49 #3] 보류 중에도 목록엔 '감지됨' 노출
-            Log.d(TAG, "[v1.0.36] 경보 보류 ${extractDisplayName(deviceId)}: side=$sideCourse 접근지속=${approachStreakMs}ms(<${timeGateMs}) ratio=%.2f 합산=%.1fkm/h vel=%.2f".format(closingRatio, closingSpeedKmh, kfVel))
+            Log.d(TAG, "[v1.0.36] 경보 보류 ${extractDisplayName(deviceId)}: side=$sideCourse 접근지속=${approachStreakMs}ms(<${timeGateMs}) fast=${fastApproachFrames}/2 vel=%.2f".format(kfVel))
             return   // 소리/화면 경보 보류 — 다음 프레임 재평가(접근지속 충족 또는 정면충돌 코스 시 발령)
         }
 
@@ -2104,6 +2124,7 @@ class BleService : LifecycleService() {
         recedePeakMap.clear()
         deviceRssiMap.clear()
         approachStreakStartMap.clear()   // [v1.0.35] Time-Gate 접근 추적 정리
+        fastApproachStreakMap.clear()    // [v1.1.21] 빠른접근 연속카운터 정리
         pendingDisplayMap.clear()        // [v1.0.49 #3] 보류 표시 정리
         mutedDevices.clear()
         firebaseLastSaveMap.clear()
