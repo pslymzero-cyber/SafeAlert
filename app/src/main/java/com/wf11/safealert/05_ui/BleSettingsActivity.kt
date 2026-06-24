@@ -92,9 +92,9 @@ class BleSettingsActivity : AppCompatActivity() {
     }
 
     private fun updateBeaconGainLabel() {
-        // 슬라이더 progress(0~30)×10 = percent(0~300%), dBm = (percent-100)/10
+        // 슬라이더 progress(0~30)×10 = percent(0~300%), dBm = (percent-100)/5 (10%당 2dBm)
         val pct = binding.seekBeaconGain.progress * 10
-        val dbm = (pct - 100) / 10
+        val dbm = (pct - 100) / 5
         val sign = if (dbm > 0) "+" else ""
         binding.tvBeaconGain.text = "${pct}% (${sign}${dbm} dBm)"
     }
