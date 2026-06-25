@@ -187,10 +187,12 @@ class BleService : LifecycleService() {
     //   processAlert 가 매 프레임 갱신, isDangerPresent() 가 SIGNAL_STALE_MS 신선도로 평가. (lastScanResultMs 선례와 동일하게 @Volatile Long)
     @Volatile private var lastApproachAtMs = 0L
     private val ecoDowngradeRunnable = Runnable {
-        // 5초 뒤에도 여전히 정지 + 위험 신호 전무일 때만 절전 진입 (근접/경보/접근 중이면 전투 유지)
+        // 5초 뒤에도 여전히 정지 + 위험 신호 전무일 때만 휴식 플래그 (근접/경보/접근 중이면 전투 유지)
         if (ImuFusion.isStationary && !isDangerPresent()) {
             bleScanner?.setEcoMode(true)
-            Log.d(TAG, "정지 5초 경과 + 위험신호 없음 → BALANCED 절전(휴식 모드)")
+            // [v1.1.27] 스캔 한정 eco 폐지 → 스캔은 LOW_LATENCY 유지(등속 오판→첫 경고 지연 차단).
+            //   절전은 광고(TX, evaluateAdvertiserPower)·배칭(화면 꺼짐)이 독립적으로 판단.
+            Log.d(TAG, "정지 5초 경과 + 위험신호 없음 → 휴식 플래그(스캔은 LOW_LATENCY 유지)")
         }
     }
 

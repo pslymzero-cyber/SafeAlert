@@ -73,12 +73,17 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
     @Volatile private var hazardNear: Boolean = false
 
     // [v1.0.48 #5] 전투 모드 = 설정 scanPeriodMs 의 프리셋 매핑(라이브 — 매번 설정에서 읽음).
-    //   휴식 모드 = 전투가 LOW_LATENCY 면 BALANCED 로 한 단계 강하, 그 외엔 전투와 동일
-    //   (BALANCED 미만으론 더 내리지 않음 — 기본 3000ms 에선 둘 다 BALANCED, 현행 거동 보존).
     private val activeScanMode: Int get() = mapScanMode(BleConstants.scanPeriodMs)
-    private val restScanMode: Int
-        get() = if (activeScanMode == ScanSettings.SCAN_MODE_LOW_LATENCY)
-                    ScanSettings.SCAN_MODE_BALANCED else activeScanMode
+    // [v1.1.27] 휴식 모드 = 전투와 동일(= 수신 스캔 eco 강등 폐지).
+    //   (구) 전투가 LOW_LATENCY 면 BALANCED(4.1s 주기·1s 듀티)로 한 단계 강하시켰다.
+    //   그러나 등속 주행은 선형가속도≈0 이라 ImuFusion.isStationary 가 '정지'로 오판 →
+    //   작업 중에도 휴식(eco) 진입 → 스캔이 BALANCED 로 떨어지면 새 기기 첫 발견·median
+    //   충전·2프레임 확증이 4초 듀티에 갇혀, 정면 6+6km/h(closing 3.33m/s)에서 첫 경고가
+    //   0.3m(코앞)까지 늦어졌다(시뮬 sa_scan_eco_sim.py: L0 0.30m→L2 10.04m, TTC 0.09s→3.01s).
+    //   '남이 다가오는 걸 듣는' 수신(RX)은 안전의 핵심 → eco 여부와 무관하게 항상 전투 유지.
+    //   절전은 광고(TX, evaluateAdvertiserPower)·배칭(화면 꺼짐)에서만 — 그쪽과 직교(불변).
+    //   사용자가 scanPeriodMs 를 명시적으로 2000/3000/5000 으로 올리면 그 절전 주기는 존중.
+    private val restScanMode: Int get() = activeScanMode
 
     // [v1.0.48 #5] eco(휴식) 상태를 boolean 으로 별도 추적 — (구) '모드 값 비교' 방식은
     //   ACTIVE==REST(BALANCED)라 항상 같은 쪽으로 고정되는 함정이 있었고, 모드가 설정에
@@ -347,6 +352,8 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
     // [v1.0.27] 동적 절전 스캔 모드 전환 (BleService 가 IMU 상태에 따라 호출).
     //  eco=true  → 휴식 모드: restScanMode. 정지 5초 확정 시.
     //  eco=false → 전투 모드: activeScanMode(설정 scanPeriodMs 매핑). 이동 즉시·경보 발생 시.
+    // [v1.1.27] restScanMode=activeScanMode 가 되어 '스캔 한정' eco 는 실질 no-op(안전 우선).
+    //   ecoMode 플래그·호출부는 보존 — 광고/배칭 절전과 향후 연동 여지를 남긴다.
     // 모드가 실제로 바뀔 때만 재시작(idempotent) → 불필요한 스캔 리셋 없음.
     fun setEcoMode(eco: Boolean) {
         ecoMode = eco                                // [v1.0.48 #5] 모드 값과 분리해 eco 상태 기억
