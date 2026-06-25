@@ -88,6 +88,11 @@ class BleAdvertiser(
     //   재광고해 stop/start 폭주를 막는다. -1 = 아직 광고 시작 전.
     @Volatile private var lastAppliedAdvertiseMode: Int = -1
 
+    // [v1.1.26] 경고권 진입 버스트 — 상대 근접(rssi≥WAKE) 수신 시 내 광고를 LOW_LATENCY(~100ms)로
+    //   가속해 상대가 나를 더 빨리 발견(상호 보호). 이 시각(elapsedRealtime ms)까지 LOW_LATENCY 유지.
+    //   0 = 버스트 없음. requestBurst() 가 설정, burstExpiryRunnable 이 만료 시 정상 모드로 복귀.
+    @Volatile private var burstUntilMs = 0L
+
     // [v1.0.34 다이나믹 페이로드] 현재 송신자 STATE(2bit, PSTATE_*) — Category·Turn 와 함께
     //   encodePayload() 로 1바이트로 패킹되어 ServiceData 로 탑재된다.
     @Volatile private var currentState: Int = BleConstants.PSTATE_IDLE
@@ -153,8 +158,14 @@ class BleAdvertiser(
         // [v1.0.48 #5] 활성 모드를 BALANCED 고정에서 설정(advertiseInterval) 매핑으로 전환 —
         //   매 (재)광고 시점에 설정을 다시 읽으므로 슬립/웨이크·STATE/Speed 재광고가 항상 최신값 적용.
         //   슬립은 항상 LOW_POWER 유지(공개 API 최저 주기 — 설정과 무관).
-        val advertiseMode = if (paused) AdvertiseSettings.ADVERTISE_MODE_LOW_POWER
-                            else mapAdvertiseMode(BleConstants.advertiseInterval)
+        // [v1.1.26 B] 버스트 우선 — 버스트 활성(burstUntilMs 미래)이면 paused/설정과 무관히
+        //   LOW_LATENCY(~100ms)로 송출해 상대가 나를 즉시 발견. 그 외에는 기존 규칙
+        //   (슬립=LOW_POWER, 활성=advertiseInterval 매핑) 유지.
+        val advertiseMode = when {
+            SystemClock.elapsedRealtime() < burstUntilMs -> AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY
+            paused -> AdvertiseSettings.ADVERTISE_MODE_LOW_POWER
+            else -> mapAdvertiseMode(BleConstants.advertiseInterval)
+        }
         lastAppliedAdvertiseMode = advertiseMode   // [v1.0.48 #5] refreshAdvertiseMode no-op 판정용
 
         val settings = AdvertiseSettings.Builder()
@@ -290,6 +301,33 @@ class BleAdvertiser(
         }, STATE_RESTART_DELAY_MS)
     }
 
+    // ── [v1.1.26 B] 경고권 진입 버스트 ──────────────────────────────────────────
+    //   BleService.noteRssiForWake 가 상대 근접(rssi≥WAKE) 수신 시 requestBurst 를 호출 →
+    //   내 광고를 LOW_LATENCY(~100ms)로 가속해 상대가 나를 더 빨리 발견(상호 보호).
+    //   근접이 지속되는 동안 매 수신마다 hold 만큼 연장되고, 멀어지면 만료 후 정상 모드로 복귀.
+
+    //   버스트 만료 처리 — burstUntilMs 가 지났으면 정상 모드로 재광고(restartAdvertise 가
+    //   깨어있으면 BALANCED, paused 면 no-op). 더 긴 버스트로 연장됐으면(아직 미래) 아무것도 안 함.
+    private val burstExpiryRunnable = Runnable {
+        if (stopped) return@Runnable
+        if (SystemClock.elapsedRealtime() >= burstUntilMs) restartAdvertise()
+    }
+
+    //   [v1.1.26 B] 경고권 버스트 요청 — durationMs 동안 LOW_LATENCY 광고로 가속.
+    //   이미 같거나 더 긴 버스트가 진행 중이면 무시(연장·재광고 불필요). 슬립(paused) 중이면
+    //   곧 웨이크 시 startAdvertising 이 burstUntilMs 를 보고 LOW_LATENCY 로 시작하므로
+    //   여기선 만료 타이머만 건다. 깨어있고 아직 LOW_LATENCY 가 아니면 즉시 재광고로 가속.
+    fun requestBurst(durationMs: Long) {
+        if (stopped) return
+        val newUntil = SystemClock.elapsedRealtime() + durationMs
+        if (newUntil <= burstUntilMs) return
+        burstUntilMs = newUntil
+        stateHandler.removeCallbacks(burstExpiryRunnable)
+        stateHandler.postDelayed(burstExpiryRunnable, durationMs)
+        if (paused) return
+        if (lastAppliedAdvertiseMode != AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY) restartAdvertise()
+    }
+
     /** [v1.0.48 #5] 설정(advertiseInterval) 라이브 반영 — BleService 의 prefs 리스너가 호출.
      *  슬립(paused) 중엔 어차피 LOW_POWER 고정이라 건너뛰고(웨이크 시 startAdvertising 이 새
      *  매핑을 자동 적용), 활성 광고 중이며 매핑 모드가 실제로 바뀐 경우에만 재광고한다(no-op 가드
@@ -327,6 +365,7 @@ class BleAdvertiser(
     fun pauseAdvertising() {
         if (stopped || paused) return
         paused = true
+        burstUntilMs = 0L                                  // [v1.1.26 B] 슬립 진입 시 버스트 해제(근접 신호 사라짐)
         stateHandler.removeCallbacksAndMessages(null)      // 예약된 재광고 콜백 전부 취소
         try { advertiser.stopAdvertising(callback) } catch (_: Exception) {}
         // stop→start OS 정리 대기 후 재광고 — paused=true 이므로 startAdvertising 이 LOW_POWER 연속으로 송출.
@@ -347,8 +386,11 @@ class BleAdvertiser(
         paused = false
         stateHandler.removeCallbacksAndMessages(null)      // 슬립 측 예약 콜백 제거
         try { advertiser.stopAdvertising(callback) } catch (_: Exception) {}
-        startAdvertising(currentDeviceId, lastUwbAddress)  // 0ms 즉시 BALANCED 연속 광고 ON
-        if (wasPaused) Log.d(TAG, "RSSI 웨이크 — 즉시 BALANCED 연속 광고로 승격(LocalState 강송출)")
+        startAdvertising(currentDeviceId, lastUwbAddress)  // 0ms 즉시 연속 광고 ON(버스트 중이면 LOW_LATENCY)
+        // [v1.1.26 B] 위에서 콜백을 전부 지웠으므로, 진행 중이던 버스트가 있으면 만료 타이머를 다시 건다.
+        val burstRemain = burstUntilMs - SystemClock.elapsedRealtime()
+        if (burstRemain > 0) stateHandler.postDelayed(burstExpiryRunnable, burstRemain)
+        if (wasPaused) Log.d(TAG, "RSSI 웨이크 — 즉시 연속 광고로 승격(LocalState 강송출)")
     }
 
     fun stopAdvertising() {

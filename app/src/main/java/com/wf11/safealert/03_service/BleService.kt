@@ -432,6 +432,9 @@ class BleService : LifecycleService() {
                 } else {
                     // 이동 감지 즉시(0초) → ACTIVE 원복(전투 모드)
                     bleScanner?.setEcoMode(false)
+                    // [v1.1.26 A] 이동 시작 즉시 광고도 깨운다 — 다음 evaluateAdvertiserPower(주기 평가)
+                    //   틱을 기다리지 않고 곧장 연속 광고로 올려 첫 접촉 송신 지연을 없앤다(슬립 아니면 no-op).
+                    if (DevSettings.keepAdvertiseWhileMoving) wakeAdvertiser()
                     Log.d(TAG, "IMU 이동 감지 → 즉시 ACTIVE 복귀(전투 모드)")
                 }
             }
@@ -2023,7 +2026,13 @@ class BleService : LifecycleService() {
     /** onDeviceDetected 마다 호출 — 최근 RSSI 표본 기록 + 근접(≥WAKE)이면 0ms 즉시 웨이크. */
     private fun noteRssiForWake(deviceId: String, rssi: Int) {
         wakeRssiMap[deviceId] = Pair(rssi, System.currentTimeMillis())
-        if (rssi >= WAKE_RSSI_DBM) wakeAdvertiser()
+        if (rssi >= WAKE_RSSI_DBM) {
+            // [v1.1.26 B] 상대가 경고권(WAKE) 안에 들어옴 → 내 광고를 LOW_LATENCY 버스트로 가속해
+            //   상대가 나를 더 빨리 발견(상호 보호). 웨이크보다 먼저 요청해야 슬립 중이었어도
+            //   직후 resumeAdvertising/startAdvertising 이 burstUntilMs 를 보고 LOW_LATENCY 로 시작한다.
+            if (DevSettings.burstEnabled) bleAdvertiser?.requestBurst(DevSettings.burstHoldMs)
+            wakeAdvertiser()
+        }
     }
 
     /** 슬립 중인 광고자를 즉시 깨운다(연속 광고 재개 + 최신 LocalState 강송출). */
@@ -2064,10 +2073,14 @@ class BleService : LifecycleService() {
             if (r >= WAKE_RSSI_DBM) anyNear = true
         }
         val hasAlert = alertState.isNotEmpty()
+        // [v1.1.26 A] 이동 중(IMU 비정지)에는 근접/경보가 없어도 광고를 깨워 둔다 — 콜드스타트의
+        //   핵심 레버: 움직이는 동안 LOW_POWER(~1s) 슬립으로 떨어지지 않아 첫 접촉 즉시 송신.
+        //   '자다 깨어 정신 못 차리는' 첫 깨어남 지연 제거. 정지하면 정상 슬립 복귀.
+        val moving = DevSettings.keepAdvertiseWhileMoving && !ImuFusion.isStationary
         when {
-            anyNear || hasAlert -> if (adv.isPaused) {
+            anyNear || hasAlert || moving -> if (adv.isPaused) {
                 adv.resumeAdvertising(); broadcastLocalState()
-                Log.d(TAG, "RSSI 웨이크(평가): 근접/경보 → 연속 광고 재개")
+                Log.d(TAG, "RSSI 웨이크(평가): 근접/경보/이동 → 연속 광고 재개")
             }
             else -> if (!adv.isPaused) {
                 adv.pauseAdvertising()
@@ -2076,6 +2089,8 @@ class BleService : LifecycleService() {
         }
         // [v1.1.23] 스캔 배칭 승격/복귀를 광고 슬립/웨이크와 동일 집계로 동기화 —
         //   근접/경보 유지 → 0ms 유지, 모두 stale + 경보 없음 → 500ms 절전 복귀.
+        //   [v1.1.26] 단, 이동(moving)은 스캔 배칭에서 제외 — 혼자 움직일 뿐인데 스캔까지 0ms 로
+        //   올리면 과도. 광고만 깨워 두고, 스캔 배칭 가속은 실제 근접/경보일 때만.
         bleScanner?.setHazardNear(anyNear || hasAlert)
     }
 

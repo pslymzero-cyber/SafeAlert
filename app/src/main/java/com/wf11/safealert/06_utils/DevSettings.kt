@@ -474,6 +474,32 @@ object DevSettings {
         get() = prefs.getBoolean(KEY_IDLE_IDLE_SUPPRESS_ENABLED, false)
         set(v) = prefs.edit().putBoolean(KEY_IDLE_IDLE_SUPPRESS_ENABLED, v).apply()
 
+    // ── [v1.1.26] 백그라운드 콜드스타트 지연 해소 ─────────────────────────────
+    //   증상: "자다 깨어 정신 못 차리는" 느낌 — 한 번 인식되면 잘 되는데 첫 깨어남이 느림.
+    //   시속 6km 지게차 2대가 마주 와도(closing 3.33m/s) 첫 알람이 늦음.
+    // [A] 이동 중(IMU 비정지)에는 광고를 슬립(LOW_POWER ~1s)시키지 않고 유지 → 첫 접촉 즉시 송신.
+    //   콜드스타트 사슬의 최대 레버(시뮬 sa_wakeup_burst_sim: 알람거리 +3.35m, 지연 ≈절반).
+    //   정지 5초 후 evaluateAdvertiserPower 가 평소대로 다시 슬립(배터리 영향 최소).
+    private const val KEY_KEEP_ADV_WHILE_MOVING = "keep_adv_while_moving"
+    var keepAdvertiseWhileMoving: Boolean
+        get() = prefs.getBoolean(KEY_KEEP_ADV_WHILE_MOVING, true)
+        set(v) = prefs.edit().putBoolean(KEY_KEEP_ADV_WHILE_MOVING, v).apply()
+
+    // [B] 상대 근접 신호(rssi≥WAKE) 수신 시 내 광고를 LOW_LATENCY(100ms) 버스트로 가속 →
+    //   상대가 나를 더 빨리 발견(상호 보호). 근접 지속 동안 hold 만큼 연장, 멀어지면 정상 복귀.
+    //   시뮬 sa_burst_param_sweep: 트리거=WAKE(-89, 경고권보다 먼저 도달해 게이트 선예열),
+    //   간격=100ms(LOW_LATENCY 내재), hold=1500ms(1000~3000 동등·미발령 0).
+    private const val KEY_BURST_ENABLED = "burst_enabled"
+    var burstEnabled: Boolean
+        get() = prefs.getBoolean(KEY_BURST_ENABLED, true)
+        set(v) = prefs.edit().putBoolean(KEY_BURST_ENABLED, v).apply()
+
+    private const val KEY_BURST_HOLD_MS = "burst_hold_ms"
+    const val DEFAULT_BURST_HOLD_MS = 1500L
+    var burstHoldMs: Long
+        get() = prefs.getLong(KEY_BURST_HOLD_MS, DEFAULT_BURST_HOLD_MS).coerceIn(500L, 5000L)
+        set(v) = prefs.edit().putLong(KEY_BURST_HOLD_MS, v.coerceIn(500L, 5000L)).apply()
+
     fun toDebugString(): String =
         "rssiWarning=$rssiWarning | rssiDanger=$rssiDanger | scanPeriod=${scanPeriodMs}ms | " +
         "advertise=${advertiseInterval}ms | vib=$vibrationEnabled | sound=$soundEnabled | " +

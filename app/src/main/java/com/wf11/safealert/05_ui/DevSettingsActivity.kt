@@ -2,6 +2,7 @@ package com.wf11.safealert.ui
 
 import android.content.Intent
 import android.os.Bundle
+import android.view.View
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.wf11.safealert.BuildConfig
@@ -14,6 +15,10 @@ class DevSettingsActivity : AppCompatActivity() {
     private lateinit var binding: ActivityDevSettingsBinding
     // [v1.1.15] 저장 버튼 제거에 따른 EditText 지연 확정용 — 포커스 아웃/onPause 시 일괄 commit
     private val editCommitters = mutableListOf<() -> Unit>()
+
+    // [v1.1.26 D] '앱 정보' 빠른 7회 터치로 숨김 고급 옵션 노출용 카운터
+    private var appInfoTapCount = 0
+    private var lastAppInfoTapMs = 0L
 
     // [v1.0.42] 거리 교정(calibRssiAt1m/pathLossExp)·거리 교정 마법사 전면 제거.
     //   거리 추정은 칼만 필터(RSSI)만으로 수행 — RSSI→거리 변환·교정 UI/핸들러 모두 폐지.
@@ -207,6 +212,19 @@ class DevSettingsActivity : AppCompatActivity() {
         binding.tvAppVersion.text = "SafeAlert v${BuildConfig.VERSION_NAME}"
         binding.btnOpenSourceLicenses.setOnClickListener {
             startActivity(Intent(this, OpenSourceLicensesActivity::class.java))
+        }
+        // [v1.1.26 D] 앱 버전 빠른 7회 터치 → 숨김 고급 옵션(Firebase·디버그·후진대비·초기화) 노출
+        binding.tvAppVersion.setOnClickListener {
+            val now = System.currentTimeMillis()
+            appInfoTapCount = if (now - lastAppInfoTapMs <= 2000L) appInfoTapCount + 1 else 1
+            lastAppInfoTapMs = now
+            if (appInfoTapCount >= 7) {
+                appInfoTapCount = 0
+                if (binding.hiddenAdvancedGroup.visibility != View.VISIBLE) {
+                    binding.hiddenAdvancedGroup.visibility = View.VISIBLE
+                    Toast.makeText(this, "고급 옵션이 표시됩니다", Toast.LENGTH_SHORT).show()
+                }
+            }
         }
         // 비콘 관리는 메인 화면으로 이동됨
     }
