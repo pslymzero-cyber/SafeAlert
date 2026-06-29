@@ -1480,6 +1480,32 @@ class BleService : LifecycleService() {
                 updateFloatingOverlay()
                 Log.d(TAG, "위험권 유지·무음 감지 → 즉시 재발령(쿨다운 무시): $deviceId (stableLevel=$stableLevel avg1sec=$avg1sec)")
             }
+            // [v1.1.28] fail-quiet 강등 정정 — 위 fail-loud 재발령(쿨다운 무시)의 대칭(거울상).
+            //   배경: 추적 중인 기기가 demoteWhileStationary(정지 근접)·히스테리시스로 DANGER→WARNING
+            //   격하되면 재생 중인 DANGER 사이렌(루프)이 stale 가 된다. canonical 의 stopSound 는 격상에서만
+            //   호출되고(L1568 은 v1.1.28 에서 '!=' 로 고쳤으나, 쿨다운 미경과면 이 프레임은 canonical 에
+            //   닿지도 못한다), playWarning 은 danger 루프가 isPlaying 인 동안 no-op 이라 소리가 WARNING 으로
+            //   바뀌지도 않는다. 결과: 격하됐는데 DANGER 사이렌이 최대 한 쿨다운(~수초)~사실상 영구 지속
+            //   (사용자: '위험 알림이 꺼지지 않아'). 여기서 즉시 멈추고 현재(낮아진) 레벨 소리로 정정한다.
+            //   단 '다른' 기기가 아직 동급 이상이면 그 경보를 끊지 않도록 보존 — 이 시점 alertState[deviceId]
+            //   는 옛 레벨(canonical L1559 에서야 갱신)이라 getCurrentMaxLevel() 대신 '이 기기 제외' otherMax
+            //   로 직접 판정한다. 소리를 줄이는 방향이라 isDepartingNow 와 무관하게 항상 안전(이탈이면 더 바람직).
+            else if (!isMuted && !isDeviceMuted(deviceId) && alertState.containsKey(deviceId) &&
+                     activeSoundLevel >= BleConstants.LEVEL_DANGER && stableLevel < activeSoundLevel) {
+                val otherMax = alertState.entries
+                    .filter { it.key != deviceId }
+                    .maxOfOrNull { it.value.first } ?: BleConstants.LEVEL_SAFE
+                if (otherMax < activeSoundLevel) {
+                    AlertSoundPlayer.stopSound()
+                    activeSoundLevel = stableLevel
+                    if (stableLevel == BleConstants.LEVEL_WARNING && !idleIdleQuiet) {
+                        if (DevSettings.vibrationEnabled) VibrationHelper.vibrateWarning(this)
+                        if (DevSettings.soundEnabled)     AlertSoundPlayer.playWarning(this)
+                    }
+                    updateFloatingOverlay()
+                    Log.d(TAG, "강등 정정 → stale 상위 사이렌 즉시 정지(쿨다운 무시): $deviceId (stableLevel=$stableLevel < active, otherMax=$otherMax)")
+                }
+            }
             return
         }
 
@@ -1565,7 +1591,13 @@ class BleService : LifecycleService() {
             Log.d(TAG, "우선순위 무시: $stableLevel < $globalMax (활성)")
             return
         }
-        if (stableLevel > activeSoundLevel) AlertSoundPlayer.stopSound()
+        // [v1.1.28] 격상뿐 아니라 강등(stableLevel<active)에서도 stale 상위 사이렌을 멈춘다.
+        //   기존 '>' 는 격상만 멈춰, demoteWhileStationary·히스테리시스로 DANGER→WARNING 격하 시
+        //   재생 중인 DANGER 루프(AlertSoundPlayer)가 안 꺼졌다. 아래 WARNING 분기의 playWarning 은
+        //   danger 루프가 isPlaying 인 동안 no-op 이라 소리가 WARNING 으로 바뀌지도 못하고, activeSoundLevel
+        //   만 WARNING 으로 낮춰져 위험 사이렌이 영구 지속됐다(사용자: '위험 알림이 꺼지지 않아').
+        //   '!=' 로 강등도 정지 — !shouldAlert 의 fail-quiet(쿨다운 미경과 프레임) 와 쌍을 이룬다.
+        if (stableLevel != activeSoundLevel) AlertSoundPlayer.stopSound()
         activeSoundLevel = stableLevel
 
         when (stableLevel) {
