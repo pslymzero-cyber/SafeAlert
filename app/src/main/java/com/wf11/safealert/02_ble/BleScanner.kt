@@ -132,9 +132,10 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
                 scanCallback?.onDeviceDetected(fullId, rssi, alertLevel, remoteState, remoteTurn, payloadPresent)
 
                 // UWB 주소 스캔 응답 파싱 (지원 기기 한정)
+                // (v1.1.30) DEVICE(컨트롤러)=4바이트(주소+채널+프리앰블), WALKER(컨트롤리)=2바이트 — 있는 만큼 전달
                 val uwbData = record.getManufacturerSpecificData(BleConstants.COMPANY_ID_UWB_EXT)
                 if (uwbData != null && uwbData.size >= 2) {
-                    scanCallback?.onUwbAddressReceived(fullId, uwbData.copyOf(2))
+                    scanCallback?.onUwbAddressReceived(fullId, uwbData.copyOf(minOf(uwbData.size, 4)))
                 }
                 return
             }

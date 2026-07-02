@@ -11,7 +11,8 @@ object BleConstants {
     const val COMPANY_ID_DEVICE   = 0x1234  // 장비 작업자
     const val COMPANY_ID_WALKER   = 0x5678  // 보행자
     // UWB 주소 교환용 (스캔 응답 전용 — 메인 광고 패킷과 분리)
-    // 형식: [addr_lo][addr_hi]  (컨트롤러/컨트롤리 모두 동일 2바이트)
+    // (v1.1.30) 형식: DEVICE(컨트롤러) 4바이트=[addr0][addr1][channel][preambleIndex]
+    //           / WALKER(컨트롤리) 2바이트=[addr0][addr1]
     const val COMPANY_ID_UWB_EXT  = 0x9ABC
 
     // RSSI >= 임계값 → 경보 (가까울수록 RSSI가 0에 가까워짐)

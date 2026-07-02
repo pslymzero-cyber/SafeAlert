@@ -199,16 +199,17 @@ class BleAdvertiser(
             .build()
 
         // ── UWB 스캔 응답 (지원 시 별도 패킷으로 UWB 주소 공유) ──
+        // (v1.1.30) 컨트롤러(DEVICE)=4바이트(주소2+채널+프리앰블), 컨트롤리(WALKER)=2바이트(주소)
         val scanResponse = if (uwbLocalAddress != null && uwbLocalAddress.size >= 2) {
             AdvertiseData.Builder()
-                .addManufacturerData(BleConstants.COMPANY_ID_UWB_EXT, uwbLocalAddress.take(2).toByteArray())
+                .addManufacturerData(BleConstants.COMPANY_ID_UWB_EXT, uwbLocalAddress.take(4).toByteArray())
                 .setIncludeDeviceName(false)
                 .build()
         } else null
 
         if (scanResponse != null) {
             advertiser.startAdvertising(settings, advertiseData, scanResponse, callback)
-            Log.d(TAG, "광고+UWB 시작: id=$deviceId uwb=${uwbLocalAddress!!.take(2).joinToString("") { "%02X".format(it) }}")
+            Log.d(TAG, "광고+UWB 시작: id=$deviceId uwb=${uwbLocalAddress!!.take(4).joinToString("") { "%02X".format(it) }}")
         } else {
             advertiser.startAdvertising(settings, advertiseData, callback)
             Log.d(TAG, "광고 시작: companyId=0x${companyId.toString(16).uppercase()} id=$deviceId")
@@ -342,12 +343,25 @@ class BleAdvertiser(
 
     /** UWB 주소 준비 완료 후 광고 재시작 */
     fun restartWithUwbAddress(uwbLocalAddress: ByteArray) {
+        // (v1.1.30) sticky 주소를 가드보다 먼저 기록 — 슬립(paused) 중 갱신이 유실되지 않고
+        //   wake 시 startAdvertising(currentDeviceId, lastUwbAddress) 가 최신 주소로 송출.
+        lastUwbAddress = uwbLocalAddress
         if (stopped || paused) return   // [v1.0.42 Req3] 슬립 중엔 UWB 재시작도 광고를 깨우지 않음
         try { advertiser.stopAdvertising(callback) } catch (_: Exception) {}
         // [v1.0.41] 전용 Handler 대신 stateHandler 로 통일 — stopAdvertising() 의
         //   removeCallbacksAndMessages(null) 한 번으로 모든 예약 재광고를 취소하기 위함.
         stateHandler.postDelayed({
             startAdvertising(currentDeviceId, uwbLocalAddress)
+        }, 300)
+    }
+
+    /** (v1.1.30) UWB 세션 종료 후 UWB 스캔 응답 없이 광고 재시작 — sticky 주소도 함께 제거 */
+    fun restartWithoutUwbAddress() {
+        lastUwbAddress = null                // 슬립 중이어도 주소는 지워 wake 시 UWB 없이 재광고
+        if (stopped || paused) return
+        try { advertiser.stopAdvertising(callback) } catch (_: Exception) {}
+        stateHandler.postDelayed({
+            startAdvertising(currentDeviceId)
         }, 300)
     }
 

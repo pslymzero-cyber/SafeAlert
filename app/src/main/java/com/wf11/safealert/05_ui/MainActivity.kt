@@ -42,6 +42,7 @@ import com.wf11.safealert.databinding.ActivityMainBinding
 import com.wf11.safealert.databinding.DialogPinBinding
 import com.wf11.safealert.service.BleService
 import com.wf11.safealert.utils.UpdateManager
+import com.wf11.safealert.utils.UwbRanger
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -175,8 +176,9 @@ class MainActivity : AppCompatActivity() {
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { results ->
-        if (results.values.all { it }) requestBatteryOptimizationExclusion()
+    ) { _ ->
+        // (v1.1.30) 판정은 BLE 필수 권한만 — UWB_RANGING 은 선택(거부돼도 BLE 로 동작)
+        if (hasAllPermissions()) requestBatteryOptimizationExclusion()
         else showPermissionWarning("BLE · 위치 권한이 필요합니다. 탭하여 허용해주세요.") { openAppSettings() }
     }
 
@@ -479,8 +481,14 @@ class MainActivity : AppCompatActivity() {
         // 역할(Category) 복원용 저장 — 서비스 START_STICKY 재시작·앱 재실행 시 라벨 일관성 확보
         prefs.edit().putInt("running_category", category).apply()
         binding.layoutPermissionWarning.visibility = View.GONE
-        if (hasAllPermissions()) requestBatteryOptimizationExclusion()
-        else permissionLauncher.launch(blePermissions)
+        // (v1.1.30) UWB 지원 기기는 UWB_RANGING 런타임 권한을 함께 요청 — 필수 판정은 BLE 셋만
+        val wantUwb = UwbRanger.isHardwareSupported(this) &&
+                ContextCompat.checkSelfPermission(this, Manifest.permission.UWB_RANGING) !=
+                    PackageManager.PERMISSION_GRANTED
+        if (hasAllPermissions() && !wantUwb) requestBatteryOptimizationExclusion()
+        else permissionLauncher.launch(
+            if (wantUwb) blePermissions + Manifest.permission.UWB_RANGING else blePermissions
+        )
     }
 
     private fun hasAllPermissions() = blePermissions.all {

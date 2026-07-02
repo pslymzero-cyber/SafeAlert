@@ -510,6 +510,13 @@ object DevSettings {
         get() = prefs.getLong(KEY_BURST_HOLD_MS, DEFAULT_BURST_HOLD_MS).coerceIn(500L, 5000L)
         set(v) = prefs.edit().putLong(KEY_BURST_HOLD_MS, v.coerceIn(500L, 5000L)).apply()
 
+    // (v1.1.30) UWB 정밀 거리 측정 — 지원 기기끼리 UWB 세션으로 실거리(m)를 측정(기본 ON).
+    //   OFF 또는 미지원이면 기존 BLE RSSI 경로 그대로(경보 로직 무접촉).
+    private const val KEY_UWB_ENABLED = "uwb_enabled"
+    var uwbEnabled: Boolean
+        get() = prefs.getBoolean(KEY_UWB_ENABLED, true)
+        set(v) = prefs.edit().putBoolean(KEY_UWB_ENABLED, v).apply()
+
     fun toDebugString(): String =
         "rssiWarning=$rssiWarning | rssiDanger=$rssiDanger | scanPeriod=${scanPeriodMs}ms | " +
         "advertise=${advertiseInterval}ms | vib=$vibrationEnabled | sound=$soundEnabled | " +

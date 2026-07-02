@@ -4,6 +4,7 @@ import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity
 import com.wf11.safealert.databinding.ActivityBleSettingsBinding
 import com.wf11.safealert.utils.DevSettings
+import com.wf11.safealert.utils.UwbRanger
 
 // [v1.1.8 ①②] 감지 방식(칼만/1초평균 고정값) 선택·모드 혼합(blend) 전면 제거 → 칼만 단일화.
 //   화면은 칼만 강도 프리셋 + 경고/위험 신호세기(dBm) 임계만 남긴다.
@@ -43,6 +44,13 @@ class BleSettingsActivity : AppCompatActivity() {
         // [v1.1.25] EPJ↔EPJ 오프셋 — 슬라이더 progress = 오프셋+10 (-10~+15 dB → 0~25)
         binding.seekEpjBias.progress = (DevSettings.epjVsEpjBiasDb + 10).coerceIn(0, 25)
         updateEpjBiasLabel()
+
+        // (v1.1.30) UWB 정밀 거리 토글 — 미지원 기기는 스위치 비활성
+        binding.swUwb.isChecked = DevSettings.uwbEnabled
+        if (!UwbRanger.isHardwareSupported(this)) {
+            binding.swUwb.isEnabled = false
+            binding.tvUwbHint.text = "이 기기는 UWB 하드웨어가 없어 BLE 신호로만 동작합니다"
+        }
     }
 
     private fun setupListeners() {
@@ -90,6 +98,9 @@ class BleSettingsActivity : AppCompatActivity() {
             DevSettings.epjVsEpjBiasDb = binding.seekEpjBias.progress - 10
             updateEpjBiasLabel()
         })
+
+        // (v1.1.30) UWB 토글 — 즉시 라이브 반영(BleService 가 SharedPreferences 변경 구독)
+        binding.swUwb.setOnCheckedChangeListener { _, checked -> DevSettings.uwbEnabled = checked }
     }
 
     private fun updateDistLabels() {

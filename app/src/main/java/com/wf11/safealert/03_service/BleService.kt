@@ -1,5 +1,6 @@
 package com.wf11.safealert.service
 
+import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.bluetooth.BluetoothAdapter
@@ -8,11 +9,13 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.media.AudioManager
 import android.os.IBinder
 import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleService
 import com.wf11.safealert.ble.BleAdvertiser
 import com.wf11.safealert.ble.BleConstants
@@ -571,21 +574,10 @@ class BleService : LifecycleService() {
                     onStatusUpdate = { msg -> sendStatusBroadcast(msg) }
                 )
                 bleAdvertiser = bleAdv
-                if (UwbRanger.isHardwareSupported(this)) {
-                    val isDevMode = myMode == "DEVICE"
-                    uwbRanger = UwbRanger(this, lifecycleScope, isDevMode)
-                    lifecycleScope.launch {
-                        val uwbAddr = uwbRanger?.initSession()
-                        if (uwbAddr != null) {
-                            bleAdv.restartWithUwbAddress(uwbAddr)
-                            sendStatusBroadcast("UWB 활성: ${uwbAddr.joinToString("") { "%02X".format(it) }}")
-                        } else {
-                            bleAdv.startAdvertising(myId)
-                        }
-                    }
-                } else {
-                    bleAdv.startAdvertising(myId)
-                }
+                bleAdv.startAdvertising(myId)
+                // (v1.1.30) UWB 는 광고 시작 후 별도 적용 — 모드 전환 대비 이전 세션 정리 후 재생성
+                uwbRanger?.stop(); uwbRanger = null
+                applyUwbLiveState()
                 sendStatusBroadcast("TX 송출 요청: $myId")
                 broadcastLocalState()   // [v1.0.42 Req2] 송출 시작 시점 Local 상태 초기 전파
                 startAdvPowerManager()  // [v1.0.42 Req3] RSSI 기반 송출 전력 관리(슬립/웨이크) 시작
@@ -661,6 +653,7 @@ class BleService : LifecycleService() {
                             deviceTurnMap.remove(deviceId); reverseRssiHist.remove(deviceId); reversePrepUntil.remove(deviceId)   // [v1.1.7 #1/#2]
                             firebaseLastSaveMap.remove(deviceId)
                             pendingDisplayMap.remove(deviceId)   // [v1.0.49 #3] 소실 기기 보류 표시 정리
+                            uwbRanger?.onDeviceLost(deviceId)    // (v1.1.30) UWB 후보·세션 정리
                             sendAlertBroadcast(deviceId, BleConstants.LEVEL_SAFE)
                             if (alertState.isEmpty()) {
                                 AlertSoundPlayer.stopSound()
@@ -2165,8 +2158,40 @@ class BleService : LifecycleService() {
         //   재시작하는 no-op 가드가 있어 저비용이고, resetToDefault(clear) 의 null key 도 자연 커버.
         bleScanner?.refreshScanMode()
         bleAdvertiser?.refreshAdvertiseMode()
+        applyUwbLiveState()   // (v1.1.30) UWB 토글 라이브 반영
         Log.d(TAG, "[Req5] 설정 라이브 반영(key=$changedKey): KF프리셋=$preset 위험=${BleConstants.rssiDanger}dBm 경고=${BleConstants.rssiWarning}dBm TimeGate=${DevSettings.timeGateMs}ms 스캔주기=${BleConstants.scanPeriodMs}ms 광고간격=${BleConstants.advertiseInterval}ms")
         sendStatusBroadcast("설정 라이브 반영됨")
+    }
+
+    /**
+     * (v1.1.30) UWB 가동 상태를 현재 설정에 맞춘다 — 시작 시점과 라이브 설정 변경 양쪽에서 호출.
+     * 조건 미충족·토글 OFF 면 세션을 정리하고 UWB 없는 광고로 되돌린다(BLE 폴백은 항상 유지).
+     */
+    private fun applyUwbLiveState() {
+        if (bleAdvertiser == null) { uwbRanger?.stop(); uwbRanger = null; return }
+        val want = UwbRanger.isHardwareSupported(this)
+                && DevSettings.uwbEnabled
+                && ContextCompat.checkSelfPermission(this, Manifest.permission.UWB_RANGING) ==
+                       PackageManager.PERMISSION_GRANTED
+        if (want && uwbRanger == null) {
+            val ranger = UwbRanger(this, lifecycleScope, myMode == "DEVICE",
+                onStatus = { msg -> sendStatusBroadcast(msg) },
+                onLocalAddressChanged = { payload -> bleAdvertiser?.restartWithUwbAddress(payload) }
+            )
+            uwbRanger = ranger
+            lifecycleScope.launch {
+                val payload = ranger.initSession()
+                if (payload != null) {
+                    bleAdvertiser?.restartWithUwbAddress(payload)
+                    sendStatusBroadcast("UWB 활성: ${payload.joinToString("") { "%02X".format(it) }}")
+                }
+            }
+        } else if (!want && uwbRanger != null) {
+            uwbRanger?.stop()
+            uwbRanger = null
+            bleAdvertiser?.restartWithoutUwbAddress()
+            sendStatusBroadcast("UWB 비활성 — BLE 전용")
+        }
     }
 
     // [판정 파라미터] 전단 EMA(rssiPreFilter) 비대칭 알파를 DevSettings 값으로 주입.
