@@ -51,6 +51,15 @@ class BleSettingsActivity : AppCompatActivity() {
             binding.swUwb.isEnabled = false
             binding.tvUwbHint.text = "이 기기는 UWB 하드웨어가 없어 BLE 신호로만 동작합니다"
         }
+
+        // (v1.1.31) 거리 표시 방식 — 0=dBm만 / 1=UWB만 m / 2=전부 m(비UWB는 역산 추정)
+        binding.rgDistMode.check(
+            when (DevSettings.distanceDisplayMode) {
+                0    -> binding.rbDistDbm.id
+                1    -> binding.rbDistUwbM.id
+                else -> binding.rbDistAllM.id
+            }
+        )
     }
 
     private fun setupListeners() {
@@ -101,6 +110,15 @@ class BleSettingsActivity : AppCompatActivity() {
 
         // (v1.1.30) UWB 토글 — 즉시 라이브 반영(BleService 가 SharedPreferences 변경 구독)
         binding.swUwb.setOnCheckedChangeListener { _, checked -> DevSettings.uwbEnabled = checked }
+
+        // (v1.1.31) 거리 표시 방식 — 즉시 라이브 반영(다음 목록 브로드캐스트부터 적용)
+        binding.rgDistMode.setOnCheckedChangeListener { _, checkedId ->
+            DevSettings.distanceDisplayMode = when (checkedId) {
+                binding.rbDistDbm.id  -> 0
+                binding.rbDistUwbM.id -> 1
+                else                  -> 2
+            }
+        }
     }
 
     private fun updateDistLabels() {

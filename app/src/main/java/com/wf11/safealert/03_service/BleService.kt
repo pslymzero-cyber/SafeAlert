@@ -29,6 +29,7 @@ import com.wf11.safealert.utils.BeaconRegistry
 import com.wf11.safealert.utils.DevSettings
 import com.wf11.safealert.utils.ImuFusion
 import com.wf11.safealert.utils.OverlayManager
+import com.wf11.safealert.utils.UwbCalibrator
 import com.wf11.safealert.utils.UwbRanger
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
@@ -978,7 +979,13 @@ class BleService : LifecycleService() {
         // [전역 비콘 수신 강도] BLE설정의 비콘 게인(%)을 공통 dBm 보정으로 환산해 비콘에만 가산한다
         //   (offset 0 비콘 포함). 게인 100%(=0dBm)면 기존 거동과 완전 동일. 일반 SafeAlert 기기엔 미적용.
         val beaconGlobalGain = if (BeaconRegistry.isBeaconFullId(deviceId)) DevSettings.beaconGainDbm else 0
-        val totalOffset = payloadOffset + beaconOffset + beaconGlobalGain
+        // (v1.1.31) UWB 델타 보정 — 활성 UWB 세션 페어면 실거리+medianValue(스파이크 제거·지연≈0)로
+        //   이 페어의 채널 편차 Δ 를 학습하고, 학습된 보정을 다른 오프셋과 같은 자리에서 합산한다.
+        //   경보는 여전히 100% RSSI 구동(UWB 끊겨도 무봉합) — UWB 는 임계를 '보정'만 한다.
+        //   비대칭 클램프(지연 −3dB / 조기 +10dB)+24h 감쇠는 UwbCalibrator 내부 불변식. 비활성=0=기존 동일.
+        uwbRanger?.uwbDistances?.get(deviceId)?.let { UwbCalibrator.onSample(deviceId, medianValue, it) }
+        val uwbCalibOffset = UwbCalibrator.offsetDbFor(deviceId)
+        val totalOffset = payloadOffset + beaconOffset + beaconGlobalGain + uwbCalibOffset
         val effWarning = BleConstants.rssiWarning - totalOffset
         val effDanger  = BleConstants.rssiDanger  - totalOffset
         // [v1.1.16 D → v1.1.22 C-fix] 첫 접촉 고속 발령용 '근접 2프레임 확증' 카운터(워밍업·Time-Gate 우회).
@@ -1789,12 +1796,15 @@ class BleService : LifecycleService() {
         }
         val level = alertState[topId]?.first ?: BleConstants.LEVEL_SAFE
         val rssi  = deviceRssiMap[topId] ?: -99
+        // (v1.1.31) 거리 문자열(빈값=기존 dBm 폴백)을 플로팅에도 전달 — 목록과 동일 표기 규칙.
+        val dist  = UwbCalibrator.distanceTextFor(topId, rssi, uwbRanger?.uwbDistances?.get(topId))
         OverlayManager.showFloating(
             context  = this,
             deviceId = topId,
             name     = suddenLabelMap[topId] ?: makeApproachLabel(topId),
             rssi     = rssi,
-            danger   = level >= BleConstants.LEVEL_DANGER
+            danger   = level >= BleConstants.LEVEL_DANGER,
+            distText = dist
         )
     }
 
@@ -1995,8 +2005,10 @@ class BleService : LifecycleService() {
             val level = entry.value.first
             val rssi  = deviceRssiMap[id] ?: -99
             val name  = suddenLabelMap[id] ?: makeApproachLabel(id)
+            // (v1.1.31) 4번째 필드 = 거리 문자열(빈값 가능) — 구버전 파서는 f.size>=3 만 보므로 뒤호환.
+            val dist  = UwbCalibrator.distanceTextFor(id, rssi, uwbRanger?.uwbDistances?.get(id))
             if (sb.isNotEmpty()) sb.append('\u001E')
-            sb.append(level).append('\u001F').append(rssi).append('\u001F').append(name)
+            sb.append(level).append('\u001F').append(rssi).append('\u001F').append(name).append('\u001F').append(dist)
         }
 
         // [v1.0.49 #3] 게이트 보류 기기 병합 — alertState 미등록(경보 발령 전) 기기를 SAFE 레벨 행으로 추가.
@@ -2011,8 +2023,9 @@ class BleService : LifecycleService() {
             .forEach { id ->
                 val rssi = deviceRssiMap[id] ?: -99
                 val name = suddenLabelMap[id] ?: makeApproachLabel(id)
+                val dist = UwbCalibrator.distanceTextFor(id, rssi, uwbRanger?.uwbDistances?.get(id))
                 if (sb.isNotEmpty()) sb.append(30.toChar())
-                sb.append(BleConstants.LEVEL_SAFE).append(31.toChar()).append(rssi).append(31.toChar()).append(name)
+                sb.append(BleConstants.LEVEL_SAFE).append(31.toChar()).append(rssi).append(31.toChar()).append(name).append(31.toChar()).append(dist)
                 mergedCount++
             }
 

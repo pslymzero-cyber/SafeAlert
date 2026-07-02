@@ -58,8 +58,10 @@ class MainActivity : AppCompatActivity() {
     private var testAlertRunning = false
 
     // [v1.0.26 Req2] 감지 기기 목록 — BleService.alertState 스냅샷을 통째로 받아 매번 교체.
-    // (displayName, alertLevel, rssi) 정렬 리스트. 단일 진실 공급원이라 부분 add/remove 없음 = 불일치 불가.
-    private val detectedDevices = mutableListOf<Triple<String, Int, Int>>()
+    // (displayName, alertLevel, rssi, dist) 정렬 리스트. 단일 진실 공급원이라 부분 add/remove 없음 = 불일치 불가.
+    // (v1.1.31) dist = 서비스가 산출한 거리 문자열(4번째 필드, 빈값 가능) — 빈값이면 렌더가 dBm 으로 폴백.
+    private data class DetectedRow(val name: String, val level: Int, val rssi: Int, val dist: String)
+    private val detectedDevices = mutableListOf<DetectedRow>()
 
     // [v1.0.42] Broadcast 수신과 폴링 폴백이 공유하는 '마지막 반영 스냅샷'.
     //   같은 값이면 양쪽 모두 no-op → 중복 렌더 방지. 초기 sentinel()은 빈 목록("")과도 구분.
@@ -87,7 +89,7 @@ class MainActivity : AppCompatActivity() {
     private val renderRunnable = Runnable {
         pendingRender = false
         lastRenderMs = android.os.SystemClock.elapsedRealtime()
-        lastRenderedTopLevel = detectedDevices.maxOfOrNull { it.second } ?: BleConstants.LEVEL_SAFE
+        lastRenderedTopLevel = detectedDevices.maxOfOrNull { it.level } ?: BleConstants.LEVEL_SAFE
         updateDetectedDisplay()
     }
 
@@ -337,7 +339,9 @@ class MainActivity : AppCompatActivity() {
                 val level = f[0].toIntOrNull() ?: BleConstants.LEVEL_SAFE
                 val rssi  = f[1].toIntOrNull() ?: -99
                 val name  = f[2]
-                detectedDevices.add(Triple(name, level, rssi))
+                // (v1.1.31) 4번째 필드 = 거리 문자열(옵션) — 3필드 구버전 스냅샷과도 뒤호환.
+                val dist  = if (f.size >= 4) f[3] else ""
+                detectedDevices.add(DetectedRow(name, level, rssi, dist))
             }
         }
     }
@@ -376,7 +380,7 @@ class MainActivity : AppCompatActivity() {
      *  - 마지막 변경이 스로틀에 걸리면 trailing 타이머(renderRunnable)가 최신 스냅샷으로 1회 렌더.
      */
     private fun requestDetectedRender() {
-        val topLevel = detectedDevices.maxOfOrNull { it.second } ?: BleConstants.LEVEL_SAFE
+        val topLevel = detectedDevices.maxOfOrNull { it.level } ?: BleConstants.LEVEL_SAFE
         val now = android.os.SystemClock.elapsedRealtime()
         val escalated = topLevel > lastRenderedTopLevel          // 위험도 상승 = 크리티컬 → 즉시
         if (escalated || now - lastRenderMs >= uiRenderThrottleMs) {
@@ -422,8 +426,8 @@ class MainActivity : AppCompatActivity() {
         // 위험도 우선 → 같은 위험도면 RSSI 강한(가까운) 순, 최대 10개
         val sorted = detectedDevices
             .sortedWith(
-                compareByDescending<Triple<String, Int, Int>> { it.second }
-                    .thenByDescending { it.third }
+                compareByDescending<DetectedRow> { it.level }
+                    .thenByDescending { it.rssi }
             )
             .take(10)
 
@@ -435,14 +439,16 @@ class MainActivity : AppCompatActivity() {
             sb.setSpan(ForegroundColorSpan(0xFF9FB8C8.toInt()), hStart, sb.length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
             sb.setSpan(RelativeSizeSpan(0.78f), hStart, sb.length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
-        sorted.forEachIndexed { idx, (name, level, rssi) ->
+        sorted.forEachIndexed { idx, (name, level, rssi, dist) ->
             if (idx > 0) sb.append("\n")
             val prefix = when (level) {
                 BleConstants.LEVEL_DANGER  -> "🚨"
                 BleConstants.LEVEL_WARNING -> "⚠"
                 else                       -> "📡"
             }
-            val line = "$prefix  $name   ${rssi}dBm"
+            // (v1.1.31) 서비스가 준 거리 문자열이 있으면 그대로, 없으면 기존 dBm 표기 폴백.
+            val meas = if (dist.isNotEmpty()) dist else "${rssi}dBm"
+            val line = "$prefix  $name   $meas"
             val start = sb.length
             sb.append(line)
             val end = sb.length
@@ -464,7 +470,7 @@ class MainActivity : AppCompatActivity() {
 
         // [Req2] 목록을 하단 tv_ble_status 에 출력 — 밝은 기본 배경에선 노랑/연청이 묻히므로
         // 위험도에 맞춰 어두운 배경을 동적으로 깔아 가독성 확보.
-        val topLevel = sorted.first().second
+        val topLevel = sorted.first().level
         val bgColor = when {
             topLevel >= BleConstants.LEVEL_DANGER  -> 0xDD1A0000.toInt()  // 짙은 적
             topLevel == BleConstants.LEVEL_WARNING -> 0xDD1A1400.toInt()  // 짙은 황

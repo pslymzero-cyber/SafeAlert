@@ -182,6 +182,35 @@
                         android:textSize="11sp" android:textColor="#9CA3AF"
                         android:layout_width="match_parent" android:layout_height="wrap_content"
                         android:layout_marginTop="6dp"/>
+
+                    <!-- (v1.1.31) 거리 표시 방식 — 목록·플로팅의 신호 표기(dBm/미터) 선택 -->
+                    <TextView android:text="거리 표시 방식"
+                        android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:textSize="13sp" android:textColor="#374151"
+                        android:layout_marginTop="14dp" android:layout_marginBottom="6dp"/>
+                    <RadioGroup android:id="@+id/rg_dist_mode"
+                        android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:orientation="horizontal">
+                        <RadioButton android:id="@+id/rb_dist_dbm"
+                            android:layout_width="0dp" android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="dBm"
+                            android:textSize="12sp" android:textColor="#374151"/>
+                        <RadioButton android:id="@+id/rb_dist_uwb_m"
+                            android:layout_width="0dp" android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="UWB만 m"
+                            android:textSize="12sp" android:textColor="#374151"/>
+                        <RadioButton android:id="@+id/rb_dist_all_m"
+                            android:layout_width="0dp" android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="전부 m"
+                            android:textSize="12sp" android:textColor="#374151"/>
+                    </RadioGroup>
+                    <TextView android:text="전부 m: UWB 페어는 실측, 그 외는 신호 기반 추정(약 X m)"
+                        android:textSize="11sp" android:textColor="#9CA3AF"
+                        android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"/>
                 </LinearLayout>
             </androidx.cardview.widget.CardView>
 

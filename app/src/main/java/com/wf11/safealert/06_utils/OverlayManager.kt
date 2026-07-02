@@ -61,22 +61,24 @@ object OverlayManager {
      * 최우선 기기 1대를 플로팅 위젯에 표시.
      * 이미 떠 있으면 removeView/addView 없이 내용·색상만 갱신 → 깜빡임/위치 리셋 방지.
      */
-    fun showFloating(context: Context, deviceId: String, name: String, rssi: Int, danger: Boolean) {
+    // (v1.1.31) distText: UWB 실측/역산 거리 문자열. 빈값이면 기존 dBm 표기로 폴백(뒤호환 기본값).
+    fun showFloating(context: Context, deviceId: String, name: String, rssi: Int, danger: Boolean, distText: String = "") {
         if (!canDrawOverlays(context)) { Log.w(TAG, "오버레이 권한 없음"); return }
         currentDeviceId = deviceId
         if (floatingView != null) {
-            updateContent(name, rssi, danger)
+            updateContent(name, rssi, danger, distText)
         } else {
-            createFloating(context, name, rssi, danger)
+            createFloating(context, name, rssi, danger, distText)
         }
     }
 
     // ── 내부 헬퍼 ────────────────────────────────────────────────────────
 
-    private fun updateContent(name: String, rssi: Int, danger: Boolean) {
+    private fun updateContent(name: String, rssi: Int, danger: Boolean, distText: String) {
         iconText?.text = if (danger) "🚨" else "⚠"
         nameText?.text = name
-        rssiText?.text = "${rssi}dBm · 탭하면 10초 확인"
+        val meas = if (distText.isNotEmpty()) distText else "${rssi}dBm"
+        rssiText?.text = "$meas · 탭하면 10초 확인"
         if (currentDanger != danger) {
             background?.setColor(bgColor(danger))
             startPulse(danger)
@@ -87,7 +89,7 @@ object OverlayManager {
     private fun bgColor(danger: Boolean): Int =
         if (danger) Color.argb(238, 205, 30, 30) else Color.argb(238, 205, 135, 0)
 
-    private fun createFloating(context: Context, name: String, rssi: Int, danger: Boolean) {
+    private fun createFloating(context: Context, name: String, rssi: Int, danger: Boolean, distText: String) {
         val wm = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
         windowManager = wm
         fun dp(v: Int) = dpToPx(context, v)
@@ -117,7 +119,8 @@ object OverlayManager {
         nameText = nameTv
 
         val rssiTv = TextView(context).apply {
-            text = "${rssi}dBm · 탭하면 10초 확인"
+            val meas = if (distText.isNotEmpty()) distText else "${rssi}dBm"
+            text = "$meas · 탭하면 10초 확인"
             textSize = 11f
             setTextColor(Color.argb(225, 255, 255, 255))
             maxLines = 1

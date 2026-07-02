@@ -517,6 +517,21 @@ object DevSettings {
         get() = prefs.getBoolean(KEY_UWB_ENABLED, true)
         set(v) = prefs.edit().putBoolean(KEY_UWB_ENABLED, v).apply()
 
+    // (v1.1.31) UWB 델타 보정 학습 — UWB 실거리로 페어별 RSSI 편차(Δ)를 학습해 경보 임계에
+    //   보정(조기 +10dB / 지연 −3dB 비대칭 클램프 + 24h 감쇠)으로 반영. OFF = 보정 항상 0(기본 ON).
+    private const val KEY_UWB_CALIB_ENABLED = "uwb_calib_enabled"
+    var uwbCalibEnabled: Boolean
+        get() = prefs.getBoolean(KEY_UWB_CALIB_ENABLED, true)
+        set(v) = prefs.edit().putBoolean(KEY_UWB_CALIB_ENABLED, v).apply()
+
+    // (v1.1.31) 거리 표시 방식 — 감지 목록·플로팅 위젯의 신호 표기.
+    //   0 = dBm만 / 1 = UWB 실측 페어만 미터 / 2 = 전부 미터(비UWB 는 RSSI 역산 '약 X m', 기본).
+    //   경보 임계 슬라이더는 dBm 그대로 — 표시 전용 설정이라 경보 로직에 영향 없음.
+    private const val KEY_DISTANCE_DISPLAY_MODE = "distance_display_mode"
+    var distanceDisplayMode: Int
+        get() = prefs.getInt(KEY_DISTANCE_DISPLAY_MODE, 2).coerceIn(0, 2)
+        set(v) = prefs.edit().putInt(KEY_DISTANCE_DISPLAY_MODE, v.coerceIn(0, 2)).apply()
+
     fun toDebugString(): String =
         "rssiWarning=$rssiWarning | rssiDanger=$rssiDanger | scanPeriod=${scanPeriodMs}ms | " +
         "advertise=${advertiseInterval}ms | vib=$vibrationEnabled | sound=$soundEnabled | " +
