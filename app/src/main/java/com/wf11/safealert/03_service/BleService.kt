@@ -2170,11 +2170,16 @@ class BleService : LifecycleService() {
     }
 
     // [판정 파라미터] 전단 EMA(rssiPreFilter) 비대칭 알파를 DevSettings 값으로 주입.
-    //   후처리 P-EMA(pEmaFilter, 0.4/0.15)는 칼만 P항 평활 전용 설계값이라 고정 유지.
+    //   후처리 P-EMA(pEmaFilter, 0.4/0.15)는 칼만 P항 평활 전용 설계값이라 알파는 고정 유지.
+    // [v1.1.29] 워밍업 대칭 푸시 수는 전단·후처리 양쪽에 공통 주입 — 재시작 편차(첫 표본 앵커)
+    //   교정은 두 EMA 인스턴스 모두에 적용해야 완성된다(전단만 고치면 후처리 P-EMA 의
+    //   자체 앵커 잔상이 남는다). 서비스 시작(onCreate)과 설정 라이브 변경 모두 이 함수를 경유.
     private fun applyEmaAlphas() {
         rssiPreFilter.alphaRise   = DevSettings.emaAlphaRise
         rssiPreFilter.alphaFall   = DevSettings.emaAlphaFall
         rssiPreFilter.alphaDBoost = DevSettings.emaAlphaDBoost
+        rssiPreFilter.warmupSymmetricPushes = DevSettings.emaWarmupPushes
+        pEmaFilter.warmupSymmetricPushes    = DevSettings.emaWarmupPushes
     }
 
     private fun sendAlertBroadcast(deviceId: String, level: Int) {

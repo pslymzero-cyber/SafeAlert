@@ -446,6 +446,17 @@
 
                 <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
                     android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="10dp">
+                    <TextView android:text="워밍업 대칭 푸시 수" android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
+                    <EditText android:id="@+id/et_ema_warmup" android:layout_width="96dp" android:layout_height="wrap_content"
+                        android:inputType="number" android:gravity="end" android:textSize="13sp"/>
+                </LinearLayout>
+                <TextView android:text="유효 0~30 (기본 10, 0=끄기). 기기별 첫 N개 수신 동안 하강 알파를 상승 알파와 같게 적용해, 앱 재시작 직후 첫 신호가 우연히 높게 잡혔을 때 기준선을 빠르게 교정합니다. 접근 반응 속도에는 영향이 없습니다."
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:textSize="11sp" android:textColor="#9CA3AF"/>
+
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="10dp">
                     <TextView android:text="필터 보존 밴드 (dB)" android:layout_width="0dp" android:layout_height="wrap_content"
                         android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
                     <EditText android:id="@+id/et_preserve_band" android:layout_width="96dp" android:layout_height="wrap_content"

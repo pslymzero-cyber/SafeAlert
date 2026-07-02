@@ -121,16 +121,22 @@ class KalmanFilter(private var preset: Int = DevSettings.KALMAN_PRESET_NORMAL) {
     }
 
     /**
-     * Cold-Start 웜업 주입.
-     * 초기 RSSI를 즉시 신뢰하도록 공분산을 낮게 설정해 Cold Start 딜레이를 제거한다.
-     * (현재 호출처 없음 — 향후 즉시 웜업이 필요할 때 사용할 공개 API로 유지)
+     * Cold-Start 웜업 주입 — BleService 가 기기별 KalmanFilter 최초 생성 직후 첫 원시 RSSI 로 호출.
+     * 상태를 첫 표본으로 즉시 초기화해 Cold Start 딜레이를 제거하되,
+     * (v1.1.29) 초기 공분산은 '정직하게' 설정한다: BLE 원시 RSSI 단일 표본은 3개 광고채널·
+     * 다중경로 탓에 표준편차 약 5dB 수준이므로 pRR=25(=5의 제곱), pVV=5.
+     * 이전 pRR=1.0/pVV=1.0 과신은 우연히 높거나 낮게 잡힌 첫 표본을 필터가 강하게 붙들어
+     * 앱 재시작(세션)마다 초반 기준선이 달라지는 편차의 한 원인이었다. 정직한 초기 분산은
+     * 칼만 게인을 키워 이후 관측이 첫 표본의 복불복을 빠르게 씻어내게 한다.
+     * (일반 초기화 경로 update 의 !initialized 는 pRR=5 — 이 경로는 '생성 즉시 앵커'라
+     *  불확실성이 더 크므로 더 큰 초기 분산이 타당하다.)
      */
     fun injectWarmup(rssiVal: Int) {
         rssi        = rssiVal.toDouble()
         vel         = 0.0
-        pRR         = 1.0
+        pRR         = 25.0   // (v1.1.29) 1.0 → 25.0: 첫 표본 과신 제거(단일표본 정직 분산)
         pRV         = 0.0
-        pVV         = 1.0
+        pVV         = 5.0    // (v1.1.29) 1.0 → 5.0: 초기 속도 불확실성 정직화
         initialized = true
         lastTsMs    = System.currentTimeMillis()
     }

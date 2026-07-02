@@ -331,6 +331,16 @@ object DevSettings {
                     .toDouble().coerceIn(0.05, 1.0)
         set(v) = prefs.edit().putFloat(KEY_EMA_ALPHA_DBOOST, v.coerceIn(0.05, 1.0).toFloat()).apply()
 
+    // [v1.1.29] EMA 워밍업 대칭 푸시 수 — 기기별 첫 N개 푸시 동안 하강 알파를 상승 알파와 동일하게
+    //   적용(대칭화). 앱 재시작 시 첫 표본 앵커가 우연히 높게 잡히면 하강α(0.05)의 느린 회복(약
+    //   11.7초)이 세션 기준선을 물고 늘어지던 '재시작 편차'의 교정. 0=끄기(기존 동작).
+    //   전단(rssiPreFilter)·후처리 P-EMA(pEmaFilter) 양쪽 공통 적용.
+    private const val KEY_EMA_WARMUP_PUSHES = "ema_warmup_pushes"
+    const val DEFAULT_EMA_WARMUP_PUSHES = 10
+    var emaWarmupPushes: Int
+        get() = prefs.getInt(KEY_EMA_WARMUP_PUSHES, DEFAULT_EMA_WARMUP_PUSHES).coerceIn(0, 30)
+        set(v) = prefs.edit().putInt(KEY_EMA_WARMUP_PUSHES, v.coerceIn(0, 30)).apply()
+
     // 경고권 밖 필터 보존 밴드(dB) — rssiWarning 미달이라도 이 폭 안이면 필터 상태 보존
     private const val KEY_FILTER_PRESERVE_BAND_DB = "filter_preserve_band_db"
     const val DEFAULT_FILTER_PRESERVE_BAND_DB = 10
