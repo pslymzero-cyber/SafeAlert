@@ -532,6 +532,31 @@ object DevSettings {
         get() = prefs.getInt(KEY_DISTANCE_DISPLAY_MODE, 2).coerceIn(0, 2)
         set(v) = prefs.edit().putInt(KEY_DISTANCE_DISPLAY_MODE, v.coerceIn(0, 2)).apply()
 
+    // (v1.1.32) UWB 위험 승격(promote-only) — UWB 실측거리가 승격 반경 이하면 해당 페어의 경보를
+    //   DANGER 로 '승격만' 한다(억제·격하 방향 개입은 코드 경로 자체가 없음 — 안전불변식).
+    //   RSSI 파이프라인은 전 페어 상시 가동 — UWB 세션이 없거나 끊긴 기기는 이 기능이 없던 것과 동일.
+    //   신규 개입이므로 안전상 기본 OFF(옵트인) — BLE 감지 설정의 UWB 카드 토글.
+    private const val KEY_UWB_PROMOTE_ENABLED = "uwb_promote_enabled"
+    var uwbPromoteEnabled: Boolean
+        get() = prefs.getBoolean(KEY_UWB_PROMOTE_ENABLED, false)
+        set(v) = prefs.edit().putBoolean(KEY_UWB_PROMOTE_ENABLED, v).apply()
+
+    // (v1.1.32) UWB 위험 승격 반경(m) — 실측거리가 이 값 이하면 DANGER 승격. UI 미노출(기본 3m).
+    private const val KEY_UWB_DANGER_METERS = "uwb_danger_meters"
+    const val DEFAULT_UWB_DANGER_METERS = 3.0f
+    var uwbDangerMeters: Float
+        get() = prefs.getFloat(KEY_UWB_DANGER_METERS, DEFAULT_UWB_DANGER_METERS).coerceIn(0.5f, 10f)
+        set(v) = prefs.edit().putFloat(KEY_UWB_DANGER_METERS, v.coerceIn(0.5f, 10f)).apply()
+
+    // (v1.1.32) UWB 세션 시작 RSSI 게이트(dBm) — BLE 평활 RSSI 가 이 값 이상인 후보만 레인징
+    //   세션을 시작(배터리 듀티사이클). 원거리·미추적 페어는 세션을 쉬고, 접근하면 스캔 응답마다
+    //   재평가돼 자연 개시. 경보(BLE RSSI)는 세션 유무와 무관하게 상시 가동. UI 미노출(기본 -80).
+    private const val KEY_UWB_START_RSSI_GATE = "uwb_start_rssi_gate"
+    const val DEFAULT_UWB_START_RSSI_GATE = -80
+    var uwbStartRssiGate: Int
+        get() = prefs.getInt(KEY_UWB_START_RSSI_GATE, DEFAULT_UWB_START_RSSI_GATE).coerceIn(-100, -50)
+        set(v) = prefs.edit().putInt(KEY_UWB_START_RSSI_GATE, v.coerceIn(-100, -50)).apply()
+
     fun toDebugString(): String =
         "rssiWarning=$rssiWarning | rssiDanger=$rssiDanger | scanPeriod=${scanPeriodMs}ms | " +
         "advertise=${advertiseInterval}ms | vib=$vibrationEnabled | sound=$soundEnabled | " +

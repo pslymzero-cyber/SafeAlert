@@ -211,6 +211,21 @@
                         android:textSize="11sp" android:textColor="#9CA3AF"
                         android:layout_width="match_parent" android:layout_height="wrap_content"
                         android:layout_marginTop="6dp"/>
+
+                    <!-- (v1.1.32) UWB 위험 승격(promote-only) — 실측거리로 DANGER 승격만, 억제 없음 -->
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:orientation="horizontal" android:gravity="center_vertical"
+                        android:layout_marginTop="14dp">
+                        <TextView android:text="UWB 위험 승격" android:layout_width="0dp"
+                            android:layout_height="wrap_content" android:layout_weight="1"
+                            android:textSize="13sp" android:textColor="#374151"/>
+                        <Switch android:id="@+id/sw_uwb_promote"
+                            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                    </LinearLayout>
+                    <TextView android:text="UWB 실측 3m 이내면 위험 경보로 승격만 · 끄거나 늦추는 개입 없음 · 기본 꺼짐"
+                        android:textSize="11sp" android:textColor="#9CA3AF"
+                        android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"/>
                 </LinearLayout>
             </androidx.cardview.widget.CardView>
 

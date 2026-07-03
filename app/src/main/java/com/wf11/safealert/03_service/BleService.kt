@@ -1200,6 +1200,24 @@ class BleService : LifecycleService() {
             Log.w(TAG, "[v1.1.22 C] med 즉시 격상 WARNING: $deviceId (warningStreak=$warningStreak med=$medianValue raw1s=$avg1sec pEma=$avgRssi kfVel=%.2f)".format(kfVel))
         }
 
+        // ── (v1.1.32) UWB 실거리 위험 승격(promote-only, 기본 OFF) ──────────────────────────
+        //   UWB 실측거리가 승격 반경(uwbDangerMeters) 이하면 stableLevel 을 DANGER 로 '승격만' 한다.
+        //   모든 RSSI 격상·격하(정지 격하·safeForceFloor 강제-SAFE 포함)가 끝난 최종값 위에 얹으므로
+        //   차폐로 RSSI 는 약한데 물리적으로 붙어 있는 사각을 실거리로 메운다. 억제·격하 경로는 없고,
+        //   UWB 세션이 없거나 끊긴 기기는 이 블록이 없던 것과 동일(무봉합 — 경보는 BLE 상시 가동).
+        //   uwbDistances 는 세션 종료·기기 이탈 시 즉시 제거되므로 값이 있으면 항상 라이브 실측.
+        //   distanceLevel 도 함께 승격 — 아래 이탈 가드(isReceding)가 차폐로 낮아진 pEma 기준
+        //   distanceLevel<DANGER 를 '위험권 밖 이탈'로 오판해 무음화(조기 return)하는 것을 막는다.
+        //   진짜 이탈은 OR isDepartingNow(v1.1.22 B) 절이 그대로 잡으므로 이탈측 로직은 무접촉.
+        if (DevSettings.uwbPromoteEnabled && stableLevel < BleConstants.LEVEL_DANGER) {
+            val uwbD = uwbRanger?.uwbDistances?.get(deviceId)
+            if (uwbD != null && uwbD <= DevSettings.uwbDangerMeters) {
+                stableLevel = BleConstants.LEVEL_DANGER
+                distanceLevel = BleConstants.LEVEL_DANGER
+                Log.w(TAG, "[v1.1.32] UWB 승격 DANGER: $deviceId d=%.2fm (pEma=$avgRssi)".format(uwbD))
+            }
+        }
+
         // [v1.0.26 Req2] 개별 sendDetectedBroadcast 폐지 — 목록은 onDeviceDetected 처리 직후
         // broadcastDeviceList() 가 alertState 전체를 한 번에 송출한다(단일 진실 공급원).
 
@@ -2189,7 +2207,9 @@ class BleService : LifecycleService() {
         if (want && uwbRanger == null) {
             val ranger = UwbRanger(this, lifecycleScope, myMode == "DEVICE",
                 onStatus = { msg -> sendStatusBroadcast(msg) },
-                onLocalAddressChanged = { payload -> bleAdvertiser?.restartWithUwbAddress(payload) }
+                onLocalAddressChanged = { payload -> bleAdvertiser?.restartWithUwbAddress(payload) },
+                // (v1.1.32) 세션 우선순위·시작 게이트용 평활 RSSI(pEma) 프로바이더 — 미추적 기기는 null
+                rssiOf = { id -> deviceRssiMap[id] }
             )
             uwbRanger = ranger
             lifecycleScope.launch {

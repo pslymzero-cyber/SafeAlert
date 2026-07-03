@@ -60,6 +60,10 @@ class BleSettingsActivity : AppCompatActivity() {
                 else -> binding.rbDistAllM.id
             }
         )
+
+        // (v1.1.32) UWB 위험 승격(promote-only) — 기본 OFF(옵트인), UWB 미지원 기기는 비활성
+        binding.swUwbPromote.isChecked = DevSettings.uwbPromoteEnabled
+        if (!UwbRanger.isHardwareSupported(this)) binding.swUwbPromote.isEnabled = false
     }
 
     private fun setupListeners() {
@@ -118,6 +122,11 @@ class BleSettingsActivity : AppCompatActivity() {
                 binding.rbDistUwbM.id -> 1
                 else                  -> 2
             }
+        }
+
+        // (v1.1.32) UWB 위험 승격 토글 — 즉시 라이브 반영(승격만 · 억제 방향 개입 없음)
+        binding.swUwbPromote.setOnCheckedChangeListener { _, checked ->
+            DevSettings.uwbPromoteEnabled = checked
         }
     }
 

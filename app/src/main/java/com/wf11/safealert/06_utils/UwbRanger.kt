@@ -46,7 +46,8 @@ class UwbRanger(
     private val scope: CoroutineScope,
     private val isDeviceMode: Boolean,          // true=Controller(DEVICE), false=Controlee(WALKER)
     private val onStatus: ((String) -> Unit)? = null,
-    private val onLocalAddressChanged: ((ByteArray) -> Unit)? = null
+    private val onLocalAddressChanged: ((ByteArray) -> Unit)? = null,
+    private val rssiOf: ((String) -> Int?)? = null    // (v1.1.32) deviceId → 최근 평활 RSSI(dBm) — 세션 우선순위·시작 게이트용
 ) {
     companion object {
         private const val TAG = "UwbRanger"
@@ -54,6 +55,7 @@ class UwbRanger(
         private const val RESTART_BACKOFF_MS = 10_000L        // 세션 오류·피어 해제 후 재시도 대기
         private const val REJOIN_DELAY_MS = 1_000L            // 피어 재광고·이탈 등 즉시성 재시작 대기
         private const val STATUS_THROTTLE_MS = 3_000L         // 거리 상태줄 전파 최소 간격
+        private const val SWITCH_HYSTERESIS_DB = 6            // (v1.1.32) 직전 피어 유지 히스테리시스(재선정 핑퐁 방지)
 
         /** 하드웨어 UWB 지원 여부 (API 31+ & FEATURE_UWB) */
         fun isHardwareSupported(context: Context): Boolean {
@@ -79,6 +81,7 @@ class UwbRanger(
     private var activePeerId: String? = null
     private var activePeerPayload: ByteArray? = null
     private val candidates = LinkedHashMap<String, ByteArray>()   // deviceId → 최신 OOB 페이로드(수신 순서)
+    private var lastActivePeerId: String? = null                  // (v1.1.32) 직전 세션 피어 — 선택 히스테리시스 기준
     private var restartScheduled = false
     private var stopped = false
     @Volatile private var lastStatusAt = 0L
@@ -173,6 +176,7 @@ class UwbRanger(
         rangingJob = null
         activePeerId = null
         activePeerPayload = null
+        lastActivePeerId = null
         sessionScope = null
         uwbManager = null
         candidates.clear()
@@ -239,17 +243,37 @@ class UwbRanger(
         synchronized(this) { if (!stopped) startNextLocked() }
     }
 
-    /** 대기 후보 중 가장 먼저 발견된 기기와 레인징 세션 시작(동기화 블록 안에서만 호출) */
+    /**
+     * (v1.1.32) 대기 후보 중 세션 상대 선정 후 레인징 시작(동기화 블록 안에서만 호출).
+     * 선정 규칙: BLE 평활 RSSI 최강 후보 우선 — 가장 가까운 페어가 곧 가장 위험한 페어.
+     *   직전 세션 피어가 최강 대비 SWITCH_HYSTERESIS_DB 이내면 유지(재선정 핑퐁 방지).
+     * 시작 게이트(배터리 듀티사이클): RSSI 가 uwbStartRssiGate 미만이거나 미추적인 후보는
+     *   세션을 시작하지 않는다. 후보는 스캔 응답 수신마다 재평가되므로 접근하면 자연 개시.
+     *   활성 세션은 게이트와 무관하게 자연 종료까지 유지(시작 시점만 게이트).
+     *   rssiOf 미제공(단독 사용) 시엔 게이트·우선순위 없이 종전대로 첫 후보를 쓴다.
+     */
     private fun startNextLocked() {
         if (stopped || activePeerId != null) return
         val s = sessionScope ?: return
-        val entry = candidates.entries.firstOrNull() ?: return
-        val deviceId = entry.key
-        val payload = entry.value
+        if (candidates.isEmpty()) return
+        fun rankOf(id: String): Int = rssiOf?.invoke(id) ?: Int.MIN_VALUE
+        val deviceId: String = if (rssiOf == null) {
+            candidates.keys.first()
+        } else {
+            val gate = DevSettings.uwbStartRssiGate
+            val eligible = candidates.keys.filter { rankOf(it) >= gate }
+            if (eligible.isEmpty()) return
+            val best = eligible.maxByOrNull { rankOf(it) } ?: return
+            lastActivePeerId
+                ?.takeIf { it in eligible && rankOf(it) >= rankOf(best) - SWITCH_HYSTERESIS_DB }
+                ?: best
+        }
+        val payload = candidates[deviceId] ?: return
         activePeerId = deviceId
         activePeerPayload = payload
+        lastActivePeerId = deviceId
         rangingJob = scope.launch { runSession(s, deviceId, payload) }
-        Log.d(TAG, "UWB 세션 시작: ${deviceId} 후보=${candidates.size}")
+        Log.d(TAG, "UWB 세션 시작: ${deviceId} rssi=${rssiOf?.invoke(deviceId)} 후보=${candidates.size}")
     }
 
     /**
