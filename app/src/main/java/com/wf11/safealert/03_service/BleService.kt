@@ -1234,6 +1234,57 @@ class BleService : LifecycleService() {
             }
         }
 
+        // ── (v1.1.34) UWB 접근속도 승격(promote-only, 기본 OFF) ────────────────────────────────
+        //   실측 거리 미분 접근속도가 임계(uwbApproachSpeedKmh, 기본 6km/h = 지게차 제한속도) 이상
+        //   2샘플 지속 + 평활속도 동반 상승(정지 멀티패스 스파이크 오승격 차단)이면 최소 WARNING 으로
+        //   조기 승격한다. DANGER 는 거리 승격(위 v1.1.33)의 몫 — 속도만으로 사이렌까지 올리지 않는다.
+        //   격하 경로 없음. 운동학 부재(세션 없음/단절/리셋)면 이 블록이 없던 것과 동일.
+        //   ※ v1.0.36 충돌기하의 closingSpeedKmh(사망 입력)에는 연결하지 않는다 — 그쪽 sideCourse
+        //     경로는 '첫 경보 보류' 방향이라 안전불변식 위반. 독립 승격 블록으로만 쓴다.
+        if (DevSettings.uwbVelPromoteEnabled && stableLevel < BleConstants.LEVEL_WARNING) {
+            val kin = uwbRanger?.uwbKinematics?.get(deviceId)
+            val approachMps = DevSettings.uwbApproachSpeedKmh / 3.6f
+            if (kin != null && now - kin.atMs <= 1500L &&   // 라이브 운동학만(레인징 정지 잔상 차단)
+                kin.approachStreak >= 2 && kin.closingMps >= approachMps * 0.6f) {
+                stableLevel = BleConstants.LEVEL_WARNING
+                if (distanceLevel < stableLevel) distanceLevel = stableLevel
+                Log.w(TAG, "[v1.1.34] UWB 접근속도 승격 WARNING: $deviceId 평활v=%.1fkm/h streak=${kin.approachStreak} 임계=${DevSettings.uwbApproachSpeedKmh}km/h".format(kin.closingMps * 3.6f))
+            }
+        }
+
+        // ── (v1.1.34) UWB 지속 이탈 해제 — '멀어질 때 알림 꺼짐'(사용자 명시 요청) ─────────────────
+        //   promote-only 불변식의 최초 승인 예외(과신호 피로 저감). 실측 3샘플 연속 이탈 + 평활속도
+        //   음수일 때 경보를 실측 거리 기준으로만 캡: 경고 반경 밖=SAFE(완전 해제 — 아래 SAFE 처리
+        //   블록이 정리·브로드캐스트·사운드 중지까지 수행), 경고대=WARNING(사이렌만 해제 — 사운드
+        //   전환은 fail-quiet 강등정정(v1.1.28)·canonical 디스패치가 처리).
+        //   가드: ① 옵트인(기본 꺼짐) ② 실측·운동학 라이브(세션 드랍 = 엔트리 제거 = 기존 RSSI 거동
+        //   폴백) ③ 역할쌍 DANGER 반경 안(uwbD ≤ dangM)에서는 개입 금지 ④ RSSI 강접근(kfVel ≥
+        //   fastApproachBypassVelDbm) 시 거부권 — 실측과 RSSI 가 상충하면 경보 유지(fail-safe).
+        //   위 승격 블록과 streak 이 상호배타(접근/이탈 카운트가 서로 리셋)라 같은 프레임 동시 발동 불가.
+        //   distanceLevel 도 캡까지 하향 — 이탈 가드(isReceding)의 자연 페이드아웃이 걸리게 한다.
+        if (DevSettings.uwbVelReleaseEnabled && stableLevel > BleConstants.LEVEL_SAFE) {
+            val kin = uwbRanger?.uwbKinematics?.get(deviceId)
+            val uwbNowD = uwbRanger?.uwbDistances?.get(deviceId)
+            if (kin != null && uwbNowD != null && now - kin.atMs <= 1500L &&
+                kin.separatingStreak >= 3 && kin.closingMps < 0f &&
+                kfVel < DevSettings.fastApproachBypassVelDbm) {
+                val forkliftPair = myCategory == BleConstants.CAT_FORKLIFT ||
+                        rCategory == BleConstants.CAT_FORKLIFT
+                val warnM = if (forkliftPair) DevSettings.uwbForkliftWarnMeters else DevSettings.uwbPairWarnMeters
+                val dangM = if (forkliftPair) DevSettings.uwbForkliftDangerMeters else DevSettings.uwbPairDangerMeters
+                val cap = when {
+                    uwbNowD > warnM -> BleConstants.LEVEL_SAFE      // 경고 반경 밖 — 완전 해제
+                    uwbNowD > dangM -> BleConstants.LEVEL_WARNING   // 경고대 — DANGER 만 WARNING 으로
+                    else            -> stableLevel                  // DANGER 반경 안 — 개입 금지
+                }
+                if (cap < stableLevel) {
+                    Log.w(TAG, "[v1.1.34] UWB 이탈 해제 ${stableLevel}→${cap}: $deviceId d=%.1fm 평활v=%.1fkm/h streak=${kin.separatingStreak} kfVel=%.2f".format(uwbNowD, kin.closingMps * 3.6f, kfVel))
+                    stableLevel = cap
+                    if (distanceLevel > cap) distanceLevel = cap
+                }
+            }
+        }
+
         // [v1.0.26 Req2] 개별 sendDetectedBroadcast 폐지 — 목록은 onDeviceDetected 처리 직후
         // broadcastDeviceList() 가 alertState 전체를 한 번에 송출한다(단일 진실 공급원).
 
@@ -2206,6 +2257,7 @@ class BleService : LifecycleService() {
         bleScanner?.refreshScanMode()
         bleAdvertiser?.refreshAdvertiseMode()
         applyUwbLiveState()   // (v1.1.30) UWB 토글 라이브 반영
+        UwbCalibrator.applySite()   // (v1.1.34) 사업장 코드 변경 → Δ보정 프로파일 전환(무변경 no-op)
         Log.d(TAG, "[Req5] 설정 라이브 반영(key=$changedKey): KF프리셋=$preset 위험=${BleConstants.rssiDanger}dBm 경고=${BleConstants.rssiWarning}dBm TimeGate=${DevSettings.timeGateMs}ms 스캔주기=${BleConstants.scanPeriodMs}ms 광고간격=${BleConstants.advertiseInterval}ms")
         sendStatusBroadcast("설정 라이브 반영됨")
     }

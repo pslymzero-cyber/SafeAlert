@@ -59,6 +59,12 @@ class UwbRanger(
         private const val SWITCH_HYSTERESIS_DB = 6            // (v1.1.32) 직전 피어 유지 히스테리시스(재선정 핑퐁 방지)
         private const val FORKLIFT_RANK_BIAS_DB = 12          // (v1.1.33) 지게차 낀 쌍 우선순위 가산 — 단일 세션 경쟁에서 더 가까운 비지게차 쌍에 세션을 뺏겨 15m 경고가 무력화되는 것 방지
 
+        // (v1.1.34) 접근속도 운동학 — dt 연속성 창·평활 계수·이탈 데드밴드
+        private const val KIN_DT_MIN_MS = 60L         // 이보다 촘촘한 표본은 미분 노이즈 증폭 — 직전 기준점 유지
+        private const val KIN_DT_MAX_MS = 2000L       // 이보다 벌어지면 연속성 단절 — 운동학 리셋
+        private const val KIN_EMA_ALPHA = 0.45f       // 평활 접근속도 EMA 계수(표본 약 240ms 간격 기준)
+        private const val SEP_MIN_MPS = 0.15f         // 이탈 streak 최소 속도(노이즈 데드밴드)
+
         /** 하드웨어 UWB 지원 여부 (API 31+ & FEATURE_UWB) */
         fun isHardwareSupported(context: Context): Boolean {
             if (Build.VERSION.SDK_INT < 31) return false
@@ -72,6 +78,14 @@ class UwbRanger(
 
     /** deviceId(fullId) → 최근 UWB 실측 거리(m). 세션 없는 기기는 항상 부재 → BLE 폴백 */
     val uwbDistances: MutableMap<String, Float> = ConcurrentHashMap()
+
+    // (v1.1.34) UWB 실측 운동학 — 연속 거리 표본을 미분한 접근속도(+ = 접근)와 지속 표본 수.
+    //   uwbDistances 와 같은 수명(세션 종료·피어 이탈·중지 시 즉시 제거) — 값이 있으면 라이브 실측.
+    data class UwbKin(val closingMps: Float, val approachStreak: Int, val separatingStreak: Int, val atMs: Long)
+
+    /** deviceId(fullId) → 접근속도 운동학. BleService 속도 승격/이탈 해제 판정용(부재 = 개입 없음) */
+    val uwbKinematics: MutableMap<String, UwbKin> = ConcurrentHashMap()
+    private val lastSampleMap = ConcurrentHashMap<String, Pair<Long, Float>>()   // deviceId → (시각, 거리) 직전 표본
 
     /** 이 기기의 UWB 로컬 주소 2바이트 (스코프 갱신 때마다 새 값) */
     @Volatile var localAddress: ByteArray? = null
@@ -163,6 +177,8 @@ class UwbRanger(
     fun onDeviceLost(deviceId: String) {
         candidates.remove(deviceId)
         uwbDistances.remove(deviceId)
+        uwbKinematics.remove(deviceId)
+        lastSampleMap.remove(deviceId)
         if (deviceId == activePeerId) {
             Log.d(TAG, "활성 UWB 피어 이탈: ${deviceId}")
             stopActiveLocked()
@@ -183,6 +199,8 @@ class UwbRanger(
         uwbManager = null
         candidates.clear()
         uwbDistances.clear()
+        uwbKinematics.clear()
+        lastSampleMap.clear()
         localAddress = null
         isSupported = false
         Log.d(TAG, "UwbRanger 중지")
@@ -194,7 +212,7 @@ class UwbRanger(
     private fun stopActiveLocked() {
         rangingJob?.cancel()
         rangingJob = null
-        activePeerId?.let { uwbDistances.remove(it) }
+        activePeerId?.let { uwbDistances.remove(it); uwbKinematics.remove(it); lastSampleMap.remove(it) }
         activePeerId = null
         activePeerPayload = null
         sessionScope = null
@@ -359,6 +377,7 @@ class UwbRanger(
                 val d = result.position.distance?.value ?: return
                 uwbDistances[deviceId] = d
                 val now = System.currentTimeMillis()
+                updateKinematics(deviceId, d, now)   // (v1.1.34) 접근속도·이탈 연속 카운트 갱신
                 if (now - lastStatusAt >= STATUS_THROTTLE_MS) {
                     lastStatusAt = now
                     onStatus?.invoke("UWB 거리: ${shortId(deviceId)} ${"%.1f".format(d)}m")
@@ -370,6 +389,26 @@ class UwbRanger(
             }
             else -> { /* 알 수 없는 결과 타입 — 무시 */ }
         }
+    }
+
+    // (v1.1.34) 접근속도 운동학 갱신 — 연속 표본 미분(+ = 접근). 세션 스레드 단일 호출 전제.
+    //   dt 창 밖(너무 촘촘/단절)은 각각 기준점 유지/리셋으로 미분 노이즈·유령 속도를 차단한다.
+    //   approach/separating streak 은 상호배타(서로 리셋) — 같은 표본이 양쪽에 설 수 없다.
+    private fun updateKinematics(deviceId: String, distM: Float, now: Long) {
+        val prev = lastSampleMap.put(deviceId, now to distM) ?: return
+        val dtMs = now - prev.first
+        if (dtMs < KIN_DT_MIN_MS) { lastSampleMap[deviceId] = prev; return }   // 과밀 표본 — 직전 기준점 유지
+        if (dtMs > KIN_DT_MAX_MS) { uwbKinematics.remove(deviceId); return }   // 연속성 단절 — 리셋 후 재축적
+        val instMps = (prev.second - distM) / (dtMs / 1000f)
+        val approachMps = DevSettings.uwbApproachSpeedKmh / 3.6f
+        val k = uwbKinematics[deviceId]
+        val ema = if (k == null) instMps else k.closingMps + KIN_EMA_ALPHA * (instMps - k.closingMps)
+        uwbKinematics[deviceId] = UwbKin(
+            closingMps = ema,
+            approachStreak = if (instMps >= approachMps) (k?.approachStreak ?: 0) + 1 else 0,
+            separatingStreak = if (instMps <= -SEP_MIN_MPS) (k?.separatingStreak ?: 0) + 1 else 0,
+            atMs = now
+        )
     }
 
     /** 세션 종료 공통 처리 — 현재 활성 세션에 대해서만 1회 동작(중복 종료 무시) */

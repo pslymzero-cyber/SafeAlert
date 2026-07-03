@@ -587,6 +587,37 @@ object DevSettings {
         get() = prefs.getInt(KEY_UWB_START_RSSI_GATE_FORKLIFT, DEFAULT_UWB_START_RSSI_GATE_FORKLIFT).coerceIn(-100, -50)
         set(v) = prefs.edit().putInt(KEY_UWB_START_RSSI_GATE_FORKLIFT, v.coerceIn(-100, -50)).apply()
 
+    // (v1.1.34) UWB 접근속도 승격 — UWB 실측 접근속도가 임계(기본 6km/h) 이상 2샘플 지속이면
+    //   해당 페어를 최소 WARNING 으로 조기 승격. 승격만 — 격하 경로 없음. 신규 개입이라 기본 OFF(옵트인).
+    private const val KEY_UWB_VEL_PROMOTE_ENABLED = "uwb_vel_promote_enabled"
+    var uwbVelPromoteEnabled: Boolean
+        get() = prefs.getBoolean(KEY_UWB_VEL_PROMOTE_ENABLED, false)
+        set(v) = prefs.edit().putBoolean(KEY_UWB_VEL_PROMOTE_ENABLED, v).apply()
+
+    // (v1.1.34) UWB 이탈 해제 — UWB 실측 3샘플 연속 이탈 페어의 경보를 실측 거리 기준으로 하향
+    //   (경고 반경 밖=SAFE 해제, 경고대=WARNING 캡). '멀어질 때 알림 꺼짐' 사용자 명시 요청 —
+    //   promote-only 불변식의 최초 승인 예외. 위험 반경 안·RSSI 강접근·세션 없음이면 개입하지
+    //   않으며, 신규 개입이라 기본 OFF(옵트인).
+    private const val KEY_UWB_VEL_RELEASE_ENABLED = "uwb_vel_release_enabled"
+    var uwbVelReleaseEnabled: Boolean
+        get() = prefs.getBoolean(KEY_UWB_VEL_RELEASE_ENABLED, false)
+        set(v) = prefs.edit().putBoolean(KEY_UWB_VEL_RELEASE_ENABLED, v).apply()
+
+    // (v1.1.34) UWB 접근속도 임계(km/h) — 사업장 지게차 제한속도 기준(기본 6). UI 미노출(키만).
+    private const val KEY_UWB_APPROACH_SPEED_KMH = "uwb_approach_speed_kmh"
+    const val DEFAULT_UWB_APPROACH_SPEED_KMH = 6.0f
+    var uwbApproachSpeedKmh: Float
+        get() = prefs.getFloat(KEY_UWB_APPROACH_SPEED_KMH, DEFAULT_UWB_APPROACH_SPEED_KMH).coerceIn(1f, 30f)
+        set(v) = prefs.edit().putFloat(KEY_UWB_APPROACH_SPEED_KMH, v.coerceIn(1f, 30f)).apply()
+
+    // (v1.1.34) 사업장 코드 — UWB Δ보정 학습 프로파일 네임스페이스 키(예: "WF11"). 빈 값=공용
+    //   (현행과 완전 동일). 변경 즉시 UwbCalibrator.applySite 가 현재 프로파일을 저장하고 해당
+    //   사업장 프로파일로 전환한다(각 사업장 학습 보존 — 지워지지 않음).
+    private const val KEY_UWB_SITE_CODE = "uwb_site_code"
+    var uwbSiteCode: String
+        get() = prefs.getString(KEY_UWB_SITE_CODE, "")?.trim() ?: ""
+        set(v) = prefs.edit().putString(KEY_UWB_SITE_CODE, v.trim()).apply()
+
     fun toDebugString(): String =
         "rssiWarning=$rssiWarning | rssiDanger=$rssiDanger | scanPeriod=${scanPeriodMs}ms | " +
         "advertise=${advertiseInterval}ms | vib=$vibrationEnabled | sound=$soundEnabled | " +

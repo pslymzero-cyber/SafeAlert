@@ -2,8 +2,10 @@ package com.wf11.safealert.ui
 
 import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.widget.doAfterTextChanged
 import com.wf11.safealert.databinding.ActivityBleSettingsBinding
 import com.wf11.safealert.utils.DevSettings
+import com.wf11.safealert.utils.UwbCalibrator
 import com.wf11.safealert.utils.UwbRanger
 
 // [v1.1.8 ①②] 감지 방식(칼만/1초평균 고정값) 선택·모드 혼합(blend) 전면 제거 → 칼만 단일화.
@@ -64,6 +66,16 @@ class BleSettingsActivity : AppCompatActivity() {
         // (v1.1.32) UWB 위험 승격(promote-only) — 기본 OFF(옵트인), UWB 미지원 기기는 비활성
         binding.swUwbPromote.isChecked = DevSettings.uwbPromoteEnabled
         if (!UwbRanger.isHardwareSupported(this)) binding.swUwbPromote.isEnabled = false
+
+        // (v1.1.34) UWB 접근속도 승격·이탈 해제 — 기본 OFF(옵트인), 사업장 코드 = 보정 프로파일 키
+        binding.swUwbVelPromote.isChecked = DevSettings.uwbVelPromoteEnabled
+        binding.swUwbVelRelease.isChecked = DevSettings.uwbVelReleaseEnabled
+        binding.etUwbSite.setText(DevSettings.uwbSiteCode)
+        if (!UwbRanger.isHardwareSupported(this)) {
+            binding.swUwbVelPromote.isEnabled = false
+            binding.swUwbVelRelease.isEnabled = false
+            binding.etUwbSite.isEnabled = false
+        }
     }
 
     private fun setupListeners() {
@@ -127,6 +139,21 @@ class BleSettingsActivity : AppCompatActivity() {
         // (v1.1.32) UWB 위험 승격 토글 — 즉시 라이브 반영(승격만 · 억제 방향 개입 없음)
         binding.swUwbPromote.setOnCheckedChangeListener { _, checked ->
             DevSettings.uwbPromoteEnabled = checked
+        }
+
+        // (v1.1.34) UWB 접근속도 승격/이탈 해제 토글 + 사업장 코드 — 즉시 라이브 반영.
+        //   사업장 코드는 입력 즉시 저장 + applySite 직접 호출(서비스 미가동 시에도 즉시 전환) —
+        //   BleService applyLiveSettings 경유 호출은 무변경 no-op 이라 이중 호출 무해. 타이핑
+        //   중간값 프로파일은 파일이 생기지 않는다(persist dirty 게이트).
+        binding.swUwbVelPromote.setOnCheckedChangeListener { _, checked ->
+            DevSettings.uwbVelPromoteEnabled = checked
+        }
+        binding.swUwbVelRelease.setOnCheckedChangeListener { _, checked ->
+            DevSettings.uwbVelReleaseEnabled = checked
+        }
+        binding.etUwbSite.doAfterTextChanged {
+            DevSettings.uwbSiteCode = it?.toString() ?: ""
+            UwbCalibrator.applySite()
         }
     }
 
