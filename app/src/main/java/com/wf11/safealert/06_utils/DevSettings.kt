@@ -541,12 +541,33 @@ object DevSettings {
         get() = prefs.getBoolean(KEY_UWB_PROMOTE_ENABLED, false)
         set(v) = prefs.edit().putBoolean(KEY_UWB_PROMOTE_ENABLED, v).apply()
 
-    // (v1.1.32) UWB 위험 승격 반경(m) — 실측거리가 이 값 이하면 DANGER 승격. UI 미노출(기본 3m).
-    private const val KEY_UWB_DANGER_METERS = "uwb_danger_meters"
-    const val DEFAULT_UWB_DANGER_METERS = 3.0f
-    var uwbDangerMeters: Float
-        get() = prefs.getFloat(KEY_UWB_DANGER_METERS, DEFAULT_UWB_DANGER_METERS).coerceIn(0.5f, 10f)
-        set(v) = prefs.edit().putFloat(KEY_UWB_DANGER_METERS, v.coerceIn(0.5f, 10f)).apply()
+    // (v1.1.33) UWB 승격 임계(m) — 역할쌍 차등. v1.1.32 의 단일 3m(uwb_danger_meters)는 지게차
+    //   제동거리 기준 이미 충돌권이라 폐기(구 키는 미참조 방치 — 마이그레이션 불필요).
+    //   지게차가 한쪽이라도 낀 쌍 = 15m 경고 / 8m 위험, 그 외(EPJ↔보행자 등) = 5m 경고 / 3m 위험.
+    //   UI 미노출(DevSettings 키만). 경고<위험으로 역설정해도 promote-only 라 위험 분기가 우선(무해).
+    private const val KEY_UWB_FORKLIFT_WARN_METERS = "uwb_forklift_warn_meters"
+    const val DEFAULT_UWB_FORKLIFT_WARN_METERS = 15.0f
+    var uwbForkliftWarnMeters: Float
+        get() = prefs.getFloat(KEY_UWB_FORKLIFT_WARN_METERS, DEFAULT_UWB_FORKLIFT_WARN_METERS).coerceIn(1f, 40f)
+        set(v) = prefs.edit().putFloat(KEY_UWB_FORKLIFT_WARN_METERS, v.coerceIn(1f, 40f)).apply()
+
+    private const val KEY_UWB_FORKLIFT_DANGER_METERS = "uwb_forklift_danger_meters"
+    const val DEFAULT_UWB_FORKLIFT_DANGER_METERS = 8.0f
+    var uwbForkliftDangerMeters: Float
+        get() = prefs.getFloat(KEY_UWB_FORKLIFT_DANGER_METERS, DEFAULT_UWB_FORKLIFT_DANGER_METERS).coerceIn(0.5f, 30f)
+        set(v) = prefs.edit().putFloat(KEY_UWB_FORKLIFT_DANGER_METERS, v.coerceIn(0.5f, 30f)).apply()
+
+    private const val KEY_UWB_PAIR_WARN_METERS = "uwb_pair_warn_meters"
+    const val DEFAULT_UWB_PAIR_WARN_METERS = 5.0f
+    var uwbPairWarnMeters: Float
+        get() = prefs.getFloat(KEY_UWB_PAIR_WARN_METERS, DEFAULT_UWB_PAIR_WARN_METERS).coerceIn(1f, 20f)
+        set(v) = prefs.edit().putFloat(KEY_UWB_PAIR_WARN_METERS, v.coerceIn(1f, 20f)).apply()
+
+    private const val KEY_UWB_PAIR_DANGER_METERS = "uwb_pair_danger_meters"
+    const val DEFAULT_UWB_PAIR_DANGER_METERS = 3.0f
+    var uwbPairDangerMeters: Float
+        get() = prefs.getFloat(KEY_UWB_PAIR_DANGER_METERS, DEFAULT_UWB_PAIR_DANGER_METERS).coerceIn(0.5f, 15f)
+        set(v) = prefs.edit().putFloat(KEY_UWB_PAIR_DANGER_METERS, v.coerceIn(0.5f, 15f)).apply()
 
     // (v1.1.32) UWB 세션 시작 RSSI 게이트(dBm) — BLE 평활 RSSI 가 이 값 이상인 후보만 레인징
     //   세션을 시작(배터리 듀티사이클). 원거리·미추적 페어는 세션을 쉬고, 접근하면 스캔 응답마다
@@ -556,6 +577,15 @@ object DevSettings {
     var uwbStartRssiGate: Int
         get() = prefs.getInt(KEY_UWB_START_RSSI_GATE, DEFAULT_UWB_START_RSSI_GATE).coerceIn(-100, -50)
         set(v) = prefs.edit().putInt(KEY_UWB_START_RSSI_GATE, v.coerceIn(-100, -50)).apply()
+
+    // (v1.1.33) 지게차 낀 쌍 전용 시작 게이트(dBm) — 기본 게이트(-80 ≈ 수 m~10m권)로는 지게차의
+    //   15m 경고 반경 밖에서 UWB 세션이 안 열려 승격이 무력화된다. 지게차 쌍만 -90 까지 완화해
+    //   경고 반경 밖에서도 레인징을 개시(배터리 듀티사이클은 비지게차 쌍에서 그대로 유효).
+    private const val KEY_UWB_START_RSSI_GATE_FORKLIFT = "uwb_start_rssi_gate_forklift"
+    const val DEFAULT_UWB_START_RSSI_GATE_FORKLIFT = -90
+    var uwbStartRssiGateForklift: Int
+        get() = prefs.getInt(KEY_UWB_START_RSSI_GATE_FORKLIFT, DEFAULT_UWB_START_RSSI_GATE_FORKLIFT).coerceIn(-100, -50)
+        set(v) = prefs.edit().putInt(KEY_UWB_START_RSSI_GATE_FORKLIFT, v.coerceIn(-100, -50)).apply()
 
     fun toDebugString(): String =
         "rssiWarning=$rssiWarning | rssiDanger=$rssiDanger | scanPeriod=${scanPeriodMs}ms | " +
