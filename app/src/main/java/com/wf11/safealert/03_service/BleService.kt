@@ -1285,6 +1285,53 @@ class BleService : LifecycleService() {
             }
         }
 
+        // ── (v1.1.36) UWB 주 거리 권위 — 세션 활성 페어는 UWB 실측으로 '거리'만 판정, 승격·이탈은 기존 워크플로우에 위임 ──
+        //   [설계 원칙 — 사용자 지시] UWB 는 '거리 입력'만 대체한다. 승격(아래 TTC 선발령)·이탈
+        //   (isReceding·isDepartingNow)의 판정 로직은 기존 RSSI 파이프라인이 그대로 담당한다.
+        //   stableLevel 을 통째로 덮어쓰지 않는다(v1.1.36 초판의 '완전 대체'가 기존 이탈·TTC 를 무력화한
+        //   회귀를 정정).
+        //   · 격상(promote): UWB 실측이 역할쌍 경고/위험 반경 안이면 그 레벨로 올린다. 금속 캐빈·파렛트
+        //     차폐로 RSSI 는 약한데 물리적으로 가까운 사각을 실측으로 메운다(v1.1.33 거동을 상시화).
+        //   · 이탈(release): UWB 운동학이 '멀어지는 중'(separatingStreak≥3 · closingMps<0)일 때만 실측
+        //     거리 기준으로 강등한다 — 스쳐 지나가면(멀어짐) 끈다. 접근·정지 중엔 강등 금지(위험 유지 =
+        //     페일세이프). RSSI 강접근(kfVel ≥ fastApproachBypassVelDbm) 동반 시 거부권(실측·RSSI 상충 시 유지).
+        //   · 접근속도 단독 승격은 두지 않는다 — '멀리서 빠르게 접근'을 거리와 무관하게 경고로 올리면
+        //     종일 오경보가 된다(TTC 무시). 조기 위험 예측은 아래 기존 TTC 선발령(경고권 진입 + 충돌 임박
+        //     TTC≤임계)이 담당한다.
+        //   uwbDistances 는 세션 종료·기기 이탈 시 즉시 제거 → 값이 있으면 항상 라이브 실측. null 이면 이
+        //   블록 무동작(위 RSSI stableLevel 유지 = 무봉합 폴백). RSSI 보정 학습(UwbCalibrator, 상단)은 독립 지속.
+        if (DevSettings.uwbPrimaryAuthorityEnabled) {
+            val uwbPrimD = uwbRanger?.uwbDistances?.get(deviceId)
+            if (uwbPrimD != null) {
+                val forkliftPair = myCategory == BleConstants.CAT_FORKLIFT ||
+                        rCategory == BleConstants.CAT_FORKLIFT
+                val warnM = if (forkliftPair) DevSettings.uwbForkliftWarnMeters else DevSettings.uwbPairWarnMeters
+                val dangM = if (forkliftPair) DevSettings.uwbForkliftDangerMeters else DevSettings.uwbPairDangerMeters
+                val uwbLevel = when {
+                    uwbPrimD <= dangM -> BleConstants.LEVEL_DANGER
+                    uwbPrimD <= warnM -> BleConstants.LEVEL_WARNING
+                    else              -> BleConstants.LEVEL_SAFE
+                }
+                if (uwbLevel > stableLevel) {
+                    // (A) 격상 — 실측이 더 가깝다. 차폐로 약한 RSSI 를 실측 거리로 끌어올린다(promote-only).
+                    val lvName = if (uwbLevel == BleConstants.LEVEL_DANGER) "DANGER" else "WARNING"
+                    Log.w(TAG, "[v1.1.36] UWB 거리 격상 ${lvName}: ${deviceId} d=%.2fm 지게차쌍=${forkliftPair} 임계=경고${warnM}m/위험${dangM}m (RSSI=${stableLevel} pEma=${avgRssi})".format(uwbPrimD))
+                    stableLevel = uwbLevel
+                    if (distanceLevel < uwbLevel) distanceLevel = uwbLevel
+                } else if (uwbLevel < stableLevel) {
+                    // (B) 이탈 강등 — '멀어지는 중'일 때만 실측 거리로 낮춘다(스쳐 지나감 = 끔). 접근·정지는 유지.
+                    val kin = uwbRanger?.uwbKinematics?.get(deviceId)
+                    if (kin != null && now - kin.atMs <= 1500L &&
+                        kin.separatingStreak >= 3 && kin.closingMps < 0f &&
+                        kfVel < DevSettings.fastApproachBypassVelDbm) {
+                        Log.w(TAG, "[v1.1.36] UWB 이탈 강등 ${stableLevel}->${uwbLevel}: ${deviceId} d=%.1fm 멀어짐v=%.1fkm/h streak=${kin.separatingStreak} kfVel=%.2f".format(uwbPrimD, kin.closingMps * 3.6f, kfVel))
+                        stableLevel = uwbLevel
+                        if (distanceLevel > uwbLevel) distanceLevel = uwbLevel
+                    }
+                }
+            }
+        }
+
         // [v1.0.26 Req2] 개별 sendDetectedBroadcast 폐지 — 목록은 onDeviceDetected 처리 직후
         // broadcastDeviceList() 가 alertState 전체를 한 번에 송출한다(단일 진실 공급원).
 
