@@ -2369,6 +2369,7 @@ class BleService : LifecycleService() {
         fastApproachStreakMap.clear()    // [v1.1.21] 빠른접근 연속카운터 정리
         pendingDisplayMap.clear()        // [v1.0.49 #3] 보류 표시 정리
         mutedDevices.clear()
+        forwardBiasLatchMap.clear()      // [v1.1.11 C1] 전진가산 래치 일괄 정리(다른 26개 맵과 정합)
         firebaseLastSaveMap.clear()
         testRunnable?.let { testHandler.removeCallbacks(it) }
         testRunnable = null
