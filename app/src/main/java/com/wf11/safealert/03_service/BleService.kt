@@ -105,6 +105,46 @@ class BleService : LifecycleService() {
     private fun getCurrentMaxLevel() =
         alertState.values.maxOfOrNull { it.first } ?: BleConstants.LEVEL_SAFE
 
+    // [v1.1.37 ③] UWB↔RSSI 보정 학습·조회 키 — 역할쌍(카테고리쌍) 세그먼트.
+    //   내 카테고리와 상대(스캔 캐시) 카테고리를 토큰화해 순서 무관하게 정렬·결합("×").
+    //   같은 역할쌍(예 FORKLIFT×WALKER)은 안테나 높이·차폐 특성이 유사하다는 물리 모델 →
+    //   한 지게차와 UWB로 학습한 편차를, 아직 UWB로 못 만난 다른 지게차의 RSSI 역산·임계 넛지에
+    //   즉시 적용(사용자: "역할에 따른 데이터를 따로 저장 / 그 역할에 따른 데이터로 보정").
+    //   상대 카테고리 미상(스캔 캐시 없음)이면 가장 보수적인 보행자로 간주.
+    private fun uwbPairKeyFor(deviceId: String): String {
+        val mine   = categoryToken(myCategory)
+        val theirs = categoryToken(deviceCategoryMap[deviceId] ?: BleConstants.CAT_WALKER)
+        return listOf(mine, theirs).sorted().joinToString("×")   // "×"
+    }
+
+    private fun categoryToken(cat: Int): String = when (cat) {
+        BleConstants.CAT_FORKLIFT -> "FORKLIFT"
+        BleConstants.CAT_EPJ      -> "EPJ"
+        else                      -> "WALKER"
+    }
+
+    /**
+     * [v1.1.37 ②] 부분 이탈 사운드 하향 정합 — 기기 '일부'만 제거된 뒤(alertState 비어있지 않음)
+     *   남은 기기들의 실제 최대 레벨로 재생 중인 사운드를 즉시 맞춘다. 사이렌을 소유하던 상위(DANGER) 기기가
+     *   이탈했는데 남은 기기는 더 낮은 레벨이면, 기존엔 canonical/fail-quiet 정정이 '남은 기기의 다음 프레임'
+     *   에서야 동작해 상위 사이렌이 수 초~사실상 영구 잔존했다(사용자: '스쳐 지나갔으면 신호를 끄라고').
+     *   소리를 '낮추는' 방향(remainingMax < activeSoundLevel)에서만 동작 → 남은 기기가 동급 이상이면 무개입
+     *   = 경보 누락 0 보장. fail-quiet 강등 정정(processAlert L1625)의 teardown 판(版).
+     */
+    private fun resyncSoundToRemaining() {
+        val remainingMax = getCurrentMaxLevel()
+        if (remainingMax >= activeSoundLevel) return          // 남은 기기가 동급 이상 — 사이렌 유지
+        AlertSoundPlayer.stopSound()                          // 이탈한 상위 기기의 stale 사이렌 즉시 정지
+        activeSoundLevel = remainingMax
+        if (remainingMax == BleConstants.LEVEL_WARNING && !isMuted) {
+            if (DevSettings.vibrationEnabled) VibrationHelper.vibrateWarning(this)
+            if (DevSettings.soundEnabled)     AlertSoundPlayer.playWarning(this)
+        } else if (remainingMax <= BleConstants.LEVEL_SAFE) {
+            VibrationHelper.stopVibration(this)
+        }
+        Log.d(TAG, "[v1.1.37 ②] 부분 이탈 사운드 하향 정합: activeSoundLevel→$remainingMax (남은 최대레벨)")
+    }
+
     @Volatile private var ignoringVolumeChange = false
 
     // ── [v1.0.32] RssiPreFilter: 비대칭 비례제어(Asymmetric P-Control) EMA 전처리 ──
@@ -663,6 +703,7 @@ class BleService : LifecycleService() {
                                 activeSoundLevel = BleConstants.LEVEL_SAFE
                                 sendStatusBroadcast("기기 이탈 → 경보 중지")
                             } else {
+                                resyncSoundToRemaining()  // [v1.1.37 ②] 상위 기기 이탈 → 남은 최대레벨로 사운드 하향 정합
                                 updateFloatingOverlay()   // 다른 위험 기기로 플로팅 전환
                             }
                             // [v1.1.14] 소실로 alertState 가 줄었으니 위험상태(RISK)도 즉시 갱신 송출(비었으면 SAFE).
@@ -983,8 +1024,9 @@ class BleService : LifecycleService() {
         //   이 페어의 채널 편차 Δ 를 학습하고, 학습된 보정을 다른 오프셋과 같은 자리에서 합산한다.
         //   경보는 여전히 100% RSSI 구동(UWB 끊겨도 무봉합) — UWB 는 임계를 '보정'만 한다.
         //   비대칭 클램프(지연 −3dB / 조기 +10dB)+24h 감쇠는 UwbCalibrator 내부 불변식. 비활성=0=기존 동일.
-        uwbRanger?.uwbDistances?.get(deviceId)?.let { UwbCalibrator.onSample(deviceId, medianValue, it) }
-        val uwbCalibOffset = UwbCalibrator.offsetDbFor(deviceId)
+        val uwbPairKey = uwbPairKeyFor(deviceId)   // [v1.1.37 ③] 개별 기기 대신 역할쌍 세그먼트로 학습·조회
+        uwbRanger?.uwbDistances?.get(deviceId)?.let { UwbCalibrator.onSample(uwbPairKey, medianValue, it) }
+        val uwbCalibOffset = UwbCalibrator.offsetDbFor(uwbPairKey)
         val totalOffset = payloadOffset + beaconOffset + beaconGlobalGain + uwbCalibOffset
         val effWarning = BleConstants.rssiWarning - totalOffset
         val effDanger  = BleConstants.rssiDanger  - totalOffset
@@ -1372,6 +1414,7 @@ class BleService : LifecycleService() {
                     VibrationHelper.stopVibration(this)
                     OverlayManager.hideOverlay()
                 } else {
+                    resyncSoundToRemaining()  // [v1.1.37 ②] 상위 기기 이탈 → 남은 최대레벨로 사운드 하향 정합
                     updateFloatingOverlay()   // 다른 위험 기기로 플로팅 전환
                 }
             }
@@ -1500,6 +1543,9 @@ class BleService : LifecycleService() {
                     VibrationHelper.stopVibration(this)
                     OverlayManager.hideOverlay()
                     activeSoundLevel = BleConstants.LEVEL_SAFE
+                } else {
+                    resyncSoundToRemaining()  // [v1.1.37 ②] 이탈 확인된 상위 기기 → 남은 최대레벨로 사운드 하향 정합
+                    updateFloatingOverlay()   // 남은 위험 기기로 플로팅 갱신
                 }
                 sendStatusBroadcast("↗ 이탈 확인 → 경보 해제: ${extractDisplayName(deviceId)}")
                 Log.d(TAG, "이탈 경보 해제: $deviceId (${recedingMs}ms 연속 이탈)")
@@ -1929,7 +1975,7 @@ class BleService : LifecycleService() {
         val level = alertState[topId]?.first ?: BleConstants.LEVEL_SAFE
         val rssi  = deviceRssiMap[topId] ?: -99
         // (v1.1.31) 거리 문자열(빈값=기존 dBm 폴백)을 플로팅에도 전달 — 목록과 동일 표기 규칙.
-        val dist  = UwbCalibrator.distanceTextFor(topId, rssi, uwbRanger?.uwbDistances?.get(topId))
+        val dist  = UwbCalibrator.distanceTextFor(uwbPairKeyFor(topId), rssi, uwbRanger?.uwbDistances?.get(topId))
         OverlayManager.showFloating(
             context  = this,
             deviceId = topId,
@@ -2138,7 +2184,7 @@ class BleService : LifecycleService() {
             val rssi  = deviceRssiMap[id] ?: -99
             val name  = suddenLabelMap[id] ?: makeApproachLabel(id)
             // (v1.1.31) 4번째 필드 = 거리 문자열(빈값 가능) — 구버전 파서는 f.size>=3 만 보므로 뒤호환.
-            val dist  = UwbCalibrator.distanceTextFor(id, rssi, uwbRanger?.uwbDistances?.get(id))
+            val dist  = UwbCalibrator.distanceTextFor(uwbPairKeyFor(id), rssi, uwbRanger?.uwbDistances?.get(id))
             if (sb.isNotEmpty()) sb.append('\u001E')
             sb.append(level).append('\u001F').append(rssi).append('\u001F').append(name).append('\u001F').append(dist)
         }
@@ -2155,7 +2201,7 @@ class BleService : LifecycleService() {
             .forEach { id ->
                 val rssi = deviceRssiMap[id] ?: -99
                 val name = suddenLabelMap[id] ?: makeApproachLabel(id)
-                val dist = UwbCalibrator.distanceTextFor(id, rssi, uwbRanger?.uwbDistances?.get(id))
+                val dist = UwbCalibrator.distanceTextFor(uwbPairKeyFor(id), rssi, uwbRanger?.uwbDistances?.get(id))
                 if (sb.isNotEmpty()) sb.append(30.toChar())
                 sb.append(BleConstants.LEVEL_SAFE).append(31.toChar()).append(rssi).append(31.toChar()).append(name).append(31.toChar()).append(dist)
                 mergedCount++
@@ -2320,7 +2366,12 @@ class BleService : LifecycleService() {
                 && ContextCompat.checkSelfPermission(this, Manifest.permission.UWB_RANGING) ==
                        PackageManager.PERMISSION_GRANTED
         if (want && uwbRanger == null) {
-            val ranger = UwbRanger(this, lifecycleScope, myMode == "DEVICE",
+            // [v1.1.37 ③] 내 전체 광고 ID(prefix+id) — 같은 역할 쌍의 컨트롤러 선출 tiebreak 기준.
+            //   BleScanner 가 상대에게 붙이는 fullId 와 동일한 prefix 규칙(DEVICE_/WALKER_)이라야
+            //   peerOutranksMe(id < myFullId)·peerIsVehicle(startsWith DEVICE_PREFIX) 비교가 정합.
+            val myFullId = (if (myMode == "DEVICE") BleConstants.DEVICE_PREFIX
+                            else BleConstants.WALKER_PREFIX) + myId
+            val ranger = UwbRanger(this, lifecycleScope, myFullId, myMode == "DEVICE",
                 onStatus = { msg -> sendStatusBroadcast(msg) },
                 onLocalAddressChanged = { payload -> bleAdvertiser?.restartWithUwbAddress(payload) },
                 // (v1.1.32) 세션 우선순위·시작 게이트용 평활 RSSI(pEma) 프로바이더 — 미추적 기기는 null

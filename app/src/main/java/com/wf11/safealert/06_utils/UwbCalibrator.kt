@@ -9,7 +9,7 @@ import kotlin.math.pow
 import kotlin.math.roundToInt
 
 // (v1.1.31) UWB 델타 보정 학습기 — UWB 실거리(d)와 같은 프레임의 BLE RSSI(median)를 짝지어
-//   페어(deviceId)별 채널 편차 Δ = EMA(실측RSSI − 기대RSSI(d)) 를 학습한다.
+//   역할쌍(pairKey)별 채널 편차 Δ = EMA(실측RSSI − 기대RSSI(d)) 를 학습한다.
 //   · 기대RSSI(d) = A − 10n·log10(d)  (A = 1m 기준 −59dBm, n = 2.0 실내 자유공간 근사)
 //   · Δ > 0 = 이 페어는 모델보다 세게 들림(안테나 이득 등) → 임계를 늦춰도 됨(−측, 최대 −3dB)
 //   · Δ < 0 = 모델보다 약하게 들림(주머니/케이스 차폐) → 임계를 앞당김(+측, 최대 +10dB)
@@ -26,6 +26,14 @@ import kotlin.math.roundToInt
 //     '감쇠는 당일 미세조정만' — 주말이 지나도 기준선은 남고, 24h 단절 후에도 기준선에서
 //     이어간다(samples 누적 유지 → 재방문 첫 샘플부터 보정 활성). 안전 클램프(−3..+10)는 동일.
 //   · 사업장 전환(applySite) = 현재 프로파일 저장 → 새 프로파일 로드(각 사업장 학습 보존).
+//
+// (v1.1.37) 역할쌍 세분 — 학습 키를 개별 기기(deviceId)에서 역할쌍(pairKey)으로 바꾼다.
+//   pairKey = 양끝 카테고리(WALKER/EPJ/FORKLIFT)를 정렬해 순서무관 결합(예 "FORKLIFT×WALKER").
+//   같은 역할쌍은 안테나 높이·차폐 특성이 유사하다는 물리 모델 → 한 지게차와 UWB로 학습한 편차를
+//   아직 UWB로 만난 적 없는 다른 지게차의 RSSI 거리 역산·임계 넛지에 즉시 적용한다
+//   (사용자: "역할에 따른 데이터를 따로 저장 / 그 역할에 따른 데이터로 보정"). pairKey 산출은
+//   카테고리·myMode 판정이 있는 BleService 가 맡고 여기선 불투명 문자열 키로만 쓴다.
+//   경보 자체는 v1.1.36 이후 UWB 실측이 主권위 — 보정은 UWB 없는 페어의 RSSI 에만 관여한다.
 object UwbCalibrator {
 
     private const val TAG = "UwbCalibrator"
@@ -92,13 +100,13 @@ object UwbCalibrator {
         p.all.forEach { (key, value) ->
             val f = (value as? String)?.split('|') ?: return@forEach
             if (f.size < 3) return@forEach
-            val delta = f[0].toDoubleOrNull() ?: return@forEach
+            val delta = f[0].toDoubleOrNull()?.takeIf { it.isFinite() } ?: return@forEach   // [v1.1.37 ①] 디스크 NaN 오염 자가치유(로드 시 폐기)
             val at = f[1].toLongOrNull() ?: return@forEach
             val n = f[2].toIntOrNull() ?: return@forEach
             // 공용 프로파일만 7일 GC(현행 유지) — 사업장 프로파일은 장기 보존이 목적이라 GC 없음.
             //   폐기분은 다음 persist(전체 재작성)에서 디스크에서도 사라진다.
             if (site.isEmpty() && now - at > GC_MS) return@forEach
-            val baseline = if (f.size >= 4) f[3].toDoubleOrNull() ?: delta else delta   // 구(3필드) 포맷 호환
+            val baseline = if (f.size >= 4) f[3].toDoubleOrNull()?.takeIf { it.isFinite() } ?: delta else delta   // 구(3필드) 포맷 호환 + [v1.1.37 ①] NaN 자가치유
             map[key] = Calib(delta, at, n, baseline)
             loaded++
         }
@@ -108,11 +116,11 @@ object UwbCalibrator {
     // 학습 입력 — BleService.processAlert 가 '활성 UWB 세션 페어'에 한해 매 프레임 호출.
     //   rssi 는 medianValue(median-of-3): 스파이크 없고 위상지연≈0 이라 평활 잔상이 Δ 에 섞이지 않는다.
     @Synchronized
-    fun onSample(deviceId: String, measuredRssi: Int, distM: Float) {
-        if (distM < MIN_DIST_M || distM > MAX_DIST_M) return
+    fun onSample(pairKey: String, measuredRssi: Int, distM: Float) {
+        if (!distM.isFinite() || distM < MIN_DIST_M || distM > MAX_DIST_M) return   // [v1.1.37 ①] NaN 방어(비교 false 통과 차단)
         val residual = measuredRssi - expectedRssiAt(distM.toDouble())
         val now = System.currentTimeMillis()
-        val prev = map[deviceId]
+        val prev = map[pairKey]
         val next = when {
             prev == null ->
                 Calib(residual, now, 1, residual)   // 첫 샘플 = 시드
@@ -129,16 +137,17 @@ object UwbCalibrator {
                     (prev.samples + 1).coerceAtMost(1000),
                     prev.baseline + BASE_ALPHA * (residual - prev.baseline))
         }
-        map[deviceId] = next
+        map[pairKey] = next
         dirty = true
         maybePersist(now)
     }
 
     // 경보 임계 보정(dB) — BleService totalOffset 에 가산(+ = 더 먼 거리에서 조기 경보 = fail-safe 방향).
-    fun offsetDbFor(deviceId: String): Int {
+    fun offsetDbFor(pairKey: String): Int {
         if (!DevSettings.uwbCalibEnabled) return 0
-        val c = map[deviceId] ?: return 0
+        val c = map[pairKey] ?: return 0
         if (c.samples < MIN_SAMPLES) return 0
+        if (!c.delta.isFinite() || !c.baseline.isFinite()) return 0   // [v1.1.37 ①] NaN 오염 시 무보정 — coerceIn(NaN).roundToInt() 예외 방지
         val decay = (1.0 - (System.currentTimeMillis() - c.updatedAt).toDouble() / STALE_MS).coerceIn(0.0, 1.0)
         return if (activeSite.isEmpty()) {
             // 공용: 종전 공식 그대로(24h 후 0 수렴)
@@ -151,20 +160,22 @@ object UwbCalibrator {
 
     // 목록/플로팅용 거리 문자열. 빈 문자열 = 호출측이 기존 dBm 표기로 폴백.
     //   표시 모드 0 = dBm만 / 1 = UWB 실측 페어만 미터 / 2 = 전부 미터(비UWB 는 RSSI 역산 추정).
-    //   UWB 실측은 소수 1자리 확정 표기, 역산은 '약' 접두로 추정임을 구분한다.
-    fun distanceTextFor(deviceId: String, rssi: Int, uwbDistM: Float?): String {
+    //   [v1.1.37 ③] 거리 소스를 명시 태그로 노출 — UWB 실측 페어는 '·UWB', RSSI 역산은 '·RSSI'.
+    //   기존엔 UWB="3.2m" vs RSSI="약 3.2m" 로 '약' 접두만으로 구분해 사용자가 소스를 인지하지 못했다
+    //   (사용자: "왜 rssi로 거리 측정을 하고 있지?"). 이제 어느 페어가 UWB로 측정 중인지 한눈에 보인다.
+    fun distanceTextFor(pairKey: String, rssi: Int, uwbDistM: Float?): String {
         val mode = DevSettings.distanceDisplayMode
         if (mode <= 0) return ""
-        if (uwbDistM != null) return "%.1fm".format(uwbDistM)
+        if (uwbDistM != null) return "%.1fm·UWB".format(uwbDistM)
         if (mode < 2) return ""
-        val d = estimateDistanceM(deviceId, rssi)
-        return if (d < 9.95) "약 %.1fm".format(d) else "약 %.0fm".format(d)
+        val d = estimateDistanceM(pairKey, rssi)
+        return if (d < 9.95) "약 %.1fm·RSSI".format(d) else "약 %.0fm·RSSI".format(d)
     }
 
     // RSSI → 거리(m) 역산 — d = 10^((A − (rssi − Δeff)) / (10n)). Δeff = 감쇠 반영 학습 편차.
-    private fun estimateDistanceM(deviceId: String, rssi: Int): Double {
+    private fun estimateDistanceM(pairKey: String, rssi: Int): Double {
         var deltaEff = 0.0
-        val c = map[deviceId]
+        val c = map[pairKey]
         if (c != null && c.samples >= MIN_SAMPLES) {
             val decay = (1.0 - (System.currentTimeMillis() - c.updatedAt).toDouble() / STALE_MS).coerceIn(0.0, 1.0)
             deltaEff = if (activeSite.isEmpty()) c.delta * decay

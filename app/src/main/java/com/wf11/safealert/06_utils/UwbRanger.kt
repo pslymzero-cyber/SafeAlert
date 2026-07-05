@@ -22,44 +22,52 @@ import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * (v1.1.30) UWB 정밀 거리 측정 — androidx.core.uwb 1.0.0-alpha09 실구현.
+ * (v1.1.37) UWB 정밀 거리 측정 — androidx.core.uwb 1.0.0-alpha09 실구현. 다중기기 재작성.
  *
- * 역할 매핑: DEVICE=Controller / WALKER=Controlee 고정. (설계 초안의 '주소 비교 선출'은 상호
- * 주소를 알기 전엔 스코프를 만들 수 없는 순환 의존이라 역할 고정으로 확정. 같은 역할 페어는
- * BLE 전용으로 남는다.)
+ * 역할 선출(고정 아님): 모든 페어가 UWB 를 시도한다. 누가 컨트롤러/컨트롤리가 될지는 링크마다
+ * BLE 로 이미 보이는 정보(이름 프리픽스 → 차량/보행자, fullId → 동급 타이브레이크)만으로 양측이
+ * 동일하게 계산한다. 이 선출은 UWB 주소를 필요로 하지 않으므로(구 버전이 역할을 고정한 근거였던
+ * '상호 주소를 알기 전엔 스코프를 못 만드는 순환 의존'이 사라진다) 같은 역할 페어도 UWB 를 쓴다.
+ *   · 차량(지게차/EPJ, myIsVehicle=true) > 보행자(false) — 차량이 컨트롤러.
+ *   · 동급이면 fullId 가 작은 쪽이 컨트롤러.
  *
- * OOB(대역외) 합의: BLE 0x9ABC 스캔 응답으로 컨트롤러는 4바이트(주소2 + 채널 + 프리앰블 —
- * 채널은 스코프가 실제 할당받은 값), 컨트롤리는 2바이트(주소)를 광고한다. sessionId 와
- * STATIC STS 8바이트 키는 컨트롤러 주소 2바이트에서 양측이 동일하게 유도하므로 별도 협상
- * 패킷이 없다.
+ * 다중기기: 컨트롤러는 CONFIG_MULTICAST_DS_TWR 로 자신이 상위인 컨트롤리들을 동시에 측정한다.
+ * 단일 세션 하드웨어(대다수 폰) 현실상 한 기기는 한 시점에 스코프 1개(=역할 1개)만 돌린다. 그래서
+ * 링크별 선출은 '의도'이고, 실제 집계 역할은 위험도 우선순위로 정한다: 가장 위험한 링크에 그 한
+ * 세션을 쓴다(차량→컨트롤러로 보행자들 멀티캐스트 / 보행자→가장 급한 차량에 컨트롤리로 합류 /
+ * 차량 없는 보행자쌍→fullId 로 선출). 하드웨어가 못 감당하는 링크는 조용히 RSSI 로 폴백 —
+ * 오늘보다 나빠지지 않는다.
  *
- * 동시 세션은 1개(unicast, 1스코프=1세션 규칙). 세션이 끝나면 새 스코프(새 주소·새 채널)를
- * 만들고 [onLocalAddressChanged] 로 BLE 재광고를 트리거한다. 피어의 광고 페이로드가 바뀌면
- * (상대가 세션을 재시작한 것) 이쪽도 스코프를 갱신해 재합류한다.
+ * OOB(대역외) 합의: BLE 0x9ABC 스캔 응답으로 컨트롤러는 4바이트(주소2 + 채널 + 프리앰블),
+ * 컨트롤리는 2바이트(주소)를 광고한다(와이어 포맷은 종전과 동일 — 광고 주체만 선출로 바뀜).
+ * sessionId 와 STATIC STS 8바이트 키는 컨트롤러 주소 2바이트에서 양측이 동일하게 유도한다.
  *
- * 안전 불변식: 측정값은 [uwbDistances] 채움 + 상태줄 통지뿐 — 경보·거리 표시 파이프라인
- * (RSSI 기반)에는 일절 개입하지 않는다. 초기화·세션이 어떤 이유로든 실패하면 조용히 BLE
- * 전용으로 남는다(무봉합 폴백).
+ * 안전 불변식: 모든 UWB 연산은 try/catch → 실패 시 조용히 RSSI 폴백. [uwbDistances] 는 유한한
+ * 실측이 있을 때만 채워지고(경보·거리 표시 파이프라인은 부재 시 RSSI 사용), 이 클래스는 측정값
+ * 저장 + 상태줄 통지 외에 경보 로직에 개입하지 않는다.
  */
 class UwbRanger(
     private val context: Context,
     private val scope: CoroutineScope,
-    private val isDeviceMode: Boolean,          // true=Controller(DEVICE), false=Controlee(WALKER)
+    private val myFullId: String,               // 내 전체 광고 ID(prefix+id) — 동급 선출 비교 기준
+    private val myIsVehicle: Boolean,           // 내가 차량(지게차/EPJ, DEVICE 모드)인가
     private val onStatus: ((String) -> Unit)? = null,
     private val onLocalAddressChanged: ((ByteArray) -> Unit)? = null,
-    private val rssiOf: ((String) -> Int?)? = null,   // (v1.1.32) deviceId → 최근 평활 RSSI(dBm) — 세션 우선순위·시작 게이트용
-    private val forkliftPairOf: ((String) -> Boolean)? = null   // (v1.1.33) deviceId → 지게차 낀 쌍 여부 — 게이트 완화·우선순위 가산용
+    private val rssiOf: ((String) -> Int?)? = null,   // deviceId → 최근 평활 RSSI(dBm) — 세션 우선순위·시작 게이트용
+    private val forkliftPairOf: ((String) -> Boolean)? = null   // deviceId → 지게차 낀 쌍 여부 — 게이트 완화·우선순위 가산용
 ) {
     companion object {
         private const val TAG = "UwbRanger"
         private const val SESSION_ID_BASE = 0x00570000        // 'W'(0x57) 프리픽스 — 앱 고유 네임스페이스
         private const val RESTART_BACKOFF_MS = 10_000L        // 세션 오류·피어 해제 후 재시도 대기
-        private const val REJOIN_DELAY_MS = 1_000L            // 피어 재광고·이탈 등 즉시성 재시작 대기
+        private const val REJOIN_DELAY_MS = 1_000L            // 피어 재광고·이탈 등 즉시성 재시작(디바운스) 대기
         private const val STATUS_THROTTLE_MS = 3_000L         // 거리 상태줄 전파 최소 간격
-        private const val SWITCH_HYSTERESIS_DB = 6            // (v1.1.32) 직전 피어 유지 히스테리시스(재선정 핑퐁 방지)
-        private const val FORKLIFT_RANK_BIAS_DB = 12          // (v1.1.33) 지게차 낀 쌍 우선순위 가산 — 단일 세션 경쟁에서 더 가까운 비지게차 쌍에 세션을 뺏겨 15m 경고가 무력화되는 것 방지
+        private const val SWITCH_HYSTERESIS_DB = 6            // 컨트롤러 재선정 핑퐁 방지 히스테리시스
+        private const val FORKLIFT_RANK_BIAS_DB = 12          // 지게차 낀 쌍 우선순위 가산 — 단일 세션 경쟁에서 15m 경고가 밀리지 않게
+        private const val GATE_RELEASE_MARGIN_DB = 8         // 이미 측정 중인 상대는 게이트를 이만큼 완화해 유지(경계 진동 억제)
+        private const val MULTICAST_MAX = 6                  // 한 컨트롤러가 동시에 측정할 컨트롤리 상한(하드웨어 여유·튜닝 지점)
 
-        // (v1.1.34) 접근속도 운동학 — dt 연속성 창·평활 계수·이탈 데드밴드
+        // 접근속도 운동학 — dt 연속성 창·평활 계수·이탈 데드밴드
         private const val KIN_DT_MIN_MS = 60L         // 이보다 촘촘한 표본은 미분 노이즈 증폭 — 직전 기준점 유지
         private const val KIN_DT_MAX_MS = 2000L       // 이보다 벌어지면 연속성 단절 — 운동학 리셋
         private const val KIN_EMA_ALPHA = 0.45f       // 평활 접근속도 EMA 계수(표본 약 240ms 간격 기준)
@@ -72,6 +80,16 @@ class UwbRanger(
         }
     }
 
+    private enum class Role { NONE, CONTROLLER, CONTROLEE }
+
+    /** 재구성 목표(순수 계산 결과) — NONE=대기(컨트롤리 광고만) / CONTROLLER=멀티캐스트 측정 / CONTROLEE=합류 */
+    private class Desired(
+        val role: Role,
+        val controllerId: String?,          // CONTROLEE: 합류할 컨트롤러
+        val controllerPayload: ByteArray?,  // CONTROLEE: 그 컨트롤러의 4바이트 OOB
+        val controlees: List<String>        // CONTROLLER: 측정할 컨트롤리 deviceId(우선순위순)
+    )
+
     /** UWB 실가동 여부 — initSession() 성공 시 true (미지원·권한 없음·초기화 실패 = false → BLE 폴백) */
     @Volatile var isSupported: Boolean = false
         private set
@@ -79,7 +97,7 @@ class UwbRanger(
     /** deviceId(fullId) → 최근 UWB 실측 거리(m). 세션 없는 기기는 항상 부재 → BLE 폴백 */
     val uwbDistances: MutableMap<String, Float> = ConcurrentHashMap()
 
-    // (v1.1.34) UWB 실측 운동학 — 연속 거리 표본을 미분한 접근속도(+ = 접근)와 지속 표본 수.
+    // UWB 실측 운동학 — 연속 거리 표본을 미분한 접근속도(+ = 접근)와 지속 표본 수.
     //   uwbDistances 와 같은 수명(세션 종료·피어 이탈·중지 시 즉시 제거) — 값이 있으면 라이브 실측.
     data class UwbKin(val closingMps: Float, val approachStreak: Int, val separatingStreak: Int, val atMs: Long)
 
@@ -94,18 +112,30 @@ class UwbRanger(
     private var uwbManager: UwbManager? = null
     private var sessionScope: UwbClientSessionScope? = null   // 1스코프=1세션 — prepareSession 후 소진
     private var rangingJob: Job? = null
-    private var activePeerId: String? = null
-    private var activePeerPayload: ByteArray? = null
-    private val candidates = LinkedHashMap<String, ByteArray>()   // deviceId → 최신 OOB 페이로드(수신 순서)
-    private var lastActivePeerId: String? = null                  // (v1.1.32) 직전 세션 피어 — 선택 히스테리시스 기준
+    private var sessionGen = 0                                // 세션 세대 토큰 — stale 콜백 무효화
+
+    @Volatile private var role: Role = Role.NONE
+
+    // CONTROLEE 상태 — 내가 합류한 컨트롤러
+    @Volatile private var activeControllerId: String? = null
+    @Volatile private var activeControllerPayload: ByteArray? = null
+    @Volatile private var activeControllerAddrHex: String? = null   // 결과 귀속 매칭용(컨트롤러 주소 2B)
+    private var lastActiveControllerId: String? = null              // 컨트롤러 재선정 히스테리시스 기준
+
+    // CONTROLLER 상태 — 내가 측정 중인 컨트롤리들
+    private val servedControlees = LinkedHashMap<String, ByteArray>()      // deviceId → 컨트롤리 주소 2B
+    private val servedAddrToId = ConcurrentHashMap<String, String>()       // 주소hex → deviceId (멀티캐스트 결과 귀속)
+
+    private val candidates = LinkedHashMap<String, ByteArray>()   // deviceId → 최신 OOB 페이로드(2B/4B)
     private var restartScheduled = false
     private var stopped = false
     @Volatile private var lastStatusAt = 0L
 
     /**
      * UWB 세션 스코프 초기화 및 BLE 광고용 OOB 페이로드 획득.
-     * 컨트롤러 4바이트 / 컨트롤리 2바이트. 실패(미지원·권한 없음·UWB OFF·하드웨어 오류) 시
-     * null 반환 → 호출부(BleService)는 UWB 없는 광고를 그대로 유지한다.
+     * 대기 역할은 컨트롤리(2바이트) — 도착하는 상위 기기가 즉시 발견·합류할 수 있게 한다. 실제 역할은
+     * 피어가 보이는 대로 reconcile 이 승격/합류로 바꾼다. 실패(미지원·권한 없음·UWB OFF·오류) 시 null
+     * 반환 → 호출부(BleService)는 UWB 없는 광고를 그대로 유지한다.
      */
     suspend fun initSession(): ByteArray? {
         if (!isHardwareSupported(context)) {
@@ -123,17 +153,17 @@ class UwbRanger(
                 Log.i(TAG, "UWB 서비스 비활성(기기 설정 OFF 등) — BLE 전용으로 동작")
                 return null
             }
-            val s = if (isDeviceMode) mgr.controllerSessionScope() else mgr.controleeSessionScope()
-            val payload = buildAdvertisePayload(s)
+            val s = mgr.controleeSessionScope()          // 대기 역할 = 컨트롤리(합류 가능 상태로 발견되게)
+            val payload = buildAdvertisePayload(s)        // 2바이트
             synchronized(this) {
                 if (stopped) return null
                 uwbManager = mgr
                 sessionScope = s
                 localAddress = s.localAddress.address.copyOf()
+                role = Role.NONE
                 isSupported = true
             }
-            Log.i(TAG, "UWB 초기화 완료: role=${if (isDeviceMode) "controller" else "controlee"} " +
-                    "payload=${payload.toHex()}")
+            Log.i(TAG, "UWB 초기화 완료(대기=컨트롤리, vehicle=$myIsVehicle) payload=${payload.toHex()}")
             payload
         } catch (e: Exception) {
             Log.w(TAG, "UWB 초기화 실패 — BLE 전용으로 동작: ${e.message}")
@@ -142,47 +172,29 @@ class UwbRanger(
     }
 
     /**
-     * BLE 스캔 응답(0x9ABC)에서 피어의 UWB OOB 페이로드 수신.
-     * 스캔 콜백(바인더 스레드)에서 호출됨 — 상태 뮤테이션은 동기화로 보호.
+     * BLE 스캔 응답(0x9ABC)에서 피어의 UWB OOB 페이로드 수신 — 역할·소스 제한 없이 모든 피어 수용.
+     * 스캔 콜백(바인더 스레드)에서 호출됨 — 상태 뮤테이션은 동기화로 보호. 매 수신마다 reconcile 을
+     * 돌려 RSSI/게이트 변화까지 반영하되, 실제 세션 재구성은 목표가 바뀔 때만(디바운스+가드).
      */
     @Synchronized
     fun onPeerUwbAddressReceived(deviceId: String, peerUwbAddr: ByteArray) {
         if (stopped || !isSupported) return
-        // 역할 필터: DEVICE(컨트롤러) ↔ WALKER(컨트롤리) 페어만 UWB — 같은 역할끼리는 BLE 전용
-        val expectedPrefix = if (isDeviceMode) BleConstants.WALKER_PREFIX else BleConstants.DEVICE_PREFIX
-        if (!deviceId.startsWith(expectedPrefix)) return
-        // 컨트롤리는 컨트롤러의 채널 정보까지 4바이트 필요, 컨트롤러는 컨트롤리 주소 2바이트면 충분
-        val needed = if (isDeviceMode) 2 else 4
-        if (peerUwbAddr.size < needed) return
-
-        val payload = peerUwbAddr.copyOf(needed)
-        if (deviceId == activePeerId) {
-            if (activePeerPayload?.contentEquals(payload) == true) return   // 변화 없음(dedupe)
-            // 피어가 새 스코프로 재광고(상대측 세션 재시작) — 이쪽도 스코프를 갱신해 재합류
-            Log.d(TAG, "피어 페이로드 변경 — 세션 재합류: ${deviceId}")
-            candidates[deviceId] = payload
-            stopActiveLocked()
-            scheduleRestartLocked(REJOIN_DELAY_MS)
-            return
-        }
-        candidates[deviceId] = payload
-        if (activePeerId == null) {
-            if (sessionScope != null) startNextLocked()
-            else scheduleRestartLocked(REJOIN_DELAY_MS)   // 스코프 소진 상태 — 갱신 후 시작
-        }
+        if (peerUwbAddr.size < 2) return
+        candidates[deviceId] = peerUwbAddr.copyOf(minOf(peerUwbAddr.size, 4))   // 컨트롤러 4B / 컨트롤리 2B
+        reconcileLocked()
     }
 
-    /** BLE 스캔에서 피어 이탈 시 호출 — 후보·거리 제거, 활성 세션 상대였다면 다음 후보로 */
+    /** BLE 스캔에서 피어 이탈 시 호출 — 후보·거리 제거, 활성 상대였다면 재구성 */
     @Synchronized
     fun onDeviceLost(deviceId: String) {
         candidates.remove(deviceId)
-        uwbDistances.remove(deviceId)
-        uwbKinematics.remove(deviceId)
-        lastSampleMap.remove(deviceId)
-        if (deviceId == activePeerId) {
-            Log.d(TAG, "활성 UWB 피어 이탈: ${deviceId}")
+        dropServedLocked(deviceId)   // 서빙 중이었으면 서빙맵·거리 제거(아니어도 거리/운동학 정리 — 무해)
+        if (deviceId == activeControllerId) {
+            Log.d(TAG, "합류 중이던 컨트롤러 이탈: $deviceId")
             stopActiveLocked()
             scheduleRestartLocked(REJOIN_DELAY_MS)
+        } else {
+            reconcileLocked()   // 남은 상대로 역할 재평가(가드가 불필요한 재구성 차단)
         }
     }
 
@@ -192,11 +204,16 @@ class UwbRanger(
         stopped = true
         rangingJob?.cancel()
         rangingJob = null
-        activePeerId = null
-        activePeerPayload = null
-        lastActivePeerId = null
+        sessionGen++
         sessionScope = null
         uwbManager = null
+        role = Role.NONE
+        activeControllerId = null
+        activeControllerPayload = null
+        activeControllerAddrHex = null
+        lastActiveControllerId = null
+        servedControlees.clear()
+        servedAddrToId.clear()
         candidates.clear()
         uwbDistances.clear()
         uwbKinematics.clear()
@@ -206,19 +223,122 @@ class UwbRanger(
         Log.d(TAG, "UwbRanger 중지")
     }
 
-    // ── 내부 구현 ──────────────────────────────────────────────────────────
+    // ── 선출·위험도(BLE 가시 정보만) ────────────────────────────────────────
 
-    /** 활성 세션 정리(동기화 블록 안에서만 호출) — prepareSession 이 소비된 스코프는 함께 버린다 */
-    private fun stopActiveLocked() {
-        rangingJob?.cancel()
-        rangingJob = null
-        activePeerId?.let { uwbDistances.remove(it); uwbKinematics.remove(it); lastSampleMap.remove(it) }
-        activePeerId = null
-        activePeerPayload = null
-        sessionScope = null
+    /** 차량 여부는 이름 프리픽스로 판정 — UWB 주소 도착 전에도 확정(경합 없음) */
+    private fun peerIsVehicle(id: String): Boolean = id.startsWith(BleConstants.DEVICE_PREFIX)
+
+    /** 이 링크에서 피어가 나보다 상위인가(피어가 컨트롤러여야 하는가) */
+    private fun peerOutranksMe(id: String): Boolean {
+        val pv = peerIsVehicle(id)
+        if (pv != myIsVehicle) return pv   // 차량 > 보행자
+        return id < myFullId               // 동급 — 작은 fullId 가 컨트롤러
     }
 
-    /** 스코프 갱신+다음 세션 시작 예약(동기화 블록 안에서만 호출) — 중복 예약 방지 */
+    /** 링크 위험도: 차량↔보행자=2(최우선), 차량↔차량=1, 보행자↔보행자=0 */
+    private fun pairDanger(peerVeh: Boolean): Int =
+        if (peerVeh != myIsVehicle) 2 else if (myIsVehicle) 1 else 0
+
+    private fun isForkliftPair(id: String): Boolean = forkliftPairOf?.invoke(id) == true
+
+    /** 세션 우선순위 랭크 — RSSI(강할수록 가까움) + 지게차 가산 */
+    private fun rankOf(id: String): Int =
+        (rssiOf?.invoke(id) ?: 0) + if (isForkliftPair(id)) FORKLIFT_RANK_BIAS_DB else 0
+
+    /** 시작 게이트 통과 여부 — 이미 측정 중인 상대는 완화(경계 진동 억제). rssiOf 미제공 시 항상 통과 */
+    private fun gatePassLocked(id: String): Boolean {
+        val f = rssiOf ?: return true
+        val base = if (isForkliftPair(id)) DevSettings.uwbStartRssiGateForklift else DevSettings.uwbStartRssiGate
+        val active = servedControlees.containsKey(id) || id == activeControllerId
+        val gate = if (active) base - GATE_RELEASE_MARGIN_DB else base
+        return (f.invoke(id) ?: Int.MIN_VALUE) >= gate
+    }
+
+    // ── 재구성(reconcile) ──────────────────────────────────────────────────
+
+    /**
+     * 현재 후보/역할/RSSI 로 목표 세션을 계산(순수). 단일 세션 하드웨어 전제로 집계 역할을 위험도
+     * 우선순위로 정한다. 실제 측정은 상대가 '호환되는 포맷'으로 광고 중인 링크만(컨트롤러는 2B
+     * 컨트롤리를, 컨트롤리는 4B 컨트롤러를) 대상으로 하며, 어긋난 링크는 조용히 RSSI 로 남는다.
+     */
+    private fun computeDesiredLocked(): Desired {
+        if (candidates.isEmpty()) return Desired(Role.NONE, null, null, emptyList())
+        val joinable = ArrayList<String>()      // 피어가 상위 + 컨트롤러(4B) 광고 + 게이트 → 합류 후보
+        val controllable = ArrayList<String>()  // 내가 상위 + 컨트롤리(2B) 광고 + 게이트 → 측정 후보
+        for ((id, p) in candidates) {
+            if (!gatePassLocked(id)) continue
+            val out = peerOutranksMe(id)
+            if (out && p.size >= 4) joinable.add(id)
+            else if (!out && p.size < 4) controllable.add(id)
+        }
+        val dangerControl = controllable.maxOfOrNull { pairDanger(peerIsVehicle(it)) } ?: -1
+        val dangerJoin = joinable.maxOfOrNull { pairDanger(peerIsVehicle(it)) } ?: -1
+
+        // 더 위험한 방향에 단일 세션을 쓴다. 동률이면 컨트롤러 우선(멀티캐스트로 다수를 커버).
+        if (controllable.isNotEmpty() && dangerControl >= dangerJoin) {
+            val sorted = controllable.sortedByDescending { rankOf(it) }
+            val served = sorted.take(MULTICAST_MAX)
+            if (served.size < controllable.size) {
+                Log.i(TAG, "멀티캐스트 상한 초과 — ${controllable.size}→${served.size} (나머지 RSSI 폴백)")
+            }
+            return Desired(Role.CONTROLLER, null, null, served)
+        }
+        if (joinable.isNotEmpty()) {
+            val best = chooseControllerLocked(joinable)
+                ?: return Desired(Role.NONE, null, null, emptyList())
+            return Desired(Role.CONTROLEE, best, candidates[best], emptyList())
+        }
+        return Desired(Role.NONE, null, null, emptyList())
+    }
+
+    /** 합류할 컨트롤러 선정: 위험도 우선 → 랭크(가까움) 우선, 직전 선택은 히스테리시스로 유지 */
+    private fun chooseControllerLocked(joinable: List<String>): String? {
+        if (joinable.isEmpty()) return null
+        val best = joinable.sortedWith(
+            compareByDescending<String> { pairDanger(peerIsVehicle(it)) }.thenByDescending { rankOf(it) }
+        ).first()
+        val keep = lastActiveControllerId?.takeIf {
+            it in joinable &&
+                pairDanger(peerIsVehicle(it)) >= pairDanger(peerIsVehicle(best)) &&
+                rankOf(it) >= rankOf(best) - SWITCH_HYSTERESIS_DB
+        }
+        return keep ?: best
+    }
+
+    /** 현재 가동 세션이 목표와 동일한가(동일하면 재구성 불필요) */
+    private fun sameAsActiveLocked(d: Desired): Boolean {
+        if (d.role != role) return false
+        return when (d.role) {
+            Role.NONE -> true
+            Role.CONTROLLER -> {
+                if (d.controlees.size != servedControlees.size) return false
+                d.controlees.all { id ->
+                    val cur = servedControlees[id] ?: return@all false
+                    val want = candidates[id]?.copyOf(2) ?: return@all false
+                    cur.contentEquals(want)
+                }
+            }
+            Role.CONTROLEE -> d.controllerId == activeControllerId &&
+                (d.controllerPayload?.contentEquals(activeControllerPayload ?: ByteArray(0)) == true)
+        }
+    }
+
+    /** 재구성이 필요한가 — 대기 목표는 가동 세션이 있으면 정지 필요, 그 외는 미가동/불일치면 필요 */
+    private fun needsRebuildLocked(): Boolean {
+        val d = computeDesiredLocked()
+        return if (d.role == Role.NONE) {
+            rangingJob != null || role != Role.NONE
+        } else {
+            rangingJob == null || !sameAsActiveLocked(d)
+        }
+    }
+
+    private fun reconcileLocked() {
+        if (stopped || uwbManager == null) return
+        if (needsRebuildLocked()) scheduleRestartLocked(REJOIN_DELAY_MS)
+    }
+
+    /** 재구성 예약(동기화 블록 안에서만) — 디바운스(중복 예약 방지). 정지는 fire 시점에 renew 가 수행 */
     private fun scheduleRestartLocked(delayMs: Long) {
         if (stopped || restartScheduled) return
         restartScheduled = true
@@ -228,106 +348,180 @@ class UwbRanger(
             } finally {
                 synchronized(this@UwbRanger) { restartScheduled = false }
             }
-            renewScopeAndStartNext()
+            renewAndStart()
         }
     }
 
+    /** 활성 세션 정리(동기화 블록 안에서만) — 세대 증가로 in-flight 콜백을 무효화하고 상태를 대기로 */
+    private fun stopActiveLocked() {
+        rangingJob?.cancel()
+        rangingJob = null
+        sessionGen++
+        sessionScope = null
+        servedControlees.keys.forEach { uwbDistances.remove(it); uwbKinematics.remove(it); lastSampleMap.remove(it) }
+        activeControllerId?.let { uwbDistances.remove(it); uwbKinematics.remove(it); lastSampleMap.remove(it) }
+        servedControlees.clear()
+        servedAddrToId.clear()
+        activeControllerId = null
+        activeControllerPayload = null
+        activeControllerAddrHex = null
+        role = Role.NONE
+    }
+
+    /** 서빙 컨트롤리 1개 제거(동기화 블록 안에서만) — 서빙맵·거리·운동학 동시 정리 */
+    private fun dropServedLocked(id: String) {
+        val addr = servedControlees.remove(id)
+        if (addr != null) servedAddrToId.remove(addr.toHex())
+        uwbDistances.remove(id)
+        uwbKinematics.remove(id)
+        lastSampleMap.remove(id)
+    }
+
     /**
-     * 새 세션 스코프 생성 → 새 로컬 주소로 BLE 재광고 트리거 → 대기 후보와 세션 시작.
-     * 스코프는 1회용이라 세션이 끝날 때마다 여기로 온다. 갱신에 실패하면 다음 피어 광고
-     * 수신이 자연 재시도 트리거가 된다(onPeerUwbAddressReceived 의 스코프 부재 분기).
+     * 목표 역할에 맞는 새 스코프 생성 → 새 로컬 주소로 BLE 재광고 → 세션 시작. 스코프는 1회용이라
+     * 세션이 끝나거나 목표가 바뀔 때마다 여기로 온다. 정지→생성 사이의 짧은 공백은 RSSI 가 덮는다.
+     * 스코프 생성/파라미터 실패는 조용히 폴백(다음 스캔 수신 또는 백오프가 자연 재시도).
      */
-    private suspend fun renewScopeAndStartNext() {
-        val mgr = synchronized(this) {
-            if (stopped || sessionScope != null || activePeerId != null) return
-            uwbManager
-        } ?: return
-        val newScope = try {
-            if (isDeviceMode) mgr.controllerSessionScope() else mgr.controleeSessionScope()
-        } catch (e: Exception) {
-            Log.w(TAG, "UWB 스코프 갱신 실패(다음 수신 시 재시도): ${e.message}")
-            return
-        }
-        val payload = try {
-            buildAdvertisePayload(newScope)
-        } catch (e: Exception) {
-            Log.w(TAG, "UWB 페이로드 구성 실패: ${e.message}")
-            return
-        }
-        synchronized(this) {
+    private suspend fun renewAndStart() {
+        val plan = synchronized(this) {
             if (stopped) return
-            sessionScope = newScope
-            localAddress = newScope.localAddress.address.copyOf()
+            val mgr = uwbManager ?: return
+            val desired = computeDesiredLocked()
+            if (rangingJob != null && sameAsActiveLocked(desired)) return   // 이미 목표대로 가동 중 — 유지
+            stopActiveLocked()                                             // 현 세션 정리(세대 증가)
+            Triple(mgr, desired, sessionGen)
         }
-        onLocalAddressChanged?.invoke(payload)   // BLE 스캔 응답 갱신(재광고)
-        synchronized(this) { if (!stopped) startNextLocked() }
-    }
+        val (mgr, desired, gen) = plan
 
-    /**
-     * (v1.1.32) 대기 후보 중 세션 상대 선정 후 레인징 시작(동기화 블록 안에서만 호출).
-     * 선정 규칙: BLE 평활 RSSI 최강 후보 우선 — 가장 가까운 페어가 곧 가장 위험한 페어.
-     *   직전 세션 피어가 최강 대비 SWITCH_HYSTERESIS_DB 이내면 유지(재선정 핑퐁 방지).
-     * 시작 게이트(배터리 듀티사이클): RSSI 가 게이트 미만이거나 미추적인 후보는 세션을
-     *   시작하지 않는다. 후보는 스캔 응답 수신마다 재평가되므로 접근하면 자연 개시.
-     *   활성 세션은 게이트와 무관하게 자연 종료까지 유지(시작 시점만 게이트).
-     *   rssiOf 미제공(단독 사용) 시엔 게이트·우선순위 없이 종전대로 첫 후보를 쓴다.
-     * (v1.1.33) 지게차 낀 쌍 차등 — 게이트는 완화값(uwbStartRssiGateForklift, 기본 -90)을
-     *   써서 15m 경고 반경 밖에서도 세션을 열고, 우선순위 rank 에 FORKLIFT_RANK_BIAS_DB 를
-     *   가산해 단일 세션 경쟁에서 지게차 쌍이 밀리지 않게 한다(승격 임계가 15/8m 로 넓어
-     *   같은 RSSI 면 지게차 쌍의 실측이 더 급하다). forkliftPairOf 미제공 시 종전과 동일.
-     */
-    private fun startNextLocked() {
-        if (stopped || activePeerId != null) return
-        val s = sessionScope ?: return
-        if (candidates.isEmpty()) return
-        fun isForkliftPair(id: String): Boolean = forkliftPairOf?.invoke(id) == true
-        fun rankOf(id: String): Int {
-            val r = rssiOf?.invoke(id) ?: return Int.MIN_VALUE   // 미추적 — 가산 전 반환(오버플로 방지)
-            return r + if (isForkliftPair(id)) FORKLIFT_RANK_BIAS_DB else 0
-        }
-        val deviceId: String = if (rssiOf == null) {
-            candidates.keys.first()
-        } else {
-            val eligible = candidates.keys.filter {
-                val gate = if (isForkliftPair(it)) DevSettings.uwbStartRssiGateForklift
-                           else DevSettings.uwbStartRssiGate
-                (rssiOf?.invoke(it) ?: Int.MIN_VALUE) >= gate   // 게이트는 raw RSSI 기준(가산 없음)
+        when (desired.role) {
+            Role.NONE -> {
+                // 대기: 발견 가능한 컨트롤리로 광고만(세션 없음)
+                val sc = try {
+                    mgr.controleeSessionScope()
+                } catch (e: Exception) {
+                    Log.w(TAG, "UWB 대기 스코프 생성 실패(백오프 재시도): ${e.message}")
+                    synchronized(this) { scheduleRestartLocked(RESTART_BACKOFF_MS) }
+                    return
+                }
+                val payload = try { buildAdvertisePayload(sc) } catch (e: Exception) { return }
+                synchronized(this) {
+                    if (stopped || gen != sessionGen) return
+                    sessionScope = sc
+                    localAddress = sc.localAddress.address.copyOf()
+                    role = Role.NONE
+                }
+                onLocalAddressChanged?.invoke(payload)
             }
-            if (eligible.isEmpty()) return
-            val best = eligible.maxByOrNull { rankOf(it) } ?: return
-            lastActivePeerId
-                ?.takeIf { it in eligible && rankOf(it) >= rankOf(best) - SWITCH_HYSTERESIS_DB }
-                ?: best
+
+            Role.CONTROLLER -> {
+                val sc: UwbControllerSessionScope = try {
+                    mgr.controllerSessionScope()
+                } catch (e: Exception) {
+                    Log.w(TAG, "UWB 컨트롤러 스코프 생성 실패(백오프 재시도): ${e.message}")
+                    synchronized(this) { scheduleRestartLocked(RESTART_BACKOFF_MS) }
+                    return
+                }
+                val payload = try { buildAdvertisePayload(sc) } catch (e: Exception) { return }
+                val served = LinkedHashMap<String, ByteArray>()
+                synchronized(this) {
+                    if (stopped || gen != sessionGen) return
+                    sessionScope = sc
+                    localAddress = sc.localAddress.address.copyOf()
+                    role = Role.CONTROLLER
+                    servedControlees.clear(); servedAddrToId.clear()
+                    for (id in desired.controlees) {
+                        val p = candidates[id] ?: continue      // 계산~구성 사이 이탈한 후보는 스킵
+                        val addr = p.copyOf(2)
+                        served[id] = addr
+                        servedControlees[id] = addr
+                        servedAddrToId[addr.toHex()] = id
+                    }
+                }
+                onLocalAddressChanged?.invoke(payload)
+                if (served.isEmpty()) {
+                    // 구성 시점에 대상이 모두 사라짐 — 다음 수신/재구성이 정정
+                    synchronized(this) { if (gen == sessionGen && !stopped) scheduleRestartLocked(REJOIN_DELAY_MS) }
+                    return
+                }
+                val job = scope.launch { runControllerSession(sc, served, gen) }
+                synchronized(this) { if (gen == sessionGen && !stopped) rangingJob = job else job.cancel() }
+                onStatus?.invoke("UWB 컨트롤러: ${served.size}대 측정")
+                Log.d(TAG, "UWB 컨트롤러 시작 — ${served.keys.joinToString { shortId(it) }}")
+            }
+
+            Role.CONTROLEE -> {
+                val cid = desired.controllerId ?: return
+                val cpayload = desired.controllerPayload ?: return
+                if (cpayload.size < 4) return
+                val sc = try {
+                    mgr.controleeSessionScope()
+                } catch (e: Exception) {
+                    Log.w(TAG, "UWB 컨트롤리 스코프 생성 실패(백오프 재시도): ${e.message}")
+                    synchronized(this) { scheduleRestartLocked(RESTART_BACKOFF_MS) }
+                    return
+                }
+                val payload = try { buildAdvertisePayload(sc) } catch (e: Exception) { return }
+                synchronized(this) {
+                    if (stopped || gen != sessionGen) return
+                    sessionScope = sc
+                    localAddress = sc.localAddress.address.copyOf()
+                    role = Role.CONTROLEE
+                    activeControllerId = cid
+                    activeControllerPayload = cpayload
+                    activeControllerAddrHex = cpayload.copyOf(2).toHex()
+                    lastActiveControllerId = cid
+                }
+                onLocalAddressChanged?.invoke(payload)
+                val job = scope.launch { runControleeSession(sc, cpayload, gen) }
+                synchronized(this) { if (gen == sessionGen && !stopped) rangingJob = job else job.cancel() }
+                onStatus?.invoke("UWB 합류: ${shortId(cid)}")
+                Log.d(TAG, "UWB 컨트롤리 시작 — 컨트롤러 ${shortId(cid)}")
+            }
         }
-        val payload = candidates[deviceId] ?: return
-        activePeerId = deviceId
-        activePeerPayload = payload
-        lastActivePeerId = deviceId
-        rangingJob = scope.launch { runSession(s, deviceId, payload) }
-        Log.d(TAG, "UWB 세션 시작: ${deviceId} rssi=${rssiOf?.invoke(deviceId)} 후보=${candidates.size}")
     }
 
     /**
-     * 단일 피어와 레인징 세션 실행 — prepareSession 은 스코프당 1회만 소비 가능.
-     * CONFIG_UNICAST_DS_TWR(STATIC STS): sessionId/sessionKeyInfo 를 컨트롤러 주소 2바이트에서
-     * 양측이 동일하게 유도한다(OOB 광고만으로 파라미터 합의 — 협상 채널 없음).
+     * 컨트롤러 멀티캐스트 세션 — CONFIG_MULTICAST_DS_TWR 로 여러 컨트롤리를 동시에 측정.
+     * sessionId/키는 내 컨트롤러 주소 2바이트에서 유도(컨트롤리들이 광고로 동일 유도).
      */
-    private suspend fun runSession(s: UwbClientSessionScope, deviceId: String, payload: ByteArray) {
+    private suspend fun runControllerSession(
+        sc: UwbControllerSessionScope, served: Map<String, ByteArray>, gen: Int
+    ) {
         val params = try {
-            buildParameters(s, payload)
+            buildMulticastParameters(sc, served.values.toList())
         } catch (e: Exception) {
-            Log.w(TAG, "UWB 파라미터 구성 실패: ${e.message}")
-            onSessionEnded(deviceId, "파라미터 오류")
-            return
+            Log.w(TAG, "컨트롤러 파라미터 구성 실패: ${e.message}")
+            onSessionEnded(gen, "파라미터 오류"); return
         }
         try {
-            s.prepareSession(params).collect { result -> handleResult(deviceId, result) }
-            onSessionEnded(deviceId, "스트림 종료")
+            sc.prepareSession(params).collect { result -> handleResult(result) }
+            onSessionEnded(gen, "스트림 종료")
         } catch (e: CancellationException) {
-            throw e   // 취소 주체(stopActiveLocked/stop)가 후속을 관리 — 재시작 사이클 중복 방지
+            throw e
         } catch (e: Exception) {
-            Log.w(TAG, "UWB 세션 오류: ${e.message}")
-            onSessionEnded(deviceId, "오류")
+            Log.w(TAG, "컨트롤러 세션 오류: ${e.message}")
+            onSessionEnded(gen, "오류")
+        }
+    }
+
+    /** 컨트롤리 세션 — 지정 컨트롤러에 합류(단일 피어). 결과는 activeControllerAddrHex→activeControllerId 로 귀속 */
+    private suspend fun runControleeSession(
+        sc: UwbClientSessionScope, controllerPayload: ByteArray, gen: Int
+    ) {
+        val params = try {
+            buildJoinParameters(controllerPayload)
+        } catch (e: Exception) {
+            Log.w(TAG, "컨트롤리 파라미터 구성 실패: ${e.message}")
+            onSessionEnded(gen, "파라미터 오류"); return
+        }
+        try {
+            sc.prepareSession(params).collect { result -> handleResult(result) }
+            onSessionEnded(gen, "스트림 종료")
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "컨트롤리 세션 오류: ${e.message}")
+            onSessionEnded(gen, "오류")
         }
     }
 
@@ -342,56 +536,107 @@ class UwbRanger(
         }
     }
 
-    private fun buildParameters(s: UwbClientSessionScope, payload: ByteArray): RangingParameters {
-        // 컨트롤러 주소 2바이트 = 세션 파라미터 유도의 단일 기준(양측 동일값 보장)
-        val ctrlA0: Byte
-        val ctrlA1: Byte
-        val complexChannel: UwbComplexChannel
-        if (s is UwbControllerSessionScope) {
-            val myAddr = s.localAddress.address
-            ctrlA0 = myAddr[0]; ctrlA1 = myAddr[1]
-            complexChannel = s.uwbComplexChannel          // 시스템이 실할당한 채널(광고로 이미 공유됨)
-        } else {
-            ctrlA0 = payload[0]; ctrlA1 = payload[1]
-            complexChannel = UwbComplexChannel(payload[2].toInt() and 0xFF, payload[3].toInt() and 0xFF)
-        }
-        val sessionId = SESSION_ID_BASE or ((ctrlA0.toInt() and 0xFF) shl 8) or (ctrlA1.toInt() and 0xFF)
-        // STATIC STS 는 정확히 8바이트 키 필수 — "WF" + 컨트롤러 주소 2B + "SAFE"
-        val sessionKey = byteArrayOf(0x57, 0x46, ctrlA0, ctrlA1, 0x53, 0x41, 0x46, 0x45)
-        val peer = UwbDevice.createForAddress(payload.copyOf(2))
+    /** 컨트롤러(멀티캐스트) 파라미터 — 내 주소에서 sessionId/키 유도, 컨트롤리 다수를 peerDevices 로 */
+    private fun buildMulticastParameters(
+        sc: UwbControllerSessionScope, controleeAddrs: List<ByteArray>
+    ): RangingParameters {
+        val myAddr = sc.localAddress.address
+        val a0 = myAddr[0]; val a1 = myAddr[1]
+        val peers = controleeAddrs.map { UwbDevice.createForAddress(it.copyOf(2)) }
         return RangingParameters(
-            uwbConfigType = RangingParameters.CONFIG_UNICAST_DS_TWR,
-            sessionId = sessionId,
+            uwbConfigType = RangingParameters.CONFIG_MULTICAST_DS_TWR,
+            sessionId = deriveSessionId(a0, a1),
             subSessionId = 0,
-            sessionKeyInfo = sessionKey,
+            sessionKeyInfo = deriveSessionKey(a0, a1),
             subSessionKeyInfo = null,
-            complexChannel = complexChannel,
-            peerDevices = listOf(peer),
+            complexChannel = sc.uwbComplexChannel,   // 시스템이 실할당한 채널(광고로 이미 공유됨)
+            peerDevices = peers,
             updateRateType = RangingParameters.RANGING_UPDATE_RATE_AUTOMATIC
         )
     }
 
-    private fun handleResult(deviceId: String, result: RangingResult) {
+    /** 컨트롤리 파라미터 — 컨트롤러의 4바이트 OOB(주소2+채널+프리앰블)에서 세션을 동일 유도 */
+    private fun buildJoinParameters(controllerPayload: ByteArray): RangingParameters {
+        val a0 = controllerPayload[0]; val a1 = controllerPayload[1]
+        val ch = UwbComplexChannel(controllerPayload[2].toInt() and 0xFF, controllerPayload[3].toInt() and 0xFF)
+        val controller = UwbDevice.createForAddress(controllerPayload.copyOf(2))
+        return RangingParameters(
+            uwbConfigType = RangingParameters.CONFIG_MULTICAST_DS_TWR,
+            sessionId = deriveSessionId(a0, a1),
+            subSessionId = 0,
+            sessionKeyInfo = deriveSessionKey(a0, a1),
+            subSessionKeyInfo = null,
+            complexChannel = ch,
+            peerDevices = listOf(controller),
+            updateRateType = RangingParameters.RANGING_UPDATE_RATE_AUTOMATIC
+        )
+    }
+
+    // 컨트롤러 주소 2바이트 = 세션 파라미터 유도의 단일 기준(양측 동일값 보장)
+    private fun deriveSessionId(a0: Byte, a1: Byte): Int =
+        SESSION_ID_BASE or ((a0.toInt() and 0xFF) shl 8) or (a1.toInt() and 0xFF)
+
+    // STATIC STS 는 정확히 8바이트 키 필수 — "WF" + 컨트롤러 주소 2B + "SAFE"
+    private fun deriveSessionKey(a0: Byte, a1: Byte): ByteArray =
+        byteArrayOf(0x57, 0x46, a0, a1, 0x53, 0x41, 0x46, 0x45)
+
+    /** 레인징 결과 처리 — 멀티캐스트는 result.device.address 로 어느 피어인지 역매핑 */
+    private fun handleResult(result: RangingResult) {
         when (result) {
             is RangingResult.RangingResultPosition -> {
                 val d = result.position.distance?.value ?: return
-                uwbDistances[deviceId] = d
+                if (!d.isFinite()) return   // [v1.1.37 ①] NaN/±Inf 표본 차단 — 운동학·보정 오염 및 roundToInt 예외 방지
+                val id = peerIdForResult(result.device) ?: return
+                uwbDistances[id] = d
                 val now = System.currentTimeMillis()
-                updateKinematics(deviceId, d, now)   // (v1.1.34) 접근속도·이탈 연속 카운트 갱신
+                updateKinematics(id, d, now)
                 if (now - lastStatusAt >= STATUS_THROTTLE_MS) {
                     lastStatusAt = now
-                    onStatus?.invoke("UWB 거리: ${shortId(deviceId)} ${"%.1f".format(d)}m")
+                    onStatus?.invoke("UWB 거리: ${shortId(id)} ${"%.1f".format(d)}m")
                 }
             }
             is RangingResult.RangingResultPeerDisconnected -> {
-                Log.d(TAG, "UWB 피어 연결 해제: ${deviceId}")
-                onSessionEnded(deviceId, "피어 해제")
+                val id = peerIdForResult(result.device)
+                Log.d(TAG, "UWB 피어 연결 해제: ${id ?: "?"}")
+                onPeerDisconnected(id)
             }
             else -> { /* 알 수 없는 결과 타입 — 무시 */ }
         }
     }
 
-    // (v1.1.34) 접근속도 운동학 갱신 — 연속 표본 미분(+ = 접근). 세션 스레드 단일 호출 전제.
+    /** 결과의 주소를 deviceId 로 역매핑 — 컨트롤러는 서빙맵, 컨트롤리는 활성 컨트롤러 */
+    private fun peerIdForResult(device: UwbDevice): String? {
+        val hex = device.address.address.toHex()
+        return when (role) {
+            Role.CONTROLLER -> servedAddrToId[hex]
+            Role.CONTROLEE -> if (hex == activeControllerAddrHex) activeControllerId else null
+            else -> null
+        }
+    }
+
+    /** UWB 레벨 피어 해제 처리 — 컨트롤러는 해당 컨트롤리만 정리(남으면 유지), 컨트롤리는 재합류 */
+    @Synchronized
+    private fun onPeerDisconnected(id: String?) {
+        if (stopped) return
+        when (role) {
+            Role.CONTROLLER -> {
+                if (id != null) dropServedLocked(id)
+                if (servedControlees.isEmpty()) {
+                    stopActiveLocked()
+                    scheduleRestartLocked(REJOIN_DELAY_MS)
+                } else {
+                    reconcileLocked()   // 대체 컨트롤리 승격 여지 확인(가드가 불필요 재구성 차단)
+                }
+            }
+            Role.CONTROLEE -> {
+                stopActiveLocked()
+                scheduleRestartLocked(REJOIN_DELAY_MS)
+            }
+            else -> { /* 대기 상태 — 무시 */ }
+        }
+    }
+
+    // 접근속도 운동학 갱신 — 연속 표본 미분(+ = 접근). 세션 스레드 단일 호출 전제.
     //   dt 창 밖(너무 촘촘/단절)은 각각 기준점 유지/리셋으로 미분 노이즈·유령 속도를 차단한다.
     //   approach/separating streak 은 상호배타(서로 리셋) — 같은 표본이 양쪽에 설 수 없다.
     private fun updateKinematics(deviceId: String, distM: Float, now: Long) {
@@ -411,11 +656,11 @@ class UwbRanger(
         )
     }
 
-    /** 세션 종료 공통 처리 — 현재 활성 세션에 대해서만 1회 동작(중복 종료 무시) */
+    /** 세션 종료 공통 처리 — 현 세대에 대해서만 1회 동작(stale 세대 콜백 무시) */
     @Synchronized
-    private fun onSessionEnded(deviceId: String, reason: String) {
-        if (stopped || activePeerId != deviceId) return
-        Log.d(TAG, "UWB 세션 종료(${reason}): ${deviceId}")
+    private fun onSessionEnded(gen: Int, reason: String) {
+        if (stopped || gen != sessionGen) return
+        Log.d(TAG, "UWB 세션 종료($reason) role=$role")
         stopActiveLocked()
         scheduleRestartLocked(RESTART_BACKOFF_MS)
     }
