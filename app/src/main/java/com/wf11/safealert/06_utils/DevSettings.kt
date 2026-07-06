@@ -641,6 +641,14 @@ object DevSettings {
         get() = prefs.getString(KEY_UWB_SITE_CODE, "")?.trim() ?: ""
         set(v) = prefs.edit().putString(KEY_UWB_SITE_CODE, v.trim()).apply()
 
+    // (v1.1.40) 섀도우 IMU 융합 — 정지(IMU)+상대 FORWARD 페이로드일 때 median 스트림 전용 섀도우
+    //   칼만으로 접근을 병렬 추적, DANGER 이탈 프레임의 EMA 하강 알파 부스트(0.4)와 TTC 예비
+    //   후보를 제공. 끄면(false) 섀도우 경로 전체 우회 = 기존 거동과 완전 동일.
+    private const val KEY_IMU_SHADOW_FUSION = "imu_shadow_fusion_enabled"
+    var imuShadowFusionEnabled: Boolean
+        get() = prefs.getBoolean(KEY_IMU_SHADOW_FUSION, true)
+        set(v) = prefs.edit().putBoolean(KEY_IMU_SHADOW_FUSION, v).apply()
+
     fun toDebugString(): String =
         "rssiWarning=$rssiWarning | rssiDanger=$rssiDanger | scanPeriod=${scanPeriodMs}ms | " +
         "advertise=${advertiseInterval}ms | vib=$vibrationEnabled | sound=$soundEnabled | " +

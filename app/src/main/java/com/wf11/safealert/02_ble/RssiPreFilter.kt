@@ -61,6 +61,8 @@ class RssiPreFilter(
         const val VEL_DBOOST_DBM = 2.0
         // (v1.1.29) 워밍업 대칭 푸시 수 기본값 — 3Hz 광고 기준 약 3.3초
         const val WARMUP_SYMMETRIC_PUSHES = 10
+        // (v1.1.40) 섀도우 IMU 융합 이탈확증 프레임의 하강 알파 부스트 — DANGER 해제 가속(시뮬 S3 -42%)
+        const val FALL_BOOST_ALPHA = 0.4
     }
 
     // 기기별 EMA 상태 S_{t-1} (Double 정밀도 유지, 출력만 Int 양자화)
@@ -74,9 +76,11 @@ class RssiPreFilter(
      * @param deviceId 기기 식별자 (기기별 독립 상태)
      * @param rssi     원시 RSSI (dBm, 음수)
      * @param prevVel  직전 프레임 칼만 추정속도(dBm/s). +접근/−이탈. 첫 프레임 0.0.
+     * @param fallBoost (v1.1.40) 섀도우 IMU 융합의 이탈확증 프레임 — 하강(R<S) 알파만
+     *                  FALL_BOOST_ALPHA(0.4)로 부스트해 해제(이탈) 추종을 가속. 상승·D-Boost 불변.
      * @return 2D 칼만 필터에 입력할 정제 RSSI(smoothedRssi)
      */
-    fun push(deviceId: String, rssi: Int, prevVel: Double = 0.0): Int {
+    fun push(deviceId: String, rssi: Int, prevVel: Double = 0.0, fallBoost: Boolean = false): Int {
         // 첫 샘플: 상태 초기화(콜드스타트 지연 제거) — 원시값을 그대로 신뢰
         val prev = emaState[deviceId] ?: run {
             emaState[deviceId] = rssi.toDouble()
@@ -97,6 +101,8 @@ class RssiPreFilter(
             dBoostEnabled && prevVel > VEL_DBOOST_DBM -> alphaDBoost
             // 신호 강해짐(R ≥ S): 위험 방향 → 빠른 추종
             r >= prev                                 -> alphaRise
+            // (v1.1.40) 섀도우 이탈확증(DANGER 해제 국면): 하강 프레임만 부스트(rise 가 선매치라 상승 불변)
+            fallBoost                                 -> FALL_BOOST_ALPHA
             // 신호 약해짐(R < S): 철제랙 간섭 등 난수 의심 → 매우 느린 추종(워밍업 중엔 대칭)
             else                                      -> fallEff
         }

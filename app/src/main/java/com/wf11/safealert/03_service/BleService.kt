@@ -245,6 +245,26 @@ class BleService : LifecycleService() {
     // ── 2D 칼만 필터 맵 (v1.0.20: KalmanFilter, 거리+속도 동시 추적) ──
     private val kalmanFilters = mutableMapOf<String, KalmanFilter>()
 
+    // ── (v1.1.40) 섀도우 IMU 융합 — 정지 관측자 전용 병렬 추적기 ─────────────────
+    // 메인 파이프라인(EMA→칼만→P-EMA)과 완전 분리된 '섀도우 칼만'을 median 스트림에만 물려,
+    // 내 IMU 정지(관측 플랫폼 안정) + 상대 FORWARD 자기신고일 때만 공정잡음을 열어(0.15)
+    // 접근을 병렬 추적한다. 산출물 2개뿐 — ① DANGER 프레임의 EMA 하강 알파 부스트(0.4, 해제
+    // 가속) ② 메인 TTC 후보 불성립 시 예비 TTC 후보. 메인 칼만/레벨/streak/게이트/래치는 무접촉.
+    // 킬스위치 DevSettings.imuShadowFusionEnabled=false 또는 페이로드 부재 시 전 경로 우회(기존 동일).
+    private data class ShadowFusion(
+        val kf: KalmanFilter = KalmanFilter(DevSettings.kalmanPreset),
+        var apprStreak: Int = 0,          // 공정잡음 열린 상태의 연속 접근 프레임(TTC 예비 후보 자격)
+        var departFrames: Int = 0,        // 연속 이탈 프레임(>=2 → tracking)
+        var tracking: Boolean = false,    // 이탈 추적 중(부스트 자격의 전제)
+        var relLatch: Boolean = false,    // DANGER 이탈 래치(레벨 SAFE 해제까지 부스트 유지)
+        var lastEffWarning: Int = Int.MIN_VALUE,   // 직전 프레임 effWarning 캐시(첫 프레임은 rssiWarning 폴백)
+    )
+    private val shadowFusionMap = mutableMapOf<String, ShadowFusion>()
+    private val SHADOW_CROSS_Q_MILD       = 0.15   // 정지+상대 FORWARD+경고권: 공정잡음 완만 개방
+    private val SHADOW_Q_FREEZE           = 0.01   // 그 외: 사실상 동결(잡음 학습 차단)
+    private val SHADOW_DEPART_REENTER_VEL = 1.5    // 재접근 판정 속도(dBm/s) — 이탈 추적 해제
+    private val SHADOW_LIVE_VEL_DBM       = -1.0   // '실제로 멀어지는 중' 판정 속도(직전 프레임)
+
     // ── [v1.0.45] 돌진 시 칼만 FAST 조건부 승격 ─────────────────────────
     // prevVel(직전 칼만 속도) > RUSH_FAST_VEL_DBM 이 '연속 RUSH_FAST_MIN_FRAMES 프레임' 지속되거나,
     // IMU 실가속(adaptiveQFactor ≥ RUSH_FAST_IMU_QFACTOR)이 동반될 때만 NORMAL→FAST 로 승격한다.
@@ -682,6 +702,7 @@ class BleService : LifecycleService() {
                             warningContactStreakMap.remove(deviceId)  // [v1.1.18] 첫접촉 WARNING 카운터 정리
                             kalmanFilters[deviceId]?.reset()
                             kalmanFilters.remove(deviceId)
+                            shadowFusionMap.remove(deviceId)          // (v1.1.40) 섀도우 융합 상태 정리
                             trackingStateMap.remove(deviceId)
                             crossingStartMap.remove(deviceId)
                             departingStartMap.remove(deviceId)
@@ -948,11 +969,38 @@ class BleService : LifecycleService() {
         //   단계 진입 '전'에 순위통계로 제거해 칼만 속도(kfVel) 오염을 차단한다.
         val medianValue = medianFilter.push(deviceId, inputRssi)
 
+        // ── (v1.1.40) 섀도우 IMU 융합 갱신 — median 스트림 전용, 메인 파이프라인 무접촉 ──
+        //   sPrevVel(직전 프레임 섀도우 속도)·sh.tracking(직전 프레임 이탈추적)·prevLevel(직전
+        //   프레임 alertState)로 부스트를 판정한 '뒤' 이번 프레임 관측을 반영한다(인과 정합).
+        val shadowOn = DevSettings.imuShadowFusionEnabled && payloadPresent
+        var shadowBoost = false
+        val sh = if (shadowOn) shadowFusionMap.getOrPut(deviceId) { ShadowFusion() } else null
+        if (sh != null) {
+            val selfStat = ImuFusion.isStationary
+            val peerFwdFresh = rState == BleConstants.PSTATE_FORWARD
+            val sPrevVel = sh.kf.estimatedVel
+            val effWarnRef = if (sh.lastEffWarning != Int.MIN_VALUE) sh.lastEffWarning else DevSettings.rssiWarning
+            val sqf = when {
+                !selfStat -> 1.0
+                peerFwdFresh && medianValue >= effWarnRef -> SHADOW_CROSS_Q_MILD
+                else -> SHADOW_Q_FREEZE
+            }
+            sh.kf.updatePreset(if (promoteFast) DevSettings.KALMAN_PRESET_FAST else DevSettings.kalmanPreset)
+            val (_, sVel) = sh.kf.update(medianValue, sqf)
+            sh.apprStreak = if (sqf > SHADOW_Q_FREEZE && sVel >= MIN_APPROACH_VEL_DBM) sh.apprStreak + 1 else 0
+            val prevLevel = alertState[deviceId]?.first ?: BleConstants.LEVEL_SAFE
+            val live = selfStat && sh.tracking && sPrevVel <= SHADOW_LIVE_VEL_DBM && peerFwdFresh
+            if (live && prevLevel == BleConstants.LEVEL_DANGER) sh.relLatch = true
+            if (!live || prevLevel == BleConstants.LEVEL_SAFE) sh.relLatch = false
+            shadowBoost = live && (prevLevel == BleConstants.LEVEL_DANGER || sh.relLatch)
+        }
+
         // ── [v1.0.32] RssiPreFilter: 비대칭 비례제어(Asymmetric P-Control) EMA 전처리 ──
         //   강한 돌진(prevVel>+2.0)이면 α 빗장(D-Boost)을 열어 지연을 없앤다.
         //   ★ v1.0.45: EMA 입력을 raw → medianValue 로 변경(Median 직렬 선행). 정제 출력(preFiltered)만
         //     칼만 입력으로 주입(raw 직접 입력 금지).
-        val preFiltered = rssiPreFilter.push(deviceId, medianValue, prevVel)
+        //   (v1.1.40) fallBoost=shadowBoost — DANGER 이탈확증 프레임은 하강 알파 부스트(해제 가속).
+        val preFiltered = rssiPreFilter.push(deviceId, medianValue, prevVel, fallBoost = shadowBoost)
 
         // ── 2D 칼만 필터 업데이트 (RSSI 공간) ────────────────────────────
         // kfRssi: 추정 RSSI(dBm) / kfVel: 변화율(dBm/s), 양수=접근 / 음수=이탈
@@ -963,7 +1011,8 @@ class BleService : LifecycleService() {
         // ── [v1.0.45] 후처리 P-EMA: 거리(P)항 전용 평활 — kfRssi → 비대칭 P-EMA → 거리판정 ──
         //   D항(kfVel)은 위상선행 유지를 위해 후필터 우회(아래 Time-Gate/TTC 에 kfVel 직결).
         //   P항(거리)만 평활(상승0.4/하강0.15). 게이트 1번째 다리는 raw-order kalmanRssi 유지(보수적 min).
-        val pEma = pEmaFilter.push(deviceId, kalmanRssi)
+        //   (v1.1.40) fallBoost=shadowBoost — 전단 EMA 와 동일한 이탈확증 하강 부스트(P-EMA 잔상 제거).
+        val pEma = pEmaFilter.push(deviceId, kalmanRssi, fallBoost = shadowBoost)
 
         // ── [v1.0.45] 워밍업 가드: Median 윈도우 충전 전(콜드스타트)에는 신규/격상 발령 보류 ──
         //   첫 N프레임은 임펄스로 시작했을 때 거짓 근접으로 보일 수 있어, 필터 상태는 계속 쌓되
@@ -1051,6 +1100,16 @@ class BleService : LifecycleService() {
         val inWarningRaw = medianValue >= effWarning
         val warningStreak = if (inWarningRaw) (warningContactStreakMap[deviceId] ?: 0) + 1 else 0
         warningContactStreakMap[deviceId] = warningStreak
+        // (v1.1.40) 섀도우 이탈 추적 + effWarning 1프레임 캐시 — 부스트는 '직전 프레임' tracking 을
+        //   읽으므로(위 median 직후 블록) 당 프레임 갱신은 다음 프레임부터 반영된다(설계 정합).
+        if (sh != null) {
+            val sVelNow = sh.kf.estimatedVel
+            sh.departFrames = if (sVelNow < -MIN_APPROACH_VEL_DBM) sh.departFrames + 1 else 0
+            if (sh.departFrames >= 2) sh.tracking = true
+            if (sVelNow > SHADOW_DEPART_REENTER_VEL &&
+                (!ImuFusion.isStationary || avg1sec >= effWarning)) sh.tracking = false
+            sh.lastEffWarning = effWarning
+        }
         // [Phase2] IDLE-IDLE 가청 억제 — 내 IMU 정지 + 상대 IDLE 송신(둘 다 정지=충돌동역학 없음)이면
         //   아래 정규 WARNING 가청경보를 억제(표시·목록·위젯은 유지). DANGER 는 억제 대상이 아니며,
         //   둘 중 하나라도 움직이면(rState≠IDLE 또는 IMU 이동) 다음 프레임 즉시 해제된다.
@@ -1104,6 +1163,7 @@ class BleService : LifecycleService() {
             dangerContactStreakMap.remove(deviceId)   // [v1.1.16 D] 첫접촉 DANGER 카운터 정리
             warningContactStreakMap.remove(deviceId)  // [v1.1.18] 첫접촉 WARNING 카운터 정리
             kalmanFilters.remove(deviceId)    // [v1.0.38 클린업] 미추적 기기 칼만 인스턴스 정리(stale 재등장 방지)
+            shadowFusionMap.remove(deviceId)  // (v1.1.40) 섀도우 융합 상태 정리(미추적 기기)
             recedingStartMap.remove(deviceId)    // [v1.1.6 검증 보강] 이탈 판정 상태 누수·stale 피크 재출현 방지
             recedeRefMap.remove(deviceId)        // [v1.1.6 검증 보강] 미추적 기기 중간평활 EMA 정리
             recedePeakMap.remove(deviceId)       // [v1.1.6 검증 보강] 미추적 기기 피크 홀드 정리
@@ -1399,6 +1459,7 @@ class BleService : LifecycleService() {
                 warningContactStreakMap.remove(deviceId)  // [v1.1.18]
                 kf.reset()
                 kalmanFilters.remove(deviceId)
+                shadowFusionMap.remove(deviceId)   // (v1.1.40) 섀도우 융합 상태 정리
                 trackingStateMap.remove(deviceId)
                 crossingStartMap.remove(deviceId)
                 departingStartMap.remove(deviceId)
@@ -1534,6 +1595,7 @@ class BleService : LifecycleService() {
                 warningContactStreakMap.remove(deviceId)  // [v1.1.18]
                 kalmanFilters[deviceId]?.reset()
                 kalmanFilters.remove(deviceId)
+                shadowFusionMap.remove(deviceId)   // (v1.1.40) 섀도우 융합 상태 정리
                 wasStationaryMap.remove(deviceId)
                 recedingStartMap.remove(deviceId)
                 recedeRefMap.remove(deviceId)
@@ -1589,7 +1651,16 @@ class BleService : LifecycleService() {
             && newState == TrackingState.APPROACHING
             && avg1sec >= effWarning                                            // [v1.1.10] 페이로드 시프트
             && (recentPeakRssi(deviceId, 500L) ?: avg1sec) >= effWarning) {      // [v1.1.14] 피크 게이트=경고거리 설정값(effWarning) 연동
-            val ttc = estimateTTC(kfRssi, kfVel)
+            // (v1.1.40) 섀도우 TTC 예비 후보 — 메인 칼만 후보 불성립(느린 수렴·접근속도 미달) 시,
+            //   내가 정지 + 상대 FORWARD 페이로드 + 섀도우 접근 3프레임 연속이면 섀도우 칼만의
+            //   (거리,속도)로 한 번 더 시도. 게이트(WARNING·avg1sec·피크)는 이미 위에서 통과한 프레임.
+            var ttc = estimateTTC(kfRssi, kfVel)
+            if (ttc == null) {
+                val sh2 = if (DevSettings.imuShadowFusionEnabled && payloadPresent &&
+                    ImuFusion.isStationary) shadowFusionMap[deviceId] else null
+                if (sh2 != null && sh2.apprStreak >= 3)
+                    ttc = estimateTTC(sh2.kf.estimatedRssi, sh2.kf.estimatedVel)
+            }
             if (ttc != null && ttc <= TTC_THRESHOLD_SEC) {
                 alertState[deviceId] = Pair(BleConstants.LEVEL_DANGER, now)  // ★ 먼저 업데이트 → 목록에 DANGER 반영
                 pendingDisplayMap.remove(deviceId)   // [v1.0.49 #3] 경보 등록 → 보류 표시 해제
@@ -2484,6 +2555,7 @@ class BleService : LifecycleService() {
         dangerContactStreakMap.clear()   // [v1.1.16 D]
         warningContactStreakMap.clear()  // [v1.1.18]
         kalmanFilters.clear()
+        shadowFusionMap.clear()          // (v1.1.40) 섀도우 융합 상태 일괄 정리
         trackingStateMap.clear()
         crossingStartMap.clear()
         departingStartMap.clear()
