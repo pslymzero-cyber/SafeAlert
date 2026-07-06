@@ -47,6 +47,7 @@ class BleService : LifecycleService() {
         const val ACTION_UNMUTE        = "ACTION_UNMUTE"
         const val ACTION_MUTE_DEVICE   = "ACTION_MUTE_DEVICE"   // v1.0.25: 플로팅 터치 → 특정 기기 10초 음소거
         const val ACTION_TEST_STATE    = "ACTION_TEST_STATE"   // [v1.0.34] 개발자 수동 STATE 주입(후진/하역 예약비트 송신 테스트)
+        const val ACTION_REAPPLY_UWB   = "ACTION_REAPPLY_UWB"  // (v1.1.38 A) 권한 부여·강제 토글 직후 UWB 세션 재평가 넛지
         const val EXTRA_ID             = "extra_id"
         const val EXTRA_CATEGORY       = "extra_category"       // [v1.0.34] 송신자 역할 Category(CAT_*)
         const val EXTRA_PSTATE         = "extra_pstate"         // [v1.0.34] ACTION_TEST_STATE 용 STATE 값(PSTATE_*)
@@ -572,6 +573,12 @@ class BleService : LifecycleService() {
                 bleAdvertiser?.updateState(s)
                 broadcastLocalState()   // [v1.0.42 Req2] 수동 STATE 주입 즉시 Local UI 반영
                 sendStatusBroadcast("수동 STATE 주입: $s")
+            }
+            // (v1.1.38 A) UWB 권한 부여·강제 토글 직후 재평가 — 동일값 SharedPreferences 쓰기는
+            //   변경 리스너를 발화시키지 않으므로 명시 인텐트로 applyUwbLiveState 를 직접 호출한다.
+            //   역할 미지정(myMode 공백) 상태면 startForeground 없이 부팅된 인스턴스이므로 안전 종료.
+            ACTION_REAPPLY_UWB -> {
+                if (myMode.isNotEmpty()) applyUwbLiveState() else stopSelf(startId)
             }
         }
         return START_STICKY
@@ -2362,7 +2369,7 @@ class BleService : LifecycleService() {
     private fun applyUwbLiveState() {
         if (bleAdvertiser == null) { uwbRanger?.stop(); uwbRanger = null; return }
         val want = UwbRanger.isHardwareSupported(this)
-                && DevSettings.uwbEnabled
+                && (DevSettings.uwbEnabled || DevSettings.uwbForce)   // (v1.1.38 B) 강제 활성화 시 uwbEnabled OFF 여도 가동
                 && ContextCompat.checkSelfPermission(this, Manifest.permission.UWB_RANGING) ==
                        PackageManager.PERMISSION_GRANTED
         if (want && uwbRanger == null) {

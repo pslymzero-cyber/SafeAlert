@@ -1,13 +1,23 @@
 package com.wf11.safealert.ui
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.View
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
+import androidx.core.uwb.UwbManager
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import com.wf11.safealert.BuildConfig
+import com.wf11.safealert.service.BleService
 import com.wf11.safealert.utils.BeaconRegistry
 import com.wf11.safealert.utils.DevSettings
+import com.wf11.safealert.utils.UwbRanger
 import com.wf11.safealert.databinding.ActivityDevSettingsBinding
 
 class DevSettingsActivity : AppCompatActivity() {
@@ -104,6 +114,9 @@ class DevSettingsActivity : AppCompatActivity() {
         updateDebugBadge()
         updateSimRssiEnabled()
         updateReversePrepEnabled()
+        // (v1.1.38 B·C) UWB 강제 스위치 상태 복원 + 진단 라인 초기 갱신
+        binding.swUwbForce.isChecked = DevSettings.uwbForce
+        refreshUwbDiag()
     }
 
     private fun setupListeners() {
@@ -167,6 +180,12 @@ class DevSettingsActivity : AppCompatActivity() {
         }
         binding.switchReversePrep.setOnCheckedChangeListener { _, c ->
             DevSettings.reversePrepEnabled = c; updateReversePrepEnabled()
+        }
+        // (v1.1.38 B) UWB 강제 활성화 — 즉시 기록 + 서비스 재적용 넛지 + 진단 즉시 갱신
+        binding.swUwbForce.setOnCheckedChangeListener { _, c ->
+            DevSettings.uwbForce = c
+            nudgeUwbReapply()
+            refreshUwbDiag()
         }
 
         // ── Spinner : 선택 즉시 기록 ────────────────────────────────────
@@ -258,12 +277,73 @@ class DevSettingsActivity : AppCompatActivity() {
         }
     }
 
+    // ── (v1.1.38 B·C) UWB 진단·강제 ─────────────────────────────────────
+    private val uwbDiagHandler = Handler(Looper.getMainLooper())
+    private var uwbSystemAvailable: Boolean? = null   // null=미확인, 시스템 UWB 토글 상태(비동기 조회)
+    private val uwbDiagPoller = object : Runnable {
+        override fun run() {
+            refreshUwbDiag()
+            uwbDiagHandler.postDelayed(this, 1200L)
+        }
+    }
+
+    // 진단 라인 갱신 — HW/권한은 동기 판정, 시스템 UWB 토글은 suspend 라 코루틴 비동기 조회 후 다음 폴에서 반영
+    private fun refreshUwbDiag() {
+        val hw = UwbRanger.isHardwareSupported(this)
+        val perm = ContextCompat.checkSelfPermission(this, Manifest.permission.UWB_RANGING) ==
+                PackageManager.PERMISSION_GRANTED
+        if (hw && perm) {
+            lifecycleScope.launch {
+                uwbSystemAvailable = try {
+                    UwbManager.createInstance(this@DevSettingsActivity).isAvailable()
+                } catch (e: Exception) { null }
+            }
+        } else {
+            uwbSystemAvailable = if (!hw) false else null
+        }
+        binding.tvUwbDiag.text = buildUwbDiagText(hw, perm, uwbSystemAvailable)
+    }
+
+    private fun buildUwbDiagText(hw: Boolean, perm: Boolean, sys: Boolean?): String {
+        fun mk(b: Boolean) = if (b) "✓" else "✗"
+        val sysMark = when (sys) { true -> "✓"; false -> "✗"; null -> "…" }
+        val active = UwbRanger.liveActive
+        val role   = UwbRanger.liveRole
+        val sess   = UwbRanger.liveSessionCount
+        val line1  = "HW ${mk(hw)}    권한 ${mk(perm)}    시스템 $sysMark"
+        val line2  = "세션 ${if (active) "가동" else "정지"} · 역할 $role · 실측 ${sess}대"
+        val hint = when {
+            !hw          -> "→ 이 기기는 UWB 하드웨어가 없습니다(BLE 신호만 사용)."
+            !perm        -> "→ UWB 권한 없음. BLE 설정 화면에서 권한을 허용하세요."
+            sys == false -> "→ 기기 UWB가 꺼져 있습니다. 시스템 설정에서 켜세요."
+            !active      -> if (DevSettings.uwbForce) "→ 강제 ON. 상대 UWB 기기가 잡히면 세션이 열립니다."
+                            else "→ 대기 중. 상대가 근접(시작 게이트 통과)하면 세션이 열립니다."
+            else         -> "→ UWB 실측 중 — 목록 거리가 m로 표시됩니다."
+        }
+        return "$line1\n$line2\n$hint"
+    }
+
+    // 권한 부여·강제 토글 직후, 서비스에 UWB 세션 재평가를 명시 요청(동일값 쓰기는 변경 리스너 미발화)
+    private fun nudgeUwbReapply() {
+        try {
+            startService(Intent(this, BleService::class.java).setAction(BleService.ACTION_REAPPLY_UWB))
+        } catch (e: Exception) { /* 서비스 미기동 등 — 다음 스캔 주기에 자연 반영 */ }
+    }
+
     override fun onSupportNavigateUp(): Boolean { finish(); return true }
+
+    // (v1.1.38 C) 화면 표시 중에만 UWB 진단 폴링 — onResume 시작 / onPause 정지(배터리·리소스 절약)
+    override fun onResume() {
+        super.onResume()
+        uwbDiagHandler.removeCallbacks(uwbDiagPoller)
+        uwbDiagHandler.post(uwbDiagPoller)
+    }
 
     // [v1.1.15] 포커스 아웃을 거치지 않고 화면을 떠나는 경우의 안전망 — 입력란 전체 확정
     override fun onPause() {
         super.onPause()
         editCommitters.forEach { it() }
+        uwbDiagHandler.removeCallbacks(uwbDiagPoller)   // (v1.1.38 C) 진단 폴링 중지
     }
 
     // Spinner 인덱스 헬퍼

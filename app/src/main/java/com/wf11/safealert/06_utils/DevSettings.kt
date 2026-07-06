@@ -517,6 +517,14 @@ object DevSettings {
         get() = prefs.getBoolean(KEY_UWB_ENABLED, true)
         set(v) = prefs.edit().putBoolean(KEY_UWB_ENABLED, v).apply()
 
+    // (v1.1.38 B) UWB 강제 활성화 — HW·권한·시스템 토글이 충족된 상태에서 RSSI 시작 게이트(거리 문턱)
+    //   와 uwbEnabled 토글을 우회해 UWB 세션을 무조건 띄운다. HW 미지원·권한 거부·시스템 OFF 는
+    //   물리적으로 우회 불가(강제해도 세션을 못 연다). 기본 OFF — 디버그/현장 검증용.
+    private const val KEY_UWB_FORCE = "uwb_force"
+    var uwbForce: Boolean
+        get() = prefs.getBoolean(KEY_UWB_FORCE, false)
+        set(v) = prefs.edit().putBoolean(KEY_UWB_FORCE, v).apply()
+
     // (v1.1.31) UWB 델타 보정 학습 — UWB 실거리로 페어별 RSSI 편차(Δ)를 학습해 경보 임계에
     //   보정(조기 +10dB / 지연 −3dB 비대칭 클램프 + 24h 감쇠)으로 반영. OFF = 보정 항상 0(기본 ON).
     private const val KEY_UWB_CALIB_ENABLED = "uwb_calib_enabled"

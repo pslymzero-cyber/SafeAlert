@@ -521,6 +521,39 @@
             </LinearLayout>
         </androidx.cardview.widget.CardView>
 
+        <!-- (v1.1.38 B·C) UWB 진단·강제 — 항상 표시(7탭 숨김 게이트 밖). 실가동 상태 확인 + 강제 활성화 -->
+        <TextView android:text="UWB 진단·강제" android:textStyle="bold" android:textSize="16sp"
+            android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="16dp"/>
+        <androidx.cardview.widget.CardView
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginTop="8dp">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="vertical" android:padding="16dp">
+
+                <!-- 실시간 상태 라인 — 개발자설정 화면 표시 중 약 1.2초 주기 폴링 갱신 -->
+                <TextView android:id="@+id/tv_uwb_diag"
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:text="UWB 상태 확인 중…"
+                    android:textSize="13sp" android:textColor="#111827"
+                    android:fontFamily="monospace" android:lineSpacingExtra="3dp"/>
+                <TextView android:text="HW=하드웨어 지원 · 권한=UWB_RANGING · 시스템=기기 UWB 토글 · 세션=UWB 실측 중인 상대 수. 세션이 가동이면 목록 거리가 m(UWB)로 표시됩니다."
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp" android:textSize="11sp" android:textColor="#9CA3AF"/>
+
+                <!-- 강제 활성화 토글 -->
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="12dp">
+                    <TextView android:text="UWB 강제 활성화" android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:textColor="#111827"/>
+                    <Switch android:id="@+id/sw_uwb_force" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                </LinearLayout>
+                <TextView android:text="켜면 거리 시작 게이트와 UWB 토글을 무시하고 지원 기기끼리 UWB 세션을 무조건 시도합니다. 하드웨어 미지원·권한 거부·기기 UWB 설정 OFF는 강제로도 우회되지 않습니다(위 진단 참고). 기본 OFF."
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp" android:textSize="11sp" android:textColor="#9CA3AF"/>
+
+            </LinearLayout>
+        </androidx.cardview.widget.CardView>
+
         <!-- 앱 정보 -->
         <TextView android:text="앱 정보" android:textStyle="bold" android:textSize="16sp"
             android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="16dp"/>

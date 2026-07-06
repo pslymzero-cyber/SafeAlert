@@ -78,6 +78,17 @@ class UwbRanger(
             if (Build.VERSION.SDK_INT < 31) return false
             return context.packageManager.hasSystemFeature(PackageManager.FEATURE_UWB)
         }
+
+        // (v1.1.38 C) UWB 실가동 진단 스냅샷 — 같은 프로세스(BleService + Activity 단일 프로세스)의
+        //   개발자설정 화면이 IPC 없이 직접 읽는다. UwbRanger 는 한 번에 하나만 살아 있고(BleService 가
+        //   stop→null→새 인스턴스 순서로 교체, stop 은 동기) 옛 인스턴스 stop() 이 이 값을 리셋하므로
+        //   경합 없이 최신 인스턴스 상태만 노출된다. publishDiag() 가 상태 변동점마다 갱신.
+        @Volatile var liveActive: Boolean = false      // 세션 스코프 열림(=UWB 초기화 성공, BLE 폴백 아님)
+            private set
+        @Volatile var liveRole: String = "-"           // 대기 / 컨트롤러 / 컨트롤리 / -
+            private set
+        @Volatile var liveSessionCount: Int = 0        // 현재 UWB 실측 거리를 수신 중인 피어 수
+            private set
     }
 
     private enum class Role { NONE, CONTROLLER, CONTROLEE }
@@ -163,6 +174,7 @@ class UwbRanger(
                 role = Role.NONE
                 isSupported = true
             }
+            publishDiag()
             Log.i(TAG, "UWB 초기화 완료(대기=컨트롤리, vehicle=$myIsVehicle) payload=${payload.toHex()}")
             payload
         } catch (e: Exception) {
@@ -220,7 +232,20 @@ class UwbRanger(
         lastSampleMap.clear()
         localAddress = null
         isSupported = false
+        publishDiag()
         Log.d(TAG, "UwbRanger 중지")
+    }
+
+    /** (v1.1.38 C) 진단 스냅샷 발행 — companion @Volatile 필드로 같은 프로세스의 개발자설정 UI 가 IPC 없이 읽는다.
+     *   role 은 세션 상태 필드, uwbDistances 는 ConcurrentHashMap 이라 호출 지점(락 안/밖) 무관하게 안전. */
+    private fun publishDiag() {
+        liveActive = isSupported
+        liveRole = when (role) {
+            Role.CONTROLLER -> "컨트롤러"
+            Role.CONTROLEE  -> "컨트롤리"
+            Role.NONE       -> if (isSupported) "대기" else "-"
+        }
+        liveSessionCount = uwbDistances.size
     }
 
     // ── 선출·위험도(BLE 가시 정보만) ────────────────────────────────────────
@@ -247,6 +272,7 @@ class UwbRanger(
 
     /** 시작 게이트 통과 여부 — 이미 측정 중인 상대는 완화(경계 진동 억제). rssiOf 미제공 시 항상 통과 */
     private fun gatePassLocked(id: String): Boolean {
+        if (DevSettings.uwbForce) return true   // (v1.1.38 B) 강제 활성화 — RSSI 거리 게이트 우회(무조건 통과)
         val f = rssiOf ?: return true
         val base = if (isForkliftPair(id)) DevSettings.uwbStartRssiGateForklift else DevSettings.uwbStartRssiGate
         val active = servedControlees.containsKey(id) || id == activeControllerId
@@ -366,6 +392,7 @@ class UwbRanger(
         activeControllerPayload = null
         activeControllerAddrHex = null
         role = Role.NONE
+        publishDiag()
     }
 
     /** 서빙 컨트롤리 1개 제거(동기화 블록 안에서만) — 서빙맵·거리·운동학 동시 정리 */
@@ -375,6 +402,7 @@ class UwbRanger(
         uwbDistances.remove(id)
         uwbKinematics.remove(id)
         lastSampleMap.remove(id)
+        publishDiag()
     }
 
     /**
@@ -409,6 +437,7 @@ class UwbRanger(
                     sessionScope = sc
                     localAddress = sc.localAddress.address.copyOf()
                     role = Role.NONE
+                    publishDiag()
                 }
                 onLocalAddressChanged?.invoke(payload)
             }
@@ -436,6 +465,7 @@ class UwbRanger(
                         servedControlees[id] = addr
                         servedAddrToId[addr.toHex()] = id
                     }
+                    publishDiag()
                 }
                 onLocalAddressChanged?.invoke(payload)
                 if (served.isEmpty()) {
@@ -470,6 +500,7 @@ class UwbRanger(
                     activeControllerPayload = cpayload
                     activeControllerAddrHex = cpayload.copyOf(2).toHex()
                     lastActiveControllerId = cid
+                    publishDiag()
                 }
                 onLocalAddressChanged?.invoke(payload)
                 val job = scope.launch { runControleeSession(sc, cpayload, gen) }
@@ -588,6 +619,7 @@ class UwbRanger(
                 if (!d.isFinite()) return   // [v1.1.37 ①] NaN/±Inf 표본 차단 — 운동학·보정 오염 및 roundToInt 예외 방지
                 val id = peerIdForResult(result.device) ?: return
                 uwbDistances[id] = d
+                publishDiag()
                 val now = System.currentTimeMillis()
                 updateKinematics(id, d, now)
                 if (now - lastStatusAt >= STATUS_THROTTLE_MS) {

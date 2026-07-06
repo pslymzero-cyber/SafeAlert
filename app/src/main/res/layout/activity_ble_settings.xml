@@ -183,6 +183,21 @@
                         android:layout_width="match_parent" android:layout_height="wrap_content"
                         android:layout_marginTop="6dp"/>
 
+                    <!-- (v1.1.38 A) UWB 권한 요청 + 시스템 UWB 상태 안내 — 권한 미부여/시스템 OFF 면
+                         세션이 열리지 않아 목록 거리가 dBm 으로 폴백된다. 이 버튼으로 권한 요청,
+                         시스템 UWB 가 꺼져 있으면 아래 안내가 뜨고 버튼이 시스템 설정으로 연결. -->
+                    <Button android:id="@+id/btn_uwb_permission"
+                        android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:text="UWB 권한 허용 / 시스템 UWB 설정"
+                        android:textSize="13sp" android:textAllCaps="false"
+                        android:textColor="#FFFFFF" android:backgroundTint="#2563EB"/>
+                    <TextView android:id="@+id/tv_uwb_system_hint"
+                        android:text="UWB로 거리가 m 로 표시되려면: ① 이 버튼으로 UWB 권한 허용 ② 기기 UWB(시스템) 켜짐 ③ 상대 기기도 UWB 지원. 하나라도 빠지면 신호세기(dBm)로 표시됩니다."
+                        android:textSize="11sp" android:textColor="#9CA3AF"
+                        android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"/>
+
                     <!-- (v1.1.31) 거리 표시 방식 — 목록·플로팅의 신호 표기(dBm/미터) 선택 -->
                     <TextView android:text="거리 표시 방식"
                         android:layout_width="match_parent" android:layout_height="wrap_content"
