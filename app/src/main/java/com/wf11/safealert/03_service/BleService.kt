@@ -32,6 +32,7 @@ import com.wf11.safealert.utils.OverlayManager
 import com.wf11.safealert.utils.UwbCalibrator
 import com.wf11.safealert.utils.UwbRanger
 import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 class BleService : LifecycleService() {
@@ -1343,7 +1344,8 @@ class BleService : LifecycleService() {
         //     차폐로 RSSI 는 약한데 물리적으로 가까운 사각을 실측으로 메운다(v1.1.33 거동을 상시화).
         //   · 이탈(release): UWB 운동학이 '멀어지는 중'(separatingStreak≥3 · closingMps<0)일 때만 실측
         //     거리 기준으로 강등한다 — 스쳐 지나가면(멀어짐) 끈다. 접근·정지 중엔 강등 금지(위험 유지 =
-        //     페일세이프). RSSI 강접근(kfVel ≥ fastApproachBypassVelDbm) 동반 시 거부권(실측·RSSI 상충 시 유지).
+        //     페일세이프). (v1.1.39) kfVel 거부권 제거 — UWB 활성 페어는 실측 운동학이 主권위. RSSI
+        //     멀티패스 반등(가짜 접근 신호)이 해제를 수초 차단하던 지연 원인을 없앤다.
         //   · 접근속도 단독 승격은 두지 않는다 — '멀리서 빠르게 접근'을 거리와 무관하게 경고로 올리면
         //     종일 오경보가 된다(TTC 무시). 조기 위험 예측은 아래 기존 TTC 선발령(경고권 진입 + 충돌 임박
         //     TTC≤임계)이 담당한다.
@@ -1369,11 +1371,12 @@ class BleService : LifecycleService() {
                     if (distanceLevel < uwbLevel) distanceLevel = uwbLevel
                 } else if (uwbLevel < stableLevel) {
                     // (B) 이탈 강등 — '멀어지는 중'일 때만 실측 거리로 낮춘다(스쳐 지나감 = 끔). 접근·정지는 유지.
+                    //     (v1.1.39) kfVel 거부권 제거 — UWB 활성 페어는 실측 운동학이 主권위. RSSI 멀티패스
+                    //     반등이 해제를 수초 차단하던 원인 제거(이탈 지연 수초 → ~1s).
                     val kin = uwbRanger?.uwbKinematics?.get(deviceId)
                     if (kin != null && now - kin.atMs <= 1500L &&
-                        kin.separatingStreak >= 3 && kin.closingMps < 0f &&
-                        kfVel < DevSettings.fastApproachBypassVelDbm) {
-                        Log.w(TAG, "[v1.1.36] UWB 이탈 강등 ${stableLevel}->${uwbLevel}: ${deviceId} d=%.1fm 멀어짐v=%.1fkm/h streak=${kin.separatingStreak} kfVel=%.2f".format(uwbPrimD, kin.closingMps * 3.6f, kfVel))
+                        kin.separatingStreak >= 3 && kin.closingMps < 0f) {
+                        Log.w(TAG, "(v1.1.39) UWB 이탈 강등 ${stableLevel}->${uwbLevel}: ${deviceId} d=%.1fm 멀어짐v=%.1fkm/h streak=${kin.separatingStreak}".format(uwbPrimD, kin.closingMps * 3.6f))
                         stableLevel = uwbLevel
                         if (distanceLevel > uwbLevel) distanceLevel = uwbLevel
                     }
@@ -2372,37 +2375,57 @@ class BleService : LifecycleService() {
                 && (DevSettings.uwbEnabled || DevSettings.uwbForce)   // (v1.1.38 B) 강제 활성화 시 uwbEnabled OFF 여도 가동
                 && ContextCompat.checkSelfPermission(this, Manifest.permission.UWB_RANGING) ==
                        PackageManager.PERMISSION_GRANTED
-        if (want && uwbRanger == null) {
-            // [v1.1.37 ③] 내 전체 광고 ID(prefix+id) — 같은 역할 쌍의 컨트롤러 선출 tiebreak 기준.
-            //   BleScanner 가 상대에게 붙이는 fullId 와 동일한 prefix 규칙(DEVICE_/WALKER_)이라야
-            //   peerOutranksMe(id < myFullId)·peerIsVehicle(startsWith DEVICE_PREFIX) 비교가 정합.
-            val myFullId = (if (myMode == "DEVICE") BleConstants.DEVICE_PREFIX
-                            else BleConstants.WALKER_PREFIX) + myId
-            val ranger = UwbRanger(this, lifecycleScope, myFullId, myMode == "DEVICE",
-                onStatus = { msg -> sendStatusBroadcast(msg) },
-                onLocalAddressChanged = { payload -> bleAdvertiser?.restartWithUwbAddress(payload) },
-                // (v1.1.32) 세션 우선순위·시작 게이트용 평활 RSSI(pEma) 프로바이더 — 미추적 기기는 null
-                rssiOf = { id -> deviceRssiMap[id] },
-                // (v1.1.33) 지게차 낀 쌍 판별 — 시작 게이트 완화(-90)·세션 우선순위 가산용.
-                //   내가 지게차(DEVICE 모드 기본 카테고리)거나 상대 카테고리 캐시가 지게차면 true.
-                forkliftPairOf = { id ->
-                    myCategory == BleConstants.CAT_FORKLIFT ||
-                        deviceCategoryMap[id] == BleConstants.CAT_FORKLIFT
-                }
-            )
-            uwbRanger = ranger
-            lifecycleScope.launch {
+        if (!want) {
+            if (uwbRanger != null) {
+                uwbRanger?.stop()
+                uwbRanger = null
+                bleAdvertiser?.restartWithoutUwbAddress()
+                sendStatusBroadcast("UWB 비활성 — BLE 전용")
+            }
+            return
+        }
+        // (v1.1.39 a·b) 종전에는 (want && ranger==null) 1회 생성 분기뿐이라 초기화 실패(시스템 UWB OFF 등)
+        //   후 재시도가 전무했고, REAPPLY·설정 변경 호출이 전부 no-op 에 흡수됐다(one-shot 래치).
+        //   이제 건강한 ranger 는 유지하고, 초기화 실패 상태(isSupported=false)면 버리고 재생성 —
+        //   생성 후에는 성공까지 백오프 재시도 루프(5s→×2→60s cap)가 돈다.
+        uwbRanger?.let { existing ->
+            if (existing.isSupported) return   // 건강 — 유지(applyLiveSettings 가 매 설정 변경마다 호출)
+            existing.stop()
+            uwbRanger = null
+        }
+        // [v1.1.37 ③] 내 전체 광고 ID(prefix+id) — 같은 역할 쌍의 컨트롤러 선출 tiebreak 기준.
+        //   BleScanner 가 상대에게 붙이는 fullId 와 동일한 prefix 규칙(DEVICE_/WALKER_)이라야
+        //   peerOutranksMe(id < myFullId)·peerIsVehicle(startsWith DEVICE_PREFIX) 비교가 정합.
+        val myFullId = (if (myMode == "DEVICE") BleConstants.DEVICE_PREFIX
+                        else BleConstants.WALKER_PREFIX) + myId
+        val ranger = UwbRanger(this, lifecycleScope, myFullId, myMode == "DEVICE",
+            onStatus = { msg -> sendStatusBroadcast(msg) },
+            onLocalAddressChanged = { payload -> bleAdvertiser?.restartWithUwbAddress(payload) },
+            // (v1.1.32) 세션 우선순위·시작 게이트용 평활 RSSI(pEma) 프로바이더 — 미추적 기기는 null
+            rssiOf = { id -> deviceRssiMap[id] },
+            // (v1.1.33) 지게차 낀 쌍 판별 — 시작 게이트 완화(-90)·세션 우선순위 가산용.
+            //   내가 지게차(DEVICE 모드 기본 카테고리)거나 상대 카테고리 캐시가 지게차면 true.
+            forkliftPairOf = { id ->
+                myCategory == BleConstants.CAT_FORKLIFT ||
+                    deviceCategoryMap[id] == BleConstants.CAT_FORKLIFT
+            }
+        )
+        uwbRanger = ranger
+        lifecycleScope.launch {
+            // (v1.1.39 a) 초기화 재시도 루프 — 1회 실패(권한 타이밍·시스템 UWB 토글 등)가 영구
+            //   BLE 폴백으로 굳지 않게 성공까지 백오프 재시도. ranger 가 교체·정리되면 즉시 종료.
+            var backoffMs = 5_000L
+            while (true) {
+                if (uwbRanger !== ranger) return@launch   // 교체·정리됨 — 이 루프는 폐기
                 val payload = ranger.initSession()
                 if (payload != null) {
                     bleAdvertiser?.restartWithUwbAddress(payload)
                     sendStatusBroadcast("UWB 활성: ${payload.joinToString("") { "%02X".format(it) }}")
+                    return@launch
                 }
+                delay(backoffMs)
+                backoffMs = (backoffMs * 2).coerceAtMost(60_000L)
             }
-        } else if (!want && uwbRanger != null) {
-            uwbRanger?.stop()
-            uwbRanger = null
-            bleAdvertiser?.restartWithoutUwbAddress()
-            sendStatusBroadcast("UWB 비활성 — BLE 전용")
         }
     }
 

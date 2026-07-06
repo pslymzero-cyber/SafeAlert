@@ -316,6 +316,8 @@ class DevSettingsActivity : AppCompatActivity() {
             !hw          -> "→ 이 기기는 UWB 하드웨어가 없습니다(BLE 신호만 사용)."
             !perm        -> "→ UWB 권한 없음. BLE 설정 화면에서 권한을 허용하세요."
             sys == false -> "→ 기기 UWB가 꺼져 있습니다. 시스템 설정에서 켜세요."
+            !active && UwbRanger.liveInitError != null ->
+                "→ 초기화 실패: ${UwbRanger.liveInitError} (자동 재시도 중)"
             !active      -> if (DevSettings.uwbForce) "→ 강제 ON. 상대 UWB 기기가 잡히면 세션이 열립니다."
                             else "→ 대기 중. 상대가 근접(시작 게이트 통과)하면 세션이 열립니다."
             else         -> "→ UWB 실측 중 — 목록 거리가 m로 표시됩니다."
