@@ -452,13 +452,16 @@ class BleService : LifecycleService() {
     // ── [v1.1.41] UWB/RSSI 양방향 조건부 판단 분리(Case A/B) ─────────────────────────────
     //   Case A(UWB↔UWB): 양측 UWB 활성 페어는 UWB 실측 '전용' 판정 — RSSI 는 판단에 절대 불개입.
     //   Case B(UWB↔Non-UWB): 한쪽이라도 UWB 부재·비활성(플래그 하차)이면 기존 RSSI 판정.
-    //   [v1.1.42] '상대 UWB 활성 플래그'는 0x9ABC 확장광고 단독 권위(존재=활성, 제거=비활성 —
-    //   양쪽이 서로 관찰하므로 대칭). 실측 표본 신선도는 판정 조건이 아님 — 플래그가 살아있는 한
-    //   실측이 잠시 끊겨도 RSSI 로 넘어가지 않는다(판정 홀드, 세션은 백오프가 자동 재연결).
-    private val peerUwbSeenMap   = mutableMapOf<String, Long>()   // deviceId → 0x9ABC(UWB 활성 플래그) 최근 관측 시각
-    private val uwbSampleAtMsMap = mutableMapOf<String, Long>()   // deviceId → UWB 실측 표본 최근 수신 시각(진단용)
+    //   [v1.1.43] Case A 성립 권위 = 레인징 링크 실가동(uwbDistances 엔트리 = 첫 실측 수신~세션
+    //   종료 이벤트). 링크가 살아있는 한 표본 공백은 판정 홀드(RSSI 불개입)이되, 종료 이벤트 없는
+    //   무표본 10s(좀비)는 링크 사망 간주 → 세션 철거 후 기존 스캔응답 경로로 자동 재개설. 링크가
+    //   없는 동안(개설 전·듀티 휴면·백오프·종료 후)은 Case B(RSSI)가 정상 판정한다.
+    //   (v1.1.42 의 0x9ABC 광고 단독 권위는 스택 가동 '선언'일 뿐 링크 증거가 아니어서 무세션
+    //   구간에 판정 전면 공백을 만든 회귀로 폐지 — 광고는 발견·진단용으로만 유지.)
+    private val peerUwbSeenMap   = mutableMapOf<String, Long>()   // deviceId → 0x9ABC(UWB 활성 플래그) 최근 관측 시각(진단용 — 판정 불사용)
+    private val uwbSampleAtMsMap = mutableMapOf<String, Long>()   // deviceId → UWB 실측 표본 최근 수신 시각(좀비 워치독 근거)
     private val uwbSafeStreakMap = mutableMapOf<String, Int>()    // deviceId → UWB 판정 격하 확증 연속표본 수
-    private val PEER_UWB_AD_FRESH_MS = 6000L   // 플래그 신선 창 — 광고 간격·스캔 공백 여유
+    private val UWB_LINK_ZOMBIE_MS   = 10_000L // 종료 이벤트 없는 무표본 허용 창(정상 주기 ~120ms 의 ~80배) — 초과=좀비 철거
     private val UWB_DEMOTE_STREAK    = 3       // 격하 확증 표본 수(FREQUENT ~120ms → 약 0.4s)
     private val UWB_RELEASE_HYST_M   = 0.5f    // 경계 진동 억제 — 유지 중 임계+0.5m 까지 레벨 유지
 
@@ -758,7 +761,7 @@ class BleService : LifecycleService() {
                         }
                         override fun onScanError(errorCode: Int) { Log.e(TAG, "스캔 오류: $errorCode") }
                         override fun onUwbAddressReceived(deviceId: String, uwbAddress: ByteArray) {
-                            // [v1.1.41] 상대 UWB 활성 플래그(0x9ABC) 관측 시각 기록 — Case A 판정 신선도 근거
+                            // [v1.1.43] 0x9ABC 관측 기록(진단용 — 판정 불사용) + 주소 전달 = 세션 (재)개설 경로
                             peerUwbSeenMap[deviceId] = System.currentTimeMillis()
                             uwbRanger?.onPeerUwbAddressReceived(deviceId, uwbAddress)
                         }
@@ -1106,12 +1109,12 @@ class BleService : LifecycleService() {
         val effWarning = BleConstants.rssiWarning - totalOffset
         val effDanger  = BleConstants.rssiDanger  - totalOffset
 
-        // ── [v1.1.41] Case A(UWB↔UWB) 배타 판정 조기 분기 ─────────────────────────────
-        //   양측 UWB 가동+실측 신선(uwbJudgeModeExclusive)이면 이 기기의 경보 판단은 UWB 실측
+        // ── [v1.1.43] Case A(UWB↔UWB) 배타 판정 조기 분기 ─────────────────────────────
+        //   레인징 링크 실가동 페어(uwbJudgeModeExclusive)만 이 기기의 경보 판단이 UWB 실측
         //   전용(judgeUwbOnly, onUwbSampleReceived 구동)이며 RSSI 는 판단에 절대 개입하지 않는다.
         //   여기(필터 워밍·표시 갱신·Calibrator 학습 '후', streak·게이트·레벨 판정 '전')서 반환해
-        //   위 전처리는 계속 수렴시킨다 — 실측이 끊기면(1.5s) 다음 프레임부터 자동 Case B(RSSI)
-        //   복귀하며 워밍된 필터로 무봉합 인계된다. streak 는 리셋해 폴백 프레임의 stale 인플레 방지.
+        //   위 전처리는 계속 수렴시킨다 — 링크가 끝나면(종료 이벤트·좀비 철거) 다음 프레임부터 자동
+        //   Case B(RSSI) 복귀하며 워밍된 필터로 무봉합 인계된다. streak 리셋=폴백 stale 인플레 방지.
         if (uwbJudgeModeExclusive(deviceId, now)) {
             dangerContactStreakMap[deviceId] = 0
             warningContactStreakMap[deviceId] = 0
@@ -1935,23 +1938,28 @@ class BleService : LifecycleService() {
         }
     }
 
-    // ── [v1.1.42] Case A(UWB↔UWB 배타 판정) 성립 판정 — 3조건 AND ──────────────────────
-    //   상대의 0x9ABC 확장광고(="나 UWB 사용 중" 선언)가 유일한 권위. 선언이 유지되는 한
-    //   실측 표본이 잠시 끊겨도 RSSI 로 절대 넘어가지 않는다(판정 홀드 — judgeUwbOnly 는
-    //   표본 도착 시에만 실행되고, 끊긴 세션은 백오프가 자동 재연결). Case B 전환은 오직:
-    //   상대가 광고에서 플래그를 내림(=UWB 끔 선언, 6s 관측 유예) · 내 UWB 미가동 · 킬스위치 off.
-    //   양쪽 기기가 각자 상대의 0x9ABC 를 관찰하므로 판정은 상호 대칭이다.
+    // ── [v1.1.43] Case A(UWB↔UWB 배타 판정) 성립 판정 — 레인징 링크 실가동이 유일한 권위 ────
+    //   uwbDistances 에 이 피어의 엔트리가 있다(=첫 실측 수신~세션 종료 이벤트) = 링크 실가동.
+    //   링크가 살아있는 한 표본이 잠시 끊겨도 RSSI 로 절대 넘어가지 않는다(판정 홀드 — judgeUwbOnly
+    //   는 표본 도착 시에만 실행). 링크가 없는 동안(개설 전·듀티 휴면·백오프·종료 후)은 Case B
+    //   (RSSI)가 정상 판정한다. 단 종료 이벤트 없는 무표본 10s = 좀비 링크 사망 간주 → 세션 철거
+    //   (onDeviceLost: 엔트리 제거로 즉시 Case B 복귀) → 재개설은 기존 기계(스캔응답 0x9ABC 주소
+    //   → reconcile, 근접 페어는 듀티게이트 통과)가 자동 수행하고 첫 실측이 흐르면 Case A 재승격.
     private fun uwbJudgeModeExclusive(deviceId: String, now: Long): Boolean {
         if (!DevSettings.uwbExclusiveJudgeEnabled) return false    // 킬스위치 off = v1.1.40 거동
-        if (uwbRanger == null) return false                        // 내 UWB 미가동(HW·권한·시스템 OFF)
-        val adSeen = peerUwbSeenMap[deviceId] ?: return false      // 상대 UWB 플래그 미관측
-        if (now - adSeen > PEER_UWB_AD_FRESH_MS) return false      //   스테일 = 상대가 UWB 를 끔 → Case B
+        val ranger = uwbRanger ?: return false                     // 내 UWB 미가동(HW·권한·시스템 OFF)
+        if (!ranger.uwbDistances.containsKey(deviceId)) return false  // 링크 미가동(개설 전·휴면·종료) → RSSI
+        val sampleAt = uwbSampleAtMsMap[deviceId]
+        if (sampleAt == null || now - sampleAt > UWB_LINK_ZOMBIE_MS) {
+            ranger.onDeviceLost(deviceId)   // 좀비 철거 — 스캔응답이 살아있으면 주소 재수신 → 자동 재개설
+            return false
+        }
         return true
     }
 
     // [v1.1.41] UWB 실측 표본 즉시 드라이버 — UwbRanger.handleResult(메인 스레드)에서 직결 호출.
     //   판정 주기를 BLE 스캔 수신 품질에서 분리해 UWB 보고 주기(FREQUENT ~120ms)로 단축한다.
-    //   Case A 페어만 여기서 판정하고, 그 외에는 표본 시각만 기록한다(진단용).
+    //   Case A 페어만 여기서 판정하고, 그 외에는 표본 시각만 기록한다(좀비 워치독 근거).
     private fun onUwbSampleReceived(deviceId: String, distM: Float) {
         val now = System.currentTimeMillis()
         uwbSampleAtMsMap[deviceId] = now
@@ -2065,7 +2073,7 @@ class BleService : LifecycleService() {
                 deviceTurnMap.remove(deviceId); reverseRssiHist.remove(deviceId); reversePrepUntil.remove(deviceId)
                 firebaseLastSaveMap.remove(deviceId)
                 pendingDisplayMap.remove(deviceId)
-                // ★ peerUwbSeenMap 은 보존 — Case A 모드 근거(지우면 순간 RSSI 폴백). uwbSampleAtMsMap 은 진단용 보존
+                // ★ uwbSampleAtMsMap 은 보존 — Case A 좀비 워치독 근거(지우면 다음 표본까지 순간 RSSI 폴백). peerUwbSeenMap 은 진단용 보존
                 sendAlertBroadcast(deviceId, BleConstants.LEVEL_SAFE)
                 if (alertState.isEmpty()) {
                     AlertSoundPlayer.stopSound()
