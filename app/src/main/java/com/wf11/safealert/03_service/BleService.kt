@@ -905,8 +905,12 @@ class BleService : LifecycleService() {
             }
             TrackingState.CROSSING -> {
                 when {
-                    kfVel >= 0.0 -> {
-                        // vel 다시 양수 → CPA 오판, APPROACHING 복귀
+                    // [v1.1.48 #2] 리셋 데드밴드 — 기존 kfVel >= 0.0 은 전파 반사로 이탈 중 찰나의
+                    //   +0.1 양수 튐(Micro-Bounce)에도 1.5s 이탈 카운터를 즉시 리셋해 DEPARTING 에
+                    //   영원히 도달하지 못했다(사이렌 안 꺼짐의 근원). 확실한 재접근(kfVel >= 1.0)만
+                    //   CPA 오판으로 보고 복귀하고, 0.0~1.0 미세 바운스는 카운터를 유지한 채 무시한다.
+                    kfVel >= 1.0 -> {
+                        // vel 뚜렷한 양수 → CPA 오판, APPROACHING 복귀
                         crossingStartMap.remove(deviceId)
                         trackingStateMap[deviceId] = TrackingState.APPROACHING
                         Log.d(TAG, "[$deviceId] CROSSING → APPROACHING 복귀 (vel=%.2fdBm/s)".format(kfVel))
@@ -1188,7 +1192,14 @@ class BleService : LifecycleService() {
         //   단발 dip 1개는 무시하되, 거짓근접에는 여전히 2개 경로 합의를 요구한다(avg1sec raw 교차검증은
         //   투표자로 보존 = MASTER 불변식 유지). (오름차순 정렬 후 가운데 1개)
         val gateRssi = listOf(kalmanRssi, avg1sec, medianValue).sorted()[1]
-        if (gateRssi < effWarning && !alertState.containsKey(deviceId)) {   // [v1.1.10] effWarning(페이로드 시프트)로 일관
+        // [v1.1.48 #1] 긴급 접근 게이트 우회 — 투표자 avg1sec(과거 1초 raw 평균)은 코너 돌진처럼
+        //   신호가 급상승하는 국면에서 항상 과거값에 눌려 있어, 칼만·median 이 이미 위험권이어도
+        //   중앙값(gateRssi)이 '멀다'를 가리켜 신규 기기 경보가 원천 차단(return)되는 병목이 있었다.
+        //   빠른 접근(kfVel >= 2.0 dBm/s) 또는 median 이 이미 위험권(effDanger)이면 게이트를 우회해
+        //   판정 기회를 준다. 우회는 발령이 아니다 — 원거리 오발은 아래 2차 방어선(safeForceFloor
+        //   강제-SAFE)이 그대로 걸러내고, 발령은 여전히 streak 확증(2프레임)을 거친다.
+        val urgentBypass = kfVel >= 2.0 || medianValue >= effDanger
+        if (!urgentBypass && gateRssi < effWarning && !alertState.containsKey(deviceId)) {   // [v1.1.10] effWarning(페이로드 시프트)로 일관
             // [v1.0.49 #2] 필터 보존 밴드 — 경고 임계 바로 아래(밴드 내) 기기는 필터 상태를 지우지 않고
             //   경보 로직만 스킵한다. 위에서 Median·EMA·칼만·P-EMA·1초버퍼가 이미 이번 프레임 값으로
             //   갱신됐으므로 밴드 체류 중 자동 워밍업 → 경고권 진입 프레임부터 웜 상태로 즉시 판정 가능.
