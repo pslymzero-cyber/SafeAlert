@@ -97,10 +97,22 @@ class BleSettingsActivity : AppCompatActivity() {
         binding.swUwbVelPromote.isChecked = DevSettings.uwbVelPromoteEnabled
         binding.swUwbVelRelease.isChecked = DevSettings.uwbVelReleaseEnabled
         binding.etUwbSite.setText(DevSettings.uwbSiteCode)
+
+        // [v1.1.46] UWB 판정 반경(역할쌍 차등) — progress = 미터 × 2(0.5m 스텝)
+        binding.seekUwbFkWarn.progress     = (DevSettings.uwbForkliftWarnMeters   * 2).toInt().coerceIn(2, 80)
+        binding.seekUwbFkDanger.progress   = (DevSettings.uwbForkliftDangerMeters * 2).toInt().coerceIn(1, 60)
+        binding.seekUwbPairWarn.progress   = (DevSettings.uwbPairWarnMeters       * 2).toInt().coerceIn(2, 40)
+        binding.seekUwbPairDanger.progress = (DevSettings.uwbPairDangerMeters     * 2).toInt().coerceIn(1, 30)
+        updateUwbRadiusLabels()
+
         if (!UwbRanger.isHardwareSupported(this)) {
             binding.swUwbVelPromote.isEnabled = false
             binding.swUwbVelRelease.isEnabled = false
             binding.etUwbSite.isEnabled = false
+            binding.seekUwbFkWarn.isEnabled = false
+            binding.seekUwbFkDanger.isEnabled = false
+            binding.seekUwbPairWarn.isEnabled = false
+            binding.seekUwbPairDanger.isEnabled = false
         }
 
         // (v1.1.38 A) UWB 권한/시스템 진입점 초기 상태 반영
@@ -184,6 +196,26 @@ class BleSettingsActivity : AppCompatActivity() {
             DevSettings.uwbSiteCode = it?.toString() ?: ""
             UwbCalibrator.applySite()
         }
+
+        // [v1.1.46] UWB 판정 반경 — progress/2 = 미터(0.5m 스텝) 저장(라이브 반영: judgeUwbOnly 가
+        //   매 판정마다 DevSettings 를 직독하므로 별도 서비스 통지 불필요). 경고<위험 역설정은
+        //   자동 보정하지 않는다 — 위험 분기가 먼저 평가돼 위험 반경이 우선(무해).
+        binding.seekUwbFkWarn.setOnSeekBarChangeListener(seek {
+            DevSettings.uwbForkliftWarnMeters = binding.seekUwbFkWarn.progress / 2f
+            updateUwbRadiusLabels()
+        })
+        binding.seekUwbFkDanger.setOnSeekBarChangeListener(seek {
+            DevSettings.uwbForkliftDangerMeters = binding.seekUwbFkDanger.progress / 2f
+            updateUwbRadiusLabels()
+        })
+        binding.seekUwbPairWarn.setOnSeekBarChangeListener(seek {
+            DevSettings.uwbPairWarnMeters = binding.seekUwbPairWarn.progress / 2f
+            updateUwbRadiusLabels()
+        })
+        binding.seekUwbPairDanger.setOnSeekBarChangeListener(seek {
+            DevSettings.uwbPairDangerMeters = binding.seekUwbPairDanger.progress / 2f
+            updateUwbRadiusLabels()
+        })
 
         // (v1.1.38 A) UWB 권한 허용 / 시스템 UWB 설정 진입 — 순차 게이트
         //   ① HW 없음 → 안내만 ② 권한 없음 → 권한 요청 ③ 권한 OK → 시스템 토글 확인·필요시 설정 딥링크
@@ -274,6 +306,17 @@ class BleSettingsActivity : AppCompatActivity() {
         val sign = if (v > 0) "+" else ""
         binding.tvEpjBias.text = "${sign}${v} dB"
     }
+
+    // [v1.1.46] UWB 판정 반경 라벨 — progress/2 = 미터. 정수 값은 "15m", 반미터는 "7.5m".
+    private fun updateUwbRadiusLabels() {
+        binding.tvUwbFkWarn.text     = fmtMeters(binding.seekUwbFkWarn.progress / 2f)
+        binding.tvUwbFkDanger.text   = fmtMeters(binding.seekUwbFkDanger.progress / 2f)
+        binding.tvUwbPairWarn.text   = fmtMeters(binding.seekUwbPairWarn.progress / 2f)
+        binding.tvUwbPairDanger.text = fmtMeters(binding.seekUwbPairDanger.progress / 2f)
+    }
+
+    private fun fmtMeters(v: Float): String =
+        if (v == v.toInt().toFloat()) "${v.toInt()}m" else "%.1fm".format(v)
 
     private fun seek(onChange: () -> Unit) = object : android.widget.SeekBar.OnSeekBarChangeListener {
         override fun onProgressChanged(sb: android.widget.SeekBar, v: Int, b: Boolean) = onChange()

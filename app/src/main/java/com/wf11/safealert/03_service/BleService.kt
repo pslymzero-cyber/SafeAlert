@@ -450,22 +450,22 @@ class BleService : LifecycleService() {
     private val FORWARD_BIAS_VEL_RELEASE_FRAC = 0.5  // 해제 데드밴드 = 임계속도의 50%
 
     // ── [v1.1.41] UWB/RSSI 양방향 조건부 판단 분리(Case A/B) ─────────────────────────────
-    //   Case A(UWB↔UWB): 양측 UWB 활성 페어는 UWB 실측 '전용' 판정 — RSSI 는 판단에 절대 불개입.
-    //   Case B(UWB↔Non-UWB): 한쪽이라도 UWB 부재·비활성(플래그 하차)이면 기존 RSSI 판정.
-    //   [v1.1.43] Case A 성립 권위 = 레인징 링크 실가동(uwbDistances 엔트리 = 첫 실측 수신~세션
-    //   종료 이벤트). 링크가 살아있는 한 표본 공백은 판정 홀드(RSSI 불개입)이되, 종료 이벤트 없는
-    //   무표본 1s(좀비)는 링크 사망 간주 → 세션 철거 후 기존 스캔응답 경로로 자동 재개설. 링크가
-    //   없는 동안(개설 전·백오프·종료 후)은 Case B(RSSI)가 정상 판정한다.
-    //   [v1.1.45] RSSI 시작 게이트(듀티사이클) 철폐 — UWB 선언 피어는 BLE 시야에 들면 거리 불문
-    //   무조건 페어 시도·상시 유지. 무링크(=Case B) 구간은 이제 개설·재개설 찰나, 멀티캐스트 정원
-    //   (6) 초과, 단일세션 반대방향(컨트롤리↔컨트롤리 포함), UWB 실거리 밖 등 '페어 불성립'뿐이다.
-    //   (v1.1.42 의 0x9ABC 광고 단독 권위는 스택 가동 '선언'일 뿐 링크 증거가 아니어서 무세션
-    //   구간에 판정 전면 공백을 만든 회귀로 폐지 — 광고는 발견·진단용으로만 유지.)
+    //   Case A(UWB↔UWB): UWB 실측 신호가 흐르는 페어는 UWB 거리 '전용' 판정 — RSSI 는 판단에 절대 불개입.
+    //   Case B(UWB↔Non-UWB): UWB 실측 신호가 없는 페어는 기존 RSSI 판정.
+    //   [v1.1.46] Case A 성립 권위 = 실측 신호 신선도 하나(마지막 표본 ≤ UWB_MEAS_FRESH_MS).
+    //   신호가 신선하면 UWB 거리로 판정하고, 아니면 그 순간부터 RSSI 가 판정한다 — 어느 쪽으로도
+    //   판정 공백 없음. 실측이 다시 흐르면 첫 표본부터 즉시 UWB 복귀. 레인징 배관(세션)은 UwbRanger
+    //   가 스캔응답·백오프로 알아서 잇고 끊는 내부 사정일 뿐, 판정은 배관을 절대 건드리지 않는다 —
+    //   v1.1.43/44 의 '무표본 1s=좀비 세션 철거(onDeviceLost)'는 마지널 신호 페어에서 철거(1s)→
+    //   재합류(250ms)→철거 무한 반복(플랩)+컨트롤러 철거 시 전 세션 연쇄 붕괴를 일으켜 폐지.
+    //   [v1.1.45] RSSI 시작 게이트(듀티사이클) 철폐 유지 — UWB 선언 피어는 BLE 시야에 들면 거리
+    //   불문 무조건 페어 시도·상시 유지. (v1.1.42 의 0x9ABC 광고 단독 권위는 스택 가동 '선언'일 뿐
+    //   실측 증거가 아니어서 판정 전면 공백을 만든 회귀로 폐지 — 광고는 발견·진단용으로만 유지.)
     private val peerUwbSeenMap   = mutableMapOf<String, Long>()   // deviceId → 0x9ABC(UWB 활성 플래그) 최근 관측 시각(진단용 — 판정 불사용)
-    private val uwbSampleAtMsMap = mutableMapOf<String, Long>()   // deviceId → UWB 실측 표본 최근 수신 시각(좀비 워치독 근거)
+    private val uwbSampleAtMsMap = mutableMapOf<String, Long>()   // deviceId → UWB 실측 표본 최근 수신 시각(Case A 신선도 근거)
     private val uwbSafeStreakMap = mutableMapOf<String, Int>()    // deviceId → UWB 판정 격하 확증 연속표본 수
-    private val UWB_LINK_ZOMBIE_MS   = 1_000L  // [v1.1.44] 10s→1s. 종료 이벤트 없는 무표본 허용 창(정상 주기 ~120ms 의 ~8표본) — 초과=좀비 철거.
-                                               //   이 창이 곧 판정 동결 최대 길이 — 지게차 1.7m/s 기준 최대 ~1.7m 이동 내 철거→RSSI 복귀
+    private val UWB_MEAS_FRESH_MS    = 1_000L  // [v1.1.46] 실측 신호 신선 창(정상 주기 ~120ms 의 ~8표본) — 초과=그 순간부터 RSSI 판정.
+                                               //   이 창이 곧 UWB 판정 공백 최대 길이 — 지게차 1.7m/s 기준 최대 ~1.7m 내 RSSI 인계
     private val UWB_DEMOTE_STREAK    = 3       // 격하 확증 표본 수(FREQUENT ~120ms → 약 0.4s)
     private val UWB_RELEASE_HYST_M   = 0.5f    // 경계 진동 억제 — 유지 중 임계+0.5m 까지 레벨 유지
 
@@ -1102,23 +1102,25 @@ class BleService : LifecycleService() {
         // [전역 비콘 수신 강도] BLE설정의 비콘 게인(%)을 공통 dBm 보정으로 환산해 비콘에만 가산한다
         //   (offset 0 비콘 포함). 게인 100%(=0dBm)면 기존 거동과 완전 동일. 일반 SafeAlert 기기엔 미적용.
         val beaconGlobalGain = if (BeaconRegistry.isBeaconFullId(deviceId)) DevSettings.beaconGainDbm else 0
-        // (v1.1.31) UWB 델타 보정 — 활성 UWB 세션 페어면 실거리+medianValue(스파이크 제거·지연≈0)로
+        // (v1.1.31) UWB 델타 보정 — UWB 실측이 흐르는 페어면 실거리+medianValue(스파이크 제거·지연≈0)로
         //   이 페어의 채널 편차 Δ 를 학습하고, 학습된 보정을 다른 오프셋과 같은 자리에서 합산한다.
-        //   경보는 여전히 100% RSSI 구동(UWB 끊겨도 무봉합) — UWB 는 임계를 '보정'만 한다.
+        //   보정은 Case B(RSSI) 판정 임계에만 관여 — Case A 페어는 이 값과 무관하게 실측 거리로 판정.
         //   비대칭 클램프(지연 −3dB / 조기 +10dB)+24h 감쇠는 UwbCalibrator 내부 불변식. 비활성=0=기존 동일.
         val uwbPairKey = uwbPairKeyFor(deviceId)   // [v1.1.37 ③] 개별 기기 대신 역할쌍 세그먼트로 학습·조회
-        uwbRanger?.uwbDistances?.get(deviceId)?.let { UwbCalibrator.onSample(uwbPairKey, medianValue, it) }
+        // [v1.1.46] 학습 입력=신선한 실측만 — 마지막 표본이 오래된 UWB 거리에 '현재' RSSI 를 짝지으면
+        //   Δ 가 오염돼 임계가 영구히 앞당겨진다(즉시 DANGER 증상의 한 축). 거리 표시도 같은 게이트.
+        freshUwbDistM(deviceId)?.let { UwbCalibrator.onSample(uwbPairKey, medianValue, it) }
         val uwbCalibOffset = UwbCalibrator.offsetDbFor(uwbPairKey)
         val totalOffset = payloadOffset + beaconOffset + beaconGlobalGain + uwbCalibOffset
         val effWarning = BleConstants.rssiWarning - totalOffset
         val effDanger  = BleConstants.rssiDanger  - totalOffset
 
-        // ── [v1.1.43] Case A(UWB↔UWB) 배타 판정 조기 분기 ─────────────────────────────
-        //   레인징 링크 실가동 페어(uwbJudgeModeExclusive)만 이 기기의 경보 판단이 UWB 실측
+        // ── [v1.1.46] Case A(UWB↔UWB) 배타 판정 조기 분기 ─────────────────────────────
+        //   UWB 실측 신호가 신선한 페어(uwbJudgeModeExclusive)만 이 기기의 경보 판단이 UWB 실측
         //   전용(judgeUwbOnly, onUwbSampleReceived 구동)이며 RSSI 는 판단에 절대 개입하지 않는다.
         //   여기(필터 워밍·표시 갱신·Calibrator 학습 '후', streak·게이트·레벨 판정 '전')서 반환해
-        //   위 전처리는 계속 수렴시킨다 — 링크가 끝나면(종료 이벤트·좀비 철거) 다음 프레임부터 자동
-        //   Case B(RSSI) 복귀하며 워밍된 필터로 무봉합 인계된다. streak 리셋=폴백 stale 인플레 방지.
+        //   위 전처리는 계속 수렴시킨다 — 실측 신호가 끊기면 다음 프레임부터 자동 Case B(RSSI)
+        //   복귀하며 워밍된 필터로 무봉합 인계된다. streak 리셋=폴백 stale 인플레 방지.
         if (uwbJudgeModeExclusive(deviceId, now)) {
             dangerContactStreakMap[deviceId] = 0
             warningContactStreakMap[deviceId] = 0
@@ -1942,28 +1944,35 @@ class BleService : LifecycleService() {
         }
     }
 
-    // ── [v1.1.43] Case A(UWB↔UWB 배타 판정) 성립 판정 — 레인징 링크 실가동이 유일한 권위 ────
-    //   uwbDistances 에 이 피어의 엔트리가 있다(=첫 실측 수신~세션 종료 이벤트) = 링크 실가동.
-    //   링크가 살아있는 한 표본이 잠시 끊겨도 RSSI 로 절대 넘어가지 않는다(판정 홀드 — judgeUwbOnly
-    //   는 표본 도착 시에만 실행). 링크가 없는 동안(개설 전·백오프·종료 후)은 Case B
-    //   (RSSI)가 정상 판정한다. 단 종료 이벤트 없는 무표본 1s([v1.1.44] 10s→1s) = 좀비 링크 사망 간주 → 세션 철거
-    //   (onDeviceLost: 엔트리 제거로 즉시 Case B 복귀) → 재개설은 기존 기계(스캔응답 0x9ABC 주소
-    //   → reconcile, [v1.1.45] 게이트 철폐로 거리 불문 무조건)가 자동 수행하고 첫 실측이 흐르면 Case A 재승격.
+    // ── [v1.1.46] Case A(UWB↔UWB 배타 판정) 성립 판정 — 실측 신호 신선도가 유일한 권위 ────
+    //   마지막 실측 표본이 UWB_MEAS_FRESH_MS(1s) 이내 = UWB 거리로 판정. 아니면 그 순간부터 RSSI
+    //   판정, 실측이 다시 흐르면 첫 표본에서 즉시 UWB 복귀 — 어느 쪽으로도 판정 공백이 없다.
+    //   여기서 레인징 배관(세션)을 철거·재개설하지 않는다 — 잇고 끊는 건 UwbRanger(스캔응답·백오프·
+    //   종료 이벤트) 내부 사정이고 판정은 신호만 본다. v1.1.43/44 는 무표본 시 onDeviceLost 철거를
+    //   함께 했는데, 마지널 신호 페어에서 철거(1s)→재합류(250ms)→철거 무한 반복(플랩)+컨트롤러
+    //   철거 시 stopActiveLocked 전 세션 연쇄 붕괴가 생겨 판정 전환만 남기고 철거를 폐지했다.
+    //   uwbDistances 엔트리 확인은 유지 — 종료 이벤트로 엔트리가 걷힌 페어는 timestamp 신선 여부와
+    //   무관하게 즉시 RSSI(스테일 timestamp 단독 잔존 오판 방지).
     private fun uwbJudgeModeExclusive(deviceId: String, now: Long): Boolean {
         if (!DevSettings.uwbExclusiveJudgeEnabled) return false    // 킬스위치 off = v1.1.40 거동
         val ranger = uwbRanger ?: return false                     // 내 UWB 미가동(HW·권한·시스템 OFF)
-        if (!ranger.uwbDistances.containsKey(deviceId)) return false  // 링크 미가동(개설 전·휴면·종료) → RSSI
-        val sampleAt = uwbSampleAtMsMap[deviceId]
-        if (sampleAt == null || now - sampleAt > UWB_LINK_ZOMBIE_MS) {
-            ranger.onDeviceLost(deviceId)   // 좀비 철거 — 스캔응답이 살아있으면 주소 재수신 → 자동 재개설
-            return false
-        }
-        return true
+        if (!ranger.uwbDistances.containsKey(deviceId)) return false  // 실측 이력 없음(개설 전·종료 후) → RSSI
+        val sampleAt = uwbSampleAtMsMap[deviceId] ?: return false
+        return now - sampleAt <= UWB_MEAS_FRESH_MS
+    }
+
+    // [v1.1.46] '신선한' UWB 실측 거리 — Case A 성립과 같은 신선 창. Calibrator 학습 입력과 거리
+    //   표시(·UWB 태그)가 쓴다: 오래된 거리로 학습하면 Δ 오염(즉시 DANGER 의 한 축), 오래된
+    //   거리를 표시하면 죽은 숫자를 실측으로 오인한다. 신선하지 않으면 null=RSSI 경로(추정·역산).
+    private fun freshUwbDistM(deviceId: String): Float? {
+        val d = uwbRanger?.uwbDistances?.get(deviceId) ?: return null
+        val at = uwbSampleAtMsMap[deviceId] ?: return null
+        return if (System.currentTimeMillis() - at <= UWB_MEAS_FRESH_MS) d else null
     }
 
     // [v1.1.41] UWB 실측 표본 즉시 드라이버 — UwbRanger.handleResult(메인 스레드)에서 직결 호출.
     //   판정 주기를 BLE 스캔 수신 품질에서 분리해 UWB 보고 주기(FREQUENT ~120ms)로 단축한다.
-    //   Case A 페어만 여기서 판정하고, 그 외에는 표본 시각만 기록한다(좀비 워치독 근거).
+    //   Case A 페어만 여기서 판정하고, 그 외에는 표본 시각만 기록한다(Case A 신선도 근거).
     private fun onUwbSampleReceived(deviceId: String, distM: Float) {
         val now = System.currentTimeMillis()
         uwbSampleAtMsMap[deviceId] = now
@@ -2077,7 +2086,7 @@ class BleService : LifecycleService() {
                 deviceTurnMap.remove(deviceId); reverseRssiHist.remove(deviceId); reversePrepUntil.remove(deviceId)
                 firebaseLastSaveMap.remove(deviceId)
                 pendingDisplayMap.remove(deviceId)
-                // ★ uwbSampleAtMsMap 은 보존 — Case A 좀비 워치독 근거(지우면 다음 표본까지 순간 RSSI 폴백). peerUwbSeenMap 은 진단용 보존
+                // ★ uwbSampleAtMsMap 은 보존 — Case A 신선도 근거(지우면 다음 표본까지 순간 RSSI 폴백). peerUwbSeenMap 은 진단용 보존
                 sendAlertBroadcast(deviceId, BleConstants.LEVEL_SAFE)
                 if (alertState.isEmpty()) {
                     AlertSoundPlayer.stopSound()
@@ -2324,7 +2333,8 @@ class BleService : LifecycleService() {
         val level = alertState[topId]?.first ?: BleConstants.LEVEL_SAFE
         val rssi  = deviceRssiMap[topId] ?: -99
         // (v1.1.31) 거리 문자열(빈값=기존 dBm 폴백)을 플로팅에도 전달 — 목록과 동일 표기 규칙.
-        val dist  = UwbCalibrator.distanceTextFor(uwbPairKeyFor(topId), rssi, uwbRanger?.uwbDistances?.get(topId))
+        //   [v1.1.46] 신선한 실측만 ·UWB 표기(freshUwbDistM) — 죽은 숫자를 실측으로 오인하지 않게.
+        val dist  = UwbCalibrator.distanceTextFor(uwbPairKeyFor(topId), rssi, freshUwbDistM(topId))
         OverlayManager.showFloating(
             context  = this,
             deviceId = topId,
@@ -2533,7 +2543,7 @@ class BleService : LifecycleService() {
             val rssi  = deviceRssiMap[id] ?: -99
             val name  = suddenLabelMap[id] ?: makeApproachLabel(id)
             // (v1.1.31) 4번째 필드 = 거리 문자열(빈값 가능) — 구버전 파서는 f.size>=3 만 보므로 뒤호환.
-            val dist  = UwbCalibrator.distanceTextFor(uwbPairKeyFor(id), rssi, uwbRanger?.uwbDistances?.get(id))
+            val dist  = UwbCalibrator.distanceTextFor(uwbPairKeyFor(id), rssi, freshUwbDistM(id))
             if (sb.isNotEmpty()) sb.append('\u001E')
             sb.append(level).append('\u001F').append(rssi).append('\u001F').append(name).append('\u001F').append(dist)
         }
@@ -2550,7 +2560,7 @@ class BleService : LifecycleService() {
             .forEach { id ->
                 val rssi = deviceRssiMap[id] ?: -99
                 val name = suddenLabelMap[id] ?: makeApproachLabel(id)
-                val dist = UwbCalibrator.distanceTextFor(uwbPairKeyFor(id), rssi, uwbRanger?.uwbDistances?.get(id))
+                val dist = UwbCalibrator.distanceTextFor(uwbPairKeyFor(id), rssi, freshUwbDistM(id))
                 if (sb.isNotEmpty()) sb.append(30.toChar())
                 sb.append(BleConstants.LEVEL_SAFE).append(31.toChar()).append(rssi).append(31.toChar()).append(name).append(31.toChar()).append(dist)
                 mergedCount++

@@ -39,13 +39,20 @@ object UwbCalibrator {
     private const val TAG = "UwbCalibrator"
     private const val PREF_NAME = "uwb_calib"
 
+    // [v1.1.46] 프로파일 스키마 — 학습 조건이 바뀌면(v2: 게이트 상시 페어 시절 NLOS 오염 잔존)
+    //   구버전 저장값을 1회 폐기하고 새 조건으로 재학습한다. Int 값이라 파서(String split)가 자동 skip.
+    private const val KEY_SCHEMA = "_schema"
+    private const val SCHEMA_VER = 2
+
     // 경로손실 모델 — BLE 1m 기준 수신강도(A)와 감쇠지수(n)
     private const val PATHLOSS_A = -59.0
     private const val PATHLOSS_N = 2.0
 
-    // 품질 게이트 — 0.3m 미만(근접 NLOS 반사 오차)·15m 초과(RSSI 분산 과대)는 학습 제외
+    // 품질 게이트 — 0.3m 미만(근접 NLOS 반사 오차)·8m 초과는 학습 제외. [v1.1.46] 15→8m:
+    //   상시 페어(v1.1.45) 이후 5~15m NLOS(랙·파렛트 차폐) 잔차가 대량 유입돼 Δ 가 +10dB 클램프에
+    //   고착(임계 영구 선행 = 즉시 DANGER 증상의 한 축) — 근거리 LOS 우세 구간만 학습한다.
     private const val MIN_DIST_M = 0.3f
-    private const val MAX_DIST_M = 15.0f
+    private const val MAX_DIST_M = 8.0f
     private const val MIN_SAMPLES = 5              // 이 미만이면 보정 0(학습 중)
     private const val EMA_ALPHA = 0.2              // Δ 평활 계수(당일 미세조정)
     private const val BASE_ALPHA = 0.05            // (v1.1.34) 사업장 기준선(장기 EMA) 계수 — delta 의 1/4 속도
@@ -95,6 +102,12 @@ object UwbCalibrator {
         lastPersistMs = 0L
         val p = ctx.getSharedPreferences(prefNameFor(site), Context.MODE_PRIVATE)
         prefs = p
+        // [v1.1.46] 구스키마(마커 없음=1) 프로파일 = 오염 가능 저장값 1회 폐기 — 마커만 남기고 비운다.
+        if (p.getInt(KEY_SCHEMA, 1) < SCHEMA_VER) {
+            p.edit().clear().putInt(KEY_SCHEMA, SCHEMA_VER).apply()
+            Log.d(TAG, "UWB 보정 스키마 승격(${if (site.isEmpty()) "공용" else site}): v${SCHEMA_VER} — 구 학습값 폐기")
+            return
+        }
         val now = System.currentTimeMillis()
         var loaded = 0
         p.all.forEach { (key, value) ->
@@ -113,7 +126,7 @@ object UwbCalibrator {
         if (loaded > 0) Log.d(TAG, "UWB 보정 로드(${if (site.isEmpty()) "공용" else site}): ${loaded}건")
     }
 
-    // 학습 입력 — BleService.processAlert 가 '활성 UWB 세션 페어'에 한해 매 프레임 호출.
+    // 학습 입력 — BleService.processAlert 가 '신선한 UWB 실측이 있는 페어'(freshUwbDistM)에 한해 매 프레임 호출.
     //   rssi 는 medianValue(median-of-3): 스파이크 없고 위상지연≈0 이라 평활 잔상이 Δ 에 섞이지 않는다.
     @Synchronized
     fun onSample(pairKey: String, measuredRssi: Int, distM: Float) {
@@ -200,6 +213,7 @@ object UwbCalibrator {
         lastPersistMs = now
         dirty = false
         val e = p.edit().clear()
+        e.putInt(KEY_SCHEMA, SCHEMA_VER)   // [v1.1.46] clear() 가 마커도 지우므로 매 persist 에 동봉 — 누락 시 재기동마다 재리셋=학습 소실
         map.forEach { (id, c) -> e.putString(id, "${c.delta}|${c.updatedAt}|${c.samples}|${c.baseline}") }
         e.apply()
     }

@@ -157,7 +157,7 @@
             <TextView android:text="UWB 정밀 거리 측정" android:textStyle="bold" android:textSize="15sp"
                 android:textColor="#111827" android:layout_width="wrap_content" android:layout_height="wrap_content"
                 android:layout_marginBottom="4dp"/>
-            <TextView android:text="지원 기기끼리 실거리(m)를 측정 · 근접경보는 BLE 신호로 항상 동작"
+            <TextView android:text="지원 기기끼리 실거리(m)를 측정 · UWB 신호가 오는 상대는 실측 거리로, 그 외는 BLE 신호로 경보 판정"
                 android:textSize="12sp" android:textColor="#9CA3AF"
                 android:layout_width="wrap_content" android:layout_height="wrap_content"
                 android:layout_marginBottom="10dp"/>
@@ -178,7 +178,7 @@
                             android:layout_width="wrap_content" android:layout_height="wrap_content"/>
                     </LinearLayout>
                     <TextView android:id="@+id/tv_uwb_hint"
-                        android:text="기본 켜짐 · 거리 표시 보조로만 쓰이며 경보 로직에는 개입하지 않음"
+                        android:text="기본 켜짐 · UWB 신호가 오는 동안은 실측 거리로만 경고/위험 판정 · 신호가 없으면 BLE 신호로 판정"
                         android:textSize="11sp" android:textColor="#9CA3AF"
                         android:layout_width="match_parent" android:layout_height="wrap_content"
                         android:layout_marginTop="6dp"/>
@@ -283,6 +283,74 @@
                         android:textSize="13sp" android:textColor="#374151"
                         android:inputType="text" android:maxLines="1"/>
                     <TextView android:text="UWB 보정 학습값을 사업장별로 저장·전환 · 사업장 학습은 지워지지 않고 코드 변경 시 즉시 불러옴"
+                        android:textSize="11sp" android:textColor="#9CA3AF"
+                        android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"/>
+
+                    <!-- [v1.1.46] UWB 판정 반경(역할쌍 차등) — UWB 실측 신호가 흐르는 상대에 적용되는
+                         경고/위험 거리. 0.5m 단위(progress=미터x2), 즉시 반영. 신호가 없는 상대는 BLE(dBm) 임계 적용. -->
+                    <TextView android:text="UWB 판정 반경"
+                        android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:textSize="13sp" android:textColor="#374151" android:textStyle="bold"
+                        android:layout_marginTop="14dp"/>
+                    <TextView android:text="UWB 실측 신호가 오는 상대에게 적용 · 지게차가 낀 쌍/그 외 쌍 각각 경고·위험 거리"
+                        android:textSize="11sp" android:textColor="#9CA3AF"
+                        android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"/>
+
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:orientation="horizontal" android:gravity="center_vertical"
+                        android:layout_marginTop="10dp">
+                        <TextView android:text="지게차 쌍 경고" android:layout_width="0dp"
+                            android:layout_height="wrap_content" android:layout_weight="1"
+                            android:textSize="13sp" android:textColor="#374151"/>
+                        <TextView android:id="@+id/tv_uwb_fk_warn"
+                            android:layout_width="wrap_content" android:layout_height="wrap_content"
+                            android:textSize="14sp" android:textStyle="bold" android:textColor="#F59E0B"/>
+                    </LinearLayout>
+                    <SeekBar android:id="@+id/seek_uwb_fk_warn" android:layout_width="match_parent"
+                        android:layout_height="wrap_content" android:layout_marginTop="4dp" android:min="2" android:max="80"/>
+
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:orientation="horizontal" android:gravity="center_vertical"
+                        android:layout_marginTop="12dp">
+                        <TextView android:text="지게차 쌍 위험" android:layout_width="0dp"
+                            android:layout_height="wrap_content" android:layout_weight="1"
+                            android:textSize="13sp" android:textColor="#374151"/>
+                        <TextView android:id="@+id/tv_uwb_fk_danger"
+                            android:layout_width="wrap_content" android:layout_height="wrap_content"
+                            android:textSize="14sp" android:textStyle="bold" android:textColor="#EF4444"/>
+                    </LinearLayout>
+                    <SeekBar android:id="@+id/seek_uwb_fk_danger" android:layout_width="match_parent"
+                        android:layout_height="wrap_content" android:layout_marginTop="4dp" android:min="1" android:max="60"/>
+
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:orientation="horizontal" android:gravity="center_vertical"
+                        android:layout_marginTop="12dp">
+                        <TextView android:text="그 외 쌍 경고" android:layout_width="0dp"
+                            android:layout_height="wrap_content" android:layout_weight="1"
+                            android:textSize="13sp" android:textColor="#374151"/>
+                        <TextView android:id="@+id/tv_uwb_pair_warn"
+                            android:layout_width="wrap_content" android:layout_height="wrap_content"
+                            android:textSize="14sp" android:textStyle="bold" android:textColor="#F59E0B"/>
+                    </LinearLayout>
+                    <SeekBar android:id="@+id/seek_uwb_pair_warn" android:layout_width="match_parent"
+                        android:layout_height="wrap_content" android:layout_marginTop="4dp" android:min="2" android:max="40"/>
+
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:orientation="horizontal" android:gravity="center_vertical"
+                        android:layout_marginTop="12dp">
+                        <TextView android:text="그 외 쌍 위험" android:layout_width="0dp"
+                            android:layout_height="wrap_content" android:layout_weight="1"
+                            android:textSize="13sp" android:textColor="#374151"/>
+                        <TextView android:id="@+id/tv_uwb_pair_danger"
+                            android:layout_width="wrap_content" android:layout_height="wrap_content"
+                            android:textSize="14sp" android:textStyle="bold" android:textColor="#EF4444"/>
+                    </LinearLayout>
+                    <SeekBar android:id="@+id/seek_uwb_pair_danger" android:layout_width="match_parent"
+                        android:layout_height="wrap_content" android:layout_marginTop="4dp" android:min="1" android:max="30"/>
+
+                    <TextView android:text="기본: 지게차 쌍 15m 경고·8m 위험 / 그 외 5m 경고·3m 위험 · 0.5m 단위 즉시 반영"
                         android:textSize="11sp" android:textColor="#9CA3AF"
                         android:layout_width="match_parent" android:layout_height="wrap_content"
                         android:layout_marginTop="6dp"/>

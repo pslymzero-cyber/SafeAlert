@@ -564,10 +564,12 @@ object DevSettings {
         get() = prefs.getBoolean(KEY_UWB_PROMOTE_ENABLED, false)
         set(v) = prefs.edit().putBoolean(KEY_UWB_PROMOTE_ENABLED, v).apply()
 
-    // (v1.1.33) UWB 승격 임계(m) — 역할쌍 차등. v1.1.32 의 단일 3m(uwb_danger_meters)는 지게차
+    // (v1.1.33) UWB 판정 반경(m) — 역할쌍 차등. v1.1.32 의 단일 3m(uwb_danger_meters)는 지게차
     //   제동거리 기준 이미 충돌권이라 폐기(구 키는 미참조 방치 — 마이그레이션 불필요).
     //   지게차가 한쪽이라도 낀 쌍 = 15m 경고 / 8m 위험, 그 외(EPJ↔보행자 등) = 5m 경고 / 3m 위험.
-    //   UI 미노출(DevSettings 키만). 경고<위험으로 역설정해도 promote-only 라 위험 분기가 우선(무해).
+    //   v1.1.41 부터 Case A(UWB 실측 판정)의 경고/위험 임계로도 쓰인다(judgeUwbOnly 가 매 호출 직독).
+    //   [v1.1.46] BLE 감지 설정 UWB 카드에 슬라이더 4종으로 노출(0.5m 스텝·즉시 반영).
+    //   경고<위험 역설정도 그대로 둔다(자동 클램프 없음) — 위험 분기가 먼저 평가돼 위험 우선(무해).
     private const val KEY_UWB_FORKLIFT_WARN_METERS = "uwb_forklift_warn_meters"
     const val DEFAULT_UWB_FORKLIFT_WARN_METERS = 15.0f
     var uwbForkliftWarnMeters: Float
