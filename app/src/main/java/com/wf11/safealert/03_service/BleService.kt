@@ -454,14 +454,15 @@ class BleService : LifecycleService() {
     //   Case B(UWB↔Non-UWB): 한쪽이라도 UWB 부재·비활성(플래그 하차)이면 기존 RSSI 판정.
     //   [v1.1.43] Case A 성립 권위 = 레인징 링크 실가동(uwbDistances 엔트리 = 첫 실측 수신~세션
     //   종료 이벤트). 링크가 살아있는 한 표본 공백은 판정 홀드(RSSI 불개입)이되, 종료 이벤트 없는
-    //   무표본 10s(좀비)는 링크 사망 간주 → 세션 철거 후 기존 스캔응답 경로로 자동 재개설. 링크가
+    //   무표본 1s(좀비)는 링크 사망 간주 → 세션 철거 후 기존 스캔응답 경로로 자동 재개설. 링크가
     //   없는 동안(개설 전·듀티 휴면·백오프·종료 후)은 Case B(RSSI)가 정상 판정한다.
     //   (v1.1.42 의 0x9ABC 광고 단독 권위는 스택 가동 '선언'일 뿐 링크 증거가 아니어서 무세션
     //   구간에 판정 전면 공백을 만든 회귀로 폐지 — 광고는 발견·진단용으로만 유지.)
     private val peerUwbSeenMap   = mutableMapOf<String, Long>()   // deviceId → 0x9ABC(UWB 활성 플래그) 최근 관측 시각(진단용 — 판정 불사용)
     private val uwbSampleAtMsMap = mutableMapOf<String, Long>()   // deviceId → UWB 실측 표본 최근 수신 시각(좀비 워치독 근거)
     private val uwbSafeStreakMap = mutableMapOf<String, Int>()    // deviceId → UWB 판정 격하 확증 연속표본 수
-    private val UWB_LINK_ZOMBIE_MS   = 10_000L // 종료 이벤트 없는 무표본 허용 창(정상 주기 ~120ms 의 ~80배) — 초과=좀비 철거
+    private val UWB_LINK_ZOMBIE_MS   = 1_000L  // [v1.1.44] 10s→1s. 종료 이벤트 없는 무표본 허용 창(정상 주기 ~120ms 의 ~8표본) — 초과=좀비 철거.
+                                               //   이 창이 곧 판정 동결 최대 길이 — 지게차 1.7m/s 기준 최대 ~1.7m 이동 내 철거→RSSI 복귀
     private val UWB_DEMOTE_STREAK    = 3       // 격하 확증 표본 수(FREQUENT ~120ms → 약 0.4s)
     private val UWB_RELEASE_HYST_M   = 0.5f    // 경계 진동 억제 — 유지 중 임계+0.5m 까지 레벨 유지
 
@@ -1942,7 +1943,7 @@ class BleService : LifecycleService() {
     //   uwbDistances 에 이 피어의 엔트리가 있다(=첫 실측 수신~세션 종료 이벤트) = 링크 실가동.
     //   링크가 살아있는 한 표본이 잠시 끊겨도 RSSI 로 절대 넘어가지 않는다(판정 홀드 — judgeUwbOnly
     //   는 표본 도착 시에만 실행). 링크가 없는 동안(개설 전·듀티 휴면·백오프·종료 후)은 Case B
-    //   (RSSI)가 정상 판정한다. 단 종료 이벤트 없는 무표본 10s = 좀비 링크 사망 간주 → 세션 철거
+    //   (RSSI)가 정상 판정한다. 단 종료 이벤트 없는 무표본 1s([v1.1.44] 10s→1s) = 좀비 링크 사망 간주 → 세션 철거
     //   (onDeviceLost: 엔트리 제거로 즉시 Case B 복귀) → 재개설은 기존 기계(스캔응답 0x9ABC 주소
     //   → reconcile, 근접 페어는 듀티게이트 통과)가 자동 수행하고 첫 실측이 흐르면 Case A 재승격.
     private fun uwbJudgeModeExclusive(deviceId: String, now: Long): Boolean {

@@ -70,7 +70,7 @@ class UwbRanger(
         private const val TAG = "UwbRanger"
         private const val SESSION_ID_BASE = 0x00570000        // 'W'(0x57) 프리픽스 — 앱 고유 네임스페이스
         private const val RESTART_BACKOFF_MS = 10_000L        // 세션 오류·피어 해제 후 재시도 대기
-        private const val REJOIN_DELAY_MS = 1_000L            // 피어 재광고·이탈 등 즉시성 재시작(디바운스) 대기
+        private const val REJOIN_DELAY_MS = 250L              // [v1.1.44] 1s→250ms — 피어 재광고·이탈·좀비 철거 후 즉시성 재시작(디바운스) 대기
         private const val STATUS_THROTTLE_MS = 3_000L         // 거리 상태줄 전파 최소 간격
         private const val SWITCH_HYSTERESIS_DB = 6            // 컨트롤러 재선정 핑퐁 방지 히스테리시스
         private const val FORKLIFT_RANK_BIAS_DB = 12          // 지게차 낀 쌍 우선순위 가산 — 단일 세션 경쟁에서 15m 경고가 밀리지 않게
