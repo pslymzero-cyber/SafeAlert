@@ -62,6 +62,12 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
     private val detectedDevices = mutableMapOf<String, Long>()
     var onStatusUpdate: ((String) -> Unit)? = null
 
+    // [v1.1.47] UWB 실측 지속 여부 술어(BleService 가 배선) — BLE 신호 타임아웃(전투 2s/휴식 6s)
+    //   시점에 이 술어가 true(신선한 UWB 실측 보유)면 onDeviceLost 를 유예한다. BLE 광고가
+    //   순간 유실돼도 실측 중인 UWB 세션이 강제 철거(BleService→UwbRanger)되는 것을 방어.
+    //   매 스윕(1s) 재평가하므로 UWB 실측까지 끊기면 그때 정상 소실 처리된다.
+    var uwbMeasuringCheck: ((String) -> Boolean)? = null
+
     private var totalBleCount = 0
 
     // 화면 상태 — false 시 500ms 하드웨어 배칭 (스캔 모드와 직교, CPU 웨이크업만 최소화)
@@ -95,6 +101,12 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
 
     private val bleScanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
+            // [v1.1.47] 스캔 콜백 스레드는 메인 루퍼 보장이 없다(스택·OEM 에 따라 바인더 스레드 유입).
+            //   detectedDevices 와 BleService 의 per-device 상태맵은 전부 메인 스레드 소유이므로,
+            //   메인이 아니면 즉시 메인 루퍼로 토스 후 반환(ConcurrentModificationException 방어).
+            //   스톡(메인 전달) 스택에선 조건 false = 지연 0 의 no-op. 배치 경로(onBatchScanResults)도
+            //   여기로 위임되므로 이 가드 하나로 전 수신 경로가 메인 단일화된다.
+            if (Looper.myLooper() != Looper.getMainLooper()) { handler.post { onScanResult(callbackType, result) }; return }
             val record = result.scanRecord ?: return
 
             // SafeAlert 기기 감지
@@ -212,6 +224,14 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
                 .filter { now - it.value > timeoutMs }
                 .map { it.key }
                 .forEach { id ->
+                    // [v1.1.47] BLE 신호 타임아웃이라도 UWB 실측이 계속 흐르는 기기는 소실 유예 —
+                    //   광고 일시 유실만으로 onDeviceLost(→UWB 세션 강제 철거)를 쏘지 않는다.
+                    //   타임스탬프는 갱신하지 않아 'BLE 스테일' 사실은 보존되고, 매 스윕(1s)
+                    //   재평가로 UWB 실측까지 끊기면 그때 정상 소실 처리된다.
+                    if (uwbMeasuringCheck?.invoke(id) == true) {
+                        Log.d(TAG, "신호 소실 유예(UWB 실측 지속): $id")
+                        return@forEach
+                    }
                     detectedDevices.remove(id)
                     scanCallback?.onDeviceLost(id)
                     Log.d(TAG, "신호 소실: $id")
@@ -307,8 +327,18 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
         }
     }
 
-    private fun restartScanInternal() {
+    private fun restartScanInternal(immediate: Boolean = false) {
+        // [v1.1.47] 재시작 직전 배칭 큐 강제 배출 — stopScan 으로 유실될 대기 결과(화면 꺼짐
+        //   500ms 배칭 최대 0.5s 치)를 먼저 전달해 무손실 전환. 배칭 0ms 면 큐가 비어 no-op.
+        runCatching { scanner.flushPendingScanResults(bleScanCallback) }
         try { scanner.stopScan(bleScanCallback) } catch (_: Exception) {}
+        if (immediate) {
+            // [v1.1.47] 위험 근접 배칭 승격(setHazardNear) 전용 — 300ms 대기 없이 즉시 재시작해
+            //   화면 꺼짐+근접 상황의 스캔 공백을 제거한다. 유령 스캔 방지는 지연이 아니라
+            //   isScanning 가드가 담당하므로 즉시 경로에서도 동일하게 안전하다.
+            if (isScanning) startScanInternal()
+            return
+        }
         // [v1.0.46 #5] stopScanning() 직후 잔류 람다가 유령 스캔을 다시 켜는 것 방지
         handler.postDelayed({ if (isScanning) startScanInternal() }, 300)
     }
@@ -328,7 +358,7 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
         hazardNear = v
         if (!isScreenOn && isScanning) {
             Log.d(TAG, "화면 꺼짐 위험근접=$v → 배칭 ${if (v) BATCH_DELAY_ACTIVE_MS else BATCH_DELAY_SCREEN_OFF_MS}ms 전환")
-            restartScanInternal()
+            restartScanInternal(immediate = true)   // [v1.1.47] 근접 배칭 전환은 300ms 공백 없이 즉시
         }
     }
 

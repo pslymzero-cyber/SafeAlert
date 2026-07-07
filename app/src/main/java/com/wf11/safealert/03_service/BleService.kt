@@ -684,6 +684,11 @@ class BleService : LifecycleService() {
                 startScanHealthCheck()
                 bleScanner = BleScanner(scanner).also { s ->
                     s.onStatusUpdate = { msg -> sendStatusBroadcast(msg) }
+                    // [v1.1.47] BLE 신호 타임아웃(전투 2s/휴식 6s)이어도 신선한 UWB 실측(≤1s)이
+                    //   흐르는 기기는 소실 판정 유예 — 광고 일시 유실만으로 onDeviceLost 가 실측
+                    //   중인 UWB 세션을 강제 철거하지 않게 한다. 실측까지 끊기면 다음 스윕에서
+                    //   정상 소실(27개 상태맵 정리 포함) — 유예는 '연기'일 뿐 경로 자체는 불변.
+                    s.uwbMeasuringCheck = { id -> freshUwbDistM(id) != null }
                     s.startScanning(object : BleScanCallback {
                         override fun onDeviceDetected(deviceId: String, rssi: Int, alertLevel: Int, remoteState: Int, remoteTurn: Int, payloadPresent: Boolean) {
                             lastScanResultMs = System.currentTimeMillis()
@@ -2223,16 +2228,23 @@ class BleService : LifecycleService() {
     //     alertWakeLock(3s)이 독립적으로 인계하므로 공백 없이 이어진다(서로 다른 lock — 간섭 0).
     //     timeout 은 release 누락 대비 안전망(주 루퍼 단일스레드라 정상 경로는 ms 내 해제).
     private val DETECTION_WAKELOCK_MS = 500L
+    // [v1.1.47] 선획득 여유 마진 — WAKE_RSSI_DBM '도달 전' 약신호 구간부터 CPU 를 미리 잡아,
+    //   임계를 넘는 경계 프레임이 Doze 상태에서도 첫 처리부터 완주하도록 한다(지연/누락 방어).
+    //   비용은 마이크로락(500ms) 획득 빈도 증가뿐 — 스캔 듀티·배칭·경보 판정 임계는 불변.
+    private val DETECTION_WAKE_MARGIN_DB = 10
     private val detectionWakeLock: PowerManager.WakeLock by lazy {
         (getSystemService(Context.POWER_SERVICE) as PowerManager)
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "SafeAlert:DetectionWakeLock")
             .apply { setReferenceCounted(false) }
     }
 
-    // [v1.1.13] 화면 꺼짐 + 근접(>=WAKE) 수신 프레임에서만 CPU 를 짧게 확보 — 처리체인이 Doze 로
-    //   끊기지 않게 한다. 화면 켜짐(사용자 인지 중) 또는 약신호(<WAKE)면 불필요하므로 잡지 않는다.
+    // [v1.1.13] 화면 꺼짐 + 근접 수신 프레임에서만 CPU 를 짧게 확보 — 처리체인이 Doze 로
+    //   끊기지 않게 한다. 화면 켜짐(사용자 인지 중)이거나 충분히 약한 신호면 잡지 않는다.
+    //   [v1.1.47] WAKE_RSSI_DBM 보다 10dB 여유를 두고 선획득 — 임계 근방(WAKE-10 ≤ rssi < WAKE)
+    //   프레임부터 미리 잡아 임계 돌파 순간 CPU 가 이미 깨어 있게 한다. setHazardNear(배칭 0ms
+    //   승격)와 광고 웨이크 게이트는 기존 WAKE_RSSI_DBM 임계 그대로 — 이 마진은 wakelock 전용.
     private fun acquireDetectionWakeLock(rssi: Int) {
-        if (isScreenOn || rssi < WAKE_RSSI_DBM) return
+        if (isScreenOn || rssi < WAKE_RSSI_DBM - DETECTION_WAKE_MARGIN_DB) return
         try { detectionWakeLock.acquire(DETECTION_WAKELOCK_MS) } catch (e: Exception) { Log.w(TAG, "DetectWakeLock 획득 실패: ${e.message}") }
     }
 
