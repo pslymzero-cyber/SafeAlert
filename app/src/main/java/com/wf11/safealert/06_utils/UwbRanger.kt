@@ -62,8 +62,8 @@ class UwbRanger(
     private val myIsVehicle: Boolean,           // 내가 차량(지게차/EPJ, DEVICE 모드)인가
     private val onStatus: ((String) -> Unit)? = null,
     private val onLocalAddressChanged: ((ByteArray) -> Unit)? = null,
-    private val rssiOf: ((String) -> Int?)? = null,   // deviceId → 최근 평활 RSSI(dBm) — 세션 우선순위·시작 게이트용
-    private val forkliftPairOf: ((String) -> Boolean)? = null,   // deviceId → 지게차 낀 쌍 여부 — 게이트 완화·우선순위 가산용
+    private val rssiOf: ((String) -> Int?)? = null,   // deviceId → 최근 평활 RSSI(dBm) — 세션 우선순위(rankOf)용. [v1.1.45] 시작 게이트 철폐로 성립 여부에는 불사용
+    private val forkliftPairOf: ((String) -> Boolean)? = null,   // deviceId → 지게차 낀 쌍 여부 — 우선순위 가산용
     private val onUwbSample: ((String, Float) -> Unit)? = null   // [v1.1.41] 실측 표본 즉시 콜백(deviceId, 거리m) — UWB 주도 판정 드라이버
 ) {
     companion object {
@@ -74,7 +74,6 @@ class UwbRanger(
         private const val STATUS_THROTTLE_MS = 3_000L         // 거리 상태줄 전파 최소 간격
         private const val SWITCH_HYSTERESIS_DB = 6            // 컨트롤러 재선정 핑퐁 방지 히스테리시스
         private const val FORKLIFT_RANK_BIAS_DB = 12          // 지게차 낀 쌍 우선순위 가산 — 단일 세션 경쟁에서 15m 경고가 밀리지 않게
-        private const val GATE_RELEASE_MARGIN_DB = 8         // 이미 측정 중인 상대는 게이트를 이만큼 완화해 유지(경계 진동 억제)
         private const val MULTICAST_MAX = 6                  // 한 컨트롤러가 동시에 측정할 컨트롤리 상한(하드웨어 여유·튜닝 지점)
 
         // 접근속도 운동학 — dt 연속성 창·평활 계수·이탈 데드밴드
@@ -213,7 +212,7 @@ class UwbRanger(
     /**
      * BLE 스캔 응답(0x9ABC)에서 피어의 UWB OOB 페이로드 수신 — 역할·소스 제한 없이 모든 피어 수용.
      * 스캔 콜백(바인더 스레드)에서 호출됨 — 상태 뮤테이션은 동기화로 보호. 매 수신마다 reconcile 을
-     * 돌려 RSSI/게이트 변화까지 반영하되, 실제 세션 재구성은 목표가 바뀔 때만(디바운스+가드).
+     * 돌려 RSSI 랭크 변화까지 반영하되, 실제 세션 재구성은 목표가 바뀔 때만(디바운스+가드).
      */
     @Synchronized
     fun onPeerUwbAddressReceived(deviceId: String, peerUwbAddr: ByteArray) {
@@ -303,15 +302,11 @@ class UwbRanger(
     private fun rankOf(id: String): Int =
         (rssiOf?.invoke(id) ?: 0) + if (isForkliftPair(id)) FORKLIFT_RANK_BIAS_DB else 0
 
-    /** 시작 게이트 통과 여부 — 이미 측정 중인 상대는 완화(경계 진동 억제). rssiOf 미제공 시 항상 통과 */
-    private fun gatePassLocked(id: String): Boolean {
-        if (DevSettings.uwbForce) return true   // (v1.1.38 B) 강제 활성화 — RSSI 거리 게이트 우회(무조건 통과)
-        val f = rssiOf ?: return true
-        val base = if (isForkliftPair(id)) DevSettings.uwbStartRssiGateForklift else DevSettings.uwbStartRssiGate
-        val active = servedControlees.containsKey(id) || id == activeControllerId
-        val gate = if (active) base - GATE_RELEASE_MARGIN_DB else base
-        return (f.invoke(id) ?: Int.MIN_VALUE) >= gate
-    }
+    // [v1.1.45] RSSI 시작 게이트(gatePassLocked, v1.1.32 배터리 듀티사이클) 철폐 — UWB 선언 피어
+    //   (0x9ABC 스캔응답)는 거리·RSSI 불문 무조건 페어를 시도하고 BLE 시야에 있는 한 상시 유지한다.
+    //   UWB↔UWB 쌍이 게이트(-80/-90dBm ≈ ~10m권) 밖이라는 이유로 세션 없이 RSSI 판정에 남던 구간
+    //   제거. RSSI 는 세션 '성립 여부'가 아니라 우선순위(rankOf: 정원 배분·컨트롤러 선정)에만 쓴다.
+    //   DevSettings.uwbForce 는 가동 게이트(uwbEnabled 무시 강제 기동, BleService)용으로 계속 유효.
 
     // ── 재구성(reconcile) ──────────────────────────────────────────────────
 
@@ -322,10 +317,9 @@ class UwbRanger(
      */
     private fun computeDesiredLocked(): Desired {
         if (candidates.isEmpty()) return Desired(Role.NONE, null, null, emptyList())
-        val joinable = ArrayList<String>()      // 피어가 상위 + 컨트롤러(4B) 광고 + 게이트 → 합류 후보
-        val controllable = ArrayList<String>()  // 내가 상위 + 컨트롤리(2B) 광고 + 게이트 → 측정 후보
-        for ((id, p) in candidates) {
-            if (!gatePassLocked(id)) continue
+        val joinable = ArrayList<String>()      // 피어가 상위 + 컨트롤러(4B) 광고 → 합류 후보
+        val controllable = ArrayList<String>()  // 내가 상위 + 컨트롤리(2B) 광고 → 측정 후보
+        for ((id, p) in candidates) {           // [v1.1.45] 게이트 필터 없음 — 후보 전원이 페어 대상
             val out = peerOutranksMe(id)
             if (out && p.size >= 4) joinable.add(id)
             else if (!out && p.size < 4) controllable.add(id)

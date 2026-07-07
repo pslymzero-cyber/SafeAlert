@@ -592,18 +592,17 @@ object DevSettings {
         get() = prefs.getFloat(KEY_UWB_PAIR_DANGER_METERS, DEFAULT_UWB_PAIR_DANGER_METERS).coerceIn(0.5f, 15f)
         set(v) = prefs.edit().putFloat(KEY_UWB_PAIR_DANGER_METERS, v.coerceIn(0.5f, 15f)).apply()
 
-    // (v1.1.32) UWB 세션 시작 RSSI 게이트(dBm) — BLE 평활 RSSI 가 이 값 이상인 후보만 레인징
-    //   세션을 시작(배터리 듀티사이클). 원거리·미추적 페어는 세션을 쉬고, 접근하면 스캔 응답마다
-    //   재평가돼 자연 개시. 경보(BLE RSSI)는 세션 유무와 무관하게 상시 가동. UI 미노출(기본 -80).
+    // (v1.1.32) UWB 세션 시작 RSSI 게이트(dBm) — [v1.1.45] 철폐(사멸 키). UWB 선언 피어는 거리·
+    //   RSSI 불문 무조건 페어 시도·상시 유지 정책으로 전환(UwbRanger gatePassLocked 삭제)돼 이 키는
+    //   어디서도 읽지 않는다. 과거 설치본의 prefs 잔존값 무해. UI 미노출.
     private const val KEY_UWB_START_RSSI_GATE = "uwb_start_rssi_gate"
     const val DEFAULT_UWB_START_RSSI_GATE = -80
     var uwbStartRssiGate: Int
         get() = prefs.getInt(KEY_UWB_START_RSSI_GATE, DEFAULT_UWB_START_RSSI_GATE).coerceIn(-100, -50)
         set(v) = prefs.edit().putInt(KEY_UWB_START_RSSI_GATE, v.coerceIn(-100, -50)).apply()
 
-    // (v1.1.33) 지게차 낀 쌍 전용 시작 게이트(dBm) — 기본 게이트(-80 ≈ 수 m~10m권)로는 지게차의
-    //   15m 경고 반경 밖에서 UWB 세션이 안 열려 승격이 무력화된다. 지게차 쌍만 -90 까지 완화해
-    //   경고 반경 밖에서도 레인징을 개시(배터리 듀티사이클은 비지게차 쌍에서 그대로 유효).
+    // (v1.1.33) 지게차 낀 쌍 전용 시작 게이트(dBm) — [v1.1.45] 철폐(사멸 키). 위 uwbStartRssiGate
+    //   와 함께 게이트 자체가 제거돼 어디서도 읽지 않는다(상시 페어 정책).
     private const val KEY_UWB_START_RSSI_GATE_FORKLIFT = "uwb_start_rssi_gate_forklift"
     const val DEFAULT_UWB_START_RSSI_GATE_FORKLIFT = -90
     var uwbStartRssiGateForklift: Int
