@@ -372,7 +372,7 @@ object DevSettings {
 
     // 속도 송신 폴링 주기(ms) — ImuFusion 속도를 advertiser 에 push 하는 간격
     private const val KEY_SPEED_PUSH_INTERVAL_MS = "speed_push_interval_ms"
-    const val DEFAULT_SPEED_PUSH_INTERVAL_MS = 1000L   // [v1.1.18] 1500→1000 STATE 폴링 가속(개발자설정서 라이브 조절 가능, coerce 500~10000)
+    const val DEFAULT_SPEED_PUSH_INTERVAL_MS = 500L   // [v1.1.41] 1000→500 STATE 폴링 추가 가속(개발자설정서 라이브 조절 가능, coerce 500~10000)
     var speedPushIntervalMs: Long
         get() = prefs.getLong(KEY_SPEED_PUSH_INTERVAL_MS, DEFAULT_SPEED_PUSH_INTERVAL_MS).coerceIn(500L, 10_000L)
         set(v) = prefs.edit().putLong(KEY_SPEED_PUSH_INTERVAL_MS, v.coerceIn(500L, 10_000L)).apply()
@@ -648,6 +648,14 @@ object DevSettings {
     var imuShadowFusionEnabled: Boolean
         get() = prefs.getBoolean(KEY_IMU_SHADOW_FUSION, true)
         set(v) = prefs.edit().putBoolean(KEY_IMU_SHADOW_FUSION, v).apply()
+
+    // (v1.1.41) UWB 배타 판정(Case A) — 양측 UWB 가동+실측 신선(1.5s)인 페어는 RSSI 를 판단에서
+    //   완전 배제하고 UWB 실측 거리로만 경보를 판정한다(판정 주기도 UWB 보고 주기로 단축).
+    //   실측이 끊기면 즉시 RSSI 판정(Case B)으로 자동 복귀. 끄면(false) v1.1.40 거동 그대로.
+    private const val KEY_UWB_EXCLUSIVE_JUDGE = "uwb_exclusive_judge_enabled"
+    var uwbExclusiveJudgeEnabled: Boolean
+        get() = prefs.getBoolean(KEY_UWB_EXCLUSIVE_JUDGE, true)
+        set(v) = prefs.edit().putBoolean(KEY_UWB_EXCLUSIVE_JUDGE, v).apply()
 
     fun toDebugString(): String =
         "rssiWarning=$rssiWarning | rssiDanger=$rssiDanger | scanPeriod=${scanPeriodMs}ms | " +

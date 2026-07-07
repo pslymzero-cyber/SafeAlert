@@ -63,7 +63,8 @@ class UwbRanger(
     private val onStatus: ((String) -> Unit)? = null,
     private val onLocalAddressChanged: ((ByteArray) -> Unit)? = null,
     private val rssiOf: ((String) -> Int?)? = null,   // deviceId → 최근 평활 RSSI(dBm) — 세션 우선순위·시작 게이트용
-    private val forkliftPairOf: ((String) -> Boolean)? = null   // deviceId → 지게차 낀 쌍 여부 — 게이트 완화·우선순위 가산용
+    private val forkliftPairOf: ((String) -> Boolean)? = null,   // deviceId → 지게차 낀 쌍 여부 — 게이트 완화·우선순위 가산용
+    private val onUwbSample: ((String, Float) -> Unit)? = null   // [v1.1.41] 실측 표본 즉시 콜백(deviceId, 거리m) — UWB 주도 판정 드라이버
 ) {
     companion object {
         private const val TAG = "UwbRanger"
@@ -716,7 +717,7 @@ class UwbRanger(
             subSessionKeyInfo = null,
             complexChannel = sc.uwbComplexChannel,   // 시스템이 실할당한 채널(광고로 이미 공유됨)
             peerDevices = peers,
-            updateRateType = RangingParameters.RANGING_UPDATE_RATE_AUTOMATIC
+            updateRateType = RangingParameters.RANGING_UPDATE_RATE_FREQUENT   // [v1.1.41] ~240ms→~120ms 보고 주기
         )
     }
 
@@ -733,7 +734,7 @@ class UwbRanger(
             subSessionKeyInfo = null,
             complexChannel = ch,
             peerDevices = listOf(controller),
-            updateRateType = RangingParameters.RANGING_UPDATE_RATE_AUTOMATIC
+            updateRateType = RangingParameters.RANGING_UPDATE_RATE_FREQUENT   // [v1.1.41] ~240ms→~120ms 보고 주기
         )
     }
 
@@ -756,6 +757,7 @@ class UwbRanger(
                 publishDiag()
                 val now = System.currentTimeMillis()
                 updateKinematics(id, d, now)
+                onUwbSample?.invoke(id, d)   // [v1.1.41] 표본 즉시 푸시 — BLE 스캔 주기 비의존 판정(지연 단축)
                 if (now - lastStatusAt >= STATUS_THROTTLE_MS) {
                     lastStatusAt = now
                     onStatus?.invoke("UWB 거리: ${shortId(id)} ${"%.1f".format(d)}m")

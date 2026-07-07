@@ -449,6 +449,19 @@ class BleService : LifecycleService() {
     private val forwardBiasLatchMap       = mutableMapOf<String, Boolean>()  // deviceId → 전진가산 래치 상태
     private val FORWARD_BIAS_VEL_RELEASE_FRAC = 0.5  // 해제 데드밴드 = 임계속도의 50%
 
+    // ── [v1.1.41] UWB/RSSI 양방향 조건부 판단 분리(Case A/B) ─────────────────────────────
+    //   Case A(UWB↔UWB): 양측 UWB 활성 페어는 UWB 실측 '전용' 판정 — RSSI 는 판단에 절대 불개입.
+    //   Case B(UWB↔Non-UWB): 한쪽이라도 UWB 부재·비활성·링크사망(스테일)이면 기존 RSSI 판정.
+    //   '상대 UWB 활성 플래그'는 0x9ABC 확장광고(존재=활성, 제거=비활성 — 양쪽이 서로 관찰하므로
+    //   대칭)+UWB 실측 표본 신선의 이중 확인. 실측이 끊기면 즉시 Case B 복귀(무판단 공백 방지).
+    private val peerUwbSeenMap   = mutableMapOf<String, Long>()   // deviceId → 0x9ABC(UWB 활성 플래그) 최근 관측 시각
+    private val uwbSampleAtMsMap = mutableMapOf<String, Long>()   // deviceId → UWB 실측 표본 최근 수신 시각
+    private val uwbSafeStreakMap = mutableMapOf<String, Int>()    // deviceId → UWB 판정 격하 확증 연속표본 수
+    private val PEER_UWB_AD_FRESH_MS = 6000L   // 플래그 신선 창 — 광고 간격·스캔 공백 여유(2차 방어선)
+    private val UWB_SAMPLE_FRESH_MS  = 1500L   // 실측 신선 창 — 운동학 staleness(1.5s)와 정합(1차 판정 근거)
+    private val UWB_DEMOTE_STREAK    = 3       // 격하 확증 표본 수(FREQUENT ~120ms → 약 0.4s)
+    private val UWB_RELEASE_HYST_M   = 0.5f    // 경계 진동 억제 — 유지 중 임계+0.5m 까지 레벨 유지
+
     // [v1.0.36→v1.1.7 #1] 송신 폴링 — STATE(정지/이동) + Turn(좌/우/직진)을 주기적으로 advertiser 에 push.
     //   (구: Speed 4비트 → v1.1.7 회전 2비트로 재패킹. 상수명 SPEED_PUSH_* 는 폴링 주기 의미로 유지.)
     //   advertiser 내부 2초 throttle·미세변화 무시와 맞물려 실제 재광고는 드물게 일어난다.
@@ -724,6 +737,9 @@ class BleService : LifecycleService() {
                             firebaseLastSaveMap.remove(deviceId)
                             pendingDisplayMap.remove(deviceId)   // [v1.0.49 #3] 소실 기기 보류 표시 정리
                             uwbRanger?.onDeviceLost(deviceId)    // (v1.1.30) UWB 후보·세션 정리
+                            peerUwbSeenMap.remove(deviceId)      // [v1.1.41] UWB 배타판정 신선도·격하 카운터 정리
+                            uwbSampleAtMsMap.remove(deviceId)
+                            uwbSafeStreakMap.remove(deviceId)
                             sendAlertBroadcast(deviceId, BleConstants.LEVEL_SAFE)
                             if (alertState.isEmpty()) {
                                 AlertSoundPlayer.stopSound()
@@ -742,6 +758,8 @@ class BleService : LifecycleService() {
                         }
                         override fun onScanError(errorCode: Int) { Log.e(TAG, "스캔 오류: $errorCode") }
                         override fun onUwbAddressReceived(deviceId: String, uwbAddress: ByteArray) {
+                            // [v1.1.41] 상대 UWB 활성 플래그(0x9ABC) 관측 시각 기록 — Case A 판정 신선도 근거
+                            peerUwbSeenMap[deviceId] = System.currentTimeMillis()
                             uwbRanger?.onPeerUwbAddressReceived(deviceId, uwbAddress)
                         }
                     })
@@ -1087,6 +1105,19 @@ class BleService : LifecycleService() {
         val totalOffset = payloadOffset + beaconOffset + beaconGlobalGain + uwbCalibOffset
         val effWarning = BleConstants.rssiWarning - totalOffset
         val effDanger  = BleConstants.rssiDanger  - totalOffset
+
+        // ── [v1.1.41] Case A(UWB↔UWB) 배타 판정 조기 분기 ─────────────────────────────
+        //   양측 UWB 가동+실측 신선(uwbJudgeModeExclusive)이면 이 기기의 경보 판단은 UWB 실측
+        //   전용(judgeUwbOnly, onUwbSampleReceived 구동)이며 RSSI 는 판단에 절대 개입하지 않는다.
+        //   여기(필터 워밍·표시 갱신·Calibrator 학습 '후', streak·게이트·레벨 판정 '전')서 반환해
+        //   위 전처리는 계속 수렴시킨다 — 실측이 끊기면(1.5s) 다음 프레임부터 자동 Case B(RSSI)
+        //   복귀하며 워밍된 필터로 무봉합 인계된다. streak 는 리셋해 폴백 프레임의 stale 인플레 방지.
+        if (uwbJudgeModeExclusive(deviceId, now)) {
+            dangerContactStreakMap[deviceId] = 0
+            warningContactStreakMap[deviceId] = 0
+            return
+        }
+
         // [v1.1.16 D → v1.1.22 C-fix] 첫 접촉 고속 발령용 '근접 2프레임 확증' 카운터(워밍업·Time-Gate 우회).
         //   ★ 게이트 신호를 칼만·1초평균(둘 다 지연) → medianValue(median-of-3, 위상지연≈0 선행)로 교체.
         //   기존엔 칼만(평활)·1초평균(평균)이 둘 다 물리 최근접(CPA)보다 신호 정점이 뒤로 밀려, 가장 가까운
@@ -1904,6 +1935,232 @@ class BleService : LifecycleService() {
         }
     }
 
+    // ── [v1.1.41] Case A(UWB↔UWB 배타 판정) 성립 판정 — 4조건 AND ──────────────────────
+    //   '상대 기기 UWB 활성화 인지'는 ① 0x9ABC 확장광고 신선(6s — 플래그 수신 증거)과
+    //   ② UWB 실측 표본 신선(1.5s — 페어 링크 실가동 증거)의 이중 확인으로 판정한다.
+    //   링크 사망·표본 스테일 = "비활성화된 경우"로 간주 → 즉시 false(Case B, RSSI 판정 복귀).
+    //   양쪽 기기가 각자 상대의 0x9ABC 를 관찰하므로 판정은 상호 대칭이다.
+    private fun uwbJudgeModeExclusive(deviceId: String, now: Long): Boolean {
+        if (!DevSettings.uwbExclusiveJudgeEnabled) return false    // 킬스위치 off = v1.1.40 거동
+        if (uwbRanger == null) return false                        // 내 UWB 미가동(HW·권한·시스템 OFF)
+        val adSeen = peerUwbSeenMap[deviceId] ?: return false      // 상대 UWB 플래그 미관측
+        if (now - adSeen > PEER_UWB_AD_FRESH_MS) return false      //   스테일 = 상대가 UWB 를 끔
+        val sampleAt = uwbSampleAtMsMap[deviceId] ?: return false  // 실측 표본 없음 = 링크 미개설
+        if (now - sampleAt > UWB_SAMPLE_FRESH_MS) return false     //   스테일 = 링크 사망 → RSSI 복귀
+        return true
+    }
+
+    // [v1.1.41] UWB 실측 표본 즉시 드라이버 — UwbRanger.handleResult(메인 스레드)에서 직결 호출.
+    //   판정 주기를 BLE 스캔 수신 품질에서 분리해 UWB 보고 주기(FREQUENT ~120ms)로 단축한다.
+    //   Case A 페어만 여기서 판정하고, 그 외에는 표본 시각만 기록한다(신선도 추적).
+    private fun onUwbSampleReceived(deviceId: String, distM: Float) {
+        val now = System.currentTimeMillis()
+        uwbSampleAtMsMap[deviceId] = now
+        if (!uwbJudgeModeExclusive(deviceId, now)) return
+        acquireDetectionWakeLock(0)   // 0(강한 값) — 화면 꺼짐이면 항상 획득: UWB 실측 자체가 근접 증거
+        try {
+            judgeUwbOnly(deviceId, distM, now)
+            broadcastDeviceList()
+            bleAdvertiser?.updateRisk(getCurrentMaxLevel())
+        } finally {
+            releaseDetectionWakeLock()
+        }
+    }
+
+    // ── [v1.1.41] Case A 전용 판정 — UWB 실측 거리 단독 권위(RSSI 절대 불개입) ─────────────
+    //   RSSI 파이프라인(median/EMA/칼만/워밍업/Time-Gate/streak/1초평균)을 전혀 쓰지 않는다.
+    //   실측 거리와 역할쌍 반경(지게차쌍 15/8m · 그외 5/3m)만으로 레벨을 정하고, 발령·소리·
+    //   표시·Firebase 는 processAlert canonical 레시피를 그대로 미러한다(Case A 에선 processAlert
+    //   가 조기 반환하므로 이중 발령 없음). 격상=표본 1개 즉시(지연 최소), 격하=연속 3표본 확증
+    //   또는 이탈 운동학(separatingStreak≥3·closing<0) + 히스테리시스(임계+0.5m 유지).
+    private fun judgeUwbOnly(deviceId: String, uwbD: Float, now: Long) {
+        val rCategory = deviceCategoryMap[deviceId]
+        val rState    = deviceStateMap[deviceId]
+        val forkliftPair = myCategory == BleConstants.CAT_FORKLIFT ||
+            rCategory == BleConstants.CAT_FORKLIFT
+        val warnM = if (forkliftPair) DevSettings.uwbForkliftWarnMeters   else DevSettings.uwbPairWarnMeters
+        val dangM = if (forkliftPair) DevSettings.uwbForkliftDangerMeters else DevSettings.uwbPairDangerMeters
+
+        val prev      = alertState[deviceId]
+        val prevLevel = prev?.first ?: BleConstants.LEVEL_SAFE
+
+        // 레벨 산출 — 유지 중이면 히스테리시스(+0.5m)로 경계 진동(깜빡임) 억제
+        val rawLevel = when {
+            uwbD <= dangM ||
+                (prevLevel >= BleConstants.LEVEL_DANGER && uwbD <= dangM + UWB_RELEASE_HYST_M) ->
+                BleConstants.LEVEL_DANGER
+            uwbD <= warnM ||
+                (prevLevel >= BleConstants.LEVEL_WARNING && uwbD <= warnM + UWB_RELEASE_HYST_M) ->
+                BleConstants.LEVEL_WARNING
+            else -> BleConstants.LEVEL_SAFE
+        }
+
+        // 격상·유지 = 표본 1개 즉시 반영. 격하 = 연속 표본 확증(단발 튐 방어) 또는 이탈 운동학 즉시.
+        val stableLevel: Int
+        if (rawLevel >= prevLevel) {
+            uwbSafeStreakMap[deviceId] = 0
+            stableLevel = rawLevel
+        } else {
+            val streak = (uwbSafeStreakMap[deviceId] ?: 0) + 1
+            uwbSafeStreakMap[deviceId] = streak
+            val kin = uwbRanger?.uwbKinematics?.get(deviceId)
+            val separating = kin != null && now - kin.atMs <= 1500L &&
+                kin.separatingStreak >= 3 && kin.closingMps < 0f
+            if (streak >= UWB_DEMOTE_STREAK || separating) {
+                uwbSafeStreakMap[deviceId] = 0
+                stableLevel = rawLevel
+            } else {
+                stableLevel = prevLevel   // 격하 보류 — 확증 대기(FREQUENT 기준 ~0.4s)
+            }
+        }
+
+        // 특수경보 — 후진/상하차 중 기기가 경고 반경 내 실측이면 즉시 DANGER (canonical 특수경보 미러)
+        if (rCategory != null && rState != null &&
+            (rState == BleConstants.PSTATE_REVERSE || rState == BleConstants.PSTATE_LOADING) &&
+            uwbD <= warnM) {
+            suddenLabelMap[deviceId] = makeStateLabel(extractDisplayName(deviceId), rCategory, rState)
+            alertState[deviceId] = Pair(BleConstants.LEVEL_DANGER, now)
+            pendingDisplayMap.remove(deviceId)
+            bleScanner?.setEcoMode(false)
+            if (isMuted || isDeviceMuted(deviceId)) { updateFloatingOverlay(); return }
+            forceAlarmVolume()
+            if (DevSettings.vibrationEnabled) VibrationHelper.vibrateDanger(this)
+            if (DevSettings.soundEnabled)     AlertSoundPlayer.playDanger(this)
+            activeSoundLevel = BleConstants.LEVEL_DANGER
+            updateFloatingOverlay()
+            sendAlertBroadcast(deviceId, BleConstants.LEVEL_DANGER)
+            sendStatusBroadcast("⚡ ${suddenLabelMap[deviceId]} UWB ${"%.1f".format(uwbD)}m")
+            return
+        }
+        suddenLabelMap.remove(deviceId)
+
+        // SAFE — canonical SAFE 정리 미러(1회성: alertState 보유 기기만). 필터류는 RSSI 헤드가
+        //   계속 워밍 중이므로 지워도 수 프레임 내 재수렴 — 폴백 무봉합 유지.
+        if (stableLevel == BleConstants.LEVEL_SAFE) {
+            uwbSafeStreakMap.remove(deviceId)
+            if (alertState.containsKey(deviceId)) {
+                alertState.remove(deviceId)
+                rssiPreFilter.clear(deviceId)
+                medianFilter.clear(deviceId)
+                pEmaFilter.clear(deviceId)
+                rushFrameMap.remove(deviceId)
+                dangerContactStreakMap.remove(deviceId)
+                warningContactStreakMap.remove(deviceId)
+                kalmanFilters.remove(deviceId)
+                shadowFusionMap.remove(deviceId)
+                trackingStateMap.remove(deviceId)
+                crossingStartMap.remove(deviceId)
+                departingStartMap.remove(deviceId)
+                approachStreakStartMap.remove(deviceId)
+                fastApproachStreakMap.remove(deviceId)
+                forwardBiasLatchMap.remove(deviceId)
+                wasStationaryMap.remove(deviceId)
+                recedingStartMap.remove(deviceId)
+                recedeRefMap.remove(deviceId)
+                recedePeakMap.remove(deviceId)
+                deviceRssiMap.remove(deviceId)
+                mutedDevices.remove(deviceId)
+                suddenLabelMap.remove(deviceId)
+                deviceCategoryMap.remove(deviceId)
+                deviceStateMap.remove(deviceId)
+                deviceTurnMap.remove(deviceId); reverseRssiHist.remove(deviceId); reversePrepUntil.remove(deviceId)
+                firebaseLastSaveMap.remove(deviceId)
+                pendingDisplayMap.remove(deviceId)
+                // ★ peerUwbSeenMap/uwbSampleAtMsMap 은 보존 — 링크 생존성 추적(지우면 판정이 순간 RSSI 폴백)
+                sendAlertBroadcast(deviceId, BleConstants.LEVEL_SAFE)
+                if (alertState.isEmpty()) {
+                    AlertSoundPlayer.stopSound()
+                    activeSoundLevel = BleConstants.LEVEL_SAFE
+                    VibrationHelper.stopVibration(this)
+                    OverlayManager.hideOverlay()
+                } else {
+                    resyncSoundToRemaining()
+                    updateFloatingOverlay()
+                }
+            }
+            return
+        }
+
+        // 비-SAFE — 전투 모드 보장(canonical 미러)
+        bleScanner?.setEcoMode(false)
+
+        // 정지↔정지 저감(idle-idle quiet) — UWB 피어는 페이로드 캐시가 항상 있으므로 캐시로 재계산
+        val idleIdleQuiet = DevSettings.idleIdleSuppressEnabled && ImuFusion.isStationary &&
+            rState == BleConstants.PSTATE_IDLE
+
+        // 무음 중 — 레벨 추적만 유지(발령 시각 보존, canonical 뮤트 미러)
+        if (isMuted || isDeviceMuted(deviceId)) {
+            alertState[deviceId] = Pair(stableLevel, prev?.second ?: now)
+            pendingDisplayMap.remove(deviceId)
+            return
+        }
+
+        val lastAlertTime    = prev?.second ?: 0L
+        val baseCooldown     = if (stableLevel == BleConstants.LEVEL_DANGER) DANGER_COOLDOWN_MS else WARNING_COOLDOWN_MS
+        val isFirstDetection = prev == null
+        val levelEscalated   = stableLevel > prevLevel
+        val cooldownPassed   = now - lastAlertTime >= baseCooldown
+
+        if (!(isFirstDetection || levelEscalated || cooldownPassed)) {
+            // 비발령 표본 — 레벨만 갱신(발령 시각 보존) + fail-quiet 강등 정정(canonical 미러)
+            alertState[deviceId] = Pair(stableLevel, lastAlertTime)
+            if (activeSoundLevel >= BleConstants.LEVEL_DANGER && stableLevel < activeSoundLevel) {
+                val otherMax = alertState.entries
+                    .filter { it.key != deviceId }
+                    .maxOfOrNull { it.value.first } ?: BleConstants.LEVEL_SAFE
+                if (otherMax < activeSoundLevel) {
+                    AlertSoundPlayer.stopSound()
+                    activeSoundLevel = stableLevel
+                    if (stableLevel == BleConstants.LEVEL_WARNING && !idleIdleQuiet) {
+                        if (DevSettings.vibrationEnabled) VibrationHelper.vibrateWarning(this)
+                        if (DevSettings.soundEnabled)     AlertSoundPlayer.playWarning(this)
+                    }
+                    updateFloatingOverlay()
+                }
+            }
+            return
+        }
+
+        // 발령 — canonical 발령 레시피 미러
+        pendingDisplayMap.remove(deviceId)
+        alertState[deviceId] = Pair(stableLevel, now)
+        forceAlarmVolume()
+        val globalMax = getCurrentMaxLevel()
+        if (stableLevel < globalMax) return   // 더 높은 경보 재생 중 — 소리 격하 금지(우선순위)
+        if (stableLevel != activeSoundLevel) AlertSoundPlayer.stopSound()
+        activeSoundLevel = stableLevel
+        when (stableLevel) {
+            BleConstants.LEVEL_DANGER -> {
+                if (DevSettings.vibrationEnabled) VibrationHelper.vibrateDanger(this)
+                if (DevSettings.soundEnabled)     AlertSoundPlayer.playDanger(this)
+                if (DevSettings.autoSaveAlerts) {
+                    val lastFbSave = firebaseLastSaveMap[deviceId] ?: 0L
+                    if (now - lastFbSave >= FIREBASE_SAVE_THROTTLE_MS) {
+                        firebaseLastSaveMap[deviceId] = now
+                        FirebaseManager.saveAlert(deviceId, myId, deviceRssiMap[deviceId] ?: 0, "DANGER")
+                    }
+                }
+                updateFloatingOverlay()
+                sendAlertBroadcast(deviceId, BleConstants.LEVEL_DANGER)
+                Log.w(TAG, "UWB 위험 발생: $deviceId ${"%.1f".format(uwbD)}m (forkliftPair=$forkliftPair)")
+            }
+            BleConstants.LEVEL_WARNING -> {
+                if (DevSettings.vibrationEnabled && !idleIdleQuiet) VibrationHelper.vibrateWarning(this)
+                if (DevSettings.soundEnabled && !idleIdleQuiet)     AlertSoundPlayer.playWarning(this)
+                if (DevSettings.autoSaveAlerts) {
+                    val lastFbSave = firebaseLastSaveMap[deviceId] ?: 0L
+                    if (now - lastFbSave >= FIREBASE_SAVE_THROTTLE_MS) {
+                        firebaseLastSaveMap[deviceId] = now
+                        FirebaseManager.saveAlert(deviceId, myId, deviceRssiMap[deviceId] ?: 0, "WARNING")
+                    }
+                }
+                updateFloatingOverlay()
+                sendAlertBroadcast(deviceId, BleConstants.LEVEL_WARNING)
+                Log.d(TAG, "UWB 경고 발생: $deviceId ${"%.1f".format(uwbD)}m (forkliftPair=$forkliftPair)")
+            }
+        }
+    }
+
     private val isScreenOn: Boolean
         get() = (getSystemService(Context.POWER_SERVICE) as PowerManager).isInteractive
 
@@ -2479,7 +2736,10 @@ class BleService : LifecycleService() {
             forkliftPairOf = { id ->
                 myCategory == BleConstants.CAT_FORKLIFT ||
                     deviceCategoryMap[id] == BleConstants.CAT_FORKLIFT
-            }
+            },
+            // [v1.1.41] 실측 표본 즉시 콜백 — Case A(배타 판정) 드라이버. 판정 주기를 BLE 스캔에서
+            //   분리해 UWB 보고 주기(FREQUENT ~120ms)로 단축한다(수신 즉시 판정·버퍼 대기 없음).
+            onUwbSample = { id, dist -> onUwbSampleReceived(id, dist) }
         )
         uwbRanger = ranger
         lifecycleScope.launch {
@@ -2571,6 +2831,9 @@ class BleService : LifecycleService() {
         mutedDevices.clear()
         forwardBiasLatchMap.clear()      // [v1.1.11 C1] 전진가산 래치 일괄 정리(다른 26개 맵과 정합)
         firebaseLastSaveMap.clear()
+        peerUwbSeenMap.clear()           // [v1.1.41] UWB 배타판정 신선도·격하 카운터 일괄 정리
+        uwbSampleAtMsMap.clear()
+        uwbSafeStreakMap.clear()
         testRunnable?.let { testHandler.removeCallbacks(it) }
         testRunnable = null
         muteHandler.removeCallbacksAndMessages(null)
