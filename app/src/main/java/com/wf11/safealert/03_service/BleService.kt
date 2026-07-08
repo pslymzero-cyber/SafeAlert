@@ -940,14 +940,18 @@ class BleService : LifecycleService() {
 
     /**
      * DEPARTING 상태 재진입 히스테리시스 (v1.0.20, 기둥 반사 신호 바운스 차단)
-     * - 쿨다운 중: 모든 경보 억제
+     * - 쿨다운 중: 모든 경보 억제 (단 강한 재접근 vel 은 즉시 해제 — v1.1.51 속도게이트)
      * - 쿨다운 후: WARNING 허용, DANGER는 DEPARTING_HYSTERESIS_DBM 추가 마진 필요
      */
     private fun applyDepartingHysteresis(
-        deviceId: String, rawLevel: Int, blended: Int, offset: Int, now: Long
+        deviceId: String, rawLevel: Int, blended: Int, offset: Int, now: Long, kfVel: Double
     ): Int {
         val state = trackingStateMap[deviceId] ?: return rawLevel
         if (state != TrackingState.DEPARTING) return rawLevel
+        // [v1.1.51 속도게이트] 이탈 억제창 안이라도 강한 재접근(vel > CPA×3 = 1.5dBm/s)이면 즉시 해제 —
+        //   이탈정리 후 재획득된 기기가 되돌아오는 지게차라면 실경보를 가리지 않고 통과시킨다.
+        //   반사 바운스(Micro-Bounce ~+0.1dBm/s)는 임계 1.5 에 못 미쳐 억제 유지 → 오해제 없음.
+        if (kfVel > (CPA_VEL_THRESHOLD * 3)) return rawLevel
         val timeDep = now - (departingStartMap[deviceId] ?: now)
         return when {
             timeDep < DEPARTING_REENTRY_COOLDOWN_MS -> BleConstants.LEVEL_SAFE
@@ -1310,7 +1314,7 @@ class BleService : LifecycleService() {
         avgRssi = pEma
         val rawLevel = calcLevelWithHysteresis(deviceId, pEma, totalOffset)   // [v1.1.16 C] 비콘+페이로드 합산(상단 totalOffset)
         distanceLevel = rawLevel   // [v1.1.6 R4-SIL-1] 이탈히스테리시스·격하 이전 거리 권위값 보존(이탈 가드용)
-        val afterHysteresis = applyDepartingHysteresis(deviceId, rawLevel, pEma, totalOffset, now)
+        val afterHysteresis = applyDepartingHysteresis(deviceId, rawLevel, pEma, totalOffset, now, kfVel)
         // ── 정지 격하 방어 ([v1.0.47 #2] 보행자+활동 장비 접근은 예외 — 위 demoteWhileStationary) ──
         // [v1.1.16 B] 내가 장비(지게차/EPJ)이고 상대가 위험권(DANGER) 보행자/비콘이면 내 IMU 가 정지여도
         //   DANGER→WARNING 강등 금지(작업자 위에 멈춘 지게차는 정지여도 위험). 위에서 보존한 distanceLevel
@@ -1666,9 +1670,13 @@ class BleService : LifecycleService() {
                 recedingStartMap.remove(deviceId)
                 recedeRefMap.remove(deviceId)
                 recedePeakMap.remove(deviceId)
-                trackingStateMap.remove(deviceId)
-                crossingStartMap.remove(deviceId)
-                departingStartMap.remove(deviceId)
+                // [v1.1.51 이탈쿨다운 보존] trackingStateMap/departingStartMap 을 지우지 않고 DEPARTING·now 로
+                //   재설정 — 재획득 시 applyDepartingHysteresis 5s 억제가 '위험→경고 이탈' 경고범위 통과의
+                //   재발령을 덮는다. 이탈정리는 곧 '확정 이탈' 신호이므로 쿨다운 앵커를 이 순간(now)에 맞춘다
+                //   (상태가 아직 CROSSING 이어도 강제 DEPARTING 화 → 견고). 5s 안에 되돌아오면 속도게이트가 즉시 해제.
+                trackingStateMap[deviceId] = TrackingState.DEPARTING
+                departingStartMap[deviceId] = now
+                crossingStartMap.remove(deviceId)         // CROSSING 앵커는 불필요(DEPARTING 확정)
                 approachStreakStartMap.remove(deviceId)   // [v1.0.46 #4]
                 fastApproachStreakMap.remove(deviceId)    // [v1.1.21]
                 forwardBiasLatchMap.remove(deviceId)      // [v1.1.11 C1] 이탈 정리 → 래치 리셋
