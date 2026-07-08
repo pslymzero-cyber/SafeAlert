@@ -1377,14 +1377,18 @@ class BleService : LifecycleService() {
         //   차폐로 RSSI 는 약한데 물리적으로 가까운 사각을 실거리로 메운다. 억제·격하 경로는 없고
         //   (promoteTo 가 현재 stableLevel 보다 높을 때만 대입 — 승격만), UWB 세션이 없거나 끊긴
         //   기기는 이 블록이 없던 것과 동일(무봉합 — 경보는 BLE 상시 가동).
-        //   uwbDistances 는 세션 종료·기기 이탈 시 즉시 제거되므로 값이 있으면 항상 라이브 실측.
+        //   (v1.1.50) uwbD 는 freshUwbDistM — uwbDistances 맵 직접조회 금지. 맵 엔트리는 세션 단절
+        //   시 즉시 제거되지 않고 onDeviceLost/onSessionEnded 까지 지연 잔존하므로(v1.1.43~46 이력),
+        //   과거 근접 실측(예: 사라진 지게차의 2m)이 좀비로 남아 매 프레임 DANGER 재승격시키던 벡터를
+        //   차단한다. freshUwbDistM 은 uwbSampleAtMsMap 신선도(≤1s) 통과 표본만 반환, 낡으면 null →
+        //   이 블록 무동작 → RSSI 폴백으로 자연 해제.
         //   distanceLevel 도 승격 레벨까지만 함께 상향 — 아래 이탈 가드(isReceding)가 차폐로 낮아진
         //   pEma 기준 distanceLevel<DANGER 를 '위험권 밖 이탈'로 오판해 무음화(조기 return)하는 것을
         //   DANGER 승격 시 막는다(v1.1.32 와 동일). WARNING 승격은 이 가드 밖이지만, 이탈 오판으로
         //   해제돼도 실측이 반경 안이면 다음 프레임 이 블록이 재승격 → 재발령(영구 무음 없음).
         //   진짜 이탈은 OR isDepartingNow(v1.1.22 B) 절이 그대로 잡으므로 이탈측 로직은 무접촉.
         if (DevSettings.uwbPromoteEnabled && stableLevel < BleConstants.LEVEL_DANGER) {
-            val uwbD = uwbRanger?.uwbDistances?.get(deviceId)
+            val uwbD = freshUwbDistM(deviceId)
             if (uwbD != null) {
                 val forkliftPair = myCategory == BleConstants.CAT_FORKLIFT ||
                         rCategory == BleConstants.CAT_FORKLIFT
@@ -1434,7 +1438,7 @@ class BleService : LifecycleService() {
         //   distanceLevel 도 캡까지 하향 — 이탈 가드(isReceding)의 자연 페이드아웃이 걸리게 한다.
         if (DevSettings.uwbVelReleaseEnabled && stableLevel > BleConstants.LEVEL_SAFE) {
             val kin = uwbRanger?.uwbKinematics?.get(deviceId)
-            val uwbNowD = uwbRanger?.uwbDistances?.get(deviceId)
+            val uwbNowD = freshUwbDistM(deviceId)
             if (kin != null && uwbNowD != null && now - kin.atMs <= 1500L &&
                 kin.separatingStreak >= 3 && kin.closingMps < 0f &&
                 kfVel < DevSettings.fastApproachBypassVelDbm) {
@@ -1469,10 +1473,12 @@ class BleService : LifecycleService() {
         //   · 접근속도 단독 승격은 두지 않는다 — '멀리서 빠르게 접근'을 거리와 무관하게 경고로 올리면
         //     종일 오경보가 된다(TTC 무시). 조기 위험 예측은 아래 기존 TTC 선발령(경고권 진입 + 충돌 임박
         //     TTC≤임계)이 담당한다.
-        //   uwbDistances 는 세션 종료·기기 이탈 시 즉시 제거 → 값이 있으면 항상 라이브 실측. null 이면 이
+        //   (v1.1.50) uwbPrimD 는 freshUwbDistM — 신선도(≤1s) 통과 실측만 반환(맵 직접조회 금지).
+        //   맵 엔트리는 세션 단절 시 지연 잔존하므로(v1.1.43~46), 사라진 기기의 낡은 근접값이 좀비로
+        //   남아 (A)격상에서 매 프레임 DANGER 재승격하던 벡터를 차단. null(신선 실측 없음)이면 이
         //   블록 무동작(위 RSSI stableLevel 유지 = 무봉합 폴백). RSSI 보정 학습(UwbCalibrator, 상단)은 독립 지속.
         if (DevSettings.uwbPrimaryAuthorityEnabled) {
-            val uwbPrimD = uwbRanger?.uwbDistances?.get(deviceId)
+            val uwbPrimD = freshUwbDistM(deviceId)
             if (uwbPrimD != null) {
                 val forkliftPair = myCategory == BleConstants.CAT_FORKLIFT ||
                         rCategory == BleConstants.CAT_FORKLIFT
@@ -1981,9 +1987,10 @@ class BleService : LifecycleService() {
         return now - sampleAt <= UWB_MEAS_FRESH_MS
     }
 
-    // [v1.1.46] '신선한' UWB 실측 거리 — Case A 성립과 같은 신선 창. Calibrator 학습 입력과 거리
-    //   표시(·UWB 태그)가 쓴다: 오래된 거리로 학습하면 Δ 오염(즉시 DANGER 의 한 축), 오래된
-    //   거리를 표시하면 죽은 숫자를 실측으로 오인한다. 신선하지 않으면 null=RSSI 경로(추정·역산).
+    // [v1.1.46] '신선한' UWB 실측 거리 — Case A 성립과 같은 신선 창. Calibrator 학습 입력·거리
+    //   표시(·UWB 태그)·경보 승격/이탈 판정(v1.1.50 좀비 차단)이 쓴다: 오래된 거리로 학습하면
+    //   Δ 오염(즉시 DANGER 의 한 축), 오래된 거리를 표시하면 죽은 숫자를 실측으로 오인하고, 오래된
+    //   거리로 승격하면 사라진 기기가 좀비로 DANGER 를 유지한다. 신선하지 않으면 null=RSSI 경로(추정·역산).
     private fun freshUwbDistM(deviceId: String): Float? {
         val d = uwbRanger?.uwbDistances?.get(deviceId) ?: return null
         val at = uwbSampleAtMsMap[deviceId] ?: return null
