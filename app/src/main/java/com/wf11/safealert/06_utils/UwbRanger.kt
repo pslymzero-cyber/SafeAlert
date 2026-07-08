@@ -75,6 +75,7 @@ class UwbRanger(
         private const val SWITCH_HYSTERESIS_DB = 6            // 컨트롤러 재선정 핑퐁 방지 히스테리시스
         private const val FORKLIFT_RANK_BIAS_DB = 12          // 지게차 낀 쌍 우선순위 가산 — 단일 세션 경쟁에서 15m 경고가 밀리지 않게
         private const val MULTICAST_MAX = 6                  // 한 컨트롤러가 동시에 측정할 컨트롤리 상한(하드웨어 여유·튜닝 지점)
+        private const val UWB_START_RSSI_GATE_DBM = -80      // [v1.1.49] 이보다 강한(가까운) RSSI 피어만 UWB 세션 시도 — 그 외는 RSSI(Case B) 판정. 사용자 지정 임계
 
         // 접근속도 운동학 — dt 연속성 창·평활 계수·이탈 데드밴드
         private const val KIN_DT_MIN_MS = 60L         // 이보다 촘촘한 표본은 미분 노이즈 증폭 — 직전 기준점 유지
@@ -302,10 +303,11 @@ class UwbRanger(
     private fun rankOf(id: String): Int =
         (rssiOf?.invoke(id) ?: 0) + if (isForkliftPair(id)) FORKLIFT_RANK_BIAS_DB else 0
 
-    // [v1.1.45] RSSI 시작 게이트(gatePassLocked, v1.1.32 배터리 듀티사이클) 철폐 — UWB 선언 피어
-    //   (0x9ABC 스캔응답)는 거리·RSSI 불문 무조건 페어를 시도하고 BLE 시야에 있는 한 상시 유지한다.
-    //   UWB↔UWB 쌍이 게이트(-80/-90dBm ≈ ~10m권) 밖이라는 이유로 세션 없이 RSSI 판정에 남던 구간
-    //   제거. RSSI 는 세션 '성립 여부'가 아니라 우선순위(rankOf: 정원 배분·컨트롤러 선정)에만 쓴다.
+    // [v1.1.49] RSSI 시작 게이트 재도입(computeDesiredLocked) — '-80dBm 보다 강한(가까운) 피어만 UWB 페어'.
+    //   ↳ 이력: v1.1.45 는 게이트(gatePassLocked, v1.1.32 배터리 듀티사이클)를 철폐해 UWB 선언 피어
+    //     (0x9ABC)를 거리·RSSI 불문 상시 페어했으나, 원거리 NLOS 표본이 학습 Δ 를 오염시켜 'RSSI 판정
+    //     이면 신호 세기 무관 상시 위험' 회귀를 유발 → v1.1.49 사용자 총괄 확정으로 재역전. RSSI 는 이제
+    //     세션 '성립 게이트' 겸 우선순위(rankOf: 정원 배분·컨트롤러 선정)로 쓴다.
     //   DevSettings.uwbForce 는 가동 게이트(uwbEnabled 무시 강제 기동, BleService)용으로 계속 유효.
 
     // ── 재구성(reconcile) ──────────────────────────────────────────────────
@@ -319,7 +321,12 @@ class UwbRanger(
         if (candidates.isEmpty()) return Desired(Role.NONE, null, null, emptyList())
         val joinable = ArrayList<String>()      // 피어가 상위 + 컨트롤러(4B) 광고 → 합류 후보
         val controllable = ArrayList<String>()  // 내가 상위 + 컨트롤리(2B) 광고 → 측정 후보
-        for ((id, p) in candidates) {           // [v1.1.45] 게이트 필터 없음 — 후보 전원이 페어 대상
+        for ((id, p) in candidates) {
+            // [v1.1.49] RSSI 시작 게이트 재도입 — 신호가 -80dBm 보다 강한(가까운) 피어만 UWB 세션 대상.
+            //   약신호(원거리) 피어는 UWB 를 시도하지 않고 RSSI(Case B) 판정에 남긴다. RSSI 미확보(null)는
+            //   '강하다'를 확증할 수 없으므로 제외(다음 스캔에서 값이 채워지면 자동 편입). 사용자 총괄 확정.
+            val r = rssiOf?.invoke(id)
+            if (r == null || r <= UWB_START_RSSI_GATE_DBM) continue
             val out = peerOutranksMe(id)
             if (out && p.size >= 4) joinable.add(id)
             else if (!out && p.size < 4) controllable.add(id)

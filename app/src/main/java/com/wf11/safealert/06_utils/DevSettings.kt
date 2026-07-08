@@ -546,9 +546,9 @@ object DevSettings {
     //   UWB 세션이 없거나 끊긴 페어는 RSSI 파이프라인으로 폴백(무봉합 — 세션 드랍 시 그 프레임부터 즉시
     //   RSSI 판정 복귀). 역할쌍 차등 임계(지게차 낀 쌍=uwbForkliftWarn/Danger, 그 외=uwbPairWarn/Danger)
     //   와 접근속도 임계(uwbApproachSpeedKmh)를 재사용한다.
-    //   ★ RSSI 거리 보정(UwbCalibrator)은 이 스위치와 무관하게 항상 가동 — 활성 세션의 UWB 실측을
-    //     기준으로 RSSI 신호세기 편차를 누적 학습(offsetDbFor)해, 세션이 끊긴 뒤의 RSSI 폴백을 더
-    //     정확하게 만든다. 즉 세션 중엔 UWB 가 판정하면서 동시에 RSSI 를 교정해 둔다.
+    //   ★ UWB 거리 학습(UwbCalibrator)은 이 스위치와 무관하게 활성 세션의 UWB 실측 기준으로 계속
+    //     누적 학습(offsetDbFor)한다. [v1.1.49] 단, 학습된 보정은 RSSI 판정(totalOffset)에서 분리돼
+    //     화면 거리 표시에만 반영된다 — RSSI 폴백 임계는 UWB 도입 이전의 순수 RSSI 로 판정한다.
     //   기본 ON — 사용자 요청. 끄면 RSSI 주도 + 아래 promote-only(옵트인)로 복귀.
     private const val KEY_UWB_PRIMARY_AUTHORITY_ENABLED = "uwb_primary_authority_enabled"
     var uwbPrimaryAuthorityEnabled: Boolean

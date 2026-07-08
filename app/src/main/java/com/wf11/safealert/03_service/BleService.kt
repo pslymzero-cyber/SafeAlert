@@ -1111,16 +1111,20 @@ class BleService : LifecycleService() {
         // [전역 비콘 수신 강도] BLE설정의 비콘 게인(%)을 공통 dBm 보정으로 환산해 비콘에만 가산한다
         //   (offset 0 비콘 포함). 게인 100%(=0dBm)면 기존 거동과 완전 동일. 일반 SafeAlert 기기엔 미적용.
         val beaconGlobalGain = if (BeaconRegistry.isBeaconFullId(deviceId)) DevSettings.beaconGainDbm else 0
-        // (v1.1.31) UWB 델타 보정 — UWB 실측이 흐르는 페어면 실거리+medianValue(스파이크 제거·지연≈0)로
-        //   이 페어의 채널 편차 Δ 를 학습하고, 학습된 보정을 다른 오프셋과 같은 자리에서 합산한다.
-        //   보정은 Case B(RSSI) 판정 임계에만 관여 — Case A 페어는 이 값과 무관하게 실측 거리로 판정.
-        //   비대칭 클램프(지연 −3dB / 조기 +10dB)+24h 감쇠는 UwbCalibrator 내부 불변식. 비활성=0=기존 동일.
+        // (v1.1.31→v1.1.49) UWB 델타 보정 — UWB 실측이 흐르는 페어면 실거리+medianValue(스파이크 제거·
+        //   지연≈0)로 이 페어의 채널 편차 Δ 를 학습한다. [v1.1.49] 학습된 보정은 더 이상 판정 오프셋에
+        //   합산하지 않는다(totalOffset 에서 제거) — 화면 거리 표시에만 쓴다. 상세 근거는 아래 onSample 주석.
+        //   비대칭 클램프(지연 −3dB / 조기 +10dB)+24h 감쇠는 UwbCalibrator 내부 불변식.
         val uwbPairKey = uwbPairKeyFor(deviceId)   // [v1.1.37 ③] 개별 기기 대신 역할쌍 세그먼트로 학습·조회
         // [v1.1.46] 학습 입력=신선한 실측만 — 마지막 표본이 오래된 UWB 거리에 '현재' RSSI 를 짝지으면
         //   Δ 가 오염돼 임계가 영구히 앞당겨진다(즉시 DANGER 증상의 한 축). 거리 표시도 같은 게이트.
         freshUwbDistM(deviceId)?.let { UwbCalibrator.onSample(uwbPairKey, medianValue, it) }
-        val uwbCalibOffset = UwbCalibrator.offsetDbFor(uwbPairKey)
-        val totalOffset = payloadOffset + beaconOffset + beaconGlobalGain + uwbCalibOffset
+        // [v1.1.49] 학습(onSample)은 유지하되 그 출력(offsetDbFor)은 RSSI 판정에서 완전 분리한다.
+        //   역할쌍 키 uwbCalibOffset(최대 +10dB)이 NLOS 잔차로 +클램프까지 표류하면 effDanger 가 밀려
+        //   올라가 'RSSI 판정이면 신호 세기와 무관하게 상시 위험'이 되던 회귀(UWB 도입 v1.1.31 이후)를
+        //   차단. 학습된 Δ 는 화면 거리 표시(distanceTextFor)에만 남기고 totalOffset 에서 뺀다
+        //   → Case B(RSSI)=UWB 도입 이전의 순수 RSSI 임계로 복귀(Case A 는 원래부터 실측 거리로 판정).
+        val totalOffset = payloadOffset + beaconOffset + beaconGlobalGain
         val effWarning = BleConstants.rssiWarning - totalOffset
         val effDanger  = BleConstants.rssiDanger  - totalOffset
 

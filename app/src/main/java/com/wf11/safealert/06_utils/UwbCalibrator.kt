@@ -39,10 +39,11 @@ object UwbCalibrator {
     private const val TAG = "UwbCalibrator"
     private const val PREF_NAME = "uwb_calib"
 
-    // [v1.1.46] 프로파일 스키마 — 학습 조건이 바뀌면(v2: 게이트 상시 페어 시절 NLOS 오염 잔존)
-    //   구버전 저장값을 1회 폐기하고 새 조건으로 재학습한다. Int 값이라 파서(String split)가 자동 skip.
+    // [v1.1.46→v1.1.49] 프로파일 스키마 — 학습 조건이 바뀌면 구버전 저장값을 1회 폐기하고 재학습한다.
+    //   v3(v1.1.49): 판정 분리(offsetDbFor 를 totalOffset 에서 제거) + RSSI -80dBm 시작 게이트 재도입으로
+    //   학습 모집단 자체가 바뀜 — 게이트 상시 페어(v1.1.45) 시절 누적된 NLOS 오염 Δ 를 여기서 1회 초기화한다.
     private const val KEY_SCHEMA = "_schema"
-    private const val SCHEMA_VER = 2
+    private const val SCHEMA_VER = 3
 
     // 경로손실 모델 — BLE 1m 기준 수신강도(A)와 감쇠지수(n)
     private const val PATHLOSS_A = -59.0
