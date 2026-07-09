@@ -153,6 +153,64 @@
                 </LinearLayout>
             </androidx.cardview.widget.CardView>
 
+            <!-- [v1.1.52] 협력 알림 완화 — 폰별 신호 비대칭(내 폰은 안 울림) 보정 -->
+            <TextView android:text="협력 알림 완화 (비대칭 보정)" android:textStyle="bold" android:textSize="15sp"
+                android:textColor="#111827" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:layout_marginBottom="4dp"/>
+            <TextView android:text="같은 거리인데 내 폰만 안 울릴 때 · 값을 올릴수록 상대의 위험 신호를 더 약하게 받아도 함께 울림"
+                android:textSize="12sp" android:textColor="#9CA3AF"
+                android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:layout_marginBottom="10dp"/>
+
+            <!-- [v1.1.53] 상호 RSSI 교환(대칭 판정) — 주 메커니즘. 켜짐이면 sym=(내가 들은 상대+상대가 들은 나)/2 로
+                 양 폰이 동일 판정(비대칭·2중 보정 제거). 꺼짐/무응답이면 아래 '협력 수용 완화'(coopSlack) 폴백. -->
+            <androidx.cardview.widget.CardView
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginBottom="10dp"
+                app:cardCornerRadius="14dp" app:cardElevation="0dp"
+                app:cardBackgroundColor="#F0F4FF">
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="vertical" android:padding="16dp">
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:orientation="horizontal" android:gravity="center_vertical">
+                        <TextView android:text="상호 RSSI 교환 (대칭 판정)" android:layout_width="0dp"
+                            android:layout_height="wrap_content" android:layout_weight="1"
+                            android:textSize="13sp" android:textColor="#374151"/>
+                        <Switch android:id="@+id/sw_reciprocal_rssi"
+                            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                    </LinearLayout>
+                    <TextView android:text="기본 켜짐 · 서로가 상대에게서 들은 RSSI를 되돌려 교환해 두 값의 평균으로 양 폰이 같은 문턱에서 함께 울린다(비대칭·2중 보정 제거). 상대 응답이 없거나(구버전·비콘) 두 측정이 25dB 넘게 어긋나면 아래 완화 폴백 · UWB 실측(대칭) 판정에는 개입 안 함."
+                        android:textSize="11sp" android:textColor="#9CA3AF"
+                        android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"/>
+                </LinearLayout>
+            </androidx.cardview.widget.CardView>
+
+            <androidx.cardview.widget.CardView
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginBottom="16dp"
+                app:cardCornerRadius="14dp" app:cardElevation="0dp"
+                app:cardBackgroundColor="#F0F4FF">
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="vertical" android:padding="16dp">
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:orientation="horizontal" android:gravity="center_vertical">
+                        <TextView android:text="협력 수용 완화 (폴백)" android:layout_width="0dp"
+                            android:layout_height="wrap_content" android:layout_weight="1"
+                            android:textSize="13sp" android:textColor="#374151"/>
+                        <TextView android:id="@+id/tv_coop_slack"
+                            android:layout_width="wrap_content" android:layout_height="wrap_content"
+                            android:textSize="14sp" android:textStyle="bold" android:textColor="#2563EB"/>
+                    </LinearLayout>
+                    <SeekBar android:id="@+id/seek_coop_slack" android:layout_width="match_parent"
+                        android:layout_height="wrap_content" android:layout_marginTop="4dp" android:max="20"/>
+                    <TextView android:text="폴백 전용 · 상호 RSSI 교환이 꺼졌거나 상대 응답이 없을 때만 적용 · 0 ~ 20 dB (기본 8). 상대가 위험을 보낼 때 내 RSSI 수용 문턱을 경고 임계보다 이만큼 낮춰(예 -75→-83) 약하게 받아도 함께 울린다. 일반 경보 임계는 그대로 · UWB 실측(대칭) 판정에는 개입 안 함."
+                        android:textSize="11sp" android:textColor="#9CA3AF"
+                        android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"/>
+                </LinearLayout>
+            </androidx.cardview.widget.CardView>
+
             <!-- (v1.1.30) UWB 정밀 거리 측정 — 지원 기기 페어 한정, 근접경보는 BLE 유지 -->
             <TextView android:text="UWB 정밀 거리 측정" android:textStyle="bold" android:textSize="15sp"
                 android:textColor="#111827" android:layout_width="wrap_content" android:layout_height="wrap_content"

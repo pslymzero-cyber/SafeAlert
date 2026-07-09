@@ -68,6 +68,11 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
     //   매 스윕(1s) 재평가하므로 UWB 실측까지 끊기면 그때 정상 소실 처리된다.
     var uwbMeasuringCheck: ((String) -> Boolean)? = null
 
+    // [v1.1.53] 상호 RSSI 에코 매칭용 '내 해시' — BleService 가 자기 fullId 의 shortHash 를 배선.
+    //   상대 스캔응답 에코 테이블(0xE0C0)에서 이 해시와 일치하는 엔트리 = '상대가 나를 들은 RSSI'.
+    //   null(미배선)이면 에코 파싱을 건너뛴다(구버전 상대·부트스트랩과 동일 폴백).
+    var myEchoHash: Int? = null
+
     private var totalBleCount = 0
 
     // 화면 상태 — false 시 500ms 하드웨어 배칭 (스캔 모드와 직교, CPU 웨이크업만 최소화)
@@ -139,9 +144,18 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
                 val remoteState   = payloadByte ?: BleConstants.MOTION_STATE_STATIONARY
                 val remoteTurn    = if (payloadByte != null) BleConstants.decodeTurn(payloadByte) else BleConstants.TURN_STRAIGHT
 
+                // [v1.1.53] 상호 RSSI 에코 파싱 — 상대 스캔응답 0xE0C0 테이블에서 '내 해시' 엔트리를
+                //   찾으면 그것이 '상대가 나를 들은 RSSI(rssi_me→peer)'. 양측이 sym 으로 대칭 판정한다.
+                //   내 해시 미배선·에코 부재·엔트리 불일치 → NO_ECHO_RSSI(폴백 = 기존 거동).
+                val echoData     = record.getManufacturerSpecificData(BleConstants.COMPANY_ID_RSSI_ECHO)
+                val myHash       = myEchoHash
+                val peerEchoRssi = if (myHash != null && echoData != null)
+                    (BleConstants.findEchoRssi(echoData, myHash) ?: BleConstants.NO_ECHO_RSSI)
+                    else BleConstants.NO_ECHO_RSSI
+
                 BleService.safeAlertFound++
                 detectedDevices[fullId] = System.currentTimeMillis()
-                scanCallback?.onDeviceDetected(fullId, rssi, alertLevel, remoteState, remoteTurn, payloadPresent)
+                scanCallback?.onDeviceDetected(fullId, rssi, alertLevel, remoteState, remoteTurn, payloadPresent, peerEchoRssi)
 
                 // UWB 주소 스캔 응답 파싱 (지원 기기 한정)
                 // (v1.1.30) DEVICE(컨트롤러)=4바이트(주소+채널+프리앰블), WALKER(컨트롤리)=2바이트 — 있는 만큼 전달

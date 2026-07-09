@@ -492,9 +492,28 @@ class BleService : LifecycleService() {
             // [v1.1.14] 폴링 안전망 — 스캔이 잠시 끊겨도 내 최고 경보레벨을 위험상태(RISK)로 유지 송출.
             //   (주 송출은 onDeviceDetected 스캔주기. 동일레벨 no-op 라 중복 호출 무해.)
             bleAdvertiser?.updateRisk(getCurrentMaxLevel())
+            pushRssiEcho()          // [v1.1.53 상호RSSI] 내가 측정한 상대 RSSI 표를 스캔응답 에코에 실어 되돌려 송출
             broadcastLocalState()   // [v1.0.42 Req2] 주기 갱신 — Local UI(상태/회전) 폴링 소스 최신 유지
             speedPushHandler.postDelayed(this, SPEED_PUSH_INTERVAL_MS)
         }
+    }
+
+    // [v1.1.53 상호RSSI] 내가 측정한 각 상대의 RSSI(pEma=deviceRssiMap)를 (해시,값) 표로 만들어
+    //   BleAdvertiser 스캔응답 에코 블록(0xE0C0)에 실어 되돌려 송출한다. 상대는 자기 해시로 자신의
+    //   '상대가 측정한 나' 값을 찾아 대칭 판정(sym)에 쓴다. 가까운(강한 RSSI) 상위 8기만 —
+    //   updateRssiEcho 내부에서 UWB 공존 시 5기(15B)로 다시 절단(스캔응답 31B 예산).
+    private fun pushRssiEcho() {
+        if (!DevSettings.reciprocalRssiEnabled) return
+        val snapshot = deviceRssiMap.toList()   // [(fullId, pEma)] — 동시수정 방지 스냅샷
+        if (snapshot.isEmpty()) {
+            bleAdvertiser?.updateRssiEcho(ByteArray(0))   // 상대 없음 → 낡은 에코 잔존 방지(내부 contentEquals no-op)
+            return
+        }
+        val entries = snapshot
+            .sortedByDescending { it.second }    // 강한 RSSI(가까운) 우선 상위 K
+            .take(8)
+            .map { (fullId, rssi) -> BleConstants.shortHash(fullId) to rssi }
+        bleAdvertiser?.updateRssiEcho(BleConstants.encodeEchoTable(entries, 8))
     }
 
     override fun onCreate() {
@@ -684,13 +703,20 @@ class BleService : LifecycleService() {
                 startScanHealthCheck()
                 bleScanner = BleScanner(scanner).also { s ->
                     s.onStatusUpdate = { msg -> sendStatusBroadcast(msg) }
+                    // [v1.1.53 상호RSSI] 내 에코 해시 = 상대가 나를 저장하는 키(prefix+14B 절단 id)의 해시.
+                    //   상대는 이 해시로 태그된 '상대가 측정한 나의 RSSI'를 에코에 실어 되돌려준다.
+                    //   BleAdvertiser 가 광고 시 id 를 UTF-8 14바이트로 절단하므로(BleAdvertiser:196) 여기서도
+                    //   동일 절단해야 상대 스캐너가 만든 fullId 와 해시가 일치한다(ASCII·14자 이하면 그대로).
+                    val myWireId = String(myId.toByteArray(Charsets.UTF_8).take(14).toByteArray(), Charsets.UTF_8)
+                    val myPrefix = if (myMode == "DEVICE") BleConstants.DEVICE_PREFIX else BleConstants.WALKER_PREFIX
+                    s.myEchoHash = BleConstants.shortHash(myPrefix + myWireId)
                     // [v1.1.47] BLE 신호 타임아웃(전투 2s/휴식 6s)이어도 신선한 UWB 실측(≤1s)이
                     //   흐르는 기기는 소실 판정 유예 — 광고 일시 유실만으로 onDeviceLost 가 실측
                     //   중인 UWB 세션을 강제 철거하지 않게 한다. 실측까지 끊기면 다음 스윕에서
                     //   정상 소실(27개 상태맵 정리 포함) — 유예는 '연기'일 뿐 경로 자체는 불변.
                     s.uwbMeasuringCheck = { id -> freshUwbDistM(id) != null }
                     s.startScanning(object : BleScanCallback {
-                        override fun onDeviceDetected(deviceId: String, rssi: Int, alertLevel: Int, remoteState: Int, remoteTurn: Int, payloadPresent: Boolean) {
+                        override fun onDeviceDetected(deviceId: String, rssi: Int, alertLevel: Int, remoteState: Int, remoteTurn: Int, payloadPresent: Boolean, peerEchoRssi: Int) {
                             lastScanResultMs = System.currentTimeMillis()
 
                             if (myMode == "WALKER"
@@ -704,7 +730,7 @@ class BleService : LifecycleService() {
                             //   배칭 500ms 면 BLE 칩이 0.5s 모아 효과 반감되므로 함께 0ms 로 내린다(false 복귀는 평가주기 집계).
                             if (effectiveRssi >= WAKE_RSSI_DBM) bleScanner?.setHazardNear(true)
                             try {
-                                processAlert(deviceId, effectiveRssi, remoteState, remoteTurn, payloadPresent)
+                                processAlert(deviceId, effectiveRssi, remoteState, remoteTurn, payloadPresent, peerEchoRssi)
                                 // [v1.0.26 Req2] processAlert 가 alertState 를 어떻게 바꿨든(추가·격상·SAFE 제거·TTC 선발령)
                                 // 그 직후 전체 스냅샷을 한 번에 송출 → 하단 목록이 플로팅·알람과 절대 어긋나지 않는다.
                                 broadcastDeviceList()
@@ -963,7 +989,7 @@ class BleService : LifecycleService() {
         }
     }
 
-    private fun processAlert(deviceId: String, rssi: Int, remoteState: Int = 0x00, remoteTurn: Int = BleConstants.TURN_STRAIGHT, payloadPresent: Boolean = false) {
+    private fun processAlert(deviceId: String, rssi: Int, remoteState: Int = 0x00, remoteTurn: Int = BleConstants.TURN_STRAIGHT, payloadPresent: Boolean = false, peerEchoRssi: Int = BleConstants.NO_ECHO_RSSI) {
         // [v1.0.36→v1.1.7 #1] 수신 1바이트 페이로드 언패킹 → Category / State / Turn(2비트).
         //   remoteState 는 BleScanner 가 ServiceData 1바이트를 0~255 로 그대로 넘긴 값.
         //   remoteTurn = 상대 송신 회전 방향(TURN_*, bits 3:2). 표시 라벨/디버그용(속도 비트는 제거됨).
@@ -1352,11 +1378,33 @@ class BleService : LifecycleService() {
         //   - onset(교행 전 발령): 양쪽이 접근 중이면 내 RSSI 가 DANGER 임계(-55)에 '닿기 전'에 상대 송출로 먼저 울린다.
         //   - 안전: 먼 곳 상대의 오발(false alarm)은 내 RSSI 게이트(effWarning)가 차단(절충 = 상대송출 ∧ 내 RSSI 근접).
         //   - 하이브리드(avgRssi ∧ avg1sec) 교차검증 → 이탈 잔상 위 거짓 격상도 막는다(특수경보·safeForceFloor 선례).
-        if (rRisk > BleConstants.LEVEL_SAFE && rRisk > stableLevel &&
-            avgRssi >= effWarning && avg1sec >= effWarning) {
+        //   [v1.1.52] 완화 게이트: 폰별 TX/RX 비대칭(내 폰은 안 울리는데 상대는 울림)을 메운다. 수용 문턱을
+        //     effWarning 에서 coopSlackDb(기본 8dB)만큼 더 약한 신호까지 낮춰, 내가 경고권에 살짝 못 미쳐도
+        //     상대 위험송출을 함께 울린다. 일반 임계(effWarning)는 불변 — 진짜 먼 오발(슬랙 밖)은 여전히 차단.
+        // [v1.1.53 상호RSSI] 기준선 없는 coopSlack 완화(v1.1.52)를 '폴백 전용'으로 강등하고, 상대가
+        //   되돌려 보낸 상호 실측(peerEchoRssi = rssi_me→peer)이 있으면 대칭 판정을 우선한다.
+        //   sym = (내 pEma(avgRssi) + 상대가 측정한 나(peerEchoRssi)) / 2 — 양 폰이 같은 두 값을 평균하므로
+        //   결과가 동일 → 단일 effWarning 문턱과 비교해도 양쪽 판정이 구조적으로 일치(2중 보정·비대칭 제거).
+        //   정합성 가드: 두 측정이 reciprocalMaxDisagreeDb(기본 25dB) 넘게 어긋나면(부트스트랩·해시충돌·이상치)
+        //   대칭을 신뢰하지 않고 coopSlack 폴백으로 되돌린다. 에코 부재(구버전·비콘)도 폴백.
+        //   (UWB Case A 는 이 블록 이후 별도 승격 — 상호RSSI 는 Case B(RSSI) 전용, UWB 판정 무접촉.)
+        val coopFloor = effWarning - DevSettings.coopSlackDb
+        val hasReciprocal = DevSettings.reciprocalRssiEnabled &&
+            peerEchoRssi != BleConstants.NO_ECHO_RSSI &&
+            kotlin.math.abs(avgRssi - peerEchoRssi) <= DevSettings.reciprocalMaxDisagreeDb
+        val coopStrong = if (hasReciprocal) {
+            (avgRssi + peerEchoRssi) / 2 >= effWarning       // 대칭 실측 — 단일 기준선 판정
+        } else {
+            avgRssi >= coopFloor && avg1sec >= coopFloor      // 폴백 — 기존 coopSlack 완화 게이트
+        }
+        if (rRisk > BleConstants.LEVEL_SAFE && rRisk > stableLevel && coopStrong) {
             val beforeCoop = stableLevel
             stableLevel = rRisk.coerceAtMost(BleConstants.LEVEL_DANGER)
-            Log.w(TAG, "협력 격상(절충): $deviceId rRisk=$rRisk 내RSSI(pEma=$avgRssi raw=$avg1sec) → $beforeCoop→$stableLevel")
+            if (hasReciprocal) {
+                Log.w(TAG, "협력 격상(상호RSSI): $deviceId rRisk=$rRisk sym=${(avgRssi + peerEchoRssi) / 2}(내pEma=$avgRssi+상대측정=$peerEchoRssi)/2 ≥effWarning=$effWarning → $beforeCoop→$stableLevel")
+            } else {
+                Log.w(TAG, "협력 격상(폴백·slack=${DevSettings.coopSlackDb}): $deviceId rRisk=$rRisk 내RSSI(pEma=$avgRssi raw=$avg1sec ≥$coopFloor) → $beforeCoop→$stableLevel")
+            }
         }
 
         // ── [v1.1.22 C] '붙었을 때' raw 즉시 격상 — pEma 평활지연을 기다리지 않는다 ──────────────

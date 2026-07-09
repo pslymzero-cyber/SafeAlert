@@ -14,6 +14,13 @@ object BleConstants {
     // (v1.1.30) 형식: DEVICE(컨트롤러) 4바이트=[addr0][addr1][channel][preambleIndex]
     //           / WALKER(컨트롤리) 2바이트=[addr0][addr1]
     const val COMPANY_ID_UWB_EXT  = 0x9ABC
+    // (v1.1.53) 상호 RSSI 교환용 — 스캔 응답에 UWB_EXT 와 나란히 탑재(메인 광고 패킷은 만석).
+    //   각 기기가 '내가 상대를 들은 RSSI' 를 상대별로 되돌려보내(에코) 양쪽이 동일한
+    //   sym=(rssi_A→B + rssi_B→A)/2 로 판정 → 폰별 TX/RX 비대칭(내 폰은 무음·상대는 경보) 구조 해소.
+    //   엔트리 = [hash_hi][hash_lo][rssi(signed)] 3바이트. hash = shortHash(상대 fullId) 2바이트.
+    const val COMPANY_ID_RSSI_ECHO = 0xE0C0
+    const val ECHO_ENTRY_SIZE      = 3        // 엔트리당 바이트(2바이트 해시 + 1바이트 signed RSSI)
+    const val NO_ECHO_RSSI         = Int.MIN_VALUE   // 에코 부재 센티널(RSSI 는 음수 dBm 이라 MIN_VALUE 안전)
 
     // RSSI >= 임계값 → 경보 (가까울수록 RSSI가 0에 가까워짐)
     // 경고: 더 멀리서(더 음수), 위험: 더 가까이서(덜 음수)
@@ -162,6 +169,51 @@ object BleConstants {
         TURN_RIGHT    -> "우회전"
         TURN_STRAIGHT -> "직진"
         else          -> "-"
+    }
+
+    // ── (v1.1.53) 상호 RSSI 교환 — 에코 테이블 인코딩/디코딩 + 짧은 해시 ──────────────
+    /**
+     * 상대 fullId(prefix+wire id, deviceRssiMap 키와 동일)를 2바이트(0..65535) 해시로 축약.
+     *   FNV-1a 32비트 후 상·하위 XOR-fold → 16비트. 송신측은 상대 fullId 로, 수신측은
+     *   '자기 fullId' 로 같은 함수를 호출해 자기 에코 엔트리를 식별한다(양측 동일 문자열 → 동일 해시).
+     */
+    fun shortHash(id: String): Int {
+        var h = -0x7ee3623b               // 0x811C9DC5 FNV-1a offset basis(Int 비트패턴)
+        for (b in id.toByteArray(Charsets.UTF_8)) {
+            h = h xor (b.toInt() and 0xFF)
+            h *= 0x01000193               // FNV prime
+        }
+        return (h xor (h ushr 16)) and 0xFFFF
+    }
+
+    /**
+     * 에코 엔트리 리스트((hash, rssiDbm))를 바이트 배열로 인코딩. 최대 maxEntries 개.
+     *   각 엔트리 3바이트: [hash>>8][hash&0xFF][rssi.coerceIn(-128,127)].
+     */
+    fun encodeEchoTable(entries: List<Pair<Int, Int>>, maxEntries: Int): ByteArray {
+        val n = minOf(entries.size, maxEntries)
+        val out = ByteArray(n * ECHO_ENTRY_SIZE)
+        for (i in 0 until n) {
+            val (hash, rssi) = entries[i]
+            out[i * 3]     = ((hash ushr 8) and 0xFF).toByte()
+            out[i * 3 + 1] = (hash and 0xFF).toByte()
+            out[i * 3 + 2] = rssi.coerceIn(-128, 127).toByte()
+        }
+        return out
+    }
+
+    /**
+     * 에코 바이트에서 myHash 와 일치하는 엔트리의 RSSI(dBm) 반환. 없으면 null.
+     *   수신측이 '자기 해시'로 자기 에코를 찾아 상대가 나를 들은 세기를 복원한다.
+     */
+    fun findEchoRssi(echoData: ByteArray, myHash: Int): Int? {
+        var i = 0
+        while (i + ECHO_ENTRY_SIZE <= echoData.size) {
+            val hash = ((echoData[i].toInt() and 0xFF) shl 8) or (echoData[i + 1].toInt() and 0xFF)
+            if (hash == myHash) return echoData[i + 2].toInt()
+            i += ECHO_ENTRY_SIZE
+        }
+        return null
     }
 }
 

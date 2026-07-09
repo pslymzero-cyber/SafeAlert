@@ -464,6 +464,39 @@ object DevSettings {
         get() = prefs.getInt(KEY_EPJ_VS_EPJ_BIAS_DB, DEFAULT_EPJ_VS_EPJ_BIAS_DB).coerceIn(-10, 15)
         set(v) = prefs.edit().putInt(KEY_EPJ_VS_EPJ_BIAS_DB, v.coerceIn(-10, 15)).apply()
 
+    // ── [v1.1.52] 협력 알림 완화 게이트 슬랙(dB) — 폰별 TX/RX 비대칭(내 폰은 안 울리는데 상대는 울림) 보정 ──
+    //   원인: RSSI 왕복이 이론상 상호적이나 실제로는 폰 송출세기·수신감도 차로 A→B 와 B→A 경로가 달라,
+    //   같은 물리거리에서 한쪽만 경고권(effWarning)에 든다. v1.1.14 협력 격상은 '내' RSSI 도 effWarning
+    //   이상일 때만 상대 위험송출(rRisk)을 수용하므로, 약하게 받는 폰은 상대의 DANGER 를 무시하고 침묵한다.
+    //   완화: 협력 '수용' 문턱만 effWarning 에서 이 슬랙만큼 낮춰(예 -75→-83) 살짝 못 미치게 받아도 함께 울린다.
+    //   일반 경보 임계(effWarning)는 불변 — 오직 상대송출 수용 게이트만 양보. 진짜 먼 오발(슬랙 밖)은 여전히 차단.
+    //   Case B(RSSI) 전용 — Case A(신선 UWB)는 양방향 ToF 대칭이라 비대칭이 없어 개입하지 않는다. 0=v1.1.14 원거동.
+    private const val KEY_COOP_SLACK_DB = "coop_slack_db"
+    const val DEFAULT_COOP_SLACK_DB = 8
+    var coopSlackDb: Int
+        get() = prefs.getInt(KEY_COOP_SLACK_DB, DEFAULT_COOP_SLACK_DB).coerceIn(0, 20)
+        set(v) = prefs.edit().putInt(KEY_COOP_SLACK_DB, v.coerceIn(0, 20)).apply()
+
+    // ── [v1.1.53] 상호 RSSI 교환(reciprocal) — 기준선 있는 대칭 판정으로 coopSlack 를 폴백 전용으로 강등 ──
+    //   원리: 각 기기가 '내가 상대를 들은 RSSI'를 스캔응답 에코(0xE0C0)로 되돌려보낸다. A·B 양측 모두
+    //   sym=(rssi_A→B + rssi_B→A)/2 라는 '동일한 값'을 계산해 하나의 effWarning 으로 판정 →
+    //   폰별 TX/RX 비대칭이 산술평균에서 상쇄되어 두 폰이 항상 같은 결론(둘 다 울리거나 둘 다 침묵).
+    //   coopSlack(v1.1.52)의 '기준선 없는 하향 완화(2중보정)' 문제를 구조적으로 제거한다.
+    //   에코가 없을 때만(부트스트랩·구버전 상대·패킷손실) coopSlack 폴백으로 되돌아간다.
+    //   Case B(RSSI) 전용 — Case A(신선 UWB 양방향 ToF)는 이미 대칭이라 개입하지 않는다.
+    private const val KEY_RECIPROCAL_RSSI_ENABLED = "reciprocal_rssi_enabled"
+    var reciprocalRssiEnabled: Boolean
+        get() = prefs.getBoolean(KEY_RECIPROCAL_RSSI_ENABLED, true)
+        set(v) = prefs.edit().putBoolean(KEY_RECIPROCAL_RSSI_ENABLED, v).apply()
+
+    // [v1.1.53] 상호 RSSI 정합성 게이트(dB) — 내 실측과 상대 에코의 차가 이 값을 넘으면 에코를 신뢰하지 않고
+    //   폴백(coopSlack). 해시 충돌·순간 이상치·한쪽만 멀티패스로 벌어진 값이 sym 을 오염시키는 것을 차단.
+    private const val KEY_RECIPROCAL_MAX_DISAGREE_DB = "reciprocal_max_disagree_db"
+    const val DEFAULT_RECIPROCAL_MAX_DISAGREE_DB = 25
+    var reciprocalMaxDisagreeDb: Int
+        get() = prefs.getInt(KEY_RECIPROCAL_MAX_DISAGREE_DB, DEFAULT_RECIPROCAL_MAX_DISAGREE_DB).coerceIn(5, 60)
+        set(v) = prefs.edit().putInt(KEY_RECIPROCAL_MAX_DISAGREE_DB, v.coerceIn(5, 60)).apply()
+
     // [Phase2] 상태 기반 가감 on/off — 상대 FORWARD(전진) 접근 시 추가 조기경보, IDLE-IDLE 가청 억제
     private const val KEY_STATE_MODULATION_ENABLED = "state_modulation_enabled"
     var stateModulationEnabled: Boolean

@@ -29,6 +29,14 @@ class BleAdvertiser(
         private const val MIN_RISK_UPDATE_INTERVAL_MS = 500L
         // 상태 변경 시 stopAdvertising 후 재시작까지 대기 (OS 정리 시간 확보)
         private const val STATE_RESTART_DELAY_MS = 50L
+        // [v1.1.53] 상호 RSSI 에코 최소 재광고 간격 — 에코 변화만으로 stop/start 폭주 방지.
+        //   throttle 에 걸리면 이번 갱신은 생략하고 다음 speedPush(~1.5s)가 재시도(에코 값이 여전히
+        //   on-air 와 다르면 자연 통과 → self-heal). STATE/RISK throttle 과 독립.
+        private const val MIN_ECHO_UPDATE_INTERVAL_MS = 1500L
+        // [v1.1.53] 스캔응답 에코 바이트 예산(31B 패킷 공유). UWB 동거 시 15B(5엔트리),
+        //   UWB 없으면 24B(8엔트리). 둘 다 3의 배수 → 엔트리(3B) 경계에서 잘린다.
+        private const val ECHO_MAX_BYTES_WITH_UWB = 15
+        private const val ECHO_MAX_BYTES_NO_UWB   = 24
         // [v1.0.43 Req3] (구) 하트비트 버스트 상수 폐지 — 슬립을 'stop + 700ms/4s 버스트'에서
         //   'LOW_POWER(~1s) 연속 광고'로 전환(깨어남 지연 제거). 완전 정지하지 않고 저빈도로 상시
         //   송출하므로 상대 스캐너가 항상 나를 잡아 즉시 재발견한다. 재광고 정리 대기는 STATE_RESTART_DELAY_MS 공용.
@@ -109,6 +117,13 @@ class BleAdvertiser(
     private var lastRiskUpdateMs = 0L
     // 재광고 시 UWB 주소 유지 (updateState / restartWithUwbAddress 공용)
     private var lastUwbAddress: ByteArray? = null
+    // [v1.1.53] 상호 RSSI 에코 — 스캔응답에 실을 '내가 상대별로 들은 RSSI' 인코딩 테이블.
+    //   BleService.pushRssiEcho 가 updateRssiEcho 로 민다. desiredEcho=송출 희망(최대 8엔트리),
+    //   startAdvertising 이 UWB 동거 여부로 잘라 싣는다(15B/24B). lastAdvertisedEcho=마지막
+    //   (재)광고가 반영한 값(중복 재광고 가드), lastEchoAdvAt=에코발 재광고 throttle 타임스탬프.
+    @Volatile private var desiredEcho: ByteArray = ByteArray(0)
+    private var lastAdvertisedEcho: ByteArray = ByteArray(0)
+    private var lastEchoAdvAt = 0L
     private val stateHandler = android.os.Handler(android.os.Looper.getMainLooper())
 
     // [v1.0.51 #1] Rate-Limit 드롭 보완 — throttle 에 걸려 적용 못 한 최신 STATE 보류 저장(-1=없음).
@@ -198,18 +213,24 @@ class BleAdvertiser(
             .setIncludeTxPowerLevel(false)
             .build()
 
-        // ── UWB 스캔 응답 (지원 시 별도 패킷으로 UWB 주소 공유) ──
-        // (v1.1.30) 컨트롤러(DEVICE)=4바이트(주소2+채널+프리앰블), 컨트롤리(WALKER)=2바이트(주소)
-        val scanResponse = if (uwbLocalAddress != null && uwbLocalAddress.size >= 2) {
-            AdvertiseData.Builder()
-                .addManufacturerData(BleConstants.COMPANY_ID_UWB_EXT, uwbLocalAddress.take(4).toByteArray())
-                .setIncludeDeviceName(false)
-                .build()
+        // ── 스캔 응답 (별도 31B 패킷) — UWB 주소(0x9ABC) + (v1.1.53) 상호 RSSI 에코(0xE0C0) 공동 탑재 ──
+        // (v1.1.30) UWB: 컨트롤러(DEVICE)=4바이트(주소2+채널+프리앰블), 컨트롤리(WALKER)=2바이트(주소).
+        // (v1.1.53) 에코: desiredEcho 를 UWB 동거 여부로 잘라(15B/24B, 3B 엔트리 경계) 나란히 싣는다.
+        val hasUwb = uwbLocalAddress != null && uwbLocalAddress.size >= 2
+        val echoBudget = if (hasUwb) ECHO_MAX_BYTES_WITH_UWB else ECHO_MAX_BYTES_NO_UWB
+        val echoToSend = if (desiredEcho.size <= echoBudget) desiredEcho
+                         else desiredEcho.copyOf(echoBudget)   // 15·24 = 3의 배수 → 엔트리 경계 보존
+        lastAdvertisedEcho = desiredEcho                       // 이번 (재)광고가 반영한 에코 기준 갱신
+        val scanResponse = if (hasUwb || echoToSend.isNotEmpty()) {
+            val b = AdvertiseData.Builder().setIncludeDeviceName(false)
+            if (hasUwb) b.addManufacturerData(BleConstants.COMPANY_ID_UWB_EXT, uwbLocalAddress!!.take(4).toByteArray())
+            if (echoToSend.isNotEmpty()) b.addManufacturerData(BleConstants.COMPANY_ID_RSSI_ECHO, echoToSend)
+            b.build()
         } else null
 
         if (scanResponse != null) {
             advertiser.startAdvertising(settings, advertiseData, scanResponse, callback)
-            Log.d(TAG, "광고+UWB 시작: id=$deviceId uwb=${uwbLocalAddress!!.take(4).joinToString("") { "%02X".format(it) }}")
+            Log.d(TAG, "광고+SR 시작: id=$deviceId uwb=${if (hasUwb) uwbLocalAddress!!.take(4).joinToString("") { "%02X".format(it) } else "-"} echo=${echoToSend.size / BleConstants.ECHO_ENTRY_SIZE}엔트리")
         } else {
             advertiser.startAdvertising(settings, advertiseData, callback)
             Log.d(TAG, "광고 시작: companyId=0x${companyId.toString(16).uppercase()} id=$deviceId")
@@ -290,6 +311,25 @@ class BleAdvertiser(
         currentRisk = r
         lastRiskUpdateMs = now
         Log.d(TAG, "위험상태 송출 갱신 → $r (상승=$rising) 재광고")
+        restartAdvertise()
+    }
+
+    /**
+     * (v1.1.53) 상호 RSSI 에코 갱신 — BleService 가 '내가 상대별로 들은 RSSI' 테이블을 인코딩해 민다.
+     *  스캔응답 0xE0C0 매뉴팩처러 데이터로 실려 상대가 자기 해시로 되찾아, 양측이 동일한
+     *  sym=(rssi_A→B + rssi_B→A)/2 로 대칭 판정한다.
+     *  - 이미 같은 값을 송출 중이면 무시(contentEquals 가드).
+     *  - 1.5초 최소간격 throttle — 걸리면 생략하고 다음 speedPush(~1.5s)가 재시도(값이 여전히
+     *    on-air 와 다르면 자연 통과 → self-heal). STATE/RISK throttle 과 독립.
+     *  - 통과하면 desiredEcho 갱신 후 재광고(restartAdvertise 가 최신 STATE/TURN/RISK 도 함께 재패킹).
+     */
+    fun updateRssiEcho(newEcho: ByteArray) {
+        if (stopped) return
+        if (newEcho.contentEquals(lastAdvertisedEcho)) return   // 이미 같은 에코 송출 중
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastEchoAdvAt < MIN_ECHO_UPDATE_INTERVAL_MS) return  // throttle — 다음 speedPush 서 재시도
+        desiredEcho = newEcho
+        lastEchoAdvAt = now
         restartAdvertise()
     }
 

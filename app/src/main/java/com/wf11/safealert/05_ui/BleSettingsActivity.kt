@@ -73,6 +73,13 @@ class BleSettingsActivity : AppCompatActivity() {
         binding.seekEpjBias.progress = (DevSettings.epjVsEpjBiasDb + 10).coerceIn(0, 25)
         updateEpjBiasLabel()
 
+        // [v1.1.53] 상호 RSSI 교환 토글 — 기본 켜짐(주 메커니즘). 꺼지면 coopSlack 폴백만 동작.
+        binding.swReciprocalRssi.isChecked = DevSettings.reciprocalRssiEnabled
+
+        // [v1.1.52] 협력 알림 완화 슬랙 — progress = slack(0~20 dB) 그대로
+        binding.seekCoopSlack.progress = DevSettings.coopSlackDb.coerceIn(0, 20)
+        updateCoopSlackLabel()
+
         // (v1.1.30) UWB 정밀 거리 토글 — 미지원 기기는 스위치 비활성
         binding.swUwb.isChecked = DevSettings.uwbEnabled
         if (!UwbRanger.isHardwareSupported(this)) {
@@ -163,6 +170,13 @@ class BleSettingsActivity : AppCompatActivity() {
         binding.seekEpjBias.setOnSeekBarChangeListener(seek {
             DevSettings.epjVsEpjBiasDb = binding.seekEpjBias.progress - 10
             updateEpjBiasLabel()
+        })
+        // [v1.1.53] 상호 RSSI 교환 — 즉시 라이브 반영(BleService 가 SharedPreferences 변경 구독)
+        binding.swReciprocalRssi.setOnCheckedChangeListener { _, checked -> DevSettings.reciprocalRssiEnabled = checked }
+        // [v1.1.52] 협력 알림 완화 슬랙 — progress = slack(dB) 저장(라이브 반영)
+        binding.seekCoopSlack.setOnSeekBarChangeListener(seek {
+            DevSettings.coopSlackDb = binding.seekCoopSlack.progress
+            updateCoopSlackLabel()
         })
 
         // (v1.1.30) UWB 토글 — 즉시 라이브 반영(BleService 가 SharedPreferences 변경 구독)
@@ -305,6 +319,12 @@ class BleSettingsActivity : AppCompatActivity() {
         val v = binding.seekEpjBias.progress - 10
         val sign = if (v > 0) "+" else ""
         binding.tvEpjBias.text = "${sign}${v} dB"
+    }
+
+    // [v1.1.52] 협력 알림 완화 슬랙 라벨 — progress = slack(dB). 0=완화 없음(v1.1.14 원거동).
+    private fun updateCoopSlackLabel() {
+        val v = binding.seekCoopSlack.progress
+        binding.tvCoopSlack.text = if (v == 0) "0 dB (완화 없음)" else "+${v} dB"
     }
 
     // [v1.1.46] UWB 판정 반경 라벨 — progress/2 = 미터. 정수 값은 "15m", 반미터는 "7.5m".
