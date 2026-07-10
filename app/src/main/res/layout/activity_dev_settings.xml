@@ -554,6 +554,31 @@
             </LinearLayout>
         </androidx.cardview.widget.CardView>
 
+        <!-- [v1.1.54] 에코편차 집계(상호 RSSI) — 판정 무개입 텔레메트리. 항상 표시(7탭 숨김 게이트 밖) -->
+        <TextView android:text="에코편차 집계 (상호 RSSI)" android:textStyle="bold" android:textSize="16sp"
+            android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="16dp"/>
+        <androidx.cardview.widget.CardView
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginTop="8dp">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="vertical" android:padding="16dp">
+
+                <!-- 기기별 에코편차 통계 라인 — 개발자설정 화면 표시 중 약 1.2초 주기 폴링 갱신 -->
+                <TextView android:id="@+id/tv_echo_diag"
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:text="수집된 에코 표본 없음"
+                    android:textSize="13sp" android:textColor="#111827"
+                    android:fontFamily="monospace" android:lineSpacingExtra="3dp"/>
+                <TextView android:text="편차 = 내가 측정한 상대 RSSI − 상대가 나를 측정해 되돌린 에코. 중앙값=기기 간 체계적 비대칭(모델별 오프셋의 실측 근거), 산포=채널 노이즈(보정 불가 성분), 에코%=상호 RSSI 응답 비율(0%=비콘·구버전). 판정에 개입하지 않는 수집·표시 전용이며 앱을 재시작해도 누적됩니다."
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp" android:textSize="11sp" android:textColor="#9CA3AF"/>
+
+                <Button android:id="@+id/btn_echo_reset" android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp" android:text="에코편차 통계 초기화" android:backgroundTint="#9E9E9E"/>
+
+            </LinearLayout>
+        </androidx.cardview.widget.CardView>
+
         <!-- 앱 정보 -->
         <TextView android:text="앱 정보" android:textStyle="bold" android:textSize="16sp"
             android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="16dp"/>

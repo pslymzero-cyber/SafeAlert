@@ -229,6 +229,14 @@ class DevSettingsActivity : AppCompatActivity() {
 
         binding.btnReset.setOnClickListener { resetValues() }
 
+        // [v1.1.54] 에코편차 통계 초기화 — 라이브 맵 + 전용 SharedPreferences 모두 비움(판정 무개입 통계라 안전)
+        binding.btnEchoReset.setOnClickListener {
+            BleService.echoDiffLive.clear()
+            getSharedPreferences(BleService.ECHO_PREFS, MODE_PRIVATE).edit().clear().apply()
+            refreshEchoDiag()
+            Toast.makeText(this, "에코편차 통계 초기화 완료", Toast.LENGTH_SHORT).show()
+        }
+
         // 앱 정보 — 버전 표시 + 오픈소스 라이선스 이동
         binding.tvAppVersion.text = "SafeAlert v${BuildConfig.VERSION_NAME}"
         binding.btnOpenSourceLicenses.setOnClickListener {
@@ -283,6 +291,7 @@ class DevSettingsActivity : AppCompatActivity() {
     private val uwbDiagPoller = object : Runnable {
         override fun run() {
             refreshUwbDiag()
+            refreshEchoDiag()   // [v1.1.54] 에코편차 집계 패널 — 같은 1.2s 폴에 동승(별도 타이머 없음)
             uwbDiagHandler.postDelayed(this, 1200L)
         }
     }
@@ -323,6 +332,43 @@ class DevSettingsActivity : AppCompatActivity() {
             else         -> "→ UWB 실측 중 — 목록 거리가 m로 표시됩니다."
         }
         return "$line1\n$line2\n$hint"
+    }
+
+    // ── [v1.1.54] 에코편차 집계(상호 RSSI) 진단 — 판정 무개입 텔레메트리, 표시 전용 ──────────
+    /** 버킷 히스토그램에서 분위수(dB) — 버킷 중점(−40+5i+2)의 정수 근사. total=버킷 총합(echoTicks). */
+    private fun echoPercentileDb(buckets: IntArray, total: Int, q: Double): Int {
+        if (total <= 0) return 0
+        val target = (total * q).toInt().coerceAtMost(total - 1)
+        var cum = 0
+        for (i in buckets.indices) {
+            cum += buckets[i]
+            if (cum > target) return BleService.ECHO_BUCKET_MIN + i * BleService.ECHO_BUCKET_DB + BleService.ECHO_BUCKET_DB / 2
+        }
+        return 0
+    }
+
+    // 저장분 위에 라이브를 덮어써 병합(라이브 항목 = 첫 틱에 저장분을 시드한 총 누적치) 후 기기별 한 줄 요약.
+    //   중앙값=기기 간 체계적 비대칭(모델별 오프셋 근거) · 산포=(p75−p25)/2 채널 노이즈 · 에코%=상호 RSSI 응답 비율.
+    private fun refreshEchoDiag() {
+        val saved = BleService.parseEchoBlob(
+            getSharedPreferences(BleService.ECHO_PREFS, MODE_PRIVATE).getString(BleService.ECHO_KEY, "") ?: "")
+        saved.putAll(BleService.echoDiffLive)
+        val sb = StringBuilder()
+        for ((id, s) in saved.entries.sortedByDescending { it.value.totalTicks }) {
+            if (s.totalTicks <= 0) continue
+            if (sb.isNotEmpty()) sb.append('\n')
+            if (s.echoTicks > 0) {
+                val med = echoPercentileDb(s.buckets, s.echoTicks, 0.50)
+                val p25 = echoPercentileDb(s.buckets, s.echoTicks, 0.25)
+                val p75 = echoPercentileDb(s.buckets, s.echoTicks, 0.75)
+                val pct = s.echoTicks * 100 / s.totalTicks
+                sb.append("${id}  중앙값 ${if (med >= 0) "+" else ""}${med}dB · 산포 ±${(p75 - p25) / 2} · 에코 ${pct}% · n=${s.echoTicks}")
+            } else {
+                sb.append("${id}  에코 없음(비콘·구버전) · 틱 ${s.totalTicks}")
+            }
+        }
+        binding.tvEchoDiag.text = if (sb.isEmpty())
+            "수집된 에코 표본 없음 — 상호 RSSI 기기가 근접하면 자동 수집됩니다." else sb.toString()
     }
 
     // 권한 부여·강제 토글 직후, 서비스에 UWB 세션 재평가를 명시 요청(동일값 쓰기는 변경 리스너 미발화)

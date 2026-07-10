@@ -82,6 +82,51 @@ class BleService : LifecycleService() {
         //   직렬화 필드 순서 = category / state / turnDir (필드 구분 U+001F).   // [v1.1.7 #1] 속도→회전
         //   오직 내 송출 상태(myCategory + bleAdvertiser TX)에서만 갱신 — 상대 페이로드가 절대 못 건드린다.
         @Volatile var localSnapshot: String    = ""
+
+        // [v1.1.54 에코편차 집계] 상호RSSI 에코(0xE0C0) 텔레메트리 — 판정 무개입(수집·표시 전용).
+        //   diff = (내가 측정한 상대 avgRssi) − (상대가 측정한 나 peerEchoRssi) 를 5dB×16버킷
+        //   (−40~+40dB) 히스토그램으로 기기별 누적. 중앙값=체계적 비대칭(TX전력·안테나 등 모델별
+        //   오프셋의 실측 근거), 산포=채널 노이즈(보정 불가 성분) — 이 둘의 구분이 수집 목적.
+        //   DevSettingsActivity 폴러(1200ms)가 직접 읽는다(detectedSnapshot 폴링 선례). 스캔콜백은
+        //   v1.1.47 메인루퍼 마셜, 폴러·stopAll 도 메인스레드 → 별도 동기화 불요(메인스레드 전용 맵).
+        //   수명: 첫 틱에 SharedPreferences 누적분 시드 → 라이브 누적 → 소실/중지/주기 저장(세션 간 누적).
+        const val ECHO_BUCKET_COUNT = 16      // 5dB × 16버킷 = −40 ~ +40dB
+        const val ECHO_BUCKET_DB    = 5
+        const val ECHO_BUCKET_MIN   = -40
+        const val ECHO_PREFS        = "echo_diff_stats"   // 전용 SharedPreferences(설정 프리퍼런스와 분리)
+        const val ECHO_KEY          = "data"
+        private const val ECHO_PERSIST_EVERY_TICKS = 500  // 판정 ~120ms 주기 기준 약 1분마다 주기 저장
+        val echoDiffLive = mutableMapOf<String, EchoDiffStats>()
+
+        // ── [v1.1.54] 직렬화 유틸 — 순수 함수(서비스·개발자설정 공용). 레코드 '\n', 필드 '|', 버킷 ','
+        //   "기기ID|echoTicks|totalTicks|b0,…,b15". 형식 불일치 레코드는 건너뛴다(방어적 파싱).
+        fun parseEchoBlob(blob: String): MutableMap<String, EchoDiffStats> {
+            val out = mutableMapOf<String, EchoDiffStats>()
+            for (line in blob.split('\n')) {
+                val f = line.split('|')
+                if (f.size != 4) continue
+                val b = f[3].split(',')
+                if (b.size != ECHO_BUCKET_COUNT) continue
+                val s = EchoDiffStats()
+                s.echoTicks  = f[1].toIntOrNull() ?: continue
+                s.totalTicks = f[2].toIntOrNull() ?: continue
+                for (i in 0 until ECHO_BUCKET_COUNT) s.buckets[i] = b[i].toIntOrNull() ?: 0
+                out[f[0]] = s
+            }
+            return out
+        }
+
+        fun serializeEchoBlob(map: Map<String, EchoDiffStats>): String =
+            map.entries.joinToString("\n") { (id, s) ->
+                "$id|${s.echoTicks}|${s.totalTicks}|${s.buckets.joinToString(",")}"
+            }
+    }
+
+    /** (v1.1.54) 기기별 에코편차 누적치 — buckets 의 i번째 = diff 가 −40+5i 이상 −35+5i 미만인 틱 수(범위 밖은 양끝 버킷에 클램프). */
+    class EchoDiffStats {
+        val buckets = IntArray(ECHO_BUCKET_COUNT)
+        var echoTicks  = 0   // 에코 존재 틱 수(= 버킷 총합)
+        var totalTicks = 0   // RSSI 판정 블록 도달 틱 수(에코 유무 무관 — Case A(UWB) 조기분기 틱은 제외)
     }
 
     private var bleAdvertiser: BleAdvertiser? = null
@@ -516,6 +561,45 @@ class BleService : LifecycleService() {
         bleAdvertiser?.updateRssiEcho(BleConstants.encodeEchoTable(entries, 8))
     }
 
+    // ── [v1.1.54 에코편차 집계] 판정 무개입 텔레메트리 ─────────────────────────────────────
+    //   기록 규칙: peerEchoRssi 존재 시 '항상' 기록 — 25dB 정합성 게이트(hasReciprocal)와 무관.
+    //   게이트 밖 극단 비대칭이야말로 관찰 대상이라 검열하면 25dB 문턱의 적정성을 평가할 수 없다.
+    //   킬스위치(reciprocalRssiEnabled)와도 무관 — myEchoHash 주입은 무조건이라 판정 OFF 중에도
+    //   상대 에코는 계속 파싱된다(판정 끄고 관찰만 하는 운용 가능). 단 debugMode(시뮬 RSSI 대입)
+    //   틱은 호출부에서 제외 — 가짜 RSSI 가 누적 히스토그램을 오염시키면 안 된다.
+
+    private fun echoPrefs() = getSharedPreferences(ECHO_PREFS, MODE_PRIVATE)
+
+    /** 라이브 전체를 저장분과 병합 저장 — 라이브 항목은 첫 틱에 저장분을 시드한 총 누적치라 단순 덮어쓰기. */
+    private fun persistEchoAll() {
+        if (echoDiffLive.isEmpty()) return
+        val merged = parseEchoBlob(echoPrefs().getString(ECHO_KEY, "") ?: "")
+        merged.putAll(echoDiffLive)
+        echoPrefs().edit().putString(ECHO_KEY, serializeEchoBlob(merged)).apply()
+    }
+
+    /** 단일 기기 저장(onDeviceLost 소실 경로) — 라이브에서 이미 remove 된 항목을 넘겨받는다. */
+    private fun persistEchoEntry(deviceId: String, stats: EchoDiffStats) {
+        val merged = parseEchoBlob(echoPrefs().getString(ECHO_KEY, "") ?: "")
+        merged[deviceId] = stats
+        echoPrefs().edit().putString(ECHO_KEY, serializeEchoBlob(merged)).apply()
+    }
+
+    /** 매 RSSI 판정 틱 호출(협력 격상 블록 직전). 첫 틱에 저장 누적분 시드 → 라이브 = 총 누적. */
+    private fun recordEchoDiff(deviceId: String, avgRssi: Int, peerEchoRssi: Int) {
+        val stats = echoDiffLive.getOrPut(deviceId) {
+            parseEchoBlob(echoPrefs().getString(ECHO_KEY, "") ?: "")[deviceId] ?: EchoDiffStats()
+        }
+        stats.totalTicks++
+        if (peerEchoRssi != BleConstants.NO_ECHO_RSSI) {
+            stats.echoTicks++
+            val diff = avgRssi - peerEchoRssi
+            stats.buckets[((diff - ECHO_BUCKET_MIN) / ECHO_BUCKET_DB).coerceIn(0, ECHO_BUCKET_COUNT - 1)]++
+        }
+        // 주기 저장 — 새 타이머 없이 틱 카운터로(프로세스 강제종료 시 유실 상한 ~1분치).
+        if (stats.totalTicks % ECHO_PERSIST_EVERY_TICKS == 0) persistEchoAll()
+    }
+
     override fun onCreate() {
         super.onCreate()
         isRunning = true
@@ -778,6 +862,7 @@ class BleService : LifecycleService() {
                             peerUwbSeenMap.remove(deviceId)      // [v1.1.41] UWB 배타판정 신선도·격하 카운터 정리
                             uwbSampleAtMsMap.remove(deviceId)
                             uwbSafeStreakMap.remove(deviceId)
+                            echoDiffLive.remove(deviceId)?.let { persistEchoEntry(deviceId, it) }   // [v1.1.54] 에코편차 누적 저장 후 라이브 정리(재등장 시 저장분 재시드)
                             sendAlertBroadcast(deviceId, BleConstants.LEVEL_SAFE)
                             if (alertState.isEmpty()) {
                                 AlertSoundPlayer.stopSound()
@@ -1388,6 +1473,12 @@ class BleService : LifecycleService() {
         //   정합성 가드: 두 측정이 reciprocalMaxDisagreeDb(기본 25dB) 넘게 어긋나면(부트스트랩·해시충돌·이상치)
         //   대칭을 신뢰하지 않고 coopSlack 폴백으로 되돌린다. 에코 부재(구버전·비콘)도 폴백.
         //   (UWB Case A 는 이 블록 이후 별도 승격 — 상호RSSI 는 Case B(RSSI) 전용, UWB 판정 무접촉.)
+        // [v1.1.54 에코편차 집계] 텔레메트리 — 판정 무개입(아래 협력 격상 로직과 완전 독립·결과 미사용).
+        //   이 틱의 (내 측정 avgRssi ↔ 상대가 측정한 나 peerEchoRssi) 차이를 히스토그램에 누적만 한다.
+        //   25dB 게이트(hasReciprocal)보다 앞·무관하게 기록 — 게이트 밖 극단 비대칭도 관찰 대상.
+        //   debugMode 는 제외(시뮬 RSSI 가 avgRssi 에 대입돼 실측 통계를 오염시키므로).
+        if (!DevSettings.debugMode) recordEchoDiff(deviceId, avgRssi, peerEchoRssi)
+
         val coopFloor = effWarning - DevSettings.coopSlackDb
         val hasReciprocal = DevSettings.reciprocalRssiEnabled &&
             peerEchoRssi != BleConstants.NO_ECHO_RSSI &&
@@ -2945,6 +3036,8 @@ class BleService : LifecycleService() {
         peerUwbSeenMap.clear()           // [v1.1.41] UWB 배타판정 신선도·격하 카운터 일괄 정리
         uwbSampleAtMsMap.clear()
         uwbSafeStreakMap.clear()
+        persistEchoAll()                 // [v1.1.54] 에코편차 누적 저장(중지 시 유실 방지) — clear 보다 먼저
+        echoDiffLive.clear()             // [v1.1.54] 라이브 정리 — 다음 세션 첫 틱에 저장분 재시드
         testRunnable?.let { testHandler.removeCallbacks(it) }
         testRunnable = null
         muteHandler.removeCallbacksAndMessages(null)
