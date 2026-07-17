@@ -11,6 +11,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.media.AudioManager
+import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
 import android.util.Log
@@ -83,7 +84,8 @@ class BleService : LifecycleService() {
         //   오직 내 송출 상태(myCategory + bleAdvertiser TX)에서만 갱신 — 상대 페이로드가 절대 못 건드린다.
         @Volatile var localSnapshot: String    = ""
 
-        // [v1.1.54 에코편차 집계] 상호RSSI 에코(0xE0C0) 텔레메트리 — 판정 무개입(수집·표시 전용).
+        // [v1.1.54 에코편차 집계] 상호RSSI 에코(0xE0C0) 텔레메트리 — 수집 자체는 판정 결과 미사용.
+        //   (v1.1.55 Level2 자동보정이 이 히스토그램을 '읽어' echoCal 을 산출·주입한다 — 아래 계층 참조.)
         //   diff = (내가 측정한 상대 avgRssi) − (상대가 측정한 나 peerEchoRssi) 를 5dB×16버킷
         //   (−40~+40dB) 히스토그램으로 기기별 누적. 중앙값=체계적 비대칭(TX전력·안테나 등 모델별
         //   오프셋의 실측 근거), 산포=채널 노이즈(보정 불가 성분) — 이 둘의 구분이 수집 목적.
@@ -120,6 +122,73 @@ class BleService : LifecycleService() {
             map.entries.joinToString("\n") { (id, s) ->
                 "$id|${s.echoTicks}|${s.totalTicks}|${s.buckets.joinToString(",")}"
             }
+
+        // ── [v1.1.55 Level2 에코 자동보정] 위 히스토그램을 '읽어' 판정 오프셋(echoCal)을 산출하는 계층 ──
+        //   echoCal = clamp(−중앙값/2, ±clampDb). 절반인 이유: 거울쌍(상대도 같은 편차를 반대 부호로
+        //   관측)이 양쪽에서 각자 절반씩 물러나 대칭점에 수렴 — 한쪽 전량 보정이면 쌍이 서로 과보정.
+        //   게이트: n(echoTicks) < echoCalMinTicks = 판단 불가(null → FB 프라이어 대체 시도),
+        //          산포(±IQR/2) > echoCalMaxIqrDb = 중앙값 불신(0.0 = 보정 포기 확정, 프라이어 미대체).
+        //   킬스위치(echoAutoCalibEnabled, 기본 OFF)는 주입부(totalOffset)에서 — 아래 함수들은 항상
+        //   계산 가능해 개발자설정 '후보 표시'와 판정이 같은 코드를 공유한다.
+        private const val ECHO_DECAY_TICKS = 30_000   // 초과 시 전 버킷 반감(망각) — 시정수 ~1.5만 틱, 고정 상수
+        private const val ECHO_FB_MODELS_KEY  = "fb_models"     // 캐시: "기기ID(sanitize)|모델" 라인
+        private const val ECHO_FB_PRIORS_KEY  = "fb_priors"     // 캐시: "상대모델|중앙값|Σn" 라인(내 모델 기준 fold)
+        private const val ECHO_FB_FETCHED_AT  = "fb_fetched_at"
+        private const val ECHO_FB_UPLOADED_AT = "fb_uploaded_at"
+        private const val ECHO_FB_UPLOAD_INTERVAL_MS = 3_600_000L   // 업로드 1h 스로틀(persistEchoAll 편승)
+        // Firebase 모델쌍 프라이어 — 기동 시 캐시 즉시 복원+비동기 갱신(loadEchoPriors), 판정·표시는
+        //   메모리 맵만 읽는다(판정 시 네트워크 0). Firebase 콜백=메인 루퍼 → echoDiffLive 와 같은
+        //   메인스레드 전용 맵(별도 동기화 불요).
+        val echoFbPriorByModel = mutableMapOf<String, Pair<Double, Int>>()   // 상대모델 → (fold 중앙값 dB, Σn)
+        val echoFbModelById    = mutableMapOf<String, String>()              // sanitize 기기ID → 모델명
+        @Volatile var echoFbFetchedAt = 0L
+
+        /** 버킷 히스토그램 분위수(dB) — 버킷 내 균등분포 가정 선형 보간(버킷 중심 근사보다 정밀).
+         *  total = echoTicks(버킷 총합), q ∈ (0,1]. total≤0 이면 0.0. */
+        fun echoQuantileDb(buckets: IntArray, total: Int, q: Double): Double {
+            if (total <= 0) return 0.0
+            val target = total * q
+            var cum = 0
+            for (i in buckets.indices) {
+                val c = buckets[i]
+                if (c > 0 && cum + c >= target) {
+                    val frac = ((target - cum) / c).coerceIn(0.0, 1.0)
+                    return ECHO_BUCKET_MIN + (i + frac) * ECHO_BUCKET_DB
+                }
+                cum += c
+            }
+            return (ECHO_BUCKET_MIN + ECHO_BUCKET_COUNT * ECHO_BUCKET_DB).toDouble()
+        }
+
+        /** 로컬 보정 후보(dB) — 킬스위치 무관 계산. n 미달=null(프라이어 대체 허용), 산포 초과=0.0
+         *  (보정 포기 '확정' — 로컬 표본이 충분한데 노이즈가 크다는 뜻이라 프라이어로도 안 덮는다). */
+        fun echoCalLocalDb(s: EchoDiffStats): Double? {
+            if (s.echoTicks < DevSettings.echoCalMinTicks) return null
+            val iqrHalf = (echoQuantileDb(s.buckets, s.echoTicks, 0.75) -
+                           echoQuantileDb(s.buckets, s.echoTicks, 0.25)) / 2.0
+            if (iqrHalf > DevSettings.echoCalMaxIqrDb) return 0.0
+            val clamp = DevSettings.echoCalClampDb.toDouble()
+            return (-echoQuantileDb(s.buckets, s.echoTicks, 0.50) / 2.0).coerceIn(-clamp, clamp)
+        }
+
+        /** Firebase 모델쌍 프라이어 보정(dB) — 상대 모델 미상·프라이어 부재·Σn 게이트 미달이면 null.
+         *  Σn 게이트는 '판정 시점' 라이브 평가(echoCalMinTicks 변경 즉시 반영). per-sample 산포
+         *  게이트는 fetch 시점 설정으로 이미 걸러져 있다(loadEchoPriors — 다음 fetch 에 반영되는 절충). */
+        fun echoCalPriorDb(deviceId: String): Double? {
+            val model = echoFbModelById[FirebaseManager.sanitizeKey(deviceId)] ?: return null
+            val (m, n) = echoFbPriorByModel[model] ?: return null
+            if (n < DevSettings.echoCalMinTicks) return null
+            val clamp = DevSettings.echoCalClampDb.toDouble()
+            return (-m / 2.0).coerceIn(-clamp, clamp)
+        }
+
+        /** 판정 주입값(정수 dB) — 로컬 우선, 로컬 n 미달 시 FB 프라이어, 둘 다 없으면 0.
+         *  킬스위치는 호출부가 건다(OFF 면 이 함수를 부르지 않아 순수 v1.1.54 거동). */
+        fun echoCalAppliedDb(deviceId: String): Int {
+            val v = echoDiffLive[deviceId]?.let { echoCalLocalDb(it) }
+                ?: echoCalPriorDb(deviceId) ?: 0.0
+            return Math.round(v).toInt()
+        }
     }
 
     /** (v1.1.54) 기기별 에코편차 누적치 — buckets 의 i번째 = diff 가 −40+5i 이상 −35+5i 미만인 틱 수(범위 밖은 양끝 버킷에 클램프). */
@@ -561,7 +630,7 @@ class BleService : LifecycleService() {
         bleAdvertiser?.updateRssiEcho(BleConstants.encodeEchoTable(entries, 8))
     }
 
-    // ── [v1.1.54 에코편차 집계] 판정 무개입 텔레메트리 ─────────────────────────────────────
+    // ── [v1.1.54 에코편차 집계] 수집 텔레메트리 — 기록 자체는 판정 결과 미사용(v1.1.55 Level2 가 누적을 읽어 보정 산출) ──
     //   기록 규칙: peerEchoRssi 존재 시 '항상' 기록 — 25dB 정합성 게이트(hasReciprocal)와 무관.
     //   게이트 밖 극단 비대칭이야말로 관찰 대상이라 검열하면 25dB 문턱의 적정성을 평가할 수 없다.
     //   킬스위치(reciprocalRssiEnabled)와도 무관 — myEchoHash 주입은 무조건이라 판정 OFF 중에도
@@ -576,6 +645,7 @@ class BleService : LifecycleService() {
         val merged = parseEchoBlob(echoPrefs().getString(ECHO_KEY, "") ?: "")
         merged.putAll(echoDiffLive)
         echoPrefs().edit().putString(ECHO_KEY, serializeEchoBlob(merged)).apply()
+        maybeUploadEchoCalib(merged)   // [v1.1.55] FB 프라이어 업로드(1h 스로틀) — 주기 저장에 편승
     }
 
     /** 단일 기기 저장(onDeviceLost 소실 경로) — 라이브에서 이미 remove 된 항목을 넘겨받는다. */
@@ -595,9 +665,82 @@ class BleService : LifecycleService() {
             stats.echoTicks++
             val diff = avgRssi - peerEchoRssi
             stats.buckets[((diff - ECHO_BUCKET_MIN) / ECHO_BUCKET_DB).coerceIn(0, ECHO_BUCKET_COUNT - 1)]++
+            // [v1.1.55] 망각 — 에코틱 3만 초과 시 전 버킷 반감. 환경 변화(케이스 장착·수리 교체 등)에
+            //   보정이 고착되지 않고 ~1.5만 틱 시정수로 추종한다. echoTicks=버킷합 불변식 유지,
+            //   totalTicks 도 함께 반감해 '에코 %' 의미 보존(주기 저장 모듈로 위상이 흔들리는 건 무해).
+            if (stats.echoTicks > ECHO_DECAY_TICKS) {
+                for (i in stats.buckets.indices) stats.buckets[i] /= 2
+                stats.echoTicks = stats.buckets.sum()
+                stats.totalTicks /= 2
+            }
         }
         // 주기 저장 — 새 타이머 없이 틱 카운터로(프로세스 강제종료 시 유실 상한 ~1분치).
         if (stats.totalTicks % ECHO_PERSIST_EVERY_TICKS == 0) persistEchoAll()
+    }
+
+    // ── [v1.1.55 Level2] Firebase 모델쌍 프라이어 — 업로드(집계 원본 공유)·다운로드(부트스트랩) ──
+    //   목적: 신규 기기쌍이 로컬 n 게이트(기본 3,000틱)를 채우기 전에도 같은 '모델쌍'의 집계 중앙값으로
+    //   보정을 시작한다(로컬 성립 즉시 로컬 우선). 업로드·다운로드는 킬스위치와 무관(수집·공유 상시 —
+    //   v1.1.54 상시 기록과 같은 정신), '적용'만 echoAutoCalibEnabled 가 결정한다.
+
+    /** 주기 저장 편승 업로드 — 1h 스로틀. 스탬프는 '시도 시점'에 선갱신: Firebase 오프라인 퍼시스턴스
+     *  (setPersistenceEnabled)가 쓰기를 큐잉해 재전송하므로, 실패 즉시 재시도 반복보다 다음 시간창이 안전. */
+    private fun maybeUploadEchoCalib(merged: Map<String, EchoDiffStats>) {
+        if (myId.isEmpty()) return
+        val now = System.currentTimeMillis()
+        if (now - echoPrefs().getLong(ECHO_FB_UPLOADED_AT, 0L) < ECHO_FB_UPLOAD_INTERVAL_MS) return
+        val peers = mutableMapOf<String, Triple<Double, Int, Double>>()
+        for ((id, s) in merged) {
+            if (s.echoTicks <= 0) continue   // 에코 없는 기기(비콘·구버전)는 집계 대상 아님
+            val med = echoQuantileDb(s.buckets, s.echoTicks, 0.50)
+            val iqr = (echoQuantileDb(s.buckets, s.echoTicks, 0.75) -
+                       echoQuantileDb(s.buckets, s.echoTicks, 0.25)) / 2.0
+            peers[FirebaseManager.sanitizeKey(id)] = Triple(med, s.echoTicks, iqr)
+        }
+        if (peers.isEmpty()) return
+        echoPrefs().edit().putLong(ECHO_FB_UPLOADED_AT, now).apply()
+        FirebaseManager.uploadEchoCalib(myId, Build.MODEL, peers) { }
+    }
+
+    /** 기동 시 1회(onCreate) — 프리퍼런스 캐시 즉시 복원(오프라인 재기동 대비) 후 비동기 갱신.
+     *  per-sample 산포 게이트는 fetch 시점 설정으로 집계에 반영(설정 변경은 다음 fetch 부터),
+     *  Σn 유효성 게이트는 판정 시점 라이브(echoCalPriorDb). 실패·빈 응답이면 캐시 유지. */
+    private fun loadEchoPriors() {
+        val p = echoPrefs()
+        echoFbModelById.clear()
+        for (line in (p.getString(ECHO_FB_MODELS_KEY, "") ?: "").split('\n')) {
+            val f = line.split('|')
+            if (f.size == 2) echoFbModelById[f[0]] = f[1]
+        }
+        echoFbPriorByModel.clear()
+        for (line in (p.getString(ECHO_FB_PRIORS_KEY, "") ?: "").split('\n')) {
+            val f = line.split('|')
+            if (f.size == 3) {
+                val m = f[1].toDoubleOrNull()
+                val n = f[2].toIntOrNull()
+                if (m != null && n != null) echoFbPriorByModel[f[0]] = m to n
+            }
+        }
+        echoFbFetchedAt = p.getLong(ECHO_FB_FETCHED_AT, 0L)
+        FirebaseManager.downloadEchoCalibAll { nodes ->
+            if (nodes.isEmpty()) return@downloadEchoCalibAll
+            val models = nodes.associate { it.id to it.model }
+            val priors = FirebaseManager.aggregateEchoPriors(
+                nodes, Build.MODEL, DevSettings.echoCalMaxIqrDb.toDouble())
+            echoFbModelById.clear()
+            echoFbModelById.putAll(models)
+            echoFbPriorByModel.clear()
+            echoFbPriorByModel.putAll(priors)
+            echoFbFetchedAt = System.currentTimeMillis()
+            p.edit()
+                .putString(ECHO_FB_MODELS_KEY,
+                    models.entries.joinToString("\n") { "${it.key}|${it.value}" })
+                .putString(ECHO_FB_PRIORS_KEY,
+                    priors.entries.joinToString("\n") { "${it.key}|${it.value.first}|${it.value.second}" })
+                .putLong(ECHO_FB_FETCHED_AT, echoFbFetchedAt)
+                .apply()
+            Log.d(TAG, "에코 프라이어 갱신: 노드 ${nodes.size} · 내 모델(${Build.MODEL}) 기준 ${priors.size}종")
+        }
     }
 
     override fun onCreate() {
@@ -611,6 +754,7 @@ class BleService : LifecycleService() {
             addAction(Intent.ACTION_SCREEN_OFF)
         }
         registerReceiver(screenReceiver, screenFilter)
+        loadEchoPriors()   // [v1.1.55] FB 에코 프라이어 — 캐시 즉시 복원+비동기 갱신(판정 경로는 메모리만 읽음)
         ImuFusion.init(this)
         // [v1.0.27] IMU 정지↔이동 전환 구독 → 동적 스캔 모드 제어 (DEVICE·WALKER 공통)
         ImuFusion.onStationaryChanged = { stationary ->
@@ -1239,7 +1383,15 @@ class BleService : LifecycleService() {
         //   올라가 'RSSI 판정이면 신호 세기와 무관하게 상시 위험'이 되던 회귀(UWB 도입 v1.1.31 이후)를
         //   차단. 학습된 Δ 는 화면 거리 표시(distanceTextFor)에만 남기고 totalOffset 에서 뺀다
         //   → Case B(RSSI)=UWB 도입 이전의 순수 RSSI 임계로 복귀(Case A 는 원래부터 실측 거리로 판정).
-        val totalOffset = payloadOffset + beaconOffset + beaconGlobalGain
+        // [v1.1.55 Level2 에코 자동보정] echoCal 은 위 uwbCalibOffset 과 달리 totalOffset 에 합산한다.
+        //   구조적 차이: UWB 잔차는 '단방향 절대비교'라 NLOS 감쇠가 그대로 편향으로 쌓여 표류했지만
+        //   (v1.1.49 제거 사유), 에코편차는 '양방향 차동'(내가 잰 상대 − 상대가 잰 나)이라 NLOS·거리
+        //   감쇠가 공통모드로 1차 상쇄되고 남는 것이 TX/RX 하드웨어 비대칭 — 보정하려는 대상 그 자체.
+        //   그래도 안전장구는 동일: 중앙값(스파이크 면역)·±클램프·n/산포 게이트·킬스위치(기본 OFF).
+        //   OFF·게이트 미성립·산포 과다 = 0 → 기존 거동과 완전 동일. 파급: effWarning/effDanger 에서
+        //   coop·safeForceFloor·urgentBypass 등 파생 임계 전부에 자동 전파(비콘 offset 합산과 같은 원리).
+        val echoCalDb = if (DevSettings.echoAutoCalibEnabled) echoCalAppliedDb(deviceId) else 0
+        val totalOffset = payloadOffset + beaconOffset + beaconGlobalGain + echoCalDb
         val effWarning = BleConstants.rssiWarning - totalOffset
         val effDanger  = BleConstants.rssiDanger  - totalOffset
 
@@ -1473,7 +1625,8 @@ class BleService : LifecycleService() {
         //   정합성 가드: 두 측정이 reciprocalMaxDisagreeDb(기본 25dB) 넘게 어긋나면(부트스트랩·해시충돌·이상치)
         //   대칭을 신뢰하지 않고 coopSlack 폴백으로 되돌린다. 에코 부재(구버전·비콘)도 폴백.
         //   (UWB Case A 는 이 블록 이후 별도 승격 — 상호RSSI 는 Case B(RSSI) 전용, UWB 판정 무접촉.)
-        // [v1.1.54 에코편차 집계] 텔레메트리 — 판정 무개입(아래 협력 격상 로직과 완전 독립·결과 미사용).
+        // [v1.1.54 에코편차 집계] 텔레메트리 기록 — 아래 협력 격상 로직과 완전 독립(이 틱 판정에 결과 미사용).
+        //   (v1.1.55 Level2 는 '누적' 히스토그램을 이후 틱들의 totalOffset 산출에 사용 — 기록 시점과 분리.)
         //   이 틱의 (내 측정 avgRssi ↔ 상대가 측정한 나 peerEchoRssi) 차이를 히스토그램에 누적만 한다.
         //   25dB 게이트(hasReciprocal)보다 앞·무관하게 기록 — 게이트 밖 극단 비대칭도 관찰 대상.
         //   debugMode 는 제외(시뮬 RSSI 가 avgRssi 에 대입돼 실측 통계를 오염시키므로).

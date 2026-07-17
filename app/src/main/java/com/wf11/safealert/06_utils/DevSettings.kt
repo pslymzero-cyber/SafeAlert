@@ -691,6 +691,38 @@ object DevSettings {
         get() = prefs.getBoolean(KEY_UWB_EXCLUSIVE_JUDGE, true)
         set(v) = prefs.edit().putBoolean(KEY_UWB_EXCLUSIVE_JUDGE, v).apply()
 
+    // (v1.1.55) Level 2 에코편차 자동보정 — v1.1.54 에코 히스토그램의 기기쌍 중앙값으로 TX/RX
+    //   체계 비대칭을 상쇄한다. echoCal = clamp(−중앙값/2, ±clampDb) 를 totalOffset 에 합산
+    //   (절반 = 거울쌍 양쪽이 각자 절반씩 물러나 대칭점 수렴). 기본 OFF — 실기 검증 후 수동 활성화.
+    //   v1.1.49 학습오염(uwbCalibOffset 제거) 전례가 있으나 구조가 다르다: 에코편차는 양방향 차동
+    //   측정이라 NLOS 가 공통모드로 1차 상쇄된다. 그래도 동일 안전장구(중앙값·클램프·게이트·킬스위치).
+    private const val KEY_ECHO_AUTO_CALIB = "echo_auto_calib_enabled"
+    var echoAutoCalibEnabled: Boolean
+        get() = prefs.getBoolean(KEY_ECHO_AUTO_CALIB, false)
+        set(v) = prefs.edit().putBoolean(KEY_ECHO_AUTO_CALIB, v).apply()
+
+    // (v1.1.55) 보정 성립 최소 에코틱 — 판정 ~120ms 주기 기준 3,000틱 ≈ 근접 실측 6분(세션 무관 누적).
+    //   Firebase 모델쌍 프라이어의 Σn 유효성 판정에도 같은 값을 쓴다.
+    private const val KEY_ECHO_CAL_MIN_TICKS = "echo_cal_min_ticks"
+    const val DEFAULT_ECHO_CAL_MIN_TICKS = 3000
+    var echoCalMinTicks: Int
+        get() = prefs.getInt(KEY_ECHO_CAL_MIN_TICKS, DEFAULT_ECHO_CAL_MIN_TICKS).coerceIn(500, 30_000)
+        set(v) = prefs.edit().putInt(KEY_ECHO_CAL_MIN_TICKS, v.coerceIn(500, 30_000)).apply()
+
+    // (v1.1.55) 산포(±IQR/2) 상한 — 초과 시 그 기기 보정 0(채널 노이즈가 커 중앙값 신뢰 불가).
+    private const val KEY_ECHO_CAL_MAX_IQR = "echo_cal_max_iqr_db"
+    const val DEFAULT_ECHO_CAL_MAX_IQR = 6
+    var echoCalMaxIqrDb: Int
+        get() = prefs.getInt(KEY_ECHO_CAL_MAX_IQR, DEFAULT_ECHO_CAL_MAX_IQR).coerceIn(1, 15)
+        set(v) = prefs.edit().putInt(KEY_ECHO_CAL_MAX_IQR, v.coerceIn(1, 15)).apply()
+
+    // (v1.1.55) 보정 클램프(±dB) — 아무리 큰 중앙값도 이 이상 임계를 못 움직인다(폭주 상한).
+    private const val KEY_ECHO_CAL_CLAMP = "echo_cal_clamp_db"
+    const val DEFAULT_ECHO_CAL_CLAMP = 6
+    var echoCalClampDb: Int
+        get() = prefs.getInt(KEY_ECHO_CAL_CLAMP, DEFAULT_ECHO_CAL_CLAMP).coerceIn(1, 12)
+        set(v) = prefs.edit().putInt(KEY_ECHO_CAL_CLAMP, v.coerceIn(1, 12)).apply()
+
     fun toDebugString(): String =
         "rssiWarning=$rssiWarning | rssiDanger=$rssiDanger | scanPeriod=${scanPeriodMs}ms | " +
         "advertise=${advertiseInterval}ms | vib=$vibrationEnabled | sound=$soundEnabled | " +

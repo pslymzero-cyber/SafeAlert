@@ -117,6 +117,11 @@ class DevSettingsActivity : AppCompatActivity() {
         // (v1.1.38 B·C) UWB 강제 스위치 상태 복원 + 진단 라인 초기 갱신
         binding.swUwbForce.isChecked = DevSettings.uwbForce
         refreshUwbDiag()
+        // [v1.1.55] Level 2 에코 자동보정 — 킬스위치 + 게이트 튜너블 3종
+        binding.swEchoAutoCalib.isChecked = DevSettings.echoAutoCalibEnabled
+        binding.etEchoMinTicks.setText(DevSettings.echoCalMinTicks.toString())
+        binding.etEchoMaxIqr.setText(DevSettings.echoCalMaxIqrDb.toString())
+        binding.etEchoClamp.setText(DevSettings.echoCalClampDb.toString())
     }
 
     private fun setupListeners() {
@@ -227,6 +232,15 @@ class DevSettingsActivity : AppCompatActivity() {
         bindLongField(binding.etFbThrottle,          { DevSettings.firebaseThrottleMs },     { DevSettings.firebaseThrottleMs = it })
         bindLongField(binding.etSpeedPush,           { DevSettings.speedPushIntervalMs },    { DevSettings.speedPushIntervalMs = it })
 
+        // [v1.1.55] Level 2 에코 자동보정 — 스위치는 즉시, 수치는 포커스 아웃 확정(coerce 는 DevSettings 셋터)
+        binding.swEchoAutoCalib.setOnCheckedChangeListener { _, c ->
+            DevSettings.echoAutoCalibEnabled = c
+            refreshEchoDiag()
+        }
+        bindIntField(binding.etEchoMinTicks, { DevSettings.echoCalMinTicks }, { DevSettings.echoCalMinTicks = it })
+        bindIntField(binding.etEchoMaxIqr,   { DevSettings.echoCalMaxIqrDb }, { DevSettings.echoCalMaxIqrDb = it })
+        bindIntField(binding.etEchoClamp,    { DevSettings.echoCalClampDb },  { DevSettings.echoCalClampDb = it })
+
         binding.btnReset.setOnClickListener { resetValues() }
 
         // [v1.1.54] 에코편차 통계 초기화 — 라이브 맵 + 전용 SharedPreferences 모두 비움(판정 무개입 통계라 안전)
@@ -334,38 +348,48 @@ class DevSettingsActivity : AppCompatActivity() {
         return "$line1\n$line2\n$hint"
     }
 
-    // ── [v1.1.54] 에코편차 집계(상호 RSSI) 진단 — 판정 무개입 텔레메트리, 표시 전용 ──────────
-    /** 버킷 히스토그램에서 분위수(dB) — 버킷 중점(−40+5i+2)의 정수 근사. total=버킷 총합(echoTicks). */
-    private fun echoPercentileDb(buckets: IntArray, total: Int, q: Double): Int {
-        if (total <= 0) return 0
-        val target = (total * q).toInt().coerceAtMost(total - 1)
-        var cum = 0
-        for (i in buckets.indices) {
-            cum += buckets[i]
-            if (cum > target) return BleService.ECHO_BUCKET_MIN + i * BleService.ECHO_BUCKET_DB + BleService.ECHO_BUCKET_DB / 2
-        }
-        return 0
-    }
+    // ── [v1.1.54→55] 에코편차 집계(상호 RSSI) 진단 — 분위수는 BleService.echoQuantileDb(보간) 공용 ──
+    private fun fmtDb(v: Double) = "${if (v >= 0) "+" else ""}${"%.1f".format(v)}dB"
 
-    // 저장분 위에 라이브를 덮어써 병합(라이브 항목 = 첫 틱에 저장분을 시드한 총 누적치) 후 기기별 한 줄 요약.
-    //   중앙값=기기 간 체계적 비대칭(모델별 오프셋 근거) · 산포=(p75−p25)/2 채널 노이즈 · 에코%=상호 RSSI 응답 비율.
+    // 저장분 위에 라이브를 덮어써 병합(라이브 항목 = 첫 틱에 저장분을 시드한 총 누적치) 후 기기별 두 줄 요약.
+    //   1줄=통계(중앙값·산포·에코%·n), 2줄=Level 2 보정 상태(후보/적용중/게이트 사유). 말미에 FB 프라이어 요약.
     private fun refreshEchoDiag() {
         val saved = BleService.parseEchoBlob(
             getSharedPreferences(BleService.ECHO_PREFS, MODE_PRIVATE).getString(BleService.ECHO_KEY, "") ?: "")
         saved.putAll(BleService.echoDiffLive)
+        val on = DevSettings.echoAutoCalibEnabled
+        val minT = DevSettings.echoCalMinTicks
         val sb = StringBuilder()
         for ((id, s) in saved.entries.sortedByDescending { it.value.totalTicks }) {
             if (s.totalTicks <= 0) continue
             if (sb.isNotEmpty()) sb.append('\n')
             if (s.echoTicks > 0) {
-                val med = echoPercentileDb(s.buckets, s.echoTicks, 0.50)
-                val p25 = echoPercentileDb(s.buckets, s.echoTicks, 0.25)
-                val p75 = echoPercentileDb(s.buckets, s.echoTicks, 0.75)
+                val med = BleService.echoQuantileDb(s.buckets, s.echoTicks, 0.50)
+                val iqrHalf = (BleService.echoQuantileDb(s.buckets, s.echoTicks, 0.75) -
+                               BleService.echoQuantileDb(s.buckets, s.echoTicks, 0.25)) / 2.0
                 val pct = s.echoTicks * 100 / s.totalTicks
-                sb.append("${id}  중앙값 ${if (med >= 0) "+" else ""}${med}dB · 산포 ±${(p75 - p25) / 2} · 에코 ${pct}% · n=${s.echoTicks}")
+                sb.append("${id}  중앙값 ${fmtDb(med)} · 산포 ±${"%.1f".format(iqrHalf)} · 에코 ${pct}% · n=${s.echoTicks}")
+                val local = BleService.echoCalLocalDb(s)
+                val state = when {
+                    local == null -> {
+                        val prior = BleService.echoCalPriorDb(id)
+                        if (prior != null) "n부족 ${s.echoTicks}/${minT} · FB프라이어 ${fmtDb(prior)}${if (on) " 적용중" else ""}"
+                        else "n부족 ${s.echoTicks}/${minT}"
+                    }
+                    iqrHalf > DevSettings.echoCalMaxIqrDb -> "산포과다(>±${DevSettings.echoCalMaxIqrDb}) → 보정 0"
+                    else -> "보정 ${fmtDb(local)}${if (on) " 적용중" else " (스위치 OFF)"}"
+                }
+                sb.append("\n    → ${state}")
             } else {
                 sb.append("${id}  에코 없음(비콘·구버전) · 틱 ${s.totalTicks}")
             }
+        }
+        // [v1.1.55] Firebase 모델쌍 프라이어 요약(내 모델 기준 fold 결과·서비스 기동 시 로드)
+        if (BleService.echoFbPriorByModel.isNotEmpty()) {
+            if (sb.isNotEmpty()) sb.append('\n')
+            sb.append("FB프라이어: " + BleService.echoFbPriorByModel.entries.joinToString(" · ") {
+                "${it.key} ${fmtDb(it.value.first)}(n=${it.value.second})"
+            })
         }
         binding.tvEchoDiag.text = if (sb.isEmpty())
             "수집된 에코 표본 없음 — 상호 RSSI 기기가 근접하면 자동 수집됩니다." else sb.toString()

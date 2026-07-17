@@ -554,7 +554,7 @@
             </LinearLayout>
         </androidx.cardview.widget.CardView>
 
-        <!-- [v1.1.54] 에코편차 집계(상호 RSSI) — 판정 무개입 텔레메트리. 항상 표시(7탭 숨김 게이트 밖) -->
+        <!-- [v1.1.54→55] 에코편차 집계(상호 RSSI) + Level 2 자동보정. 항상 표시(7탭 숨김 게이트 밖) -->
         <TextView android:text="에코편차 집계 (상호 RSSI)" android:textStyle="bold" android:textSize="16sp"
             android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="16dp"/>
         <androidx.cardview.widget.CardView
@@ -569,9 +569,41 @@
                     android:text="수집된 에코 표본 없음"
                     android:textSize="13sp" android:textColor="#111827"
                     android:fontFamily="monospace" android:lineSpacingExtra="3dp"/>
-                <TextView android:text="편차 = 내가 측정한 상대 RSSI − 상대가 나를 측정해 되돌린 에코. 중앙값=기기 간 체계적 비대칭(모델별 오프셋의 실측 근거), 산포=채널 노이즈(보정 불가 성분), 에코%=상호 RSSI 응답 비율(0%=비콘·구버전). 판정에 개입하지 않는 수집·표시 전용이며 앱을 재시작해도 누적됩니다."
+                <TextView android:text="편차 = 내가 측정한 상대 RSSI − 상대가 나를 측정해 되돌린 에코. 중앙값=기기 간 체계적 비대칭(모델별 오프셋의 실측 근거), 산포=채널 노이즈(보정 불가 성분), 에코%=상호 RSSI 응답 비율(0%=비콘·구버전). 수집은 판정과 독립이며 앱을 재시작해도 누적됩니다. 아래 자동보정을 켜면 이 통계의 중앙값이 판정 임계 보정(echoCal)에 사용됩니다."
                     android:layout_width="match_parent" android:layout_height="wrap_content"
                     android:layout_marginTop="6dp" android:textSize="11sp" android:textColor="#9CA3AF"/>
+
+                <!-- [v1.1.55] Level 2 자동보정 — 중앙값 기반 echoCal 을 판정 오프셋(totalOffset)에 주입 -->
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="12dp">
+                    <TextView android:text="에코편차 자동보정 (Level 2)" android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:textColor="#111827"/>
+                    <Switch android:id="@+id/sw_echo_auto_calib" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                </LinearLayout>
+                <TextView android:text="켜면 기기쌍별 중앙값의 −1/2 을 클램프로 잘라 판정 임계에 반영합니다(거울쌍 양쪽 수렴). 표본 부족 시 Firebase 모델쌍 프라이어로 시작, 산포 과다 기기는 보정 0. 실기 검증 전 기본 OFF."
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp" android:textSize="11sp" android:textColor="#9CA3AF"/>
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="10dp">
+                    <TextView android:text="보정 성립 최소 에코틱 (n)" android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
+                    <EditText android:id="@+id/et_echo_min_ticks" android:layout_width="96dp" android:layout_height="wrap_content"
+                        android:inputType="number" android:gravity="end" android:textSize="13sp"/>
+                </LinearLayout>
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="10dp">
+                    <TextView android:text="산포 상한 (±dB, 초과=보정 0)" android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
+                    <EditText android:id="@+id/et_echo_max_iqr" android:layout_width="96dp" android:layout_height="wrap_content"
+                        android:inputType="number" android:gravity="end" android:textSize="13sp"/>
+                </LinearLayout>
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="10dp">
+                    <TextView android:text="보정 클램프 (±dB)" android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
+                    <EditText android:id="@+id/et_echo_clamp" android:layout_width="96dp" android:layout_height="wrap_content"
+                        android:inputType="number" android:gravity="end" android:textSize="13sp"/>
+                </LinearLayout>
 
                 <Button android:id="@+id/btn_echo_reset" android:layout_width="match_parent" android:layout_height="wrap_content"
                     android:layout_marginTop="10dp" android:text="에코편차 통계 초기화" android:backgroundTint="#9E9E9E"/>
