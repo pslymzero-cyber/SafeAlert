@@ -360,7 +360,13 @@ class BleService : LifecycleService() {
     private val kalmanFilters = mutableMapOf<String, KalmanFilter>()
     // (v1.1.56 U3) 정리 직전 칼만 추정속도 스냅샷 — SAFE/이탈정리/하드게이트가 칼만을 지우기 직전
     //   estimatedVel 을 보관했다가 재등록 injectWarmup(initVel) 재시드에 1회성 소비(음수만, -1.5 캡).
-    private val lastKfVelMap = mutableMapOf<String, Double>()
+    // (v1.1.57) TTL — 캡처 시각(elapsedRealtime, 재부팅·시계변경 내성)을 함께 보관, 소비 시 나이가
+    //   TTL 을 넘으면 폐기(0.0 재출발). 정상 소실(onDeviceLost)·stopAll 은 스냅샷을 즉시 지우므로
+    //   낡은 시드는 onDeviceLost 를 우회하는 경로(하드게이트 보존·UWB 소실유예·스캔 스로틀 창)에서만
+    //   생김 — 그 잔존을 시간 상한으로 차단한다(시뮬: 연속 수신 중 나이 1프레임이라 기존 동작 완전 동일).
+    private data class LastKfVelState(val velocity: Double, val timestamp: Long)
+    private val lastKfVelMap = mutableMapOf<String, LastKfVelState>()
+    private val KF_VEL_SEED_TTL_MS = 30_000L   // (v1.1.57) 재시드 스냅샷 유효기간(시뮬상 30s/60s 실효차 +0.3s뿐)
 
     // ── (v1.1.40) 섀도우 IMU 융합 — 정지 관측자 전용 병렬 추적기 ─────────────────
     // 메인 파이프라인(EMA→칼만→P-EMA)과 완전 분리된 '섀도우 칼만'을 median 스트림에만 물려,
@@ -1248,7 +1254,10 @@ class BleService : LifecycleService() {
             // (v1.1.56 U3) 직전 정리(SAFE/이탈/하드게이트)에서 캡처한 이탈속도를 재시드(음수만, -1.5 캡) —
             //   얕은 SAFE 딥 직후 재등록 시 속도 0 재출발로 이탈 판정이 원점부터 재시작되는 플랩 억제.
             //   엔트리는 부호 무관 1회성 소비(remove).
-            val seedVel = lastKfVelMap.remove(deviceId)?.takeIf { it < 0.0 }?.coerceAtLeast(-1.5) ?: 0.0
+            //   (v1.1.57) TTL 검사 — 캡처 후 KF_VEL_SEED_TTL_MS 초과 스냅샷은 무효화(0.0 재출발).
+            val seedVel = lastKfVelMap.remove(deviceId)
+                ?.takeIf { android.os.SystemClock.elapsedRealtime() - it.timestamp <= KF_VEL_SEED_TTL_MS }
+                ?.velocity?.takeIf { it < 0.0 }?.coerceAtLeast(-1.5) ?: 0.0
             KalmanFilter(DevSettings.kalmanPreset).apply { injectWarmup(inputRssi, seedVel) }
         }
         // 직전 프레임 칼만 추정속도(estimatedVel) — 돌진 FAST 판정·D-Boost 피드백 공용.
@@ -1498,7 +1507,7 @@ class BleService : LifecycleService() {
             rushFrameMap.remove(deviceId)     // [v1.0.45] 돌진 프레임 카운터 정리
             dangerContactStreakMap.remove(deviceId)   // [v1.1.16 D] 첫접촉 DANGER 카운터 정리
             warningContactStreakMap.remove(deviceId)  // [v1.1.18] 첫접촉 WARNING 카운터 정리
-            kalmanFilters[deviceId]?.let { lastKfVelMap[deviceId] = it.estimatedVel }   // (v1.1.56 U3) 재시드 캡처
+            kalmanFilters[deviceId]?.let { lastKfVelMap[deviceId] = LastKfVelState(it.estimatedVel, android.os.SystemClock.elapsedRealtime()) }   // (v1.1.56 U3) 재시드 캡처 (v1.1.57 시각 동봉)
             kalmanFilters.remove(deviceId)    // [v1.0.38 클린업] 미추적 기기 칼만 인스턴스 정리(stale 재등장 방지)
             shadowFusionMap.remove(deviceId)  // (v1.1.40) 섀도우 융합 상태 정리(미추적 기기)
             recedingStartMap.remove(deviceId)    // [v1.1.6 검증 보강] 이탈 판정 상태 누수·stale 피크 재출현 방지
@@ -1829,7 +1838,7 @@ class BleService : LifecycleService() {
                 rushFrameMap.remove(deviceId)     // [v1.0.45]
                 dangerContactStreakMap.remove(deviceId)   // [v1.1.16 D]
                 warningContactStreakMap.remove(deviceId)  // [v1.1.18]
-                lastKfVelMap[deviceId] = kf.estimatedVel   // (v1.1.56 U3) reset 전 이탈속도 캡처(재시드용)
+                lastKfVelMap[deviceId] = LastKfVelState(kf.estimatedVel, android.os.SystemClock.elapsedRealtime())   // (v1.1.56 U3) reset 전 이탈속도 캡처(재시드용, v1.1.57 시각 동봉)
                 kf.reset()
                 kalmanFilters.remove(deviceId)
                 shadowFusionMap.remove(deviceId)   // (v1.1.40) 섀도우 융합 상태 정리
@@ -1974,7 +1983,7 @@ class BleService : LifecycleService() {
                 rushFrameMap.remove(deviceId)     // [v1.0.45]
                 dangerContactStreakMap.remove(deviceId)   // [v1.1.16 D]
                 warningContactStreakMap.remove(deviceId)  // [v1.1.18]
-                kalmanFilters[deviceId]?.let { lastKfVelMap[deviceId] = it.estimatedVel }   // (v1.1.56 U3) 재시드 캡처
+                kalmanFilters[deviceId]?.let { lastKfVelMap[deviceId] = LastKfVelState(it.estimatedVel, android.os.SystemClock.elapsedRealtime()) }   // (v1.1.56 U3) 재시드 캡처 (v1.1.57 시각 동봉)
                 kalmanFilters[deviceId]?.reset()
                 kalmanFilters.remove(deviceId)
                 shadowFusionMap.remove(deviceId)   // (v1.1.40) 섀도우 융합 상태 정리
