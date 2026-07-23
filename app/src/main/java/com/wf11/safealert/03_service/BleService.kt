@@ -358,6 +358,9 @@ class BleService : LifecycleService() {
 
     // ── 2D 칼만 필터 맵 (v1.0.20: KalmanFilter, 거리+속도 동시 추적) ──
     private val kalmanFilters = mutableMapOf<String, KalmanFilter>()
+    // (v1.1.56 U3) 정리 직전 칼만 추정속도 스냅샷 — SAFE/이탈정리/하드게이트가 칼만을 지우기 직전
+    //   estimatedVel 을 보관했다가 재등록 injectWarmup(initVel) 재시드에 1회성 소비(음수만, -1.5 캡).
+    private val lastKfVelMap = mutableMapOf<String, Double>()
 
     // ── (v1.1.40) 섀도우 IMU 융합 — 정지 관측자 전용 병렬 추적기 ─────────────────
     // 메인 파이프라인(EMA→칼만→P-EMA)과 완전 분리된 '섀도우 칼만'을 median 스트림에만 물려,
@@ -981,6 +984,7 @@ class BleService : LifecycleService() {
                             warningContactStreakMap.remove(deviceId)  // [v1.1.18] 첫접촉 WARNING 카운터 정리
                             kalmanFilters[deviceId]?.reset()
                             kalmanFilters.remove(deviceId)
+                            lastKfVelMap.remove(deviceId)             // (v1.1.56 U3) 진짜 소실 — 재시드 스냅샷 폐기
                             shadowFusionMap.remove(deviceId)          // (v1.1.40) 섀도우 융합 상태 정리
                             trackingStateMap.remove(deviceId)
                             crossingStartMap.remove(deviceId)
@@ -1241,7 +1245,11 @@ class BleService : LifecycleService() {
             // [v1.1.8 #3] Cold-Start 웜업 주입 — 신규/재획득 기기를 첫 raw RSSI 로 즉시 초기화(공분산↓)해
             //   재획득 시 칼만 속도(D) 수렴 지연을 단축한다. (신규 '발령' 자체는 아래 Median N=3 워밍업
             //   게이트가 계속 방어하므로 콜드스타트 오발 위험 없이 추정 수렴만 앞당긴다)
-            KalmanFilter(DevSettings.kalmanPreset).apply { injectWarmup(inputRssi) }
+            // (v1.1.56 U3) 직전 정리(SAFE/이탈/하드게이트)에서 캡처한 이탈속도를 재시드(음수만, -1.5 캡) —
+            //   얕은 SAFE 딥 직후 재등록 시 속도 0 재출발로 이탈 판정이 원점부터 재시작되는 플랩 억제.
+            //   엔트리는 부호 무관 1회성 소비(remove).
+            val seedVel = lastKfVelMap.remove(deviceId)?.takeIf { it < 0.0 }?.coerceAtLeast(-1.5) ?: 0.0
+            KalmanFilter(DevSettings.kalmanPreset).apply { injectWarmup(inputRssi, seedVel) }
         }
         // 직전 프레임 칼만 추정속도(estimatedVel) — 돌진 FAST 판정·D-Boost 피드백 공용.
         //   ※ kf.update()는 아래에서 호출되므로 지금 값은 '직전 프레임' 속도 = 1-step 미분 피드백.
@@ -1282,7 +1290,8 @@ class BleService : LifecycleService() {
             val (_, sVel) = sh.kf.update(medianValue, sqf)
             sh.apprStreak = if (sqf > SHADOW_Q_FREEZE && sVel >= MIN_APPROACH_VEL_DBM) sh.apprStreak + 1 else 0
             val prevLevel = alertState[deviceId]?.first ?: BleConstants.LEVEL_SAFE
-            val live = selfStat && sh.tracking && sPrevVel <= SHADOW_LIVE_VEL_DBM && peerFwdFresh
+            // (v1.1.56 U4b) 보행자 정지 조건(selfStat) 삭제 — 섀도우 이탈속도 확증이면 이동/정지 무관 부스트.
+            val live = sh.tracking && sPrevVel <= SHADOW_LIVE_VEL_DBM && peerFwdFresh
             if (live && prevLevel == BleConstants.LEVEL_DANGER) sh.relLatch = true
             if (!live || prevLevel == BleConstants.LEVEL_SAFE) sh.relLatch = false
             shadowBoost = live && (prevLevel == BleConstants.LEVEL_DANGER || sh.relLatch)
@@ -1489,6 +1498,7 @@ class BleService : LifecycleService() {
             rushFrameMap.remove(deviceId)     // [v1.0.45] 돌진 프레임 카운터 정리
             dangerContactStreakMap.remove(deviceId)   // [v1.1.16 D] 첫접촉 DANGER 카운터 정리
             warningContactStreakMap.remove(deviceId)  // [v1.1.18] 첫접촉 WARNING 카운터 정리
+            kalmanFilters[deviceId]?.let { lastKfVelMap[deviceId] = it.estimatedVel }   // (v1.1.56 U3) 재시드 캡처
             kalmanFilters.remove(deviceId)    // [v1.0.38 클린업] 미추적 기기 칼만 인스턴스 정리(stale 재등장 방지)
             shadowFusionMap.remove(deviceId)  // (v1.1.40) 섀도우 융합 상태 정리(미추적 기기)
             recedingStartMap.remove(deviceId)    // [v1.1.6 검증 보강] 이탈 판정 상태 누수·stale 피크 재출현 방지
@@ -1819,12 +1829,21 @@ class BleService : LifecycleService() {
                 rushFrameMap.remove(deviceId)     // [v1.0.45]
                 dangerContactStreakMap.remove(deviceId)   // [v1.1.16 D]
                 warningContactStreakMap.remove(deviceId)  // [v1.1.18]
+                lastKfVelMap[deviceId] = kf.estimatedVel   // (v1.1.56 U3) reset 전 이탈속도 캡처(재시드용)
                 kf.reset()
                 kalmanFilters.remove(deviceId)
                 shadowFusionMap.remove(deviceId)   // (v1.1.40) 섀도우 융합 상태 정리
-                trackingStateMap.remove(deviceId)
-                crossingStartMap.remove(deviceId)
-                departingStartMap.remove(deviceId)
+                // (v1.1.56 U2) 추적맵(상태·CROSSING·DEPARTING 앵커) 조기삭제 방지 — DEPARTING 진입 후
+                //   3000ms 는 무조건 유지(Hold), 그 외엔 pEma 가 경고문턱-5dBm 이하로 충분히 이탈했을
+                //   때만 삭제. 얕은 SAFE 딥에서 이탈 앵커가 증발해 REGISTER 재발령이 반복되는 플랩을
+                //   차단한다(시뮬 검증). 나머지 정리·SAFE 방송·사운드 정지는 기존 그대로.
+                val inDepartHold = trackingStateMap[deviceId] == TrackingState.DEPARTING &&
+                    departingStartMap[deviceId]?.let { now - it < 3000L } == true
+                if (!inDepartHold && pEma <= effWarning - 5) {
+                    trackingStateMap.remove(deviceId)
+                    crossingStartMap.remove(deviceId)
+                    departingStartMap.remove(deviceId)
+                }
                 approachStreakStartMap.remove(deviceId)   // [v1.0.46 #4] stale 시작시각 → 재접근 시 Time-Gate 즉시통과 방지
                 fastApproachStreakMap.remove(deviceId)    // [v1.1.21] stale 카운터 → 재접근 시 1프레임에 즉시통과 방지
                 forwardBiasLatchMap.remove(deviceId)      // [v1.1.11 C1] SAFE 강등 → 래치 리셋(재접근 시 fresh)
@@ -1955,6 +1974,7 @@ class BleService : LifecycleService() {
                 rushFrameMap.remove(deviceId)     // [v1.0.45]
                 dangerContactStreakMap.remove(deviceId)   // [v1.1.16 D]
                 warningContactStreakMap.remove(deviceId)  // [v1.1.18]
+                kalmanFilters[deviceId]?.let { lastKfVelMap[deviceId] = it.estimatedVel }   // (v1.1.56 U3) 재시드 캡처
                 kalmanFilters[deviceId]?.reset()
                 kalmanFilters.remove(deviceId)
                 shadowFusionMap.remove(deviceId)   // (v1.1.40) 섀도우 융합 상태 정리
@@ -2394,6 +2414,7 @@ class BleService : LifecycleService() {
                 dangerContactStreakMap.remove(deviceId)
                 warningContactStreakMap.remove(deviceId)
                 kalmanFilters.remove(deviceId)
+                lastKfVelMap.remove(deviceId)   // (v1.1.56 U3) UWB 확증 SAFE — 재시드 불필요, 스냅샷 폐기
                 shadowFusionMap.remove(deviceId)
                 trackingStateMap.remove(deviceId)
                 crossingStartMap.remove(deviceId)
@@ -3170,6 +3191,7 @@ class BleService : LifecycleService() {
         dangerContactStreakMap.clear()   // [v1.1.16 D]
         warningContactStreakMap.clear()  // [v1.1.18]
         kalmanFilters.clear()
+        lastKfVelMap.clear()             // (v1.1.56 U3) 재시드 스냅샷 일괄 정리
         shadowFusionMap.clear()          // (v1.1.40) 섀도우 융합 상태 일괄 정리
         trackingStateMap.clear()
         crossingStartMap.clear()

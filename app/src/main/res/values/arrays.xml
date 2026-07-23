@@ -37,7 +37,8 @@
         <item>초민감 (0.6)</item><item>매우 민감 (0.52)</item><item>민감 (0.45)</item><item>약간 민감 (0.37)</item><item>보통 (0.3 · 기본)</item><item>약간 둔감 (0.25)</item><item>둔감 (0.2)</item><item>매우 둔감 (0.15)</item><item>초둔감 (0.1)</item>
     </string-array>
     <string-array name="ema_fall_labels">
-        <item>초민감 (0.2)</item><item>매우 민감 (0.15)</item><item>민감 (0.1)</item><item>약간 민감 (0.07)</item><item>보통 (0.05 · 기본)</item><item>약간 둔감 (0.04)</item><item>둔감 (0.03)</item><item>매우 둔감 (0.02)</item><item>초둔감 (0.01)</item>
+        <!-- (v1.1.56 U4a) 0.12 삽입(새 기본) — DevSettingsActivity.emaFallPresets 값 배열과 인덱스 1:1 -->
+        <item>초민감 (0.2)</item><item>매우 민감 (0.15)</item><item>민감 (0.12 · 기본)</item><item>약간 민감 (0.1)</item><item>보통 (0.07)</item><item>약간 둔감 (0.05)</item><item>둔감 (0.04)</item><item>매우 둔감 (0.03)</item><item>초둔감 (0.02)</item><item>극둔감 (0.01)</item>
     </string-array>
     <string-array name="ema_dboost_labels">
         <item>초민감 (0.7)</item><item>매우 민감 (0.62)</item><item>민감 (0.55)</item><item>약간 민감 (0.47)</item><item>보통 (0.4 · 기본)</item><item>약간 둔감 (0.32)</item><item>둔감 (0.25)</item><item>매우 둔감 (0.17)</item><item>초둔감 (0.1)</item>

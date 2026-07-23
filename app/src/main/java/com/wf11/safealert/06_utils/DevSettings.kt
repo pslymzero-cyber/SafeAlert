@@ -64,6 +64,13 @@ object DevSettings {
 
     fun init(context: Context) {
         prefs = context.applicationContext.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+        // (v1.1.56 U4a) EMA 하강 알파 기본 0.05→0.12 1회 마이그레이션 — 스피너 초기 programmatic
+        //   선택도 putFloat 로 저장되므로 DEFAULT 변경만으론 기존 설치에 미반영. 마커 1회에 한해
+        //   저장값을 새 기본으로 덮는다(사용자가 스피너로 고른 값도 이 1회는 덮임 — 이후 변경은 존중).
+        if (!prefs.getBoolean(KEY_EMA_FALL_MIGR_V1156, false)) {
+            prefs.edit().putFloat(KEY_EMA_ALPHA_FALL, DEFAULT_EMA_ALPHA_FALL.toFloat())
+                .putBoolean(KEY_EMA_FALL_MIGR_V1156, true).apply()
+        }
     }
 
     // [v1.0.42 Req5] 설정 라이브 전파 — dev_settings 변경 리스너 등록/해제(앱 재시작 없이 반영).
@@ -318,7 +325,10 @@ object DevSettings {
         set(v) = prefs.edit().putFloat(KEY_EMA_ALPHA_RISE, v.coerceIn(0.05, 1.0).toFloat()).apply()
 
     private const val KEY_EMA_ALPHA_FALL = "ema_alpha_fall"
-    const val DEFAULT_EMA_ALPHA_FALL = 0.05
+    // (v1.1.56 U4a) 0.05 → 0.12: 이탈(하강) 추종 가속 — 얕은 SAFE 딥 재등록 플랩 억제(시뮬 검증).
+    //   개발자설정을 연 적 있는 설치는 스피너가 구 기본값을 putFloat 저장해 두므로 init() 1회 마이그레이션으로 덮는다.
+    private const val KEY_EMA_FALL_MIGR_V1156 = "ema_fall_migrated_v1156"
+    const val DEFAULT_EMA_ALPHA_FALL = 0.12
     var emaAlphaFall: Double
         get() = prefs.getFloat(KEY_EMA_ALPHA_FALL, DEFAULT_EMA_ALPHA_FALL.toFloat())
                     .toDouble().coerceIn(0.01, 1.0)

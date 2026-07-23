@@ -130,10 +130,12 @@ class KalmanFilter(private var preset: Int = DevSettings.KALMAN_PRESET_NORMAL) {
      * 칼만 게인을 키워 이후 관측이 첫 표본의 복불복을 빠르게 씻어내게 한다.
      * (일반 초기화 경로 update 의 !initialized 는 pRR=5 — 이 경로는 '생성 즉시 앵커'라
      *  불확실성이 더 크므로 더 큰 초기 분산이 타당하다.)
+     * (v1.1.56 U3) initVel — SAFE/이탈 정리 직전 캡처된 이탈속도(음수, -1.5 캡)를 재시드해, 얕은
+     *   SAFE 딥 직후 재등록 시 속도 0 재출발로 이탈 판정이 원점부터 재시작되는 플랩을 줄인다. 기본 0.0.
      */
-    fun injectWarmup(rssiVal: Int) {
+    fun injectWarmup(rssiVal: Int, initVel: Double = 0.0) {
         rssi        = rssiVal.toDouble()
-        vel         = 0.0
+        vel         = initVel
         pRR         = 25.0   // (v1.1.29) 1.0 → 25.0: 첫 표본 과신 제거(단일표본 정직 분산)
         pRV         = 0.0
         pVV         = 5.0    // (v1.1.29) 1.0 → 5.0: 초기 속도 불확실성 정직화
