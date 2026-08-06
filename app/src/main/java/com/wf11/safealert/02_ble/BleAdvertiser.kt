@@ -46,6 +46,10 @@ class BleAdvertiser(
         //   설정값을 가장 가까운 프리셋으로 양자화한다(스피너: 100/200/500/1000ms).
         //     ≤100ms → LOW_LATENCY(~100ms) / ≤250ms → BALANCED(~250ms — 기본 200,
         //     v1.0.37 거동 보존) / 초과 → LOW_POWER(~1000ms)
+        // [v1.1.58 fix3] hazard 광고 승격 홀드(ms) — WAKE(-89dBm) 수신 시 버스트 성패와 무관하게
+        //   내 광고를 최소 BALANCED(~250ms)로 승격 유지하는 시간. requestHazardAdv() 가 설정.
+        private const val HAZARD_ADV_HOLD_MS = 5000L
+
         private fun mapAdvertiseMode(intervalMs: Int): Int = when {
             intervalMs <= 100 -> AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY
             intervalMs <= 250 -> AdvertiseSettings.ADVERTISE_MODE_BALANCED
@@ -100,6 +104,11 @@ class BleAdvertiser(
     //   가속해 상대가 나를 더 빨리 발견(상호 보호). 이 시각(elapsedRealtime ms)까지 LOW_LATENCY 유지.
     //   0 = 버스트 없음. requestBurst() 가 설정, burstExpiryRunnable 이 만료 시 정상 모드로 복귀.
     @Volatile private var burstUntilMs = 0L
+
+    // [v1.1.58 fix3] hazard 광고 승격 — WAKE 수신 시 버스트(LOW_LATENCY) 성패·burstEnabled 와 무관하게
+    //   이 시각(elapsedRealtime ms)까지 광고를 최소 BALANCED(~250ms)로 유지(OEM 버스트 스로틀·doze 폴백).
+    //   0 = 없음. requestHazardAdv() 가 설정, hazardExpiryRunnable 이 만료 시 정상 모드로 복귀.
+    @Volatile private var hazardUntilMs = 0L
 
     // [v1.0.34 다이나믹 페이로드] 현재 송신자 STATE(2bit, PSTATE_*) — Category·Turn 와 함께
     //   encodePayload() 로 1바이트로 패킹되어 ServiceData 로 탑재된다.
@@ -178,6 +187,13 @@ class BleAdvertiser(
         //   (슬립=LOW_POWER, 활성=advertiseInterval 매핑) 유지.
         val advertiseMode = when {
             SystemClock.elapsedRealtime() < burstUntilMs -> AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY
+            // [v1.1.58 fix3] hazard 홀드 중엔 슬립(paused) 여부와 무관하게 최소 BALANCED(~250ms) 플로어 —
+            //   버스트 실패·doze 시에도 상대가 나를 늦지 않게 발견. base 가 더 빠르면(BALANCED 이상) base 유지.
+            SystemClock.elapsedRealtime() < hazardUntilMs -> {
+                val base = if (paused) AdvertiseSettings.ADVERTISE_MODE_LOW_POWER
+                           else mapAdvertiseMode(BleConstants.advertiseInterval)
+                if (base == AdvertiseSettings.ADVERTISE_MODE_LOW_POWER) AdvertiseSettings.ADVERTISE_MODE_BALANCED else base
+            }
             paused -> AdvertiseSettings.ADVERTISE_MODE_LOW_POWER
             else -> mapAdvertiseMode(BleConstants.advertiseInterval)
         }
@@ -369,6 +385,48 @@ class BleAdvertiser(
         if (lastAppliedAdvertiseMode != AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY) restartAdvertise()
     }
 
+    // ── [v1.1.58 fix3] hazard 광고 승격 ──────────────────────────────────────
+    //   버스트(LOW_LATENCY)가 OEM 광고세트 스로틀·doze 로 실패해도, WAKE 수신 동안엔 광고를 최소
+    //   BALANCED(~250ms)로 유지해 상대의 발견 지연을 회복(시뮬: 버스트실패 +2.68s→+0.41s, ~85% 회복).
+    //   버스트와 독립 메커니즘(burstEnabled 무관)이며, 슬립(paused) 중 승격이 목적이라 paused 가드 없음.
+
+    private val hazardExpiryRunnable = Runnable {
+        if (stopped) return@Runnable
+        if (SystemClock.elapsedRealtime() < hazardUntilMs) return@Runnable   // 연장됨 — 새 타이머가 처리
+        // 만료 — 지금 있어야 할 정상 모드 재계산 후, 실제 적용 모드와 다를 때만 재광고
+        val target = when {
+            SystemClock.elapsedRealtime() < burstUntilMs -> AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY
+            paused -> AdvertiseSettings.ADVERTISE_MODE_LOW_POWER
+            else -> mapAdvertiseMode(BleConstants.advertiseInterval)
+        }
+        if (target != lastAppliedAdvertiseMode) hazardRestart()
+    }
+
+    /**
+     * (v1.1.58 fix3) WAKE(-89dBm) 수신 시마다 호출 — hazard 홀드를 5s 연장하고, 현재 광고가
+     * LOW_POWER 로 굳어 있으면 즉시 재광고해 BALANCED 이상으로 승격. ~120ms 수신 주기마다
+     * 불리므로 이미 승격된 상태에선 stop/start 를 반복하지 않는다(타이머 연장만).
+     */
+    fun requestHazardAdv() {
+        if (stopped) return
+        val newUntil = SystemClock.elapsedRealtime() + HAZARD_ADV_HOLD_MS
+        if (newUntil > hazardUntilMs) {
+            hazardUntilMs = newUntil
+            stateHandler.removeCallbacks(hazardExpiryRunnable)
+            stateHandler.postDelayed(hazardExpiryRunnable, HAZARD_ADV_HOLD_MS)
+        }
+        if (lastAppliedAdvertiseMode == AdvertiseSettings.ADVERTISE_MODE_LOW_POWER) hazardRestart()
+    }
+
+    /** (v1.1.58 fix3) restartAdvertise 의 hazard 판 — 슬립(paused) 중에도 재광고(승격 자체가 목적). */
+    private fun hazardRestart() {
+        if (stopped) return
+        try { advertiser.stopAdvertising(callback) } catch (_: Exception) {}
+        stateHandler.postDelayed({
+            startAdvertising(currentDeviceId, lastUwbAddress)
+        }, STATE_RESTART_DELAY_MS)
+    }
+
     /** [v1.0.48 #5] 설정(advertiseInterval) 라이브 반영 — BleService 의 prefs 리스너가 호출.
      *  슬립(paused) 중엔 어차피 LOW_POWER 고정이라 건너뛰고(웨이크 시 startAdvertising 이 새
      *  매핑을 자동 적용), 활성 광고 중이며 매핑 모드가 실제로 바뀐 경우에만 재광고한다(no-op 가드
@@ -423,9 +481,13 @@ class BleAdvertiser(
         stateHandler.removeCallbacksAndMessages(null)      // 예약된 재광고 콜백 전부 취소
         try { advertiser.stopAdvertising(callback) } catch (_: Exception) {}
         // stop→start OS 정리 대기 후 재광고 — paused=true 이므로 startAdvertising 이 LOW_POWER 연속으로 송출.
+        //   [v1.1.58 fix3] 단, hazard 홀드가 살아 있으면 BALANCED 플로어 유지(위험 근접 중 슬립 진입 케이스).
         stateHandler.postDelayed({
             startAdvertising(currentDeviceId, lastUwbAddress)
         }, STATE_RESTART_DELAY_MS)
+        // [v1.1.58 fix3] 위에서 콜백을 전부 지웠으므로, 진행 중 hazard 홀드가 있으면 만료 타이머 재장전
+        val hazardRemain = hazardUntilMs - SystemClock.elapsedRealtime()
+        if (hazardRemain > 0) stateHandler.postDelayed(hazardExpiryRunnable, hazardRemain)
         Log.d(TAG, "RSSI 슬립 진입 — LOW_POWER 연속 광고로 전환(상시 저빈도 송출)")
     }
 
@@ -444,6 +506,9 @@ class BleAdvertiser(
         // [v1.1.26 B] 위에서 콜백을 전부 지웠으므로, 진행 중이던 버스트가 있으면 만료 타이머를 다시 건다.
         val burstRemain = burstUntilMs - SystemClock.elapsedRealtime()
         if (burstRemain > 0) stateHandler.postDelayed(burstExpiryRunnable, burstRemain)
+        // [v1.1.58 fix3] hazard 홀드도 동일 — 만료 타이머 재장전
+        val hazardRemain = hazardUntilMs - SystemClock.elapsedRealtime()
+        if (hazardRemain > 0) stateHandler.postDelayed(hazardExpiryRunnable, hazardRemain)
         if (wasPaused) Log.d(TAG, "RSSI 웨이크 — 즉시 연속 광고로 승격(LocalState 강송출)")
     }
 

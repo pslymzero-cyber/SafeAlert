@@ -27,6 +27,9 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
         //                       오소실/깜빡임 되는 v1.0.27 휴식모드 회귀를 방지한다.
         private const val DEVICE_TIMEOUT_ACTIVE_MS = 2000L
         private const val DEVICE_TIMEOUT_REST_MS   = 6000L
+        // [v1.1.58 fix2] 비콘(BEA_) 전용 최소 타임아웃 — 300ms~1s 광고 비콘이 ACTIVE 2s 타임아웃에
+        //   소실↔재발견 플래핑하는 것 방지(maxOf 적용이라 REST 6s 는 단축되지 않음).
+        private const val DEVICE_TIMEOUT_BEACON_MS = 3500L
 
         // ── 동적 스캔 모드 정책 (v1.0.27 배터리 최적화) ────────────────────
         // IMU 가 '정지 5초'를 확정하면 BleService 가 setEcoMode(true)를 호출해
@@ -235,7 +238,11 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
             val timeoutMs = if (currentScanMode == ScanSettings.SCAN_MODE_LOW_LATENCY)
                                 DEVICE_TIMEOUT_ACTIVE_MS else DEVICE_TIMEOUT_REST_MS
             detectedDevices.entries
-                .filter { now - it.value > timeoutMs }
+                .filter {
+                    // [v1.1.58 fix2] 비콘은 광고주기가 길어(300ms~1s) ACTIVE 2s 에서 순간 플래핑 — 최소 3.5s 보장
+                    val effTimeoutMs = if (it.key.contains("BEA_")) maxOf(timeoutMs, DEVICE_TIMEOUT_BEACON_MS) else timeoutMs
+                    now - it.value > effTimeoutMs
+                }
                 .map { it.key }
                 .forEach { id ->
                     // [v1.1.47] BLE 신호 타임아웃이라도 UWB 실측이 계속 흐르는 기기는 소실 유예 —

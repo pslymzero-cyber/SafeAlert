@@ -368,6 +368,15 @@ class BleService : LifecycleService() {
     private val lastKfVelMap = mutableMapOf<String, LastKfVelState>()
     private val KF_VEL_SEED_TTL_MS = 30_000L   // (v1.1.57) 재시드 스냅샷 유효기간(시뮬상 30s/60s 실효차 +0.3s뿐)
 
+    // ── [v1.1.58 fix4] lost 시 필터 상태 defer-clear 보존 ──────────────────────
+    //   onDeviceLost 에서 필터를 즉시 지우지 않고 마지막 RSSI 스냅샷만 남긴다.
+    //   30s(KF_VEL_SEED_TTL_MS) 내 ±10dB(FILTER_PRESERVE_BAND_DB) 밴드로 재발견되면
+    //   웜 필터 그대로 재사용+TimeGate 1회 면제(재발견 즉시 경보 가능) — 플래핑 소실 -87% (시뮬).
+    //   조건 불충족이면 그 자리서 콜드 클리어(기존 lost 경로와 동일 결과).
+    private data class FilterPreserveState(val refRssi: Int, val atMs: Long)
+    private val filterPreserveMap = mutableMapOf<String, FilterPreserveState>()
+    private val timeGateWaiveSet  = mutableSetOf<String>()
+
     // ── (v1.1.40) 섀도우 IMU 융합 — 정지 관측자 전용 병렬 추적기 ─────────────────
     // 메인 파이프라인(EMA→칼만→P-EMA)과 완전 분리된 '섀도우 칼만'을 median 스트림에만 물려,
     // 내 IMU 정지(관측 플랫폼 안정) + 상대 FORWARD 자기신고일 때만 공정잡음을 열어(0.15)
@@ -958,6 +967,7 @@ class BleService : LifecycleService() {
 
                             if (myMode == "WALKER"
                                 && deviceId.startsWith(BleConstants.WALKER_PREFIX)
+                                && !deviceId.contains("BEA_")   // [v1.1.58 fix1] 비콘(BEA_)은 walker 게이트 면제 — 보행자도 비콘 경보 수신(기존: 100% 차단)
                                 && !DevSettings.walkerDetectsWalker) return
 
                             val effectiveRssi = if (DevSettings.debugMode) DevSettings.simulatedRssi else rssi
@@ -982,15 +992,24 @@ class BleService : LifecycleService() {
                         override fun onDeviceLost(deviceId: String) {
                             Log.d(TAG, "신호 소실: $deviceId")
                             alertState.remove(deviceId)
-                            rssiPreFilter.clear(deviceId)
-                            medianFilter.clear(deviceId)      // [v1.0.45] Median 윈도우 정리
-                            pEmaFilter.clear(deviceId)        // [v1.0.45] 후처리 P-EMA 상태 정리
+                            // [v1.1.58 fix4] 필터 defer-clear — 마지막 RSSI 스냅샷이 있으면 즉시 지우지 않고 보존.
+                            //   30s 내 ±10dB 밴드로 재발견되면 processAlert 가 웜 필터 복원+TimeGate 1회 면제,
+                            //   불충족 재발견은 processAlert 가·TTL 만료는 healthCheck prune 이 콜드 클리어 확정.
+                            val lastRssi = deviceRssiMap[deviceId]
+                            if (lastRssi != null) {
+                                filterPreserveMap[deviceId] = FilterPreserveState(lastRssi, android.os.SystemClock.elapsedRealtime())
+                            } else {
+                                rssiPreFilter.clear(deviceId)
+                                medianFilter.clear(deviceId)      // [v1.0.45] Median 윈도우 정리
+                                pEmaFilter.clear(deviceId)        // [v1.0.45] 후처리 P-EMA 상태 정리
+                                kalmanFilters[deviceId]?.reset()
+                                kalmanFilters.remove(deviceId)
+                            }
                             rushFrameMap.remove(deviceId)     // [v1.0.45] 돌진 프레임 카운터 정리
                             dangerContactStreakMap.remove(deviceId)   // [v1.1.16 D] 첫접촉 DANGER 카운터 정리
                             warningContactStreakMap.remove(deviceId)  // [v1.1.18] 첫접촉 WARNING 카운터 정리
-                            kalmanFilters[deviceId]?.reset()
-                            kalmanFilters.remove(deviceId)
-                            lastKfVelMap.remove(deviceId)             // (v1.1.56 U3) 진짜 소실 — 재시드 스냅샷 폐기
+                            lastKfVelMap.remove(deviceId)             // (v1.1.56 U3) 진짜 소실 — 재시드 스냅샷 폐기(웜 칼만 보존이 대체)
+                            timeGateWaiveSet.remove(deviceId)         // [v1.1.58 fix4] 소실 시 미소비 면제권 회수
                             shadowFusionMap.remove(deviceId)          // (v1.1.40) 섀도우 융합 상태 정리
                             trackingStateMap.remove(deviceId)
                             crossingStartMap.remove(deviceId)
@@ -1245,6 +1264,24 @@ class BleService : LifecycleService() {
         val inputRssi: Int = rssi
 
         val now      = System.currentTimeMillis()
+
+        // [v1.1.58 fix4] lost 후 재발견 복원 판정 — 보존 스냅샷이 있으면 여기서 단 한 번 소비.
+        //   신선(30s 내)·연속(±10dB) 충족 → 필터 맵이 산 채로 남아 있어 아래 getOrPut 이 웜 칼만을
+        //   그대로 반환(복원)하고 TimeGate 1회 면제권 부여(재발견 즉시 발령 가능 — 플래핑 소실 -87% 시뮬).
+        //   불충족 → 그 자리서 콜드 클리어(기존 lost 즉시-클리어와 동일한 초기 상태로 진입).
+        filterPreserveMap.remove(deviceId)?.let { snap ->
+            val fresh      = android.os.SystemClock.elapsedRealtime() - snap.atMs <= KF_VEL_SEED_TTL_MS
+            val contiguous = kotlin.math.abs(inputRssi - snap.refRssi) <= FILTER_PRESERVE_BAND_DB
+            if (fresh && contiguous) {
+                timeGateWaiveSet.add(deviceId)
+            } else {
+                rssiPreFilter.clear(deviceId)
+                medianFilter.clear(deviceId)
+                pEmaFilter.clear(deviceId)
+                kalmanFilters[deviceId]?.reset()
+                kalmanFilters.remove(deviceId)
+            }
+        }
 
         // ── 2D 칼만 필터 가져오기 또는 생성 ──────────────────────────────
         val kf = kalmanFilters.getOrPut(deviceId) {
@@ -1501,6 +1538,7 @@ class BleService : LifecycleService() {
             deviceCategoryMap.remove(deviceId)
             deviceTurnMap.remove(deviceId); reverseRssiHist.remove(deviceId); reversePrepUntil.remove(deviceId)   // [v1.1.7 #1/#2]
             firebaseLastSaveMap.remove(deviceId)
+            timeGateWaiveSet.remove(deviceId) // [v1.1.58 fix4] 미추적 강등 — 미소비 TimeGate 면제권 회수
             rssiPreFilter.clear(deviceId)     // [v1.0.38 클린업] 미추적 기기 EMA 전처리 상태 정리
             medianFilter.clear(deviceId)      // [v1.0.45] Median 윈도우 정리(워밍업 상태 리셋)
             pEmaFilter.clear(deviceId)        // [v1.0.45] 후처리 P-EMA 상태 정리
@@ -2228,7 +2266,9 @@ class BleService : LifecycleService() {
         //   수신 감도가 낮은 폰(RSSI 동특성 작음 → kfVel 미달)은 위험권에 들어와도 승급이 무기 보류됐다
         //   (위험 경보 지연·기기별 비대칭의 원인). 스파이크 오발은 Median→EMA→칼만→P-EMA 다단 평활과
         //   3중 하드게이트, raw 2차 방어선이 이미 막으므로 격상까지 게이트하는 것은 중복 보수였다.
-        if (isFirstDetection && !fastContact && (sideCourse || !approachSustained)) {   // [v1.1.18] 2프레임 확증 WARNING/DANGER 첫접촉은 접근속도 게이트 면제(정지 근접 즉시 발령)
+        // [v1.1.58 fix4] lost→재발견 복원 기기는 TimeGate 1회 면제 — 면제권은 도달 즉시 무조건 소비(잔존 방지)
+        val timeGateWaived = timeGateWaiveSet.remove(deviceId)
+        if (isFirstDetection && !fastContact && !timeGateWaived && (sideCourse || !approachSustained)) {   // [v1.1.18] 2프레임 확증 WARNING/DANGER 첫접촉은 접근속도 게이트 면제(정지 근접 즉시 발령)
             pendingDisplayMap[deviceId] = now   // [v1.0.49 #3] 보류 중에도 목록엔 '감지됨' 노출
             Log.d(TAG, "[v1.0.36] 경보 보류 ${extractDisplayName(deviceId)}: side=$sideCourse 접근지속=${approachStreakMs}ms(<${timeGateMs}) fast=${fastApproachFrames}/2 vel=%.2f".format(kfVel))
             return   // 소리/화면 경보 보류 — 다음 프레임 재평가(접근지속 충족 또는 정면충돌 코스 시 발령)
@@ -2713,6 +2753,19 @@ class BleService : LifecycleService() {
         healthCheckHandler.removeCallbacksAndMessages(null)
         healthCheckHandler.postDelayed(object : Runnable {
             override fun run() {
+                // [v1.1.58 fix4] 보존 스냅샷 TTL 만료 prune(15s 주기) — 만료 기기는 콜드 클리어로 확정
+                if (filterPreserveMap.isNotEmpty()) {
+                    val nowEl = android.os.SystemClock.elapsedRealtime()
+                    filterPreserveMap.filterValues { nowEl - it.atMs > KF_VEL_SEED_TTL_MS }.keys.toList().forEach { id ->
+                        filterPreserveMap.remove(id)
+                        rssiPreFilter.clear(id)
+                        medianFilter.clear(id)
+                        pEmaFilter.clear(id)
+                        kalmanFilters[id]?.reset()
+                        kalmanFilters.remove(id)
+                        timeGateWaiveSet.remove(id)
+                    }
+                }
                 val elapsed = System.currentTimeMillis() - lastScanResultMs
                 if (elapsed > SCAN_HEALTH_CHECK_MS) {
                     // [v1.0.46 #9] stopBle()+applyMode() 전체 재시작은 TX 광고까지 끊어 상대 기기에서
@@ -2972,6 +3025,7 @@ class BleService : LifecycleService() {
             //   상대가 나를 더 빨리 발견(상호 보호). 웨이크보다 먼저 요청해야 슬립 중이었어도
             //   직후 resumeAdvertising/startAdvertising 이 burstUntilMs 를 보고 LOW_LATENCY 로 시작한다.
             if (DevSettings.burstEnabled) bleAdvertiser?.requestBurst(DevSettings.burstHoldMs)
+            bleAdvertiser?.requestHazardAdv()   // [v1.1.58 fix3] 버스트 성패·burstEnabled 와 무관한 광고 승격(≤250ms) 5s 홀드
             wakeAdvertiser()
         }
     }
@@ -3201,6 +3255,8 @@ class BleService : LifecycleService() {
         warningContactStreakMap.clear()  // [v1.1.18]
         kalmanFilters.clear()
         lastKfVelMap.clear()             // (v1.1.56 U3) 재시드 스냅샷 일괄 정리
+        filterPreserveMap.clear()        // [v1.1.58 fix4] 필터 보존 스냅샷 일괄 정리
+        timeGateWaiveSet.clear()         // [v1.1.58 fix4] TimeGate 면제권 일괄 정리
         shadowFusionMap.clear()          // (v1.1.40) 섀도우 융합 상태 일괄 정리
         trackingStateMap.clear()
         crossingStartMap.clear()
