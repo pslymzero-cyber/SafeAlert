@@ -527,6 +527,15 @@ object DevSettings {
         get() = prefs.getBoolean(KEY_IDLE_IDLE_SUPPRESS_ENABLED, false)
         set(v) = prefs.edit().putBoolean(KEY_IDLE_IDLE_SUPPRESS_ENABLED, v).apply()
 
+    // [v1.1.59] IDLE-IDLE 억제 역할쌍 확장 — EPJ↔EPJ·EPJ↔보행자 쌍(지게차 포함 쌍 제외)은 기본 ON.
+    //   EPJ 는 근접 협업이 일상이라 정지↔정지 WARNING 비프가 피로 주범(시뮬 sim_epj.py quiet:
+    //   통상작업 duty30 기준 42~48% 억제, 정지상주→돌진 최악 가청지연 +0.01s·미탐 0%·DANGER 불변).
+    //   전역 플래그(위)는 전 쌍 억제로 의미 불변(상위집합), 이 키 false=해당 쌍도 전역 플래그만 따름(킬스위치).
+    private const val KEY_IDLE_IDLE_SUPPRESS_EPJ_PAIRS_ENABLED = "idle_idle_suppress_epj_pairs_enabled"
+    var idleIdleSuppressEpjPairsEnabled: Boolean
+        get() = prefs.getBoolean(KEY_IDLE_IDLE_SUPPRESS_EPJ_PAIRS_ENABLED, true)
+        set(v) = prefs.edit().putBoolean(KEY_IDLE_IDLE_SUPPRESS_EPJ_PAIRS_ENABLED, v).apply()
+
     // ── [v1.1.26] 백그라운드 콜드스타트 지연 해소 ─────────────────────────────
     //   증상: "자다 깨어 정신 못 차리는" 느낌 — 한 번 인식되면 잘 되는데 첫 깨어남이 느림.
     //   시속 6km 지게차 2대가 마주 와도(closing 3.33m/s) 첫 알람이 늦음.

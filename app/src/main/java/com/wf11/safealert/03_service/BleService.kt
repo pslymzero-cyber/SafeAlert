@@ -1491,7 +1491,15 @@ class BleService : LifecycleService() {
         // [v1.1.11 C2] payloadPresent 필수 — 비콘·구버전(페이로드 부재)은 rState 가 무조건 IDLE 로 디코드되어
         //   '이동 중인 비콘 장비'가 영구 IDLE 로 오인, DANGER 가 WARNING 강등→무음화되는 구멍이 있었다.
         //   실제 1바이트 자기-신고를 보낸 기기에만 억제를 허용해 그 구멍을 막는다.
-        val idleIdleQuiet = DevSettings.idleIdleSuppressEnabled && payloadPresent &&
+        // [v1.1.59] 역할쌍 확장 — EPJ↔EPJ·EPJ↔보행자 쌍(지게차 무관 쌍)은 신규 플래그로 기본 ON.
+        //   근거: EPJ 근접작업 시뮬(sim_epj.py quiet) — 통상작업(IMU duty30) WARNING 비프 42~48% 억제,
+        //   정지상주→돌진 최악(A5) 가청지연 +0.01s·미탐 0%·DANGER 완전 불변. 이동 중 접근은 게이트 구조상 억제 불가.
+        //   전역 플래그 ON=전 쌍 억제(기존 의미 그대로·상위집합), 신규 플래그 OFF=정확히 구 동작(킬스위치).
+        val epjQuietPair = (myCategory == BleConstants.CAT_EPJ || rCategory == BleConstants.CAT_EPJ) &&
+            myCategory != BleConstants.CAT_FORKLIFT && rCategory != BleConstants.CAT_FORKLIFT
+        val quietArmed = DevSettings.idleIdleSuppressEnabled ||
+            (DevSettings.idleIdleSuppressEpjPairsEnabled && epjQuietPair)
+        val idleIdleQuiet = quietArmed && payloadPresent &&
             ImuFusion.isStationary && rState == BleConstants.PSTATE_IDLE
 
         // ── [v1.0.30 → v1.0.31 raw 이중가드] 최상단 하드 게이트 (절대 거리 선차단 · 음수 부호 주의) ─────
@@ -2502,7 +2510,12 @@ class BleService : LifecycleService() {
         bleScanner?.setEcoMode(false)
 
         // 정지↔정지 저감(idle-idle quiet) — UWB 피어는 페이로드 캐시가 항상 있으므로 캐시로 재계산
-        val idleIdleQuiet = DevSettings.idleIdleSuppressEnabled && ImuFusion.isStationary &&
+        // [v1.1.59] 역할쌍 확장(RSSI 게이트와 동일 의미론) — EPJ↔EPJ·EPJ↔보행자 쌍 기본 ON, 지게차 포함 쌍 제외.
+        val epjQuietPair = !forkliftPair &&
+            (myCategory == BleConstants.CAT_EPJ || rCategory == BleConstants.CAT_EPJ)
+        val quietArmed = DevSettings.idleIdleSuppressEnabled ||
+            (DevSettings.idleIdleSuppressEpjPairsEnabled && epjQuietPair)
+        val idleIdleQuiet = quietArmed && ImuFusion.isStationary &&
             rState == BleConstants.PSTATE_IDLE
 
         // 무음 중 — 레벨 추적만 유지(발령 시각 보존, canonical 뮤트 미러)
