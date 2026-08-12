@@ -209,6 +209,9 @@ class BleService : LifecycleService() {
     private val testHandler = android.os.Handler(android.os.Looper.getMainLooper())
 
     private val MUTE_DURATION_MS = 10_000L
+    // (v1.1.61) 항목4: 같은 경보레벨(WARNING/DANGER) 연속 체류 → 자동 뮤트까지의 시간.
+    //   하드코드 상수 — 옵션 UI 는 사용자가 '추후'로 보류(임의 설정 노출 금지).
+    private val DWELL_MUTE_MS = 5_000L
     private val muteHandler = android.os.Handler(android.os.Looper.getMainLooper())
     // [v1.0.46 #11] forceAlarmVolume 의 ignoringVolumeChange 해제(300ms) 전용 핸들러.
     //   muteHandler 공용이던 시절, muteTemporarily()의 removeCallbacksAndMessages(null)가 해제
@@ -220,6 +223,14 @@ class BleService : LifecycleService() {
 
     private fun getCurrentMaxLevel() =
         alertState.values.maxOfOrNull { it.first } ?: BleConstants.LEVEL_SAFE
+
+    // (v1.1.61) '가청' 최대레벨 — dwell 뮤트된 기기를 제외한 소리 소유권 판정 전용.
+    //   무음(뮤트) 기기가 canonical globalMax/잔여 재정합을 점유해 신규·잔여 기기의 가청 경보까지
+    //   틀어막는 것을 방지한다. 위험 재광고(updateRisk)·목록·오버레이는 여전히 raw 레벨 사용
+    //   (뮤트=소리·진동만 억제, 위험 '상태'는 불변이라는 스펙 그대로).
+    private fun getAudibleMaxLevel() =
+        alertState.entries.filter { !isDwellMuted(it.key, it.value.first) }
+            .maxOfOrNull { it.value.first } ?: BleConstants.LEVEL_SAFE
 
     // [v1.1.37 ③] UWB↔RSSI 보정 학습·조회 키 — 역할쌍(카테고리쌍) 세그먼트.
     //   내 카테고리와 상대(스캔 캐시) 카테고리를 토큰화해 순서 무관하게 정렬·결합("×").
@@ -248,7 +259,7 @@ class BleService : LifecycleService() {
      *   = 경보 누락 0 보장. fail-quiet 강등 정정(processAlert L1625)의 teardown 판(版).
      */
     private fun resyncSoundToRemaining() {
-        val remainingMax = getCurrentMaxLevel()
+        val remainingMax = getAudibleMaxLevel()   // (v1.1.61) dwell 뮤트 기기 제외 — 뮤트만 남으면 무음까지 하향
         if (remainingMax >= activeSoundLevel) return          // 남은 기기가 동급 이상 — 사이렌 유지
         AlertSoundPlayer.stopSound()                          // 이탈한 상위 기기의 stale 사이렌 즉시 정지
         activeSoundLevel = remainingMax
@@ -496,6 +507,15 @@ class BleService : LifecycleService() {
 
     // [v1.0.25 Req4] 기기별 음소거(Acknowledge) — deviceId → 음소거 해제 시각(ms). 플로팅 터치 시 등록.
     private val mutedDevices      = mutableMapOf<String, Long>()
+
+    // (v1.1.61) 항목4: 기기별·레벨별 체류(dwell) 자동 뮤트 — 같은 레벨(WARNING/DANGER)에 DWELL_MUTE_MS
+    //   연속 체류하면 그 기기·그 레벨의 소리·진동만 억제한다(표시·목록·오버레이·Firebase·판정·재광고 유지).
+    //   해제(전체 리셋)=존 이탈(SAFE 정리·이탈 확정·미추적 강등·기기 소실·서비스 중지) → 재진입=정상 발령+새 5초.
+    //   W→D 상승 전이=DANGER 뮤트 해제(격상 발령 항상 가청)+타이머 재시작. DANGER 5초 체류=DANGER+WARNING
+    //   동시 뮤트(D→W 후퇴 시 WARNING 도 조용히 유지 — 사용자 승인 스펙). 추적은 alertState 등록(발령) 중에만.
+    private val dwellLevelMap       = mutableMapOf<String, Int>()             // deviceId → 추적 중인 레벨
+    private val dwellSinceMap       = mutableMapOf<String, Long>()            // deviceId → 그 레벨 진입 시각(ms)
+    private val dwellMutedLevelsMap = mutableMapOf<String, MutableSet<Int>>() // deviceId → 뮤트된 레벨 집합
 
     // [v1.0.29 다이나믹 페이로드] 0x02(급정거/급회전) 특수경보 기기의 표시문자열 덮어쓰기 맵.
     //   값 = "{이름}이(가) 급정거 또는 급회전 중입니다." → 오버레이/목록에서 일반 이름 대신 출력.
@@ -1025,6 +1045,7 @@ class BleService : LifecycleService() {
                             forwardBiasLatchMap.remove(deviceId)      // [v1.1.11 C1] 전진가산 래치 정리(소실 → 누수 방지)
                             oneSecBuffer.remove(deviceId)   // [v1.0.31] 게이트가 raw도 push → 신호소실 시 함께 정리
                             mutedDevices.remove(deviceId)
+                            clearDwellMute(deviceId)          // (v1.1.61) 소실 = 존 이탈 — dwell 뮤트 리셋
                             suddenLabelMap.remove(deviceId)
                             deviceCategoryMap.remove(deviceId)
                             deviceStateMap.remove(deviceId)
@@ -1559,6 +1580,7 @@ class BleService : LifecycleService() {
             recedingStartMap.remove(deviceId)    // [v1.1.6 검증 보강] 이탈 판정 상태 누수·stale 피크 재출현 방지
             recedeRefMap.remove(deviceId)        // [v1.1.6 검증 보강] 미추적 기기 중간평활 EMA 정리
             recedePeakMap.remove(deviceId)       // [v1.1.6 검증 보강] 미추적 기기 피크 홀드 정리
+            clearDwellMute(deviceId)             // (v1.1.61) 경보권 밖 강등 = 존 이탈 — dwell 뮤트 리셋
             // [v1.1.9 R1/R3] pendingDisplayMap 보존 — 경보권 밖 약신호도 목록(SAFE 행)에 계속 노출.
             return
         }
@@ -1587,8 +1609,9 @@ class BleService : LifecycleService() {
             pendingDisplayMap.remove(deviceId)   // [v1.0.49 #3] 경보 등록 → 보류 표시 해제
             bleScanner?.setEcoMode(false)   // 즉시 전투 모드(ACTIVE)
             Log.w(TAG, "특수경보(STATE=$rState CAT=$rCategory): $deviceId pEma=$pEma kfRssi=%.1f".format(kfRssi))
-            // 무음(전역/개별)은 존중 — 상태·표시는 유지하되 소리/진동만 억제
-            if (isMuted || isDeviceMuted(deviceId)) {
+            updateDwellMute(deviceId, BleConstants.LEVEL_DANGER, now)   // (v1.1.61) 특수경보도 체류 추적(연속 체류 5s = 뮤트)
+            // 무음(전역/개별/dwell)은 존중 — 상태·표시는 유지하되 소리/진동만 억제
+            if (isMuted || isDeviceMuted(deviceId) || isDwellMuted(deviceId, BleConstants.LEVEL_DANGER)) {
                 updateFloatingOverlay()
                 return
             }
@@ -1874,6 +1897,12 @@ class BleService : LifecycleService() {
         // [v1.0.26 Req2] 개별 sendDetectedBroadcast 폐지 — 목록은 onDeviceDetected 처리 직후
         // broadcastDeviceList() 가 alertState 전체를 한 번에 송출한다(단일 진실 공급원).
 
+        // (v1.1.61) 항목4 dwell 추적 — 발령 등록(alertState) 중인 기기가 같은 레벨에 DWELL_MUTE_MS
+        //   연속 체류하면 그 레벨 소리·진동을 자동 뮤트(updateDwellMute 내부에서 재정합까지 수행).
+        //   SAFE 프레임은 아래 SAFE 처리의 clearDwellMute 가 리셋 담당(존 이탈=해제·재진입=정상 발령).
+        if (stableLevel >= BleConstants.LEVEL_WARNING && alertState.containsKey(deviceId))
+            updateDwellMute(deviceId, stableLevel, now)
+
         // ── SAFE 처리 ───────────────────────────────────────────────────
         if (stableLevel == BleConstants.LEVEL_SAFE) {
             if (alertState.containsKey(deviceId)) {
@@ -1902,6 +1931,7 @@ class BleService : LifecycleService() {
                 approachStreakStartMap.remove(deviceId)   // [v1.0.46 #4] stale 시작시각 → 재접근 시 Time-Gate 즉시통과 방지
                 fastApproachStreakMap.remove(deviceId)    // [v1.1.21] stale 카운터 → 재접근 시 1프레임에 즉시통과 방지
                 forwardBiasLatchMap.remove(deviceId)      // [v1.1.11 C1] SAFE 강등 → 래치 리셋(재접근 시 fresh)
+                clearDwellMute(deviceId)                  // (v1.1.61) SAFE 확정 = 존 이탈 — dwell 뮤트 리셋(재진입=정상 발령)
                 wasStationaryMap.remove(deviceId)
                 recedingStartMap.remove(deviceId)
                 recedeRefMap.remove(deviceId)
@@ -2047,6 +2077,7 @@ class BleService : LifecycleService() {
                 approachStreakStartMap.remove(deviceId)   // [v1.0.46 #4]
                 fastApproachStreakMap.remove(deviceId)    // [v1.1.21]
                 forwardBiasLatchMap.remove(deviceId)      // [v1.1.11 C1] 이탈 정리 → 래치 리셋
+                clearDwellMute(deviceId)                  // (v1.1.61) 이탈 확정 = 존 이탈 — dwell 뮤트 리셋
                 deviceRssiMap.remove(deviceId)
                 firebaseLastSaveMap.remove(deviceId)
                 pendingDisplayMap.remove(deviceId)   // [v1.0.49 #3]
@@ -2171,6 +2202,7 @@ class BleService : LifecycleService() {
             //   여기 stableLevel>=DANGER 와 정확한 여집합으로 상호배타 → 진짜 이탈 즉시정지는 유지되고,
             //   genuine 이탈로 stableLevel 이 이미 위험권 밖이면 복구가 되살리지 않아 ghost-danger 과알람도 없다.
             if (!isMuted && !isDeviceMuted(deviceId) && alertState.containsKey(deviceId) &&
+                !isDwellMuted(deviceId, stableLevel) &&   // (v1.1.61) dwell 뮤트 존중 — 의도된 무음은 '복구'하지 않는다
                 stableLevel >= BleConstants.LEVEL_DANGER && !isDepartingNow &&   // [v1.1.22 B] 이탈측 무음복구 재발령 금지
                 activeSoundLevel < BleConstants.LEVEL_DANGER) {
                 forceAlarmVolume()
@@ -2193,12 +2225,13 @@ class BleService : LifecycleService() {
             else if (!isMuted && !isDeviceMuted(deviceId) && alertState.containsKey(deviceId) &&
                      activeSoundLevel >= BleConstants.LEVEL_DANGER && stableLevel < activeSoundLevel) {
                 val otherMax = alertState.entries
-                    .filter { it.key != deviceId }
+                    .filter { it.key != deviceId && !isDwellMuted(it.key, it.value.first) }   // (v1.1.61) 뮤트 기기는 소리 소유권 없음
                     .maxOfOrNull { it.value.first } ?: BleConstants.LEVEL_SAFE
                 if (otherMax < activeSoundLevel) {
                     AlertSoundPlayer.stopSound()
                     activeSoundLevel = stableLevel
-                    if (stableLevel == BleConstants.LEVEL_WARNING && !idleIdleQuiet) {
+                    if (stableLevel == BleConstants.LEVEL_WARNING && !idleIdleQuiet &&
+                        !isDwellMuted(deviceId, BleConstants.LEVEL_WARNING)) {   // (v1.1.61) WARNING dwell 뮤트 시 재발령 생략(강등 정지는 유지)
                         if (DevSettings.vibrationEnabled) VibrationHelper.vibrateWarning(this)
                         if (DevSettings.soundEnabled)     AlertSoundPlayer.playWarning(this)
                     }
@@ -2287,8 +2320,13 @@ class BleService : LifecycleService() {
         alertState[deviceId] = Pair(stableLevel, now)
         if (isMuted) return
 
-        forceAlarmVolume()
-        val globalMax = getCurrentMaxLevel()
+        // (v1.1.61) 항목4 dwell 뮤트 게이트 — 이 기기·레벨이 5s 체류 뮤트면 소리·진동만 생략(표시·
+        //   브로드캐스트·Firebase 등 나머지 발령 레시피는 그대로). 승인 예외: 빠른 접근(kfVel≥2.0,
+        //   urgentBypass 의 속도항)은 뮤트 무시. median>=effDanger 항까지 쓰면 위험권에 '정지'한
+        //   기기가 매 프레임 바이패스돼 영원히 안 뮤트("위험 거리도 동일하게" 스펙 무력화)라 속도항만.
+        val dwellSuppressed = isDwellMuted(deviceId, stableLevel) && kfVel < 2.0
+        if (!dwellSuppressed) forceAlarmVolume()
+        val globalMax = getAudibleMaxLevel()   // (v1.1.61) 뮤트 기기 제외 — 무음 기기가 신규 경보를 못 막게
         if (stableLevel < globalMax) {
             Log.d(TAG, "우선순위 무시: $stableLevel < $globalMax (활성)")
             return
@@ -2299,16 +2337,22 @@ class BleService : LifecycleService() {
         //   danger 루프가 isPlaying 인 동안 no-op 이라 소리가 WARNING 으로 바뀌지도 못하고, activeSoundLevel
         //   만 WARNING 으로 낮춰져 위험 사이렌이 영구 지속됐다(사용자: '위험 알림이 꺼지지 않아').
         //   '!=' 로 강등도 정지 — !shouldAlert 의 fail-quiet(쿨다운 미경과 프레임) 와 쌍을 이룬다.
-        if (stableLevel != activeSoundLevel) AlertSoundPlayer.stopSound()
-        activeSoundLevel = stableLevel
+        if (!dwellSuppressed) {
+            if (stableLevel != activeSoundLevel) AlertSoundPlayer.stopSound()
+            activeSoundLevel = stableLevel
+        } else {
+            // (v1.1.61) 억제 중 잔존 사이렌 정리 — 직전 kfVel 바이패스 발령 등으로 이 기기가 소리를
+            //   점유한 채 다시 억제되면 가청 최대레벨로 재정합(비뮤트 기기 소리는 건드리지 않음 = 내부 no-op).
+            resyncSoundToRemaining()
+        }
 
         when (stableLevel) {
             // [v1.0.46 #1] 거리 기반 DANGER 커밋 분기 복원 — v1.0.20 재작성에서 사라진 회귀.
             //   서행 접근(TTC 미발동·특수상태 아님)도 위험권 진입이면 위험 경보+Firebase 기록.
             BleConstants.LEVEL_DANGER -> {
-                if (DevSettings.vibrationEnabled)
+                if (DevSettings.vibrationEnabled && !dwellSuppressed)
                     VibrationHelper.vibrateDanger(this)
-                if (DevSettings.soundEnabled)
+                if (DevSettings.soundEnabled && !dwellSuppressed)
                     AlertSoundPlayer.playDanger(this)
                 if (DevSettings.autoSaveAlerts) {
                     val lastFbSave = firebaseLastSaveMap[deviceId] ?: 0L
@@ -2327,9 +2371,9 @@ class BleService : LifecycleService() {
                 //   가청(진동·소리)만 억제하고 표시·오버레이·목록·위젯은 그대로 유지한다. DANGER 는
                 //   여기로 오지 않는다(정지 시 demoteWhileStationary 가 DANGER→WARNING 격하 → 항상 WARNING).
                 //   둘 중 하나라도 움직이면 다음 프레임 idleIdleQuiet=false 로 즉시 가청 복원. 기본 OFF(옵트인).
-                if (DevSettings.vibrationEnabled && !idleIdleQuiet)   // [v1.0.46 #7] 포그라운드(화면 켜짐)에서도 진동
+                if (DevSettings.vibrationEnabled && !idleIdleQuiet && !dwellSuppressed)   // [v1.0.46 #7] 포그라운드(화면 켜짐)에서도 진동
                     VibrationHelper.vibrateWarning(this)
-                if (DevSettings.soundEnabled && !idleIdleQuiet)
+                if (DevSettings.soundEnabled && !idleIdleQuiet && !dwellSuppressed)
                     AlertSoundPlayer.playWarning(this)
                 // [v1.0.30 Req3] Firebase 경보 저장 쓰로틀 — 같은 기기 1분 1회로 제한(모바일데이터 방어)
                 if (DevSettings.autoSaveAlerts) {
@@ -2446,7 +2490,9 @@ class BleService : LifecycleService() {
             alertState[deviceId] = Pair(BleConstants.LEVEL_DANGER, now)
             pendingDisplayMap.remove(deviceId)
             bleScanner?.setEcoMode(false)
-            if (isMuted || isDeviceMuted(deviceId)) { updateFloatingOverlay(); return }
+            updateDwellMute(deviceId, BleConstants.LEVEL_DANGER, now)   // (v1.1.61) 특수경보도 체류 추적
+            if (isMuted || isDeviceMuted(deviceId) ||
+                isDwellMuted(deviceId, BleConstants.LEVEL_DANGER)) { updateFloatingOverlay(); return }
             forceAlarmVolume()
             if (DevSettings.vibrationEnabled) VibrationHelper.vibrateDanger(this)
             if (DevSettings.soundEnabled)     AlertSoundPlayer.playDanger(this)
@@ -2457,6 +2503,10 @@ class BleService : LifecycleService() {
             return
         }
         suddenLabelMap.remove(deviceId)
+
+        // (v1.1.61) 항목4 dwell 추적 — canonical(processAlert)과 동일 규칙의 UWB 미러.
+        if (stableLevel >= BleConstants.LEVEL_WARNING && alertState.containsKey(deviceId))
+            updateDwellMute(deviceId, stableLevel, now)
 
         // SAFE — canonical SAFE 정리 미러(1회성: alertState 보유 기기만). 필터류는 RSSI 헤드가
         //   계속 워밍 중이므로 지워도 수 프레임 내 재수렴 — 폴백 무봉합 유지.
@@ -2479,6 +2529,7 @@ class BleService : LifecycleService() {
                 approachStreakStartMap.remove(deviceId)
                 fastApproachStreakMap.remove(deviceId)
                 forwardBiasLatchMap.remove(deviceId)
+                clearDwellMute(deviceId)   // (v1.1.61) UWB 확증 SAFE = 존 이탈 — dwell 뮤트 리셋
                 wasStationaryMap.remove(deviceId)
                 recedingStartMap.remove(deviceId)
                 recedeRefMap.remove(deviceId)
@@ -2536,12 +2587,13 @@ class BleService : LifecycleService() {
             alertState[deviceId] = Pair(stableLevel, lastAlertTime)
             if (activeSoundLevel >= BleConstants.LEVEL_DANGER && stableLevel < activeSoundLevel) {
                 val otherMax = alertState.entries
-                    .filter { it.key != deviceId }
+                    .filter { it.key != deviceId && !isDwellMuted(it.key, it.value.first) }   // (v1.1.61) 뮤트 기기는 소리 소유권 없음
                     .maxOfOrNull { it.value.first } ?: BleConstants.LEVEL_SAFE
                 if (otherMax < activeSoundLevel) {
                     AlertSoundPlayer.stopSound()
                     activeSoundLevel = stableLevel
-                    if (stableLevel == BleConstants.LEVEL_WARNING && !idleIdleQuiet) {
+                    if (stableLevel == BleConstants.LEVEL_WARNING && !idleIdleQuiet &&
+                        !isDwellMuted(deviceId, BleConstants.LEVEL_WARNING)) {   // (v1.1.61) WARNING dwell 뮤트 시 재발령 생략(강등 정지는 유지)
                         if (DevSettings.vibrationEnabled) VibrationHelper.vibrateWarning(this)
                         if (DevSettings.soundEnabled)     AlertSoundPlayer.playWarning(this)
                     }
@@ -2554,15 +2606,22 @@ class BleService : LifecycleService() {
         // 발령 — canonical 발령 레시피 미러
         pendingDisplayMap.remove(deviceId)
         alertState[deviceId] = Pair(stableLevel, now)
-        forceAlarmVolume()
-        val globalMax = getCurrentMaxLevel()
+        // (v1.1.61) 항목4 dwell 뮤트 게이트 — canonical 미러. UWB 경로엔 kfVel(RSSI 칼만 속도)이
+        //   없으므로 바이패스 유사물을 발명하지 않는다(스펙 재해석 금지) — 뮤트면 소리·진동만 생략.
+        val dwellSuppressed = isDwellMuted(deviceId, stableLevel)
+        if (!dwellSuppressed) forceAlarmVolume()
+        val globalMax = getAudibleMaxLevel()   // (v1.1.61) 뮤트 기기 제외
         if (stableLevel < globalMax) return   // 더 높은 경보 재생 중 — 소리 격하 금지(우선순위)
-        if (stableLevel != activeSoundLevel) AlertSoundPlayer.stopSound()
-        activeSoundLevel = stableLevel
+        if (!dwellSuppressed) {
+            if (stableLevel != activeSoundLevel) AlertSoundPlayer.stopSound()
+            activeSoundLevel = stableLevel
+        } else {
+            resyncSoundToRemaining()   // (v1.1.61) 잔존 사이렌 정리 — 비뮤트 소리는 불간섭(내부 no-op)
+        }
         when (stableLevel) {
             BleConstants.LEVEL_DANGER -> {
-                if (DevSettings.vibrationEnabled) VibrationHelper.vibrateDanger(this)
-                if (DevSettings.soundEnabled)     AlertSoundPlayer.playDanger(this)
+                if (DevSettings.vibrationEnabled && !dwellSuppressed) VibrationHelper.vibrateDanger(this)
+                if (DevSettings.soundEnabled && !dwellSuppressed)     AlertSoundPlayer.playDanger(this)
                 if (DevSettings.autoSaveAlerts) {
                     val lastFbSave = firebaseLastSaveMap[deviceId] ?: 0L
                     if (now - lastFbSave >= FIREBASE_SAVE_THROTTLE_MS) {
@@ -2575,8 +2634,8 @@ class BleService : LifecycleService() {
                 Log.w(TAG, "UWB 위험 발생: $deviceId ${"%.1f".format(uwbD)}m (forkliftPair=$forkliftPair)")
             }
             BleConstants.LEVEL_WARNING -> {
-                if (DevSettings.vibrationEnabled && !idleIdleQuiet) VibrationHelper.vibrateWarning(this)
-                if (DevSettings.soundEnabled && !idleIdleQuiet)     AlertSoundPlayer.playWarning(this)
+                if (DevSettings.vibrationEnabled && !idleIdleQuiet && !dwellSuppressed) VibrationHelper.vibrateWarning(this)
+                if (DevSettings.soundEnabled && !idleIdleQuiet && !dwellSuppressed)     AlertSoundPlayer.playWarning(this)
                 if (DevSettings.autoSaveAlerts) {
                     val lastFbSave = firebaseLastSaveMap[deviceId] ?: 0L
                     if (now - lastFbSave >= FIREBASE_SAVE_THROTTLE_MS) {
@@ -2726,6 +2785,47 @@ class BleService : LifecycleService() {
             return false
         }
         return true
+    }
+
+    // ── (v1.1.61) 항목4: 레벨 체류(dwell) 자동 뮤트 ──────────────────────────────
+    /** 매 판정 프레임 호출(alertState 등록 기기 한정 — RSSI canonical·UWB 미러·특수경보 공용).
+     *  레벨 전이=타이머 재시작, 상승 전이(W→D)=DANGER 뮤트 해제(격상 발령 항상 가청 — 승인 예외),
+     *  DWELL_MUTE_MS 연속 체류=해당 레벨 뮤트(DANGER 체류는 WARNING 도 함께 — D→W 후퇴 시 조용 유지).
+     *  새로 뮤트되는 순간 재생 중인 소리·진동을 잔여 '가청' 최대레벨로 즉시 재정합한다
+     *  (resyncSoundToRemaining — v1.1.61부터 뮤트 제외 산정이라 뮤트만 남으면 무음까지 하향). */
+    private fun updateDwellMute(deviceId: String, level: Int, now: Long) {
+        val prev = dwellLevelMap[deviceId]
+        if (prev != level) {
+            dwellLevelMap[deviceId] = level
+            dwellSinceMap[deviceId] = now
+            if (prev != null && level > prev) {
+                // 상승 전이(W→D): DANGER 뮤트 해제 — 위험 격상은 뮤트 중에도 반드시 들린다(승인 예외).
+                //   WARNING 뮤트는 유지(경고 존을 벗어난 적 없음 = 리셋 조건 미충족).
+                dwellMutedLevelsMap[deviceId]?.remove(BleConstants.LEVEL_DANGER)
+            }
+            // 하강 후퇴(D→W): 집합 유지 — DANGER 체류로 WARNING 이 뮤트됐으면 후퇴 후에도 조용(승인 스펙).
+            return
+        }
+        val since = dwellSinceMap.getOrPut(deviceId) { now }
+        if (now - since < DWELL_MUTE_MS) return
+        val set = dwellMutedLevelsMap.getOrPut(deviceId) { mutableSetOf() }
+        var engaged = set.add(level)
+        if (level == BleConstants.LEVEL_DANGER && set.add(BleConstants.LEVEL_WARNING)) engaged = true
+        if (engaged) {
+            resyncSoundToRemaining()   // 이 기기가 소리를 견인 중이었으면 잔여 가청 레벨로 즉시 하향(무음 포함)
+            Log.d(TAG, "(v1.1.61) dwell 뮤트 발동: $deviceId level=$level (${DWELL_MUTE_MS}ms 체류) — 소리·진동만 억제")
+        }
+    }
+
+    /** 해당 기기·레벨이 dwell 뮤트 중인지 — 소리·진동 억제 판정 전용(표시·목록·판정에는 불사용). */
+    private fun isDwellMuted(deviceId: String, level: Int): Boolean =
+        dwellMutedLevelsMap[deviceId]?.contains(level) == true
+
+    /** 존 이탈(SAFE 정리·이탈 확정·미추적 강등·소실·중지) — dwell 추적·뮤트 전부 리셋 → 재진입=정상 발령. */
+    private fun clearDwellMute(deviceId: String) {
+        dwellLevelMap.remove(deviceId)
+        dwellSinceMap.remove(deviceId)
+        dwellMutedLevelsMap.remove(deviceId)
     }
 
     /**
@@ -3284,6 +3384,7 @@ class BleService : LifecycleService() {
         fastApproachStreakMap.clear()    // [v1.1.21] 빠른접근 연속카운터 정리
         pendingDisplayMap.clear()        // [v1.0.49 #3] 보류 표시 정리
         mutedDevices.clear()
+        dwellLevelMap.clear(); dwellSinceMap.clear(); dwellMutedLevelsMap.clear()   // (v1.1.61) dwell 뮤트 일괄 정리
         forwardBiasLatchMap.clear()      // [v1.1.11 C1] 전진가산 래치 일괄 정리(다른 26개 맵과 정합)
         firebaseLastSaveMap.clear()
         peerUwbSeenMap.clear()           // [v1.1.41] UWB 배타판정 신선도·격하 카운터 일괄 정리
