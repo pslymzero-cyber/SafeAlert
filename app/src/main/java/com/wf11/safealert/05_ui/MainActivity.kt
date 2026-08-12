@@ -262,6 +262,7 @@ class MainActivity : AppCompatActivity() {
         binding.cardRoleEpj.setOnClickListener      { saveDisplayName(); onRoleSelected("DEVICE", BleConstants.CAT_EPJ) }
         binding.cardRoleForklift.setOnClickListener { saveDisplayName(); onRoleSelected("DEVICE", BleConstants.CAT_FORKLIFT) }
         binding.btnStop.setOnClickListener       { stopServiceImmediately() }
+        binding.btnSwitchRole.setOnClickListener { confirmSwitchRole() }   // [v1.1.60] 역할 전환
         binding.cardSettings.setOnClickListener  { showPinDialog() }
         binding.cardBleSettings.setOnClickListener {
             startActivity(Intent(this, BleSettingsActivity::class.java))
@@ -649,6 +650,30 @@ class MainActivity : AppCompatActivity() {
         startService(Intent(this, BleService::class.java).apply { action = BleService.ACTION_STOP })
     }
 
+    // [v1.1.60] 실행 중 역할 전환(B안: 정지→재시작) — 광고 fullId 에 역할 prefix(DEVICE_/WALKER_)가
+    //   박혀 실행 중 카테고리 갱신 API 가 없다. stopServiceImmediately()→onRoleSelected() 재사용이
+    //   유일 안전 경로. 전환 공백 1~2초는 EMA 워밍업(v1.1.29)이 콜드스타트를 완화한다.
+    //   매핑: WALKER→지게차(DEVICE·CAT_FORKLIFT) / DEVICE(레거시 EPJ 포함)→보행자(WALKER·CAT_WALKER).
+    private fun switchTargetLabel(): String =
+        if (currentMode == "WALKER") "지게차" else "보행자"
+
+    private fun confirmSwitchRole() {
+        val mode = currentMode ?: return
+        val target = switchTargetLabel()
+        AlertDialog.Builder(this)
+            .setTitle("작업 전환")
+            .setMessage("현재 감시를 중지하고 '${target}' 역할로 다시 시작합니다.\n전환 중 1~2초간 감시가 중단됩니다.")
+            .setPositiveButton("전환") { _, _ -> performSwitchRole(mode) }
+            .setNegativeButton("취소", null)
+            .show()
+    }
+
+    private fun performSwitchRole(fromMode: String) {
+        stopServiceImmediately()
+        if (fromMode == "WALKER") onRoleSelected("DEVICE", BleConstants.CAT_FORKLIFT)
+        else onRoleSelected("WALKER", BleConstants.CAT_WALKER)
+    }
+
     private fun restoreRunningState() {
         val mode  = prefs.getString("running_mode", null) ?: return
         val since = prefs.getLong("running_since", 0L)
@@ -670,6 +695,7 @@ class MainActivity : AppCompatActivity() {
         binding.tvLocalState.text = "상태: 정지·일반 · 회전: 직진"
         lastLocalSnapshot = ""
         binding.tvRunningMode.text  = roleDisplayName(currentCategory)   // [v1.0.34] 3-Role 라벨
+        binding.btnSwitchRole.text  = "${switchTargetLabel()}로 전환"    // [v1.1.60] 전환 대상 동적 라벨
         binding.tvRunningSince.text = SimpleDateFormat("HH:mm 시작", Locale.KOREA).format(Date(since))
         // 이름 입력 시 이름, 없으면 자동 ID 표시
         val displayName = prefs.getString("display_name", "")?.trim()

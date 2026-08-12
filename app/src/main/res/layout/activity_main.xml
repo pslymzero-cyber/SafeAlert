@@ -248,6 +248,18 @@
                         android:foreground="?attr/selectableItemBackground"
                         android:visibility="gone"/>
 
+                    <!-- [v1.1.60] 역할 전환 버튼 — 확인 다이얼로그 후 정지→반대 역할 재시작 -->
+                    <Button
+                        android:id="@+id/btn_switch_role"
+                        android:layout_width="match_parent" android:layout_height="52dp"
+                        android:layout_marginTop="16dp"
+                        android:text="역할 전환" android:textSize="15sp"
+                        android:textStyle="bold"
+                        android:textColor="#0B1220" android:backgroundTint="#7DD3FC"
+                        android:stateListAnimator="@null"
+                        style="@style/Widget.MaterialComponents.Button.UnelevatedButton"
+                        app:cornerRadius="26dp"/>
+
                     <!-- 중지 버튼 (밝은 회백 필 버튼) -->
                     <Button
                         android:id="@+id/btn_stop"
@@ -381,9 +393,12 @@
                     </LinearLayout>
                 </androidx.cardview.widget.CardView>
 
-                <!-- [v1.0.34] EPJ(전동 파레트 잭) 역할 카드 -->
+                <!-- [v1.0.34] EPJ(전동 파레트 잭) 역할 카드
+                     [v1.1.60] 오더십 리뷰로 비하인드(gone) — 수신·판정·핸들러 코드는 전부 보존.
+                     부활 시 이 visibility 한 줄만 제거 -->
                 <androidx.cardview.widget.CardView
                     android:id="@+id/card_role_epj"
+                    android:visibility="gone"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"

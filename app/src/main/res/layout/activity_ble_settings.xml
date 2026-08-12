@@ -119,18 +119,22 @@
                 </LinearLayout>
             </androidx.cardview.widget.CardView>
 
-            <!-- [v1.1.25] EPJ ↔ EPJ 근접 경보 오프셋 — 거리 변별(3m 발령/5m 무음). 음수 허용 -->
+            <!-- [v1.1.25] EPJ ↔ EPJ 근접 경보 오프셋 — 거리 변별(3m 발령/5m 무음). 음수 허용
+                 [v1.1.60] EPJ 비하인드 — 3요소 gone(핸들러·저장 로직 보존, 부활 시 visibility 만 제거) -->
             <TextView android:text="EPJ끼리 근접 경보" android:textStyle="bold" android:textSize="15sp"
                 android:textColor="#111827" android:layout_width="wrap_content" android:layout_height="wrap_content"
-                android:layout_marginBottom="4dp"/>
+                android:layout_marginBottom="4dp"
+                android:visibility="gone"/>
             <TextView android:text="EPJ끼리는 5m 공존이 정상 · 값을 낮출수록(음수) 더 가까이(3m) 와야 울림"
                 android:textSize="12sp" android:textColor="#9CA3AF"
                 android:layout_width="wrap_content" android:layout_height="wrap_content"
-                android:layout_marginBottom="10dp"/>
+                android:layout_marginBottom="10dp"
+                android:visibility="gone"/>
 
             <androidx.cardview.widget.CardView
                 android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:layout_marginBottom="16dp"
+                android:visibility="gone"
                 app:cardCornerRadius="14dp" app:cardElevation="0dp"
                 app:cardBackgroundColor="#F0F4FF">
                 <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
