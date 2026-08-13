@@ -670,8 +670,13 @@ class MainActivity : AppCompatActivity() {
 
     private fun performSwitchRole(fromMode: String) {
         stopServiceImmediately()
-        if (fromMode == "WALKER") onRoleSelected("DEVICE", BleConstants.CAT_FORKLIFT)
-        else onRoleSelected("WALKER", BleConstants.CAT_WALKER)
+        // (v1.1.62 버그B) 정지→재시작 800ms 유예 — ACTION_STOP 처리(BLE teardown)와 신규 시작이
+        //   겹치면 광고/스캔 재초기화가 이전 인스턴스 정리와 경합한다.
+        statusHandler.postDelayed({
+            if (isFinishing || isDestroyed) return@postDelayed
+            if (fromMode == "WALKER") onRoleSelected("DEVICE", BleConstants.CAT_FORKLIFT)
+            else onRoleSelected("WALKER", BleConstants.CAT_WALKER)
+        }, 800L)
     }
 
     private fun restoreRunningState() {

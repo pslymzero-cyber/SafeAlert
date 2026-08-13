@@ -6,9 +6,12 @@ interface BleScanCallback {
     // [v1.1.11 C2] payloadPresent: 상대가 실제 1바이트 자기-신고를 송신했는지(true) / 비콘·구버전 부재(false).
     //   IDLE-IDLE 가청 억제를 '진짜 정지 자기-신고' 기기에만 적용해 이동 비콘 장비의 DANGER 무음화 구멍을 막는다.
     // [v1.1.53 상호RSSI] peerEchoRssi: 상대가 되돌려 보낸 '상대가 측정한 나의 RSSI'(rssi_me→peer). 부재/구버전=NO_ECHO_RSSI.
-    fun onDeviceDetected(deviceId: String, rssi: Int, alertLevel: Int, remoteState: Int, remoteTurn: Int = BleConstants.TURN_STRAIGHT, payloadPresent: Boolean = false, peerEchoRssi: Int = BleConstants.NO_ECHO_RSSI)
+    // (v1.1.62) peerInZone: 상대가 존 비콘 접촉(IN_ZONE) 선언 중인지(ServiceData 확장 바이트 bit0). 구버전/비콘=false.
+    fun onDeviceDetected(deviceId: String, rssi: Int, alertLevel: Int, remoteState: Int, remoteTurn: Int = BleConstants.TURN_STRAIGHT, payloadPresent: Boolean = false, peerEchoRssi: Int = BleConstants.NO_ECHO_RSSI, peerInZone: Boolean = false)
     fun onDeviceLost(deviceId: String)
     fun onScanError(errorCode: Int)
     // UWB 주소가 스캔 응답에서 파싱됐을 때 (기본: 무시)
     fun onUwbAddressReceived(deviceId: String, uwbAddress: ByteArray) {}
+    // (v1.1.62) 존 비콘(zoneMute 프로파일) 신호 — 기기 목록·판정에 넣지 않고 존 상태 머신에만 전달(기본: 무시)
+    fun onZoneBeaconSignal(beaconKey: String, rssi: Int, enterRssi: Int) {}
 }

@@ -120,6 +120,9 @@ class BleAdvertiser(
     //   BleService 가 자신의 alertState 최대 경보레벨을 updateRisk() 로 주기적으로 민다.
     //   상대 수신단이 decodeRisk 로 풀어 '자신 RSSI 게이트와 결합'(절충)해 경보를 격상 → 양방향 협력 알림.
     @Volatile private var currentRisk: Int = BleConstants.LEVEL_SAFE
+    // (v1.1.62) 존 비콘 접촉(IN_ZONE) 선언 — ServiceData 확장 바이트(bit0)로 송출.
+    //   BleService 존 상태 머신이 updateInZone() 으로 민다. 수신측은 이 기기를 무해(SAFE) 판정.
+    @Volatile private var currentInZone = false
     // [v1.0.36] STATE·Speed 재광고 공용 throttle 타임스탬프 (구 lastStateUpdateMs)
     private var lastPayloadUpdateMs = 0L
     // [v1.1.14] 위험상태(RISK) 전용 throttle 타임스탬프 — STATE/TURN throttle 과 독립.
@@ -221,7 +224,11 @@ class BleAdvertiser(
             .addServiceData(
                 ParcelUuid(UUID.fromString(BleConstants.SERVICE_UUID)),
                 byteArrayOf(
-                    BleConstants.encodePayload(category, currentState, currentTurnDir, currentRisk)
+                    BleConstants.encodePayload(category, currentState, currentTurnDir, currentRisk),
+                    // (v1.1.62) 확장 플래그 바이트 — bit0=IN_ZONE(존 비콘 접촉 선언).
+                    //   상태 1바이트(2-2-2-2)는 만석이라 1바이트 증설. 구버전 수신은 byte[0]만
+                    //   읽으므로 무해(뒤호환). ServiceData 5→6B, 전체 예산 28B ≤ 31B.
+                    (if (currentInZone) BleConstants.EXT_FLAG_IN_ZONE else 0).toByte()
                 )
             )
             .addManufacturerData(companyId, idBytes)
@@ -327,6 +334,20 @@ class BleAdvertiser(
         currentRisk = r
         lastRiskUpdateMs = now
         Log.d(TAG, "위험상태 송출 갱신 → $r (상승=$rising) 재광고")
+        restartAdvertise()
+    }
+
+    /**
+     * (v1.1.62) 존 비콘 접촉(IN_ZONE) 송출 갱신 — BleService 존 상태 머신이 진입/이탈 전이 시 민다.
+     *  존 전이는 디바운스(3표본 진입·히스테리시스 이탈)된 드문 이벤트라 별도 throttle 불필요.
+     *  슬립(paused) 중엔 restartAdvertise 가 no-op 이지만 필드는 갱신되므로 wake 시
+     *  startAdvertising 이 최신값을 자동 송출. reevaluateZones 의 주기 호출이 self-heal(동일값=no-op).
+     */
+    fun updateInZone(inZone: Boolean) {
+        if (stopped) return
+        if (inZone == currentInZone) return
+        currentInZone = inZone
+        Log.d(TAG, "IN_ZONE 갱신 → $inZone 재광고")
         restartAdvertise()
     }
 

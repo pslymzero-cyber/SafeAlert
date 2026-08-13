@@ -212,6 +212,15 @@ class BleService : LifecycleService() {
     // (v1.1.61) 항목4: 같은 경보레벨(WARNING/DANGER) 연속 체류 → 자동 뮤트까지의 시간.
     //   하드코드 상수 — 옵션 UI 는 사용자가 '추후'로 보류(임의 설정 노출 금지).
     private val DWELL_MUTE_MS = 5_000L
+    // (v1.1.62) 항목5: 존 비콘(안전구역) 상태 머신 상수.
+    //   진입=enterRssi 이상 연속 ZONE_MIN_SAMPLES 표본(순간 스파이크 오진입 방지),
+    //   이탈=enterRssi−ZONE_EXIT_HYST_DB 미만 즉시(히스테리시스 데드밴드로 경계 플랩 방지)
+    //        또는 신호 두절 ZONE_LOST_GRACE_MS 초과,
+    //   엔트리 폐기=ZONE_SIGNAL_STALE_MS 초과(맵 누수 방지). 존 판정은 raw RSSI(게인 미적용).
+    private val ZONE_MIN_SAMPLES     = 3
+    private val ZONE_EXIT_HYST_DB    = 5
+    private val ZONE_LOST_GRACE_MS   = 3_000L
+    private val ZONE_SIGNAL_STALE_MS = 4_000L
     private val muteHandler = android.os.Handler(android.os.Looper.getMainLooper())
     // [v1.0.46 #11] forceAlarmVolume 의 ignoringVolumeChange 해제(300ms) 전용 핸들러.
     //   muteHandler 공용이던 시절, muteTemporarily()의 removeCallbacksAndMessages(null)가 해제
@@ -229,7 +238,10 @@ class BleService : LifecycleService() {
     //   틀어막는 것을 방지한다. 위험 재광고(updateRisk)·목록·오버레이는 여전히 raw 레벨 사용
     //   (뮤트=소리·진동만 억제, 위험 '상태'는 불변이라는 스펙 그대로).
     private fun getAudibleMaxLevel() =
-        alertState.entries.filter { !isDwellMuted(it.key, it.value.first) }
+        // (v1.1.62) 내가 존 비콘 접촉 중이면 가청 최대레벨=SAFE — 존 안=전 기기 소리·진동 억제.
+        //   resyncSoundToRemaining/fail-quiet 재정합이 이 값을 쓰므로 존 진입=능동 정지, 이탈=즉시 복원.
+        if (myZoneInside) BleConstants.LEVEL_SAFE
+        else alertState.entries.filter { !isDwellMuted(it.key, it.value.first) }
             .maxOfOrNull { it.value.first } ?: BleConstants.LEVEL_SAFE
 
     // [v1.1.37 ③] UWB↔RSSI 보정 학습·조회 키 — 역할쌍(카테고리쌍) 세그먼트.
@@ -517,6 +529,17 @@ class BleService : LifecycleService() {
     private val dwellSinceMap       = mutableMapOf<String, Long>()            // deviceId → 그 레벨 진입 시각(ms)
     private val dwellMutedLevelsMap = mutableMapOf<String, MutableSet<Int>>() // deviceId → 뮤트된 레벨 집합
 
+    // (v1.1.62) 항목5: 존 비콘(안전구역) 상태 — 존 비콘은 detectedDevices/판정에 넣지 않고
+    //   BleScanner.onZoneBeaconSignal 별도 경로로만 흐른다. beaconKey="ZONE_"+uuid8/MAC.
+    //   myZoneInside=내가 존 안(어느 존이든 1개 이상 inside) → 자기 소리·진동 억제+광고 IN_ZONE 비트.
+    //   peerInZoneMap=상대의 IN_ZONE 선언 수신 캐시 → 그 기기를 무해(SAFE) 판정(억제 전용).
+    private val zoneSampleMap    = mutableMapOf<String, Int>()     // beaconKey → 진입 연속 표본 수
+    private val zoneEnterRssiMap = mutableMapOf<String, Int>()     // beaconKey → 프로파일 진입 임계(dBm)
+    private val zoneLastSeenMap  = mutableMapOf<String, Long>()    // beaconKey → 마지막 수신 시각(ms)
+    private val zoneInsideMap    = mutableMapOf<String, Boolean>() // beaconKey → 현재 존 안 여부
+    @Volatile private var myZoneInside = false
+    private val peerInZoneMap    = mutableMapOf<String, Boolean>() // deviceId → 상대 IN_ZONE 선언
+
     // [v1.0.29 다이나믹 페이로드] 0x02(급정거/급회전) 특수경보 기기의 표시문자열 덮어쓰기 맵.
     //   값 = "{이름}이(가) 급정거 또는 급회전 중입니다." → 오버레이/목록에서 일반 이름 대신 출력.
     private val suddenLabelMap    = mutableMapOf<String, String>()
@@ -644,6 +667,7 @@ class BleService : LifecycleService() {
             // [v1.1.14] 폴링 안전망 — 스캔이 잠시 끊겨도 내 최고 경보레벨을 위험상태(RISK)로 유지 송출.
             //   (주 송출은 onDeviceDetected 스캔주기. 동일레벨 no-op 라 중복 호출 무해.)
             bleAdvertiser?.updateRisk(getCurrentMaxLevel())
+            reevaluateZones()       // (v1.1.62) 존 신호 두절 이탈·스테일 엔트리 폐기 폴링(+IN_ZONE self-heal)
             pushRssiEcho()          // [v1.1.53 상호RSSI] 내가 측정한 상대 RSSI 표를 스캔응답 에코에 실어 되돌려 송출
             broadcastLocalState()   // [v1.0.42 Req2] 주기 갱신 — Local UI(상태/회전) 폴링 소스 최신 유지
             speedPushHandler.postDelayed(this, SPEED_PUSH_INTERVAL_MS)
@@ -846,8 +870,12 @@ class BleService : LifecycleService() {
                 val title = "${categoryRoleName(myCategory)} 실행 중"
                 startForeground(NOTIF_ID, buildNotification(title, "재시작됨"))
                 applyMode()
+                return START_STICKY
             }
-            return START_STICKY
+            // (v1.1.62 버그C) 복원 근거 없음(사용자 중지 상태에서 시스템 재기동) — BLE 없이
+            //   포그라운드 알림만 띄운 유령 인스턴스가 STICKY 로 영구 잔존하는 것을 차단.
+            stopSelf(startId)
+            return START_NOT_STICKY
         }
 
         when (intent?.action) {
@@ -982,7 +1010,7 @@ class BleService : LifecycleService() {
                     //   정상 소실(27개 상태맵 정리 포함) — 유예는 '연기'일 뿐 경로 자체는 불변.
                     s.uwbMeasuringCheck = { id -> freshUwbDistM(id) != null }
                     s.startScanning(object : BleScanCallback {
-                        override fun onDeviceDetected(deviceId: String, rssi: Int, alertLevel: Int, remoteState: Int, remoteTurn: Int, payloadPresent: Boolean, peerEchoRssi: Int) {
+                        override fun onDeviceDetected(deviceId: String, rssi: Int, alertLevel: Int, remoteState: Int, remoteTurn: Int, payloadPresent: Boolean, peerEchoRssi: Int, peerInZone: Boolean) {
                             lastScanResultMs = System.currentTimeMillis()
 
                             if (myMode == "WALKER"
@@ -996,6 +1024,8 @@ class BleService : LifecycleService() {
                             // [v1.1.23] 동일 게이트로 스캔 배칭도 0ms 즉시 전달 승격 — wakelock 으로 CPU 를 깨워도
                             //   배칭 500ms 면 BLE 칩이 0.5s 모아 효과 반감되므로 함께 0ms 로 내린다(false 복귀는 평가주기 집계).
                             if (effectiveRssi >= WAKE_RSSI_DBM) bleScanner?.setHazardNear(true)
+                            // (v1.1.62) 상대 IN_ZONE 선언 캐시 — processAlert 호출 전에 갱신해야 이번 표본 판정에 반영
+                            peerInZoneMap[deviceId] = peerInZone
                             try {
                                 processAlert(deviceId, effectiveRssi, remoteState, remoteTurn, payloadPresent, peerEchoRssi)
                                 // [v1.0.26 Req2] processAlert 가 alertState 를 어떻게 바꿨든(추가·격상·SAFE 제거·TTC 선발령)
@@ -1046,6 +1076,7 @@ class BleService : LifecycleService() {
                             oneSecBuffer.remove(deviceId)   // [v1.0.31] 게이트가 raw도 push → 신호소실 시 함께 정리
                             mutedDevices.remove(deviceId)
                             clearDwellMute(deviceId)          // (v1.1.61) 소실 = 존 이탈 — dwell 뮤트 리셋
+                            peerInZoneMap.remove(deviceId)    // (v1.1.62) 상대 IN_ZONE 캐시 정리(재등장 시 광고가 재선언)
                             suddenLabelMap.remove(deviceId)
                             deviceCategoryMap.remove(deviceId)
                             deviceStateMap.remove(deviceId)
@@ -1075,9 +1106,17 @@ class BleService : LifecycleService() {
                         }
                         override fun onScanError(errorCode: Int) { Log.e(TAG, "스캔 오류: $errorCode") }
                         override fun onUwbAddressReceived(deviceId: String, uwbAddress: ByteArray) {
+                            // (v1.1.62 버그A) walker 게이트 미러 — 판정(onDeviceDetected)이 거른 보행자끼리
+                            //   UWB 세션만 열리면 judgeUwbOnly 가 걸러진 기기를 되살린다. 세션 개설 자체를 차단.
+                            if (myMode == "WALKER" && deviceId.startsWith(BleConstants.WALKER_PREFIX)
+                                && !deviceId.contains("BEA_") && !DevSettings.walkerDetectsWalker) return
                             // [v1.1.43] 0x9ABC 관측 기록(진단용 — 판정 불사용) + 주소 전달 = 세션 (재)개설 경로
                             peerUwbSeenMap[deviceId] = System.currentTimeMillis()
                             uwbRanger?.onPeerUwbAddressReceived(deviceId, uwbAddress)
+                        }
+                        override fun onZoneBeaconSignal(beaconKey: String, rssi: Int, enterRssi: Int) {
+                            // (v1.1.62) 존 비콘 신호 → 서비스 존 상태 머신으로 배선(인터페이스 디폴트=no-op라 명시 필수)
+                            this@BleService.onZoneBeaconSignal(beaconKey, rssi, enterRssi)
                         }
                     })
                 }
@@ -1602,7 +1641,8 @@ class BleService : LifecycleService() {
         if ((rState == BleConstants.PSTATE_REVERSE || rState == BleConstants.PSTATE_LOADING)
             && !warmingUp                                   // [v1.0.45] 콜드스타트 임펄스 발령 보류
             && pEma    >= effDanger                          // [v1.0.45/v1.1.10] 거리판정: P-EMA, effDanger(페이로드 시프트)
-            && avg1sec >= effDanger) {
+            && avg1sec >= effDanger
+            && peerInZoneMap[deviceId] != true) {            // (v1.1.62) 상대 IN_ZONE 선언=무해 — 특수경보 진입 자체 차단
             deviceRssiMap[deviceId]  = kalmanRssi
             suddenLabelMap[deviceId] = makeStateLabel(extractDisplayName(deviceId), rCategory, rState)
             alertState[deviceId]     = Pair(BleConstants.LEVEL_DANGER, now)
@@ -1610,8 +1650,8 @@ class BleService : LifecycleService() {
             bleScanner?.setEcoMode(false)   // 즉시 전투 모드(ACTIVE)
             Log.w(TAG, "특수경보(STATE=$rState CAT=$rCategory): $deviceId pEma=$pEma kfRssi=%.1f".format(kfRssi))
             updateDwellMute(deviceId, BleConstants.LEVEL_DANGER, now)   // (v1.1.61) 특수경보도 체류 추적(연속 체류 5s = 뮤트)
-            // 무음(전역/개별/dwell)은 존중 — 상태·표시는 유지하되 소리/진동만 억제
-            if (isMuted || isDeviceMuted(deviceId) || isDwellMuted(deviceId, BleConstants.LEVEL_DANGER)) {
+            // 무음(전역/개별/dwell/존)은 존중 — 상태·표시는 유지하되 소리/진동만 억제
+            if (isMuted || isDeviceMuted(deviceId) || isDwellMuted(deviceId, BleConstants.LEVEL_DANGER) || myZoneInside) {
                 updateFloatingOverlay()
                 return
             }
@@ -1894,6 +1934,14 @@ class BleService : LifecycleService() {
             }
         }
 
+        // (v1.1.62) 항목5 피어 무해 판정 — 상대가 IN_ZONE(존 비콘 접촉·설정 세기 수신) 선언 중이면
+        //   레벨을 SAFE 로 클램프(억제 전용 — 격상 방향 오버라이드 없음). 아래 SAFE 처리가 자연 정리.
+        if (peerInZoneMap[deviceId] == true && stableLevel > BleConstants.LEVEL_SAFE) {
+            if (alertState.containsKey(deviceId))
+                Log.d(TAG, "(v1.1.62) 피어 존 무해 클램프: $deviceId level=$stableLevel -> SAFE")
+            stableLevel = BleConstants.LEVEL_SAFE
+        }
+
         // [v1.0.26 Req2] 개별 sendDetectedBroadcast 폐지 — 목록은 onDeviceDetected 처리 직후
         // broadcastDeviceList() 가 alertState 전체를 한 번에 송출한다(단일 진실 공급원).
 
@@ -1932,6 +1980,7 @@ class BleService : LifecycleService() {
                 fastApproachStreakMap.remove(deviceId)    // [v1.1.21] stale 카운터 → 재접근 시 1프레임에 즉시통과 방지
                 forwardBiasLatchMap.remove(deviceId)      // [v1.1.11 C1] SAFE 강등 → 래치 리셋(재접근 시 fresh)
                 clearDwellMute(deviceId)                  // (v1.1.61) SAFE 확정 = 존 이탈 — dwell 뮤트 리셋(재진입=정상 발령)
+                peerInZoneMap.remove(deviceId)            // (v1.1.62) SAFE 정리 — 다음 광고 표본이 재선언(스테일 캐시 방지)
                 wasStationaryMap.remove(deviceId)
                 recedingStartMap.remove(deviceId)
                 recedeRefMap.remove(deviceId)
@@ -2203,6 +2252,7 @@ class BleService : LifecycleService() {
             //   genuine 이탈로 stableLevel 이 이미 위험권 밖이면 복구가 되살리지 않아 ghost-danger 과알람도 없다.
             if (!isMuted && !isDeviceMuted(deviceId) && alertState.containsKey(deviceId) &&
                 !isDwellMuted(deviceId, stableLevel) &&   // (v1.1.61) dwell 뮤트 존중 — 의도된 무음은 '복구'하지 않는다
+                !myZoneInside &&                          // (v1.1.62) 존 안=가청 억제 — fail-loud 복구도 되살리지 않는다
                 stableLevel >= BleConstants.LEVEL_DANGER && !isDepartingNow &&   // [v1.1.22 B] 이탈측 무음복구 재발령 금지
                 activeSoundLevel < BleConstants.LEVEL_DANGER) {
                 forceAlarmVolume()
@@ -2231,7 +2281,8 @@ class BleService : LifecycleService() {
                     AlertSoundPlayer.stopSound()
                     activeSoundLevel = stableLevel
                     if (stableLevel == BleConstants.LEVEL_WARNING && !idleIdleQuiet &&
-                        !isDwellMuted(deviceId, BleConstants.LEVEL_WARNING)) {   // (v1.1.61) WARNING dwell 뮤트 시 재발령 생략(강등 정지는 유지)
+                        !isDwellMuted(deviceId, BleConstants.LEVEL_WARNING) &&   // (v1.1.61) WARNING dwell 뮤트 시 재발령 생략(강등 정지는 유지)
+                        !myZoneInside) {   // (v1.1.62) 존 안=가청 억제 — 정정 재발령도 생략(정지는 유지)
                         if (DevSettings.vibrationEnabled) VibrationHelper.vibrateWarning(this)
                         if (DevSettings.soundEnabled)     AlertSoundPlayer.playWarning(this)
                     }
@@ -2324,7 +2375,8 @@ class BleService : LifecycleService() {
         //   브로드캐스트·Firebase 등 나머지 발령 레시피는 그대로). 승인 예외: 빠른 접근(kfVel≥2.0,
         //   urgentBypass 의 속도항)은 뮤트 무시. median>=effDanger 항까지 쓰면 위험권에 '정지'한
         //   기기가 매 프레임 바이패스돼 영원히 안 뮤트("위험 거리도 동일하게" 스펙 무력화)라 속도항만.
-        val dwellSuppressed = isDwellMuted(deviceId, stableLevel) && kfVel < 2.0
+        // (v1.1.62) || myZoneInside — 존 비콘 접촉 중엔 무조건 가청 억제(urgentBypass 의 속도항도 안 뚫음).
+        val dwellSuppressed = (isDwellMuted(deviceId, stableLevel) && kfVel < 2.0) || myZoneInside
         if (!dwellSuppressed) forceAlarmVolume()
         val globalMax = getAudibleMaxLevel()   // (v1.1.61) 뮤트 기기 제외 — 무음 기기가 신규 경보를 못 막게
         if (stableLevel < globalMax) {
@@ -2442,6 +2494,10 @@ class BleService : LifecycleService() {
     //   가 조기 반환하므로 이중 발령 없음). 격상=표본 1개 즉시(지연 최소), 격하=연속 3표본 확증
     //   또는 이탈 운동학(separatingStreak≥3·closing<0) + 히스테리시스(임계+0.5m 유지).
     private fun judgeUwbOnly(deviceId: String, uwbD: Float, now: Long) {
+        // (v1.1.62 버그A) walker 게이트 이중 안전 — 세션 개설 차단(onUwbAddressReceived)이 1차지만,
+        //   이미 열린 세션의 잔여 표본이 이 경로로 들어와도 걸러진 기기를 되살리지 않는다.
+        if (myMode == "WALKER" && deviceId.startsWith(BleConstants.WALKER_PREFIX)
+            && !deviceId.contains("BEA_") && !DevSettings.walkerDetectsWalker) return
         val rCategory = deviceCategoryMap[deviceId]
         val rState    = deviceStateMap[deviceId]
         val forkliftPair = myCategory == BleConstants.CAT_FORKLIFT ||
@@ -2464,7 +2520,7 @@ class BleService : LifecycleService() {
         }
 
         // 격상·유지 = 표본 1개 즉시 반영. 격하 = 연속 표본 확증(단발 튐 방어) 또는 이탈 운동학 즉시.
-        val stableLevel: Int
+        var stableLevel: Int
         if (rawLevel >= prevLevel) {
             uwbSafeStreakMap[deviceId] = 0
             stableLevel = rawLevel
@@ -2482,17 +2538,26 @@ class BleService : LifecycleService() {
             }
         }
 
+        // (v1.1.62) 피어 IN_ZONE 무해 클램프 — canonical 미러(억제 전용 — 격상 방향 오버라이드 없음).
+        //   ★ uwbSafeStreakMap 리셋 금지 — 리셋하면 아래 SAFE 격하 확증(3표본)이 영영 차단된다.
+        if (peerInZoneMap[deviceId] == true && stableLevel > BleConstants.LEVEL_SAFE)
+            stableLevel = BleConstants.LEVEL_SAFE
+
         // 특수경보 — 후진/상하차 중 기기가 경고 반경 내 실측이면 즉시 DANGER (canonical 특수경보 미러)
         if (rCategory != null && rState != null &&
             (rState == BleConstants.PSTATE_REVERSE || rState == BleConstants.PSTATE_LOADING) &&
-            uwbD <= warnM) {
+            uwbD <= warnM &&
+            peerInZoneMap[deviceId] != true) {   // (v1.1.62) 상대 IN_ZONE 선언=무해 — 특수경보 진입 자체 차단
             suddenLabelMap[deviceId] = makeStateLabel(extractDisplayName(deviceId), rCategory, rState)
             alertState[deviceId] = Pair(BleConstants.LEVEL_DANGER, now)
             pendingDisplayMap.remove(deviceId)
             bleScanner?.setEcoMode(false)
             updateDwellMute(deviceId, BleConstants.LEVEL_DANGER, now)   // (v1.1.61) 특수경보도 체류 추적
             if (isMuted || isDeviceMuted(deviceId) ||
-                isDwellMuted(deviceId, BleConstants.LEVEL_DANGER)) { updateFloatingOverlay(); return }
+                isDwellMuted(deviceId, BleConstants.LEVEL_DANGER) ||
+                myZoneInside) {   // (v1.1.62) 존 안=가청 억제(상태·표시는 위에서 이미 반영)
+                updateFloatingOverlay(); return
+            }
             forceAlarmVolume()
             if (DevSettings.vibrationEnabled) VibrationHelper.vibrateDanger(this)
             if (DevSettings.soundEnabled)     AlertSoundPlayer.playDanger(this)
@@ -2530,6 +2595,7 @@ class BleService : LifecycleService() {
                 fastApproachStreakMap.remove(deviceId)
                 forwardBiasLatchMap.remove(deviceId)
                 clearDwellMute(deviceId)   // (v1.1.61) UWB 확증 SAFE = 존 이탈 — dwell 뮤트 리셋
+                peerInZoneMap.remove(deviceId)   // (v1.1.62) SAFE 정리 — 다음 광고 표본이 재선언(스테일 캐시 방지)
                 wasStationaryMap.remove(deviceId)
                 recedingStartMap.remove(deviceId)
                 recedeRefMap.remove(deviceId)
@@ -2593,7 +2659,8 @@ class BleService : LifecycleService() {
                     AlertSoundPlayer.stopSound()
                     activeSoundLevel = stableLevel
                     if (stableLevel == BleConstants.LEVEL_WARNING && !idleIdleQuiet &&
-                        !isDwellMuted(deviceId, BleConstants.LEVEL_WARNING)) {   // (v1.1.61) WARNING dwell 뮤트 시 재발령 생략(강등 정지는 유지)
+                        !isDwellMuted(deviceId, BleConstants.LEVEL_WARNING) &&   // (v1.1.61) WARNING dwell 뮤트 시 재발령 생략(강등 정지는 유지)
+                        !myZoneInside) {   // (v1.1.62) 존 안=가청 억제 — 정정 재발령도 생략(정지는 유지)
                         if (DevSettings.vibrationEnabled) VibrationHelper.vibrateWarning(this)
                         if (DevSettings.soundEnabled)     AlertSoundPlayer.playWarning(this)
                     }
@@ -2608,7 +2675,8 @@ class BleService : LifecycleService() {
         alertState[deviceId] = Pair(stableLevel, now)
         // (v1.1.61) 항목4 dwell 뮤트 게이트 — canonical 미러. UWB 경로엔 kfVel(RSSI 칼만 속도)이
         //   없으므로 바이패스 유사물을 발명하지 않는다(스펙 재해석 금지) — 뮤트면 소리·진동만 생략.
-        val dwellSuppressed = isDwellMuted(deviceId, stableLevel)
+        // (v1.1.62) || myZoneInside — 존 비콘 접촉 중엔 무조건 가청 억제.
+        val dwellSuppressed = isDwellMuted(deviceId, stableLevel) || myZoneInside
         if (!dwellSuppressed) forceAlarmVolume()
         val globalMax = getAudibleMaxLevel()   // (v1.1.61) 뮤트 기기 제외
         if (stableLevel < globalMax) return   // 더 높은 경보 재생 중 — 소리 격하 금지(우선순위)
@@ -2826,6 +2894,66 @@ class BleService : LifecycleService() {
         dwellLevelMap.remove(deviceId)
         dwellSinceMap.remove(deviceId)
         dwellMutedLevelsMap.remove(deviceId)
+    }
+
+    // ── (v1.1.62) 항목5: 존 비콘(안전구역) 상태 머신 ─────────────────────────
+    //   진입 = enterRssi 이상 ZONE_MIN_SAMPLES 연속 표본, 이탈 = enterRssi-5dB 미만 즉시
+    //   또는 신호 두절 GRACE 초과(reevaluateZones 폴링). 존 판정은 raw RSSI —
+    //   전역 게인·rssiOffset 미적용(BleScanner 가 경보 파이프라인 진입 전에 원신호로 배선).
+
+    /** 존 비콘 스캔 표본 1건 처리 — BleScanCallback.onZoneBeaconSignal 에서 배선. */
+    private fun onZoneBeaconSignal(beaconKey: String, rssi: Int, enterRssi: Int) {
+        zoneLastSeenMap[beaconKey] = System.currentTimeMillis()
+        zoneEnterRssiMap[beaconKey] = enterRssi
+        when {
+            rssi >= enterRssi -> {
+                val n = (zoneSampleMap[beaconKey] ?: 0) + 1
+                zoneSampleMap[beaconKey] = n
+                if (n >= ZONE_MIN_SAMPLES && zoneInsideMap[beaconKey] != true) {
+                    zoneInsideMap[beaconKey] = true
+                    Log.i(TAG, "(v1.1.62) 존 진입: $beaconKey rssi=$rssi (임계 $enterRssi, ${n}표본)")
+                }
+            }
+            rssi < enterRssi - ZONE_EXIT_HYST_DB -> {
+                zoneSampleMap[beaconKey] = 0
+                if (zoneInsideMap[beaconKey] == true) {
+                    zoneInsideMap[beaconKey] = false
+                    Log.i(TAG, "(v1.1.62) 존 이탈(세기 미달): $beaconKey rssi=$rssi < ${enterRssi - ZONE_EXIT_HYST_DB}")
+                }
+            }
+            else -> zoneSampleMap[beaconKey] = 0   // 데드밴드 — 상태 유지, 진입 연속성만 끊음
+        }
+        refreshMyZoneInside()
+    }
+
+    /** 평가주기 폴링 — 신호 두절 이탈(GRACE)·스테일 엔트리 폐기(STALE) + IN_ZONE 광고 self-heal. */
+    private fun reevaluateZones() {
+        val now = System.currentTimeMillis()
+        val iter = zoneLastSeenMap.entries.iterator()
+        while (iter.hasNext()) {
+            val e = iter.next()
+            if (now - e.value > ZONE_LOST_GRACE_MS && zoneInsideMap[e.key] == true) {
+                zoneInsideMap[e.key] = false; zoneSampleMap[e.key] = 0
+                Log.i(TAG, "(v1.1.62) 존 이탈(신호 두절): ${e.key}")
+            }
+            if (now - e.value > ZONE_SIGNAL_STALE_MS) {
+                zoneInsideMap.remove(e.key); zoneSampleMap.remove(e.key)
+                zoneEnterRssiMap.remove(e.key); iter.remove()
+            }
+        }
+        refreshMyZoneInside()
+        bleAdvertiser?.updateInZone(myZoneInside)   // self-heal — 동일값이면 no-op
+    }
+
+    /** 존 접촉 총괄 갱신 — 진입=능동 사운드 정지·이탈=즉시 복원 + IN_ZONE 광고 반영. */
+    private fun refreshMyZoneInside() {
+        val inside = zoneInsideMap.values.any { it }
+        if (inside == myZoneInside) return
+        myZoneInside = inside
+        resyncSoundToRemaining()   // getAudibleMaxLevel 이 존 안=SAFE 반환 → 진입=능동 정지, 이탈=즉시 복원
+        bleAdvertiser?.updateInZone(inside)
+        sendStatusBroadcast(if (inside) "존 비콘 접촉 — 경보 무음(안전구역)" else "존 이탈 — 경보 복원")
+        Log.i(TAG, "(v1.1.62) myZoneInside=$inside")
     }
 
     /**
@@ -3385,6 +3513,8 @@ class BleService : LifecycleService() {
         pendingDisplayMap.clear()        // [v1.0.49 #3] 보류 표시 정리
         mutedDevices.clear()
         dwellLevelMap.clear(); dwellSinceMap.clear(); dwellMutedLevelsMap.clear()   // (v1.1.61) dwell 뮤트 일괄 정리
+        zoneSampleMap.clear(); zoneEnterRssiMap.clear(); zoneLastSeenMap.clear()    // (v1.1.62) 존 상태 일괄 정리
+        zoneInsideMap.clear(); myZoneInside = false; peerInZoneMap.clear()
         forwardBiasLatchMap.clear()      // [v1.1.11 C1] 전진가산 래치 일괄 정리(다른 26개 맵과 정합)
         firebaseLastSaveMap.clear()
         peerUwbSeenMap.clear()           // [v1.1.41] UWB 배타판정 신선도·격하 카운터 일괄 정리

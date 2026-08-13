@@ -146,6 +146,10 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
                 val payloadPresent = payloadByte != null   // [v1.1.11 C2] 실제 1바이트 자기-신고 수신 여부(비콘/구버전=false)
                 val remoteState   = payloadByte ?: BleConstants.MOTION_STATE_STATIONARY
                 val remoteTurn    = if (payloadByte != null) BleConstants.decodeTurn(payloadByte) else BleConstants.TURN_STRAIGHT
+                // (v1.1.62) ServiceData 2번째(확장) 바이트 — bit0=IN_ZONE(존 비콘 접촉 선언).
+                //   구버전 송신·비콘은 바이트 부재 → 0 → false(뒤호환).
+                val extByte    = svcData?.getOrNull(1)?.toInt()?.and(0xFF) ?: 0
+                val peerInZone = (extByte and BleConstants.EXT_FLAG_IN_ZONE) != 0
 
                 // [v1.1.53] 상호 RSSI 에코 파싱 — 상대 스캔응답 0xE0C0 테이블에서 '내 해시' 엔트리를
                 //   찾으면 그것이 '상대가 나를 들은 RSSI(rssi_me→peer)'. 양측이 sym 으로 대칭 판정한다.
@@ -158,7 +162,7 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
 
                 BleService.safeAlertFound++
                 detectedDevices[fullId] = System.currentTimeMillis()
-                scanCallback?.onDeviceDetected(fullId, rssi, alertLevel, remoteState, remoteTurn, payloadPresent, peerEchoRssi)
+                scanCallback?.onDeviceDetected(fullId, rssi, alertLevel, remoteState, remoteTurn, payloadPresent, peerEchoRssi, peerInZone)
 
                 // UWB 주소 스캔 응답 파싱 (지원 기기 한정)
                 // (v1.1.30) DEVICE(컨트롤러)=4바이트(주소+채널+프리앰블), WALKER(컨트롤리)=2바이트 — 있는 만큼 전달
@@ -174,6 +178,13 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
             if (iBeaconData != null) {
                 val uuid = BeaconRegistry.parseIBeaconUuid(iBeaconData)
                 if (uuid != null && BeaconRegistry.containsUuid(uuid)) {
+                    // (v1.1.62) 존 비콘(zoneMute)은 경보 대상이 아니라 안전구역 마커 —
+                    //   기기 목록·판정에 넣지 않고 존 신호 경로로만 전달한다(raw RSSI, 게인 미적용).
+                    val zp = BeaconRegistry.findZoneProfileByUuid(uuid)
+                    if (zp != null) {
+                        scanCallback?.onZoneBeaconSignal("ZONE_${uuid.take(8)}", result.rssi, zp.zoneEnterRssi)
+                        return
+                    }
                     // [v1.0.25 Req3] 상태줄(tv_ble_status) 오염 방지 — 비콘 정보를 status로 보내지 않는다.
                     val fullId = BleConstants.WALKER_PREFIX + "BEA_${uuid.take(8)}"
                     val rssi   = result.rssi
@@ -188,6 +199,12 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
             record.serviceUuids?.forEach { parcelUuid ->
                 val uuidStr = parcelUuid.uuid.toString().uppercase()
                 if (BeaconRegistry.containsUuid(uuidStr)) {
+                    // (v1.1.62) 존 비콘 분기 — iBeacon 경로와 동일
+                    val zp = BeaconRegistry.findZoneProfileByUuid(uuidStr)
+                    if (zp != null) {
+                        scanCallback?.onZoneBeaconSignal("ZONE_${uuidStr.take(8)}", result.rssi, zp.zoneEnterRssi)
+                        return
+                    }
                     val fullId = BleConstants.WALKER_PREFIX + "BEA_${uuidStr.take(8)}"
                     detectedDevices[fullId] = System.currentTimeMillis()
                     scanCallback?.onDeviceDetected(fullId, result.rssi, calcAlertLevel(result.rssi), BleConstants.MOTION_STATE_STATIONARY)
@@ -198,6 +215,12 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
             // MAC 기반 비콘
             val mac = result.device.address ?: return
             if (BeaconRegistry.containsMac(mac)) {
+                // (v1.1.62) 존 비콘 분기 — iBeacon 경로와 동일
+                val zp = BeaconRegistry.findZoneProfileByMac(mac)
+                if (zp != null) {
+                    scanCallback?.onZoneBeaconSignal("ZONE_${mac.replace(":", "")}", result.rssi, zp.zoneEnterRssi)
+                    return
+                }
                 val fullId = BleConstants.WALKER_PREFIX + "BEA_${mac.replace(":", "")}"
                 detectedDevices[fullId] = System.currentTimeMillis()
                 scanCallback?.onDeviceDetected(fullId, result.rssi, calcAlertLevel(result.rssi), BleConstants.MOTION_STATE_STATIONARY)

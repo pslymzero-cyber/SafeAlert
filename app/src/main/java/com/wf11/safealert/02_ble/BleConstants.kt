@@ -22,6 +22,11 @@ object BleConstants {
     const val ECHO_ENTRY_SIZE      = 3        // 엔트리당 바이트(2바이트 해시 + 1바이트 signed RSSI)
     const val NO_ECHO_RSSI         = Int.MIN_VALUE   // 에코 부재 센티널(RSSI 는 음수 dBm 이라 MIN_VALUE 안전)
 
+    // (v1.1.62) ServiceData 2번째(확장) 바이트 bit0 — 존 비콘 접촉 선언.
+    //   상태 1바이트(2-2-2-2)는 만석이라 ServiceData 에 확장 바이트를 1개 증설한다.
+    //   구버전 수신은 byte[0]만 읽으므로 무해(뒤호환), 구버전 송신은 byte[1] 부재 → false 해석.
+    const val EXT_FLAG_IN_ZONE     = 0x01
+
     // RSSI >= 임계값 → 경보 (가까울수록 RSSI가 0에 가까워짐)
     // 경고: 더 멀리서(더 음수), 위험: 더 가까이서(덜 음수)
     // [v1.0.48 #6] (구) txPower=-38/n=2.53 거리 환산 주석 폐기 — v1.0.39 에서 거리계산 파생을

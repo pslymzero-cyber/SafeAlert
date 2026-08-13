@@ -25,11 +25,13 @@ object BeaconRegistry {
             (0 until arr.length()).map { i ->
                 val obj = arr.getJSONObject(i)
                 BeaconProfile(
-                    uuid       = obj.getString("uuid").uppercase(),
-                    label      = obj.getString("label"),
-                    type       = obj.optString("type", "IBEACON"),
-                    addedAt    = obj.optLong("addedAt", 0L),
-                    rssiOffset = obj.optInt("rssiOffset", 0)
+                    uuid          = obj.getString("uuid").uppercase(),
+                    label         = obj.getString("label"),
+                    type          = obj.optString("type", "IBEACON"),
+                    addedAt       = obj.optLong("addedAt", 0L),
+                    rssiOffset    = obj.optInt("rssiOffset", 0),
+                    zoneMute      = obj.optBoolean("zoneMute", false),
+                    zoneEnterRssi = obj.optInt("zoneEnterRssi", -65)
                 )
             }
         }.getOrDefault(emptyList())
@@ -40,6 +42,13 @@ object BeaconRegistry {
 
     fun containsMac(mac: String): Boolean =
         getAll().any { it.type == "MAC" && it.uuid.equals(mac.trim(), ignoreCase = true) }
+
+    // (v1.1.62) 존 비콘(zoneMute) 프로파일 조회 — 스캐너가 경보 대상에서 제외하고 존 신호로 돌리기 위함
+    fun findZoneProfileByUuid(uuid: String): BeaconProfile? =
+        getAll().firstOrNull { it.zoneMute && it.type != "MAC" && it.uuid.equals(uuid.trim(), ignoreCase = true) }
+
+    fun findZoneProfileByMac(mac: String): BeaconProfile? =
+        getAll().firstOrNull { it.zoneMute && it.type == "MAC" && it.uuid.equals(mac.trim(), ignoreCase = true) }
 
     fun getLabelByUuid(uuid: String): String =
         getAll().firstOrNull { it.uuid.equals(uuid.trim(), ignoreCase = true) }?.label ?: uuid
@@ -74,11 +83,13 @@ object BeaconRegistry {
         val arr = JSONArray()
         list.forEach { p ->
             arr.put(JSONObject().apply {
-                put("uuid",       p.uuid)
-                put("label",      p.label)
-                put("type",       p.type)
-                put("addedAt",    p.addedAt)
-                put("rssiOffset", p.rssiOffset)
+                put("uuid",          p.uuid)
+                put("label",         p.label)
+                put("type",          p.type)
+                put("addedAt",       p.addedAt)
+                put("rssiOffset",    p.rssiOffset)
+                put("zoneMute",      p.zoneMute)
+                put("zoneEnterRssi", p.zoneEnterRssi)
             })
         }
         return arr.toString()
@@ -92,11 +103,13 @@ object BeaconRegistry {
             val uuid = obj.optString("uuid", "").trim().uppercase()
             if (uuid.isEmpty()) return@mapNotNull null
             BeaconProfile(
-                uuid       = uuid,
-                label      = obj.optString("label", uuid),
-                type       = obj.optString("type", "IBEACON"),
-                addedAt    = obj.optLong("addedAt", 0L),
-                rssiOffset = obj.optInt("rssiOffset", 0)
+                uuid          = uuid,
+                label         = obj.optString("label", uuid),
+                type          = obj.optString("type", "IBEACON"),
+                addedAt       = obj.optLong("addedAt", 0L),
+                rssiOffset    = obj.optInt("rssiOffset", 0),
+                zoneMute      = obj.optBoolean("zoneMute", false),
+                zoneEnterRssi = obj.optInt("zoneEnterRssi", -65)
             )
         }
     }.getOrDefault(emptyList())

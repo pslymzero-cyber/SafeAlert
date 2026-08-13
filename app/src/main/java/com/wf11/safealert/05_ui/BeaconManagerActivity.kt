@@ -92,6 +92,18 @@ class BeaconManagerActivity : AppCompatActivity() {
         }
         layout.addView(etLabel)
         layout.addView(etMac)
+        // (v1.1.62) 항목5: 존 비콘(안전구역) 등록 옵션 — 접촉 기기는 IN_ZONE 송출+무음, 상대는 무해 판정
+        val cbZone = CheckBox(this).apply { text = "존 비콘(안전구역) — 접촉 기기는 무해 판정" }
+        val etZoneRssi = EditText(this).apply {
+            hint = "존 판정 신호 세기 dBm (기본 -65)"
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_SIGNED
+            visibility = View.GONE
+        }
+        cbZone.setOnCheckedChangeListener { _, checked ->
+            etZoneRssi.visibility = if (checked) View.VISIBLE else View.GONE
+        }
+        layout.addView(cbZone)
+        layout.addView(etZoneRssi)
 
         AlertDialog.Builder(this)
             .setTitle("MAC 주소 비콘 등록")
@@ -105,9 +117,12 @@ class BeaconManagerActivity : AppCompatActivity() {
                     Toast.makeText(this, "MAC 형식이 올바르지 않습니다\n예: AA:BB:CC:DD:EE:FF", Toast.LENGTH_SHORT).show()
                     return@setPositiveButton
                 }
-                val ok = BeaconRegistry.add(BeaconProfile(mac, label, "MAC", rssiOffset = 15))
+                val zoneRssi = (etZoneRssi.text.toString().trim().toIntOrNull() ?: -65).coerceIn(-100, -30)
+                val ok = BeaconRegistry.add(BeaconProfile(mac, label, "MAC", rssiOffset = 15,
+                    zoneMute = cbZone.isChecked, zoneEnterRssi = zoneRssi))
                 // SmartTag/하드웨어 비콘은 기본 +15dBm (약 3배 범위) 적용
-                if (ok) { Toast.makeText(this, "등록됨: $label (범위 +15dBm)", Toast.LENGTH_SHORT).show(); refreshProfiles() }
+                val zoneNote = if (cbZone.isChecked) " · 존(${zoneRssi}dBm)" else ""
+                if (ok) { Toast.makeText(this, "등록됨: $label (범위 +15dBm)$zoneNote", Toast.LENGTH_SHORT).show(); refreshProfiles() }
                 else    Toast.makeText(this, "이미 등록되어 있거나 한도 초과", Toast.LENGTH_SHORT).show()
             }
             .setNegativeButton("취소", null)
@@ -151,12 +166,25 @@ class BeaconManagerActivity : AppCompatActivity() {
             setSelection(1)   // (v1.1.17) 신규 등록 기본 = 넓게 +10dBm (비콘이 더 먼 거리에서 알림)
         }
 
+        // (v1.1.62) 항목5: 존 비콘(안전구역) 등록 옵션 — 접촉 기기는 IN_ZONE 송출+무음, 상대는 무해 판정
+        val cbZone = CheckBox(this).apply { text = "존 비콘(안전구역) — 접촉 기기는 무해 판정" }
+        val etZoneRssi = EditText(this).apply {
+            hint = "존 판정 신호 세기 dBm (기본 -65)"
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_SIGNED
+            visibility = View.GONE
+        }
+        cbZone.setOnCheckedChangeListener { _, checked ->
+            etZoneRssi.visibility = if (checked) View.VISIBLE else View.GONE
+        }
+
         layout.addView(etLabel)
         layout.addView(etUuid)
         layout.addView(TextView(this).apply { text = "유형"; setPadding(0, 24, 0, 4) })
         layout.addView(spType)
         layout.addView(TextView(this).apply { text = "감지 범위 (이 UUID 그룹 전체)"; setPadding(0, 24, 0, 4) })
         layout.addView(spRange)
+        layout.addView(cbZone)
+        layout.addView(etZoneRssi)
 
         AlertDialog.Builder(this)
             .setTitle("UUID 프로파일 추가")
@@ -171,10 +199,13 @@ class BeaconManagerActivity : AppCompatActivity() {
                 }
                 val type   = if (spType.selectedItemPosition == 0) "IBEACON" else "SERVICE_UUID"
                 val offset = when (spRange.selectedItemPosition) { 1 -> 10; 2 -> 20; else -> 0 }
-                val ok = BeaconRegistry.add(BeaconProfile(uuid, label, type, rssiOffset = offset))
+                val zoneRssi = (etZoneRssi.text.toString().trim().toIntOrNull() ?: -65).coerceIn(-100, -30)
+                val ok = BeaconRegistry.add(BeaconProfile(uuid, label, type, rssiOffset = offset,
+                    zoneMute = cbZone.isChecked, zoneEnterRssi = zoneRssi))
                 if (ok) {
                     val rangeNote = if (offset > 0) " (범위 +${offset}dBm)" else ""
-                    Toast.makeText(this, "등록됨: $label$rangeNote", Toast.LENGTH_SHORT).show()
+                    val zoneNote  = if (cbZone.isChecked) " · 존(${zoneRssi}dBm)" else ""
+                    Toast.makeText(this, "등록됨: $label$rangeNote$zoneNote", Toast.LENGTH_SHORT).show()
                     refreshProfiles()
                 } else Toast.makeText(this, "이미 등록되어 있거나 한도 초과", Toast.LENGTH_SHORT).show()
             }
@@ -464,7 +495,9 @@ class BeaconManagerActivity : AppCompatActivity() {
                 p.rssiOffset > 0   -> "범위 +${p.rssiOffset}dBm"
                 else               -> "기본 범위"
             }
-            h.b.tvType.text = "$typeStr · $rangeStr"
+            // (v1.1.62) 존 비콘 마커 — 목록에서 안전구역 프로파일 식별
+            val zoneStr = if (p.zoneMute) " · 존(${p.zoneEnterRssi}dBm)" else ""
+            h.b.tvType.text = "$typeStr · $rangeStr$zoneStr"
             h.b.btnDelete.setOnClickListener {
                 AlertDialog.Builder(this@BeaconManagerActivity)
                     .setTitle("삭제 확인").setMessage("'${p.label}' UUID 프로파일을 삭제하시겠습니까?\n이 UUID의 비콘이 전부 감지되지 않습니다.")
