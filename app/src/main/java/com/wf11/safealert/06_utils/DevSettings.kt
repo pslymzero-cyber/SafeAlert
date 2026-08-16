@@ -171,10 +171,11 @@ object DevSettings {
     // [v1.0.42] calibRssiAt1m / pathLossExp / resetCalibration() / DEFAULT_CALIB 전면 제거.
     //   거리 추정은 칼만 필터(RSSI)만으로 수행 — RSSI→거리 환산식·경로손실 모델 폐지.
 
-    // 알람 볼륨 게인 (0~100%)
+    // 알람 볼륨 게인 (50~100%) — (v1.1.63) BLE 감지 설정 [경보 기본]으로 이동하며 하한 50% 고정
+    //   (사용자 지시: 50% 미만 설정 불가). 저장돼 있던 옛 값(<50)도 getter 에서 50 으로 올려 읽는다.
     var alarmVolume: Int
-        get() = prefs.getInt(KEY_ALARM_VOLUME, 100)
-        set(v) = prefs.edit().putInt(KEY_ALARM_VOLUME, v.coerceIn(0, 100)).apply()
+        get() = prefs.getInt(KEY_ALARM_VOLUME, 100).coerceIn(50, 100)
+        set(v) = prefs.edit().putInt(KEY_ALARM_VOLUME, v.coerceIn(50, 100)).apply()
 
     // 송수신 설정
     var deviceTx: Boolean
@@ -712,12 +713,14 @@ object DevSettings {
 
     // (v1.1.55) Level 2 에코편차 자동보정 — v1.1.54 에코 히스토그램의 기기쌍 중앙값으로 TX/RX
     //   체계 비대칭을 상쇄한다. echoCal = clamp(−중앙값/2, ±clampDb) 를 totalOffset 에 합산
-    //   (절반 = 거울쌍 양쪽이 각자 절반씩 물러나 대칭점 수렴). 기본 OFF — 실기 검증 후 수동 활성화.
+    //   (절반 = 거울쌍 양쪽이 각자 절반씩 물러나 대칭점 수렴).
+    //   기본값: v1.1.55~62 OFF(실기 검증 후 수동 활성화) → (v1.1.63) 기본 ON 으로 전환(사용자 지시)
+    //   + 스위치·튜너블·진단이 BLE 감지 설정 [경보 기본]으로 이관. 안전장구는 그대로(중앙값·클램프·게이트·킬스위치).
     //   v1.1.49 학습오염(uwbCalibOffset 제거) 전례가 있으나 구조가 다르다: 에코편차는 양방향 차동
-    //   측정이라 NLOS 가 공통모드로 1차 상쇄된다. 그래도 동일 안전장구(중앙값·클램프·게이트·킬스위치).
+    //   측정이라 NLOS 가 공통모드로 1차 상쇄된다.
     private const val KEY_ECHO_AUTO_CALIB = "echo_auto_calib_enabled"
     var echoAutoCalibEnabled: Boolean
-        get() = prefs.getBoolean(KEY_ECHO_AUTO_CALIB, false)
+        get() = prefs.getBoolean(KEY_ECHO_AUTO_CALIB, true)
         set(v) = prefs.edit().putBoolean(KEY_ECHO_AUTO_CALIB, v).apply()
 
     // (v1.1.55) 보정 성립 최소 에코틱 — 판정 ~120ms 주기 기준 3,000틱 ≈ 근접 실측 6분(세션 무관 누적).

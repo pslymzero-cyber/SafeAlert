@@ -39,15 +39,16 @@ class DevSettingsActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityDevSettingsBinding.inflate(layoutInflater)
         setContentView(binding.root)
-        supportActionBar?.apply { title = "⚙ 개발자 설정"; setDisplayHomeAsUpEnabled(true) }
+        // (v1.1.63) 테마 NoActionBar → supportActionBar 는 null(no-op). 헤더는 레이아웃 SA.TopBar 가 담당.
+        supportActionBar?.apply { title = "개발자 설정"; setDisplayHomeAsUpEnabled(true) }
         loadValues()
         setupListeners()
+        setupAccordion()
+        updateSectionSummaries()
     }
 
     private fun loadValues() {
-        // 경보 볼륨
-        binding.seekAlarmVolume.progress = DevSettings.alarmVolume
-        binding.tvAlarmVolumeVal.text    = "${DevSettings.alarmVolume}%"
+        // (v1.1.63) 경보 볼륨은 BLE 감지 설정 [경보 기본]으로 이동(50~100%).
         // 송수신 모드
         binding.switchWalkerDetectsWalker.isChecked = DevSettings.walkerDetectsWalker
         binding.switchDeviceTx.isChecked = DevSettings.deviceTx
@@ -117,11 +118,21 @@ class DevSettingsActivity : AppCompatActivity() {
         // (v1.1.38 B·C) UWB 강제 스위치 상태 복원 + 진단 라인 초기 갱신
         binding.swUwbForce.isChecked = DevSettings.uwbForce
         refreshUwbDiag()
-        // [v1.1.55] Level 2 에코 자동보정 — 킬스위치 + 게이트 튜너블 3종
-        binding.swEchoAutoCalib.isChecked = DevSettings.echoAutoCalibEnabled
-        binding.etEchoMinTicks.setText(DevSettings.echoCalMinTicks.toString())
-        binding.etEchoMaxIqr.setText(DevSettings.echoCalMaxIqrDb.toString())
-        binding.etEchoClamp.setText(DevSettings.echoCalClampDb.toString())
+        // (v1.1.63) [협력·교환] — BLE 감지 설정에서 이관: 상호 RSSI 교환 + 협력 수용 완화(0~20 dB)
+        binding.swReciprocalRssi.isChecked = DevSettings.reciprocalRssiEnabled
+        binding.seekCoopSlack.progress = DevSettings.coopSlackDb.coerceIn(0, 20)
+        updateCoopSlackLabel()
+        // (v1.1.63) [UWB 고급] — BLE 감지 설정에서 이관: 위험 승격(v1.1.32)·접근속도 승격·이탈 해제(v1.1.34).
+        //   기본 OFF(옵트인) 유지, UWB 미지원 기기는 비활성.
+        binding.swUwbPromote.isChecked    = DevSettings.uwbPromoteEnabled
+        binding.swUwbVelPromote.isChecked = DevSettings.uwbVelPromoteEnabled
+        binding.swUwbVelRelease.isChecked = DevSettings.uwbVelReleaseEnabled
+        if (!UwbRanger.isHardwareSupported(this)) {
+            binding.swUwbPromote.isEnabled    = false
+            binding.swUwbVelPromote.isEnabled = false
+            binding.swUwbVelRelease.isEnabled = false
+        }
+        // [v1.1.55→v1.1.63] Level 2 에코 자동보정(스위치·튜너블 3종·진단·초기화)은 BLE 감지 설정으로 이관.
     }
 
     private fun setupListeners() {
@@ -131,10 +142,7 @@ class DevSettingsActivity : AppCompatActivity() {
         //   onPause 안전망) 반영된다. 값 변환식은 이전 saveValues 와 동일. 화면 종료는 기기 뒤로가기.
 
         // ── SeekBar : 라벨 갱신 + 즉시 기록 ──────────────────────────────
-        binding.seekAlarmVolume.setOnSeekBarChangeListener(seekListener { v ->
-            binding.tvAlarmVolumeVal.text = "$v%"
-            DevSettings.alarmVolume = v
-        })
+        //   (v1.1.63) 경보 볼륨 슬라이더는 BLE 감지 설정으로 이동.
         binding.seekSimRssi.setOnSeekBarChangeListener(seekListener { v ->
             binding.tvSimRssiVal.text = "${v - 100} dBm"
             DevSettings.simulatedRssi = v - 100
@@ -160,14 +168,17 @@ class DevSettingsActivity : AppCompatActivity() {
         binding.seekWalkerEquipBias.setOnSeekBarChangeListener(seekListener { v ->
             binding.tvWalkerEquipBiasVal.text = "$v dB"
             DevSettings.walkerVsEquipBiasDb = v
+            updateSectionSummaries()
         })
         binding.seekWalkerEpjBias.setOnSeekBarChangeListener(seekListener { v ->
             binding.tvWalkerEpjBiasVal.text = "$v dB"
             DevSettings.walkerVsEpjBiasDb = v
+            updateSectionSummaries()
         })
         binding.seekEquipEquipBias.setOnSeekBarChangeListener(seekListener { v ->
             binding.tvEquipEquipBiasVal.text = "$v dB"
             DevSettings.equipVsEquipBiasDb = v
+            updateSectionSummaries()
         })
 
         // ── Switch : 즉시 기록 (+ 의존 UI 갱신) ─────────────────────────
@@ -176,8 +187,8 @@ class DevSettingsActivity : AppCompatActivity() {
         binding.switchDeviceRx.setOnCheckedChangeListener { _, c -> DevSettings.deviceRx = c }
         binding.switchWalkerTx.setOnCheckedChangeListener { _, c -> DevSettings.walkerTx = c }
         binding.switchWalkerRx.setOnCheckedChangeListener { _, c -> DevSettings.walkerRx = c }
-        binding.switchVibration.setOnCheckedChangeListener { _, c -> DevSettings.vibrationEnabled = c }
-        binding.switchSound.setOnCheckedChangeListener { _, c -> DevSettings.soundEnabled = c }
+        binding.switchVibration.setOnCheckedChangeListener { _, c -> DevSettings.vibrationEnabled = c; updateSectionSummaries() }
+        binding.switchSound.setOnCheckedChangeListener { _, c -> DevSettings.soundEnabled = c; updateSectionSummaries() }
         binding.switchAutoSave.setOnCheckedChangeListener { _, c -> DevSettings.autoSaveAlerts = c }
         binding.switchVerbose.setOnCheckedChangeListener { _, c -> DevSettings.logVerbose = c }
         binding.switchDebug.setOnCheckedChangeListener { _, c ->
@@ -191,16 +202,17 @@ class DevSettingsActivity : AppCompatActivity() {
             DevSettings.uwbForce = c
             nudgeUwbReapply()
             refreshUwbDiag()
+            updateSectionSummaries()
         }
 
         // ── Spinner : 선택 즉시 기록 ────────────────────────────────────
         //   scanPeriod·advertise 는 적용 시 스캐너/광고 재구성을 유발 → 값이 실제로 바뀔 때만 기록
         //   (화면 진입 시 복원 선택으로 인한 불필요한 스캔/광고 재시작 방지). 그 외는 라이브 read 라 무해.
-        bindSpinner(binding.spinnerScanPeriod) { val nv = scanPeriodValues[it]; if (DevSettings.scanPeriodMs != nv) DevSettings.scanPeriodMs = nv }
-        bindSpinner(binding.spinnerAdvertise)  { val nv = advertiseValues[it];  if (DevSettings.advertiseInterval != nv) DevSettings.advertiseInterval = nv }
+        bindSpinner(binding.spinnerScanPeriod) { val nv = scanPeriodValues[it]; if (DevSettings.scanPeriodMs != nv) DevSettings.scanPeriodMs = nv; updateSectionSummaries() }
+        bindSpinner(binding.spinnerAdvertise)  { val nv = advertiseValues[it];  if (DevSettings.advertiseInterval != nv) DevSettings.advertiseInterval = nv; updateSectionSummaries() }
         bindSpinner(binding.spinnerVibWarning) { DevSettings.vibrationWarningMs = vibWarningValues[it] }
         bindSpinner(binding.spinnerVibCount)   { DevSettings.vibrationDangerCount = vibCountValues[it] }
-        bindSpinner(binding.spTtcThreshold)    { DevSettings.ttcThresholdSec = ttcPresets[it] }
+        bindSpinner(binding.spTtcThreshold)    { DevSettings.ttcThresholdSec = ttcPresets[it]; updateSectionSummaries() }
         bindSpinner(binding.spMinApproachVel)  { DevSettings.minApproachVelDbm = approachVelPresets[it] }
         bindSpinner(binding.spTimegateVel)     { DevSettings.timeGateVelDbm = gateVelPresets[it] }
         bindSpinner(binding.spClosingFactor)   { DevSettings.closingKmhToDbms = closingPresets[it] }
@@ -232,24 +244,24 @@ class DevSettingsActivity : AppCompatActivity() {
         bindLongField(binding.etFbThrottle,          { DevSettings.firebaseThrottleMs },     { DevSettings.firebaseThrottleMs = it })
         bindLongField(binding.etSpeedPush,           { DevSettings.speedPushIntervalMs },    { DevSettings.speedPushIntervalMs = it })
 
-        // [v1.1.55] Level 2 에코 자동보정 — 스위치는 즉시, 수치는 포커스 아웃 확정(coerce 는 DevSettings 셋터)
-        binding.swEchoAutoCalib.setOnCheckedChangeListener { _, c ->
-            DevSettings.echoAutoCalibEnabled = c
-            refreshEchoDiag()
+        // [v1.1.55→v1.1.63] Level 2 에코 자동보정(스위치·튜너블·진단·통계 초기화)은 BLE 감지 설정으로 이관.
+
+        // (v1.1.63) [협력·교환] — BLE 감지 설정에서 이관. 값 변환·기록 로직은 원본 그대로(즉시 라이브 반영).
+        binding.swReciprocalRssi.setOnCheckedChangeListener { _, c ->
+            DevSettings.reciprocalRssiEnabled = c
+            updateSectionSummaries()
         }
-        bindIntField(binding.etEchoMinTicks, { DevSettings.echoCalMinTicks }, { DevSettings.echoCalMinTicks = it })
-        bindIntField(binding.etEchoMaxIqr,   { DevSettings.echoCalMaxIqrDb }, { DevSettings.echoCalMaxIqrDb = it })
-        bindIntField(binding.etEchoClamp,    { DevSettings.echoCalClampDb },  { DevSettings.echoCalClampDb = it })
+        binding.seekCoopSlack.setOnSeekBarChangeListener(seekListener { v ->
+            updateCoopSlackLabel()
+            DevSettings.coopSlackDb = v
+            updateSectionSummaries()
+        })
+        // (v1.1.63) [UWB 고급] — BLE 감지 설정에서 이관. 스위치 3종 즉시 기록(BleService 가 라이브 read).
+        binding.swUwbPromote.setOnCheckedChangeListener    { _, c -> DevSettings.uwbPromoteEnabled    = c; updateSectionSummaries() }
+        binding.swUwbVelPromote.setOnCheckedChangeListener { _, c -> DevSettings.uwbVelPromoteEnabled = c; updateSectionSummaries() }
+        binding.swUwbVelRelease.setOnCheckedChangeListener { _, c -> DevSettings.uwbVelReleaseEnabled = c; updateSectionSummaries() }
 
         binding.btnReset.setOnClickListener { resetValues() }
-
-        // [v1.1.54] 에코편차 통계 초기화 — 라이브 맵 + 전용 SharedPreferences 모두 비움(판정 무개입 통계라 안전)
-        binding.btnEchoReset.setOnClickListener {
-            BleService.echoDiffLive.clear()
-            getSharedPreferences(BleService.ECHO_PREFS, MODE_PRIVATE).edit().clear().apply()
-            refreshEchoDiag()
-            Toast.makeText(this, "에코편차 통계 초기화 완료", Toast.LENGTH_SHORT).show()
-        }
 
         // 앱 정보 — 버전 표시 + 오픈소스 라이선스 이동
         binding.tvAppVersion.text = "SafeAlert v${BuildConfig.VERSION_NAME}"
@@ -275,6 +287,7 @@ class DevSettingsActivity : AppCompatActivity() {
     private fun resetValues() {
         DevSettings.resetToDefault()
         loadValues()
+        updateSectionSummaries()   // (v1.1.63) 섹션 헤더 요약도 기본값으로 재표시
         Toast.makeText(this, "기본값으로 초기화되었습니다", Toast.LENGTH_SHORT).show()
     }
 
@@ -305,7 +318,7 @@ class DevSettingsActivity : AppCompatActivity() {
     private val uwbDiagPoller = object : Runnable {
         override fun run() {
             refreshUwbDiag()
-            refreshEchoDiag()   // [v1.1.54] 에코편차 집계 패널 — 같은 1.2s 폴에 동승(별도 타이머 없음)
+            // [v1.1.54→v1.1.63] 에코편차 집계 패널 폴링은 BLE 감지 설정으로 이관(같은 1.2s 주기).
             uwbDiagHandler.postDelayed(this, 1200L)
         }
     }
@@ -348,51 +361,51 @@ class DevSettingsActivity : AppCompatActivity() {
         return "$line1\n$line2\n$hint"
     }
 
-    // ── [v1.1.54→55] 에코편차 집계(상호 RSSI) 진단 — 분위수는 BleService.echoQuantileDb(보간) 공용 ──
-    private fun fmtDb(v: Double) = "${if (v >= 0) "+" else ""}${"%.1f".format(v)}dB"
+    // ── [v1.1.54→55→v1.1.63] 에코편차 집계(상호 RSSI) 진단(fmtDb·refreshEchoDiag)은 BLE 감지 설정으로 이관 ──
 
-    // 저장분 위에 라이브를 덮어써 병합(라이브 항목 = 첫 틱에 저장분을 시드한 총 누적치) 후 기기별 두 줄 요약.
-    //   1줄=통계(중앙값·산포·에코%·n), 2줄=Level 2 보정 상태(후보/적용중/게이트 사유). 말미에 FB 프라이어 요약.
-    private fun refreshEchoDiag() {
-        val saved = BleService.parseEchoBlob(
-            getSharedPreferences(BleService.ECHO_PREFS, MODE_PRIVATE).getString(BleService.ECHO_KEY, "") ?: "")
-        saved.putAll(BleService.echoDiffLive)
-        val on = DevSettings.echoAutoCalibEnabled
-        val minT = DevSettings.echoCalMinTicks
-        val sb = StringBuilder()
-        for ((id, s) in saved.entries.sortedByDescending { it.value.totalTicks }) {
-            if (s.totalTicks <= 0) continue
-            if (sb.isNotEmpty()) sb.append('\n')
-            if (s.echoTicks > 0) {
-                val med = BleService.echoQuantileDb(s.buckets, s.echoTicks, 0.50)
-                val iqrHalf = (BleService.echoQuantileDb(s.buckets, s.echoTicks, 0.75) -
-                               BleService.echoQuantileDb(s.buckets, s.echoTicks, 0.25)) / 2.0
-                val pct = s.echoTicks * 100 / s.totalTicks
-                sb.append("${id}  중앙값 ${fmtDb(med)} · 산포 ±${"%.1f".format(iqrHalf)} · 에코 ${pct}% · n=${s.echoTicks}")
-                val local = BleService.echoCalLocalDb(s)
-                val state = when {
-                    local == null -> {
-                        val prior = BleService.echoCalPriorDb(id)
-                        if (prior != null) "n부족 ${s.echoTicks}/${minT} · FB프라이어 ${fmtDb(prior)}${if (on) " 적용중" else ""}"
-                        else "n부족 ${s.echoTicks}/${minT}"
-                    }
-                    iqrHalf > DevSettings.echoCalMaxIqrDb -> "산포과다(>±${DevSettings.echoCalMaxIqrDb}) → 보정 0"
-                    else -> "보정 ${fmtDb(local)}${if (on) " 적용중" else " (스위치 OFF)"}"
-                }
-                sb.append("\n    → ${state}")
-            } else {
-                sb.append("${id}  에코 없음(비콘·구버전) · 틱 ${s.totalTicks}")
-            }
+    // (v1.1.63) [협력·교환] 협력 수용 완화 라벨 — BLE 감지 설정 원본과 동일 표기
+    private fun updateCoopSlackLabel() {
+        val v = binding.seekCoopSlack.progress
+        binding.tvCoopSlack.text = if (v == 0) "0 dB (완화 없음)" else "+${v} dB"
+    }
+
+    // ── (v1.1.63) 아코디언 — 6섹션 전부 기본 접힘(레이아웃 SA.SectionBody visibility=gone), 헤더 탭 토글 ──
+    private fun setupAccordion() {
+        bindSection(binding.secTxrxHeader,    binding.secTxrxBody,    binding.secTxrxChevron)
+        bindSection(binding.secSoundHeader,   binding.secSoundBody,   binding.secSoundChevron)
+        bindSection(binding.secParamHeader,   binding.secParamBody,   binding.secParamChevron)
+        bindSection(binding.secCoopHeader,    binding.secCoopBody,    binding.secCoopChevron)
+        bindSection(binding.secUwbadvHeader,  binding.secUwbadvBody,  binding.secUwbadvChevron)
+        bindSection(binding.secAppinfoHeader, binding.secAppinfoBody, binding.secAppinfoChevron)
+    }
+
+    // 초기 셰브런 각도는 바디 가시성에 맞추고, 헤더 탭마다 바디 토글 + 셰브런 0(접힘)/180(펼침)
+    private fun bindSection(header: View, body: View, chevron: View) {
+        chevron.rotation = if (body.visibility == View.VISIBLE) 180f else 0f
+        header.setOnClickListener {
+            val open = body.visibility != View.VISIBLE
+            body.visibility = if (open) View.VISIBLE else View.GONE
+            chevron.rotation = if (open) 180f else 0f
         }
-        // [v1.1.55] Firebase 모델쌍 프라이어 요약(내 모델 기준 fold 결과·서비스 기동 시 로드)
-        if (BleService.echoFbPriorByModel.isNotEmpty()) {
-            if (sb.isNotEmpty()) sb.append('\n')
-            sb.append("FB프라이어: " + BleService.echoFbPriorByModel.entries.joinToString(" · ") {
-                "${it.key} ${fmtDb(it.value.first)}(n=${it.value.second})"
-            })
-        }
-        binding.tvEchoDiag.text = if (sb.isEmpty())
-            "수집된 에코 표본 없음 — 상호 RSSI 기기가 근접하면 자동 수집됩니다." else sb.toString()
+    }
+
+    // (v1.1.63) 섹션 헤더 요약값 — 접힌 상태에서도 핵심값이 보이도록. 값 변경 리스너마다 호출.
+    //   Spinner 는 setSelection 직후 selectedItemPosition 이 늦게 반영될 수 있어 DevSettings 를 직독.
+    private fun updateSectionSummaries() {
+        fun onOff(b: Boolean) = if (b) "ON" else "OFF"
+        binding.secTxrxSummary.text =
+            "스캔 ${DevSettings.scanPeriodMs}ms · 광고 ${DevSettings.advertiseInterval}ms"
+        binding.secSoundSummary.text =
+            "진동 ${onOff(binding.switchVibration.isChecked)} · 소리 ${onOff(binding.switchSound.isChecked)}"
+        binding.secParamSummary.text =
+            "TTC ${DevSettings.ttcThresholdSec}s · 오프셋 ${binding.seekWalkerEquipBias.progress}/" +
+            "${binding.seekWalkerEpjBias.progress}/${binding.seekEquipEquipBias.progress} dB"
+        binding.secCoopSummary.text =
+            "상호 RSSI ${onOff(binding.swReciprocalRssi.isChecked)} · 완화 +${binding.seekCoopSlack.progress} dB"
+        binding.secUwbadvSummary.text =
+            "강제 ${onOff(binding.swUwbForce.isChecked)} · 승격 ${onOff(binding.swUwbPromote.isChecked)}/" +
+            "${onOff(binding.swUwbVelPromote.isChecked)}/${onOff(binding.swUwbVelRelease.isChecked)}"
+        binding.secAppinfoSummary.text = "v${BuildConfig.VERSION_NAME}"
     }
 
     // 권한 부여·강제 토글 직후, 서비스에 UWB 세션 재평가를 명시 요청(동일값 쓰기는 변경 리스너 미발화)

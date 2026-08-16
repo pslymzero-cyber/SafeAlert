@@ -1,4 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- (v1.1.63) BLE 감지 설정 — 아코디언 3섹션([경보 기본] 기본 펼침 · [비콘]·[UWB] 접힘).
+     공통 스타일 SA.* (values/themes.xml). 섹션 헤더 탭=펼침/접힘 토글, 헤더 요약값은 BleSettingsActivity.updateSectionSummaries() 가 갱신.
+     이동: 경보 볼륨(개발자→여기, 50~100%) · 에코편차 자동보정 스위치+하위 항목(개발자→여기, 행 탭=하위 펼침) /
+           협력 2종(상호 RSSI·완화)·UWB 승격 3종 → 개발자 설정. EPJ↔EPJ 오프셋은 [v1.1.60] gone 그대로 보존. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
@@ -6,420 +10,530 @@
     android:orientation="vertical"
     android:background="#F5F6F8">
 
-    <!-- 헤더 -->
-    <LinearLayout android:layout_width="match_parent" android:layout_height="56dp"
-        android:orientation="horizontal" android:paddingStart="16dp" android:paddingEnd="8dp"
-        android:gravity="center_vertical" android:background="#FFFFFF">
-        <TextView android:layout_width="0dp" android:layout_height="wrap_content"
-            android:layout_weight="1" android:text="BLE 감지 설정"
-            android:textSize="17sp" android:textStyle="bold" android:textColor="#111827"/>
+    <!-- 상단 헤더 바 -->
+    <LinearLayout style="@style/SA.TopBar">
+        <TextView
+            style="@style/SA.TopBarTitle"
+            android:text="BLE 감지 설정" />
     </LinearLayout>
-    <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#EAECF0"/>
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="#EAECF0" />
 
-    <ScrollView android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1">
-        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:orientation="vertical" android:padding="16dp">
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
 
-            <!-- 칼만 필터 (신호세기 기반) — v1.1.8: 단일 감지 방식 -->
-            <TextView android:text="칼만 필터 (신호세기 기반)" android:textStyle="bold" android:textSize="15sp"
-                android:textColor="#111827" android:layout_width="wrap_content" android:layout_height="wrap_content"
-                android:layout_marginBottom="4dp"/>
-            <TextView android:text="신호세기(dBm)를 직접 설정 · 노이즈 자동 억제"
-                android:textSize="12sp" android:textColor="#9CA3AF"
-                android:layout_width="wrap_content" android:layout_height="wrap_content"
-                android:layout_marginBottom="10dp"/>
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="16dp">
 
-            <!-- 칼만 모드 설정 -->
-            <androidx.cardview.widget.CardView android:id="@+id/card_kalman_config"
-                android:layout_width="match_parent" android:layout_height="wrap_content"
-                android:layout_marginBottom="16dp"
-                app:cardCornerRadius="14dp" app:cardElevation="0dp"
-                app:cardBackgroundColor="#F0F4FF">
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="vertical" android:padding="16dp">
+            <!-- ═══════════ [경보 기본] — 기본 펼침 ═══════════ -->
+            <androidx.cardview.widget.CardView style="@style/SA.Card">
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical">
 
-                    <!-- 칼만 필터 강도 (프리셋 선택) -->
-                    <TextView android:text="필터 강도"
-                        android:layout_width="match_parent" android:layout_height="wrap_content"
-                        android:textSize="13sp" android:textColor="#374151"
-                        android:layout_marginBottom="6dp"/>
-                    <RadioGroup android:id="@+id/rg_kalman_preset"
-                        android:layout_width="match_parent" android:layout_height="wrap_content"
-                        android:orientation="horizontal"
-                        android:layout_marginBottom="14dp">
-                        <RadioButton android:id="@+id/rb_kf_fast"
-                            android:layout_width="0dp" android:layout_height="wrap_content"
+                    <LinearLayout
+                        android:id="@+id/sec_alert_header"
+                        style="@style/SA.SectionHeader">
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
                             android:layout_weight="1"
-                            android:text="빠른 반응"
-                            android:textSize="12sp" android:textColor="#374151"/>
-                        <RadioButton android:id="@+id/rb_kf_normal"
-                            android:layout_width="0dp" android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:text="균형"
-                            android:textSize="12sp" android:textColor="#374151"/>
-                        <RadioButton android:id="@+id/rb_kf_smooth"
-                            android:layout_width="0dp" android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:text="강한 평활"
-                            android:textSize="12sp" android:textColor="#374151"/>
-                    </RadioGroup>
-
-                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                        android:orientation="horizontal" android:gravity="center_vertical">
-                        <TextView android:text="경고 신호세기" android:layout_width="0dp"
-                            android:layout_height="wrap_content" android:layout_weight="1"
-                            android:textSize="13sp" android:textColor="#374151"/>
-                        <TextView android:id="@+id/tv_warn_dist"
-                            android:layout_width="wrap_content" android:layout_height="wrap_content"
-                            android:textSize="14sp" android:textStyle="bold" android:textColor="#F59E0B"/>
+                            android:orientation="vertical">
+                            <TextView
+                                style="@style/SA.SectionTitle"
+                                android:text="경보 기본" />
+                            <TextView
+                                android:id="@+id/sec_alert_summary"
+                                style="@style/SA.SectionSummary"
+                                android:text="경고 -75 · 위험 -80 dBm · 볼륨 100%" />
+                        </LinearLayout>
+                        <ImageView
+                            android:id="@+id/sec_alert_chevron"
+                            style="@style/SA.Chevron"
+                            android:rotation="180"
+                            android:contentDescription="펼침/접힘" />
                     </LinearLayout>
-                    <SeekBar android:id="@+id/seek_warn_dist" android:layout_width="match_parent"
-                        android:layout_height="wrap_content" android:layout_marginTop="4dp" android:min="30" android:max="100"/>
-                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                        android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="12dp">
-                        <TextView android:text="위험 신호세기" android:layout_width="0dp"
-                            android:layout_height="wrap_content" android:layout_weight="1"
-                            android:textSize="13sp" android:textColor="#374151"/>
-                        <TextView android:id="@+id/tv_dang_dist"
-                            android:layout_width="wrap_content" android:layout_height="wrap_content"
-                            android:textSize="14sp" android:textStyle="bold" android:textColor="#EF4444"/>
+
+                    <LinearLayout
+                        android:id="@+id/sec_alert_body"
+                        style="@style/SA.SectionBody"
+                        android:visibility="visible">
+
+                        <!-- 칼만 필터 (신호세기 기반) -->
+                        <TextView
+                            style="@style/SA.Hint"
+                            android:layout_marginTop="0dp"
+                            android:text="칼만 필터 (신호세기 기반) · 신호세기(dBm)를 직접 설정 · 노이즈 자동 억제" />
+
+                        <TextView
+                            style="@style/SA.Label"
+                            android:layout_marginTop="10dp"
+                            android:layout_marginBottom="6dp"
+                            android:text="필터 강도" />
+
+                        <RadioGroup
+                            android:id="@+id/rg_kalman_preset"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="horizontal"
+                            android:layout_marginBottom="6dp">
+                            <RadioButton
+                                android:id="@+id/rb_kf_fast"
+                                style="@style/SA.Radio"
+                                android:text="빠른 반응" />
+                            <RadioButton
+                                android:id="@+id/rb_kf_normal"
+                                style="@style/SA.Radio"
+                                android:text="균형" />
+                            <RadioButton
+                                android:id="@+id/rb_kf_smooth"
+                                style="@style/SA.Radio"
+                                android:text="강한 평활" />
+                        </RadioGroup>
+
+                        <LinearLayout style="@style/SA.Row">
+                            <TextView
+                                style="@style/SA.RowLabel"
+                                android:text="경고 신호세기" />
+                            <TextView
+                                android:id="@+id/tv_warn_dist"
+                                style="@style/SA.Value"
+                                android:textColor="#F59E0B"
+                                android:text="-75 dBm" />
+                        </LinearLayout>
+                        <SeekBar
+                            android:id="@+id/seek_warn_dist"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="4dp"
+                            android:min="30"
+                            android:max="100" />
+
+                        <LinearLayout style="@style/SA.Row">
+                            <TextView
+                                style="@style/SA.RowLabel"
+                                android:text="위험 신호세기" />
+                            <TextView
+                                android:id="@+id/tv_dang_dist"
+                                style="@style/SA.Value"
+                                android:textColor="#EF4444"
+                                android:text="-80 dBm" />
+                        </LinearLayout>
+                        <SeekBar
+                            android:id="@+id/seek_dang_dist"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="4dp"
+                            android:min="30"
+                            android:max="100" />
+
+                        <View style="@style/SA.Divider" />
+
+                        <!-- 경보 볼륨 — (v1.1.63) 개발자 설정에서 이동 · 50% 미만 설정 불가 -->
+                        <LinearLayout style="@style/SA.Row">
+                            <TextView
+                                style="@style/SA.RowLabel"
+                                android:text="경보 볼륨" />
+                            <TextView
+                                android:id="@+id/tv_alarm_volume_val"
+                                style="@style/SA.Value"
+                                android:text="100%" />
+                        </LinearLayout>
+                        <SeekBar
+                            android:id="@+id/seek_alarm_volume"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="4dp"
+                            android:min="50"
+                            android:max="100" />
+                        <TextView
+                            style="@style/SA.Hint"
+                            android:text="50~100% (50% 미만 설정 불가) · 진동/무음 모드에서도 알람 스트림으로 강제 출력됩니다" />
+
+                        <View style="@style/SA.Divider" />
+
+                        <!-- 에코편차 자동보정 (Level 2) — (v1.1.63) 개발자 설정에서 이동 · 기본 켜짐.
+                             스위치 행만 표시, 행(스위치 밖)을 누르면 아래 통계·보정 항목이 펼쳐짐 -->
+                        <LinearLayout
+                            android:id="@+id/row_echo_auto_calib"
+                            style="@style/SA.Row"
+                            android:clickable="true"
+                            android:focusable="true"
+                            android:background="?attr/selectableItemBackground">
+                            <TextView
+                                style="@style/SA.RowLabel"
+                                android:text="에코편차 자동보정 (상호 RSSI)" />
+                            <ImageView
+                                android:id="@+id/iv_echo_chevron"
+                                style="@style/SA.Chevron"
+                                android:layout_width="18dp"
+                                android:layout_height="18dp"
+                                android:layout_marginStart="0dp"
+                                android:layout_marginEnd="6dp"
+                                android:contentDescription="보정 항목 펼침/접힘" />
+                            <Switch
+                                android:id="@+id/sw_echo_auto_calib"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content" />
+                        </LinearLayout>
+                        <TextView
+                            style="@style/SA.Hint"
+                            android:layout_marginTop="2dp"
+                            android:text="기본 켜짐 · 기기쌍별 상호 RSSI 편차 중앙값으로 판정 임계를 자동 보정 · 행을 누르면 통계·보정 항목 표시" />
+
+                        <LinearLayout
+                            android:id="@+id/echo_detail_group"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical"
+                            android:visibility="gone">
+
+                            <TextView
+                                style="@style/SA.Hint"
+                                android:layout_marginTop="8dp"
+                                android:text="켜면 기기쌍별 중앙값의 −1/2 을 클램프로 잘라 판정 임계에 반영합니다(거울쌍 양쪽 수렴). 표본 부족 시 Firebase 모델쌍 프라이어로 시작, 산포 과다 기기는 보정 0. 기본 켜짐." />
+
+                            <TextView
+                                android:id="@+id/tv_echo_diag"
+                                style="@style/SA.Mono"
+                                android:layout_marginTop="10dp"
+                                android:text="수집된 에코 표본 없음" />
+                            <TextView
+                                style="@style/SA.Hint"
+                                android:text="편차 = 내가 측정한 상대 RSSI − 상대가 나를 측정해 되돌린 에코. 중앙값=기기 간 체계적 비대칭(모델별 오프셋의 실측 근거), 산포=채널 노이즈(보정 불가 성분), 에코%=상호 RSSI 응답 비율(0%=비콘·구버전). 수집은 판정과 독립이며 앱을 재시작해도 누적됩니다. 자동보정이 켜지면 이 통계의 중앙값이 판정 임계 보정(echoCal)에 사용됩니다." />
+
+                            <LinearLayout style="@style/SA.Row">
+                                <TextView
+                                    style="@style/SA.RowLabel"
+                                    android:text="보정 성립 최소 에코틱 (n)" />
+                                <EditText
+                                    android:id="@+id/et_echo_min_ticks"
+                                    style="@style/SA.EditNumber" />
+                            </LinearLayout>
+                            <LinearLayout style="@style/SA.Row">
+                                <TextView
+                                    style="@style/SA.RowLabel"
+                                    android:text="산포 상한 (±dB, 초과=보정 0)" />
+                                <EditText
+                                    android:id="@+id/et_echo_max_iqr"
+                                    style="@style/SA.EditNumber" />
+                            </LinearLayout>
+                            <LinearLayout style="@style/SA.Row">
+                                <TextView
+                                    style="@style/SA.RowLabel"
+                                    android:text="보정 클램프 (±dB)" />
+                                <EditText
+                                    android:id="@+id/et_echo_clamp"
+                                    style="@style/SA.EditNumber" />
+                            </LinearLayout>
+
+                            <Button
+                                android:id="@+id/btn_echo_reset"
+                                style="@style/SA.Button"
+                                android:layout_marginTop="10dp"
+                                android:backgroundTint="#9E9E9E"
+                                android:text="에코편차 통계 초기화" />
+                        </LinearLayout>
                     </LinearLayout>
-                    <SeekBar android:id="@+id/seek_dang_dist" android:layout_width="match_parent"
-                        android:layout_height="wrap_content" android:layout_marginTop="4dp" android:min="30" android:max="100"/>
                 </LinearLayout>
             </androidx.cardview.widget.CardView>
 
-            <!-- 비콘 수신 강도 (전역 공통 게인) — v1.1.18 이후 추가 -->
-            <TextView android:text="비콘 수신 강도" android:textStyle="bold" android:textSize="15sp"
-                android:textColor="#111827" android:layout_width="wrap_content" android:layout_height="wrap_content"
-                android:layout_marginBottom="4dp"/>
-            <TextView android:text="등록된 모든 비콘의 감지 범위를 비율로 일괄 조절 · 100% = 기본"
-                android:textSize="12sp" android:textColor="#9CA3AF"
-                android:layout_width="wrap_content" android:layout_height="wrap_content"
-                android:layout_marginBottom="10dp"/>
+            <!-- ═══════════ [비콘] — 접힘 ═══════════ -->
+            <androidx.cardview.widget.CardView style="@style/SA.Card">
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical">
 
-            <androidx.cardview.widget.CardView
-                android:layout_width="match_parent" android:layout_height="wrap_content"
-                android:layout_marginBottom="16dp"
-                app:cardCornerRadius="14dp" app:cardElevation="0dp"
-                app:cardBackgroundColor="#F0F4FF">
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="vertical" android:padding="16dp">
-                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                        android:orientation="horizontal" android:gravity="center_vertical">
-                        <TextView android:text="수신 강도" android:layout_width="0dp"
-                            android:layout_height="wrap_content" android:layout_weight="1"
-                            android:textSize="13sp" android:textColor="#374151"/>
-                        <TextView android:id="@+id/tv_beacon_gain"
-                            android:layout_width="wrap_content" android:layout_height="wrap_content"
-                            android:textSize="14sp" android:textStyle="bold" android:textColor="#2563EB"/>
-                    </LinearLayout>
-                    <SeekBar android:id="@+id/seek_beacon_gain" android:layout_width="match_parent"
-                        android:layout_height="wrap_content" android:layout_marginTop="4dp" android:max="30"/>
-                </LinearLayout>
-            </androidx.cardview.widget.CardView>
-
-            <!-- [v1.1.25] EPJ ↔ EPJ 근접 경보 오프셋 — 거리 변별(3m 발령/5m 무음). 음수 허용
-                 [v1.1.60] EPJ 비하인드 — 3요소 gone(핸들러·저장 로직 보존, 부활 시 visibility 만 제거) -->
-            <TextView android:text="EPJ끼리 근접 경보" android:textStyle="bold" android:textSize="15sp"
-                android:textColor="#111827" android:layout_width="wrap_content" android:layout_height="wrap_content"
-                android:layout_marginBottom="4dp"
-                android:visibility="gone"/>
-            <TextView android:text="EPJ끼리는 5m 공존이 정상 · 값을 낮출수록(음수) 더 가까이(3m) 와야 울림"
-                android:textSize="12sp" android:textColor="#9CA3AF"
-                android:layout_width="wrap_content" android:layout_height="wrap_content"
-                android:layout_marginBottom="10dp"
-                android:visibility="gone"/>
-
-            <androidx.cardview.widget.CardView
-                android:layout_width="match_parent" android:layout_height="wrap_content"
-                android:layout_marginBottom="16dp"
-                android:visibility="gone"
-                app:cardCornerRadius="14dp" app:cardElevation="0dp"
-                app:cardBackgroundColor="#F0F4FF">
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="vertical" android:padding="16dp">
-                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                        android:orientation="horizontal" android:gravity="center_vertical">
-                        <TextView android:text="조기경보 오프셋" android:layout_width="0dp"
-                            android:layout_height="wrap_content" android:layout_weight="1"
-                            android:textSize="13sp" android:textColor="#374151"/>
-                        <TextView android:id="@+id/tv_epj_bias"
-                            android:layout_width="wrap_content" android:layout_height="wrap_content"
-                            android:textSize="14sp" android:textStyle="bold" android:textColor="#2563EB"/>
-                    </LinearLayout>
-                    <SeekBar android:id="@+id/seek_epj_bias" android:layout_width="match_parent"
-                        android:layout_height="wrap_content" android:layout_marginTop="4dp" android:max="25"/>
-                    <TextView android:text="-10 ~ +15 dB (기본 -2). 0=일반 임계 · 음수=더 가까이서만(거리 변별) · 양수=더 멀리서 미리. 지게차가 끼면 장비↔장비 오프셋 적용."
-                        android:textSize="11sp" android:textColor="#9CA3AF"
-                        android:layout_width="match_parent" android:layout_height="wrap_content"
-                        android:layout_marginTop="6dp"/>
-                </LinearLayout>
-            </androidx.cardview.widget.CardView>
-
-            <!-- [v1.1.52] 협력 알림 완화 — 폰별 신호 비대칭(내 폰은 안 울림) 보정 -->
-            <TextView android:text="협력 알림 완화 (비대칭 보정)" android:textStyle="bold" android:textSize="15sp"
-                android:textColor="#111827" android:layout_width="wrap_content" android:layout_height="wrap_content"
-                android:layout_marginBottom="4dp"/>
-            <TextView android:text="같은 거리인데 내 폰만 안 울릴 때 · 값을 올릴수록 상대의 위험 신호를 더 약하게 받아도 함께 울림"
-                android:textSize="12sp" android:textColor="#9CA3AF"
-                android:layout_width="wrap_content" android:layout_height="wrap_content"
-                android:layout_marginBottom="10dp"/>
-
-            <!-- [v1.1.53] 상호 RSSI 교환(대칭 판정) — 주 메커니즘. 켜짐이면 sym=(내가 들은 상대+상대가 들은 나)/2 로
-                 양 폰이 동일 판정(비대칭·2중 보정 제거). 꺼짐/무응답이면 아래 '협력 수용 완화'(coopSlack) 폴백. -->
-            <androidx.cardview.widget.CardView
-                android:layout_width="match_parent" android:layout_height="wrap_content"
-                android:layout_marginBottom="10dp"
-                app:cardCornerRadius="14dp" app:cardElevation="0dp"
-                app:cardBackgroundColor="#F0F4FF">
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="vertical" android:padding="16dp">
-                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                        android:orientation="horizontal" android:gravity="center_vertical">
-                        <TextView android:text="상호 RSSI 교환 (대칭 판정)" android:layout_width="0dp"
-                            android:layout_height="wrap_content" android:layout_weight="1"
-                            android:textSize="13sp" android:textColor="#374151"/>
-                        <Switch android:id="@+id/sw_reciprocal_rssi"
-                            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-                    </LinearLayout>
-                    <TextView android:text="기본 켜짐 · 서로가 상대에게서 들은 RSSI를 되돌려 교환해 두 값의 평균으로 양 폰이 같은 문턱에서 함께 울린다(비대칭·2중 보정 제거). 상대 응답이 없거나(구버전·비콘) 두 측정이 25dB 넘게 어긋나면 아래 완화 폴백 · UWB 실측(대칭) 판정에는 개입 안 함."
-                        android:textSize="11sp" android:textColor="#9CA3AF"
-                        android:layout_width="match_parent" android:layout_height="wrap_content"
-                        android:layout_marginTop="6dp"/>
-                </LinearLayout>
-            </androidx.cardview.widget.CardView>
-
-            <androidx.cardview.widget.CardView
-                android:layout_width="match_parent" android:layout_height="wrap_content"
-                android:layout_marginBottom="16dp"
-                app:cardCornerRadius="14dp" app:cardElevation="0dp"
-                app:cardBackgroundColor="#F0F4FF">
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="vertical" android:padding="16dp">
-                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                        android:orientation="horizontal" android:gravity="center_vertical">
-                        <TextView android:text="협력 수용 완화 (폴백)" android:layout_width="0dp"
-                            android:layout_height="wrap_content" android:layout_weight="1"
-                            android:textSize="13sp" android:textColor="#374151"/>
-                        <TextView android:id="@+id/tv_coop_slack"
-                            android:layout_width="wrap_content" android:layout_height="wrap_content"
-                            android:textSize="14sp" android:textStyle="bold" android:textColor="#2563EB"/>
-                    </LinearLayout>
-                    <SeekBar android:id="@+id/seek_coop_slack" android:layout_width="match_parent"
-                        android:layout_height="wrap_content" android:layout_marginTop="4dp" android:max="20"/>
-                    <TextView android:text="폴백 전용 · 상호 RSSI 교환이 꺼졌거나 상대 응답이 없을 때만 적용 · 0 ~ 20 dB (기본 8). 상대가 위험을 보낼 때 내 RSSI 수용 문턱을 경고 임계보다 이만큼 낮춰(예 -75→-83) 약하게 받아도 함께 울린다. 일반 경보 임계는 그대로 · UWB 실측(대칭) 판정에는 개입 안 함."
-                        android:textSize="11sp" android:textColor="#9CA3AF"
-                        android:layout_width="match_parent" android:layout_height="wrap_content"
-                        android:layout_marginTop="6dp"/>
-                </LinearLayout>
-            </androidx.cardview.widget.CardView>
-
-            <!-- (v1.1.30) UWB 정밀 거리 측정 — 지원 기기 페어 한정, 근접경보는 BLE 유지 -->
-            <TextView android:text="UWB 정밀 거리 측정" android:textStyle="bold" android:textSize="15sp"
-                android:textColor="#111827" android:layout_width="wrap_content" android:layout_height="wrap_content"
-                android:layout_marginBottom="4dp"/>
-            <TextView android:text="지원 기기끼리 실거리(m)를 측정 · UWB 신호가 오는 상대는 실측 거리로, 그 외는 BLE 신호로 경보 판정"
-                android:textSize="12sp" android:textColor="#9CA3AF"
-                android:layout_width="wrap_content" android:layout_height="wrap_content"
-                android:layout_marginBottom="10dp"/>
-
-            <androidx.cardview.widget.CardView
-                android:layout_width="match_parent" android:layout_height="wrap_content"
-                android:layout_marginBottom="16dp"
-                app:cardCornerRadius="14dp" app:cardElevation="0dp"
-                app:cardBackgroundColor="#F0F4FF">
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="vertical" android:padding="16dp">
-                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                        android:orientation="horizontal" android:gravity="center_vertical">
-                        <TextView android:text="UWB 사용" android:layout_width="0dp"
-                            android:layout_height="wrap_content" android:layout_weight="1"
-                            android:textSize="13sp" android:textColor="#374151"/>
-                        <Switch android:id="@+id/sw_uwb"
-                            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-                    </LinearLayout>
-                    <TextView android:id="@+id/tv_uwb_hint"
-                        android:text="기본 켜짐 · UWB 신호가 오는 동안은 실측 거리로만 경고/위험 판정 · 신호가 없으면 BLE 신호로 판정"
-                        android:textSize="11sp" android:textColor="#9CA3AF"
-                        android:layout_width="match_parent" android:layout_height="wrap_content"
-                        android:layout_marginTop="6dp"/>
-
-                    <!-- (v1.1.38 A) UWB 권한 요청 + 시스템 UWB 상태 안내 — 권한 미부여/시스템 OFF 면
-                         세션이 열리지 않아 목록 거리가 dBm 으로 폴백된다. 이 버튼으로 권한 요청,
-                         시스템 UWB 가 꺼져 있으면 아래 안내가 뜨고 버튼이 시스템 설정으로 연결. -->
-                    <Button android:id="@+id/btn_uwb_permission"
-                        android:layout_width="match_parent" android:layout_height="wrap_content"
-                        android:layout_marginTop="12dp"
-                        android:text="UWB 권한 허용 / 시스템 UWB 설정"
-                        android:textSize="13sp" android:textAllCaps="false"
-                        android:textColor="#FFFFFF" android:backgroundTint="#2563EB"/>
-                    <TextView android:id="@+id/tv_uwb_system_hint"
-                        android:text="UWB로 거리가 m 로 표시되려면: ① 이 버튼으로 UWB 권한 허용 ② 기기 UWB(시스템) 켜짐 ③ 상대 기기도 UWB 지원. 하나라도 빠지면 신호세기(dBm)로 표시됩니다."
-                        android:textSize="11sp" android:textColor="#9CA3AF"
-                        android:layout_width="match_parent" android:layout_height="wrap_content"
-                        android:layout_marginTop="6dp"/>
-
-                    <!-- (v1.1.31) 거리 표시 방식 — 목록·플로팅의 신호 표기(dBm/미터) 선택 -->
-                    <TextView android:text="거리 표시 방식"
-                        android:layout_width="match_parent" android:layout_height="wrap_content"
-                        android:textSize="13sp" android:textColor="#374151"
-                        android:layout_marginTop="14dp" android:layout_marginBottom="6dp"/>
-                    <RadioGroup android:id="@+id/rg_dist_mode"
-                        android:layout_width="match_parent" android:layout_height="wrap_content"
-                        android:orientation="horizontal">
-                        <RadioButton android:id="@+id/rb_dist_dbm"
-                            android:layout_width="0dp" android:layout_height="wrap_content"
+                    <LinearLayout
+                        android:id="@+id/sec_beacon_header"
+                        style="@style/SA.SectionHeader">
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
                             android:layout_weight="1"
-                            android:text="dBm"
-                            android:textSize="12sp" android:textColor="#374151"/>
-                        <RadioButton android:id="@+id/rb_dist_uwb_m"
-                            android:layout_width="0dp" android:layout_height="wrap_content"
+                            android:orientation="vertical">
+                            <TextView
+                                style="@style/SA.SectionTitle"
+                                android:text="비콘" />
+                            <TextView
+                                android:id="@+id/sec_beacon_summary"
+                                style="@style/SA.SectionSummary"
+                                android:text="수신 강도 100%" />
+                        </LinearLayout>
+                        <ImageView
+                            android:id="@+id/sec_beacon_chevron"
+                            style="@style/SA.Chevron"
+                            android:contentDescription="펼침/접힘" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:id="@+id/sec_beacon_body"
+                        style="@style/SA.SectionBody">
+
+                        <LinearLayout
+                            style="@style/SA.Row"
+                            android:layout_marginTop="0dp">
+                            <TextView
+                                style="@style/SA.RowLabel"
+                                android:text="비콘 수신 강도" />
+                            <TextView
+                                android:id="@+id/tv_beacon_gain"
+                                style="@style/SA.Value"
+                                android:text="100%" />
+                        </LinearLayout>
+                        <SeekBar
+                            android:id="@+id/seek_beacon_gain"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="4dp"
+                            android:max="30" />
+                        <TextView
+                            style="@style/SA.Hint"
+                            android:text="등록된 모든 비콘의 감지 범위를 비율로 일괄 조절 · 100% = 기본" />
+
+                        <!-- [v1.1.60] EPJ 비하인드 — 3요소 gone(핸들러·저장 로직 보존, 부활 시 visibility 만 제거) -->
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical"
+                            android:visibility="gone">
+                            <TextView
+                                style="@style/SA.SubHeader"
+                                android:text="EPJ끼리 근접 경보" />
+                            <TextView
+                                style="@style/SA.Hint"
+                                android:layout_marginTop="2dp"
+                                android:text="EPJ끼리는 5m 공존이 정상 · 값을 낮출수록(음수) 더 가까이(3m) 와야 울림" />
+                            <LinearLayout style="@style/SA.Row">
+                                <TextView
+                                    style="@style/SA.RowLabel"
+                                    android:text="조기경보 오프셋" />
+                                <TextView
+                                    android:id="@+id/tv_epj_bias"
+                                    style="@style/SA.Value"
+                                    android:text="-2 dB" />
+                            </LinearLayout>
+                            <SeekBar
+                                android:id="@+id/seek_epj_bias"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="4dp"
+                                android:max="25" />
+                            <TextView
+                                style="@style/SA.Hint"
+                                android:text="-10 ~ +15 dB (기본 -2). 0=일반 임계 · 음수=더 가까이서만(거리 변별) · 양수=더 멀리서 미리. 지게차가 끼면 장비↔장비 오프셋 적용." />
+                        </LinearLayout>
+                    </LinearLayout>
+                </LinearLayout>
+            </androidx.cardview.widget.CardView>
+
+            <!-- ═══════════ [UWB] — 접힘 ═══════════ -->
+            <androidx.cardview.widget.CardView style="@style/SA.Card">
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical">
+
+                    <LinearLayout
+                        android:id="@+id/sec_uwb_header"
+                        style="@style/SA.SectionHeader">
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
                             android:layout_weight="1"
-                            android:text="UWB만 m"
-                            android:textSize="12sp" android:textColor="#374151"/>
-                        <RadioButton android:id="@+id/rb_dist_all_m"
-                            android:layout_width="0dp" android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:text="전부 m"
-                            android:textSize="12sp" android:textColor="#374151"/>
-                    </RadioGroup>
-                    <TextView android:text="전부 m: UWB 페어는 실측, 그 외는 신호 기반 추정(약 X m)"
-                        android:textSize="11sp" android:textColor="#9CA3AF"
-                        android:layout_width="match_parent" android:layout_height="wrap_content"
-                        android:layout_marginTop="6dp"/>
-
-                    <!-- (v1.1.33) UWB 위험 승격(promote-only) — 실측거리로 역할쌍 차등 승격만, 억제 없음 -->
-                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                        android:orientation="horizontal" android:gravity="center_vertical"
-                        android:layout_marginTop="14dp">
-                        <TextView android:text="UWB 위험 승격" android:layout_width="0dp"
-                            android:layout_height="wrap_content" android:layout_weight="1"
-                            android:textSize="13sp" android:textColor="#374151"/>
-                        <Switch android:id="@+id/sw_uwb_promote"
-                            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                            android:orientation="vertical">
+                            <TextView
+                                style="@style/SA.SectionTitle"
+                                android:text="UWB 정밀 거리 측정" />
+                            <TextView
+                                android:id="@+id/sec_uwb_summary"
+                                style="@style/SA.SectionSummary"
+                                android:text="켜짐 · 지게차 쌍 15/8m · 그 외 5/3m" />
+                        </LinearLayout>
+                        <ImageView
+                            android:id="@+id/sec_uwb_chevron"
+                            style="@style/SA.Chevron"
+                            android:contentDescription="펼침/접힘" />
                     </LinearLayout>
-                    <TextView android:text="UWB 실측거리로 승격만: 지게차 쌍 15m 경고·8m 위험, 그 외 5m 경고·3m 위험 · 끄거나 늦추는 개입 없음 · 기본 꺼짐"
-                        android:textSize="11sp" android:textColor="#9CA3AF"
-                        android:layout_width="match_parent" android:layout_height="wrap_content"
-                        android:layout_marginTop="6dp"/>
 
-                    <!-- (v1.1.34) UWB 접근속도 승격 — 실측 접근속도 6km/h+ 지속이면 조기 경고, 승격만 -->
-                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                        android:orientation="horizontal" android:gravity="center_vertical"
-                        android:layout_marginTop="14dp">
-                        <TextView android:text="UWB 접근속도 승격" android:layout_width="0dp"
-                            android:layout_height="wrap_content" android:layout_weight="1"
-                            android:textSize="13sp" android:textColor="#374151"/>
-                        <Switch android:id="@+id/sw_uwb_vel_promote"
-                            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                    <LinearLayout
+                        android:id="@+id/sec_uwb_body"
+                        style="@style/SA.SectionBody">
+
+                        <TextView
+                            style="@style/SA.Hint"
+                            android:layout_marginTop="0dp"
+                            android:text="지원 기기끼리 실거리(m)를 측정 · UWB 신호가 오는 상대는 실측 거리로, 그 외는 BLE 신호로 경보 판정" />
+
+                        <LinearLayout style="@style/SA.Row">
+                            <TextView
+                                style="@style/SA.RowLabel"
+                                android:text="UWB 사용" />
+                            <Switch
+                                android:id="@+id/sw_uwb"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content" />
+                        </LinearLayout>
+                        <TextView
+                            android:id="@+id/tv_uwb_hint"
+                            style="@style/SA.Hint"
+                            android:layout_marginTop="2dp"
+                            android:text="기본 켜짐 · UWB 신호가 오는 동안은 실측 거리로만 경고/위험 판정 · 신호가 없으면 BLE 신호로 판정" />
+
+                        <Button
+                            android:id="@+id/btn_uwb_permission"
+                            style="@style/SA.Button"
+                            android:layout_marginTop="12dp"
+                            android:text="UWB 권한 허용 / 시스템 UWB 설정" />
+                        <TextView
+                            android:id="@+id/tv_uwb_system_hint"
+                            style="@style/SA.Hint"
+                            android:text="UWB로 거리가 m 로 표시되려면: ① 이 버튼으로 UWB 권한 허용 ② 기기 UWB(시스템) 켜짐 ③ 상대 기기도 UWB 지원. 하나라도 빠지면 신호세기(dBm)로 표시됩니다." />
+
+                        <TextView
+                            style="@style/SA.Label"
+                            android:layout_marginTop="14dp"
+                            android:layout_marginBottom="6dp"
+                            android:text="거리 표시 방식" />
+                        <RadioGroup
+                            android:id="@+id/rg_dist_mode"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="horizontal">
+                            <RadioButton
+                                android:id="@+id/rb_dist_dbm"
+                                style="@style/SA.Radio"
+                                android:text="dBm" />
+                            <RadioButton
+                                android:id="@+id/rb_dist_uwb_m"
+                                style="@style/SA.Radio"
+                                android:text="UWB만 m" />
+                            <RadioButton
+                                android:id="@+id/rb_dist_all_m"
+                                style="@style/SA.Radio"
+                                android:text="전부 m" />
+                        </RadioGroup>
+                        <TextView
+                            style="@style/SA.Hint"
+                            android:layout_marginTop="2dp"
+                            android:text="전부 m: UWB 페어는 실측, 그 외는 신호 기반 추정(약 X m)" />
+
+                        <TextView
+                            style="@style/SA.Label"
+                            android:layout_marginTop="14dp"
+                            android:layout_marginBottom="4dp"
+                            android:text="사업장 코드 (보정 프로파일)" />
+                        <EditText
+                            android:id="@+id/et_uwb_site"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:hint="예: WF11 (빈 값 = 공용 프로파일)"
+                            android:textSize="13sp"
+                            android:textColor="#374151"
+                            android:inputType="text"
+                            android:maxLines="1" />
+                        <TextView
+                            style="@style/SA.Hint"
+                            android:layout_marginTop="2dp"
+                            android:text="UWB 보정 학습값을 사업장별로 저장·전환 · 사업장 학습은 지워지지 않고 코드 변경 시 즉시 불러옴" />
+
+                        <View style="@style/SA.Divider" />
+
+                        <TextView
+                            style="@style/SA.SubHeader"
+                            android:text="UWB 판정 반경" />
+                        <TextView
+                            style="@style/SA.Hint"
+                            android:layout_marginTop="2dp"
+                            android:text="UWB 실측 신호가 오는 상대에게 적용 · 지게차가 낀 쌍/그 외 쌍 각각 경고·위험 거리" />
+
+                        <LinearLayout style="@style/SA.Row">
+                            <TextView
+                                style="@style/SA.RowLabel"
+                                android:text="지게차 쌍 경고" />
+                            <TextView
+                                android:id="@+id/tv_uwb_fk_warn"
+                                style="@style/SA.Value"
+                                android:textColor="#F59E0B"
+                                android:text="15m" />
+                        </LinearLayout>
+                        <SeekBar
+                            android:id="@+id/seek_uwb_fk_warn"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="4dp"
+                            android:min="2"
+                            android:max="80" />
+
+                        <LinearLayout style="@style/SA.Row">
+                            <TextView
+                                style="@style/SA.RowLabel"
+                                android:text="지게차 쌍 위험" />
+                            <TextView
+                                android:id="@+id/tv_uwb_fk_danger"
+                                style="@style/SA.Value"
+                                android:textColor="#EF4444"
+                                android:text="8m" />
+                        </LinearLayout>
+                        <SeekBar
+                            android:id="@+id/seek_uwb_fk_danger"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="4dp"
+                            android:min="1"
+                            android:max="60" />
+
+                        <LinearLayout style="@style/SA.Row">
+                            <TextView
+                                style="@style/SA.RowLabel"
+                                android:text="그 외 쌍 경고" />
+                            <TextView
+                                android:id="@+id/tv_uwb_pair_warn"
+                                style="@style/SA.Value"
+                                android:textColor="#F59E0B"
+                                android:text="5m" />
+                        </LinearLayout>
+                        <SeekBar
+                            android:id="@+id/seek_uwb_pair_warn"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="4dp"
+                            android:min="2"
+                            android:max="40" />
+
+                        <LinearLayout style="@style/SA.Row">
+                            <TextView
+                                style="@style/SA.RowLabel"
+                                android:text="그 외 쌍 위험" />
+                            <TextView
+                                android:id="@+id/tv_uwb_pair_danger"
+                                style="@style/SA.Value"
+                                android:textColor="#EF4444"
+                                android:text="3m" />
+                        </LinearLayout>
+                        <SeekBar
+                            android:id="@+id/seek_uwb_pair_danger"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="4dp"
+                            android:min="1"
+                            android:max="30" />
+                        <TextView
+                            style="@style/SA.Hint"
+                            android:text="기본: 지게차 쌍 15m 경고·8m 위험 / 그 외 5m 경고·3m 위험 · 0.5m 단위 즉시 반영" />
                     </LinearLayout>
-                    <TextView android:text="실측 접근속도가 6km/h 이상 지속이면 최소 경고로 조기 승격 · 승격만 · 기본 꺼짐"
-                        android:textSize="11sp" android:textColor="#9CA3AF"
-                        android:layout_width="match_parent" android:layout_height="wrap_content"
-                        android:layout_marginTop="6dp"/>
-
-                    <!-- (v1.1.34) UWB 이탈 해제 — 멀어질 때 알림 끔(피로 저감), 위험 반경 안에서는 개입 없음 -->
-                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                        android:orientation="horizontal" android:gravity="center_vertical"
-                        android:layout_marginTop="14dp">
-                        <TextView android:text="UWB 이탈 시 경보 해제" android:layout_width="0dp"
-                            android:layout_height="wrap_content" android:layout_weight="1"
-                            android:textSize="13sp" android:textColor="#374151"/>
-                        <Switch android:id="@+id/sw_uwb_vel_release"
-                            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-                    </LinearLayout>
-                    <TextView android:text="실측으로 3샘플 연속 멀어지면 경보 완화(경고 반경 밖=해제) · 위험 반경 안·급접근 중엔 개입 없음 · 기본 꺼짐"
-                        android:textSize="11sp" android:textColor="#9CA3AF"
-                        android:layout_width="match_parent" android:layout_height="wrap_content"
-                        android:layout_marginTop="6dp"/>
-
-                    <!-- (v1.1.34) 사업장 코드 — UWB Δ보정 학습 프로파일 네임스페이스(빈 값=공용) -->
-                    <TextView android:text="사업장 코드 (보정 프로파일)"
-                        android:layout_width="match_parent" android:layout_height="wrap_content"
-                        android:textSize="13sp" android:textColor="#374151"
-                        android:layout_marginTop="14dp" android:layout_marginBottom="6dp"/>
-                    <EditText android:id="@+id/et_uwb_site"
-                        android:layout_width="match_parent" android:layout_height="wrap_content"
-                        android:hint="예: WF11 (빈 값 = 공용 프로파일)"
-                        android:textSize="13sp" android:textColor="#374151"
-                        android:inputType="text" android:maxLines="1"/>
-                    <TextView android:text="UWB 보정 학습값을 사업장별로 저장·전환 · 사업장 학습은 지워지지 않고 코드 변경 시 즉시 불러옴"
-                        android:textSize="11sp" android:textColor="#9CA3AF"
-                        android:layout_width="match_parent" android:layout_height="wrap_content"
-                        android:layout_marginTop="6dp"/>
-
-                    <!-- [v1.1.46] UWB 판정 반경(역할쌍 차등) — UWB 실측 신호가 흐르는 상대에 적용되는
-                         경고/위험 거리. 0.5m 단위(progress=미터x2), 즉시 반영. 신호가 없는 상대는 BLE(dBm) 임계 적용. -->
-                    <TextView android:text="UWB 판정 반경"
-                        android:layout_width="match_parent" android:layout_height="wrap_content"
-                        android:textSize="13sp" android:textColor="#374151" android:textStyle="bold"
-                        android:layout_marginTop="14dp"/>
-                    <TextView android:text="UWB 실측 신호가 오는 상대에게 적용 · 지게차가 낀 쌍/그 외 쌍 각각 경고·위험 거리"
-                        android:textSize="11sp" android:textColor="#9CA3AF"
-                        android:layout_width="match_parent" android:layout_height="wrap_content"
-                        android:layout_marginTop="2dp"/>
-
-                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                        android:orientation="horizontal" android:gravity="center_vertical"
-                        android:layout_marginTop="10dp">
-                        <TextView android:text="지게차 쌍 경고" android:layout_width="0dp"
-                            android:layout_height="wrap_content" android:layout_weight="1"
-                            android:textSize="13sp" android:textColor="#374151"/>
-                        <TextView android:id="@+id/tv_uwb_fk_warn"
-                            android:layout_width="wrap_content" android:layout_height="wrap_content"
-                            android:textSize="14sp" android:textStyle="bold" android:textColor="#F59E0B"/>
-                    </LinearLayout>
-                    <SeekBar android:id="@+id/seek_uwb_fk_warn" android:layout_width="match_parent"
-                        android:layout_height="wrap_content" android:layout_marginTop="4dp" android:min="2" android:max="80"/>
-
-                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                        android:orientation="horizontal" android:gravity="center_vertical"
-                        android:layout_marginTop="12dp">
-                        <TextView android:text="지게차 쌍 위험" android:layout_width="0dp"
-                            android:layout_height="wrap_content" android:layout_weight="1"
-                            android:textSize="13sp" android:textColor="#374151"/>
-                        <TextView android:id="@+id/tv_uwb_fk_danger"
-                            android:layout_width="wrap_content" android:layout_height="wrap_content"
-                            android:textSize="14sp" android:textStyle="bold" android:textColor="#EF4444"/>
-                    </LinearLayout>
-                    <SeekBar android:id="@+id/seek_uwb_fk_danger" android:layout_width="match_parent"
-                        android:layout_height="wrap_content" android:layout_marginTop="4dp" android:min="1" android:max="60"/>
-
-                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                        android:orientation="horizontal" android:gravity="center_vertical"
-                        android:layout_marginTop="12dp">
-                        <TextView android:text="그 외 쌍 경고" android:layout_width="0dp"
-                            android:layout_height="wrap_content" android:layout_weight="1"
-                            android:textSize="13sp" android:textColor="#374151"/>
-                        <TextView android:id="@+id/tv_uwb_pair_warn"
-                            android:layout_width="wrap_content" android:layout_height="wrap_content"
-                            android:textSize="14sp" android:textStyle="bold" android:textColor="#F59E0B"/>
-                    </LinearLayout>
-                    <SeekBar android:id="@+id/seek_uwb_pair_warn" android:layout_width="match_parent"
-                        android:layout_height="wrap_content" android:layout_marginTop="4dp" android:min="2" android:max="40"/>
-
-                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                        android:orientation="horizontal" android:gravity="center_vertical"
-                        android:layout_marginTop="12dp">
-                        <TextView android:text="그 외 쌍 위험" android:layout_width="0dp"
-                            android:layout_height="wrap_content" android:layout_weight="1"
-                            android:textSize="13sp" android:textColor="#374151"/>
-                        <TextView android:id="@+id/tv_uwb_pair_danger"
-                            android:layout_width="wrap_content" android:layout_height="wrap_content"
-                            android:textSize="14sp" android:textStyle="bold" android:textColor="#EF4444"/>
-                    </LinearLayout>
-                    <SeekBar android:id="@+id/seek_uwb_pair_danger" android:layout_width="match_parent"
-                        android:layout_height="wrap_content" android:layout_marginTop="4dp" android:min="1" android:max="30"/>
-
-                    <TextView android:text="기본: 지게차 쌍 15m 경고·8m 위험 / 그 외 5m 경고·3m 위험 · 0.5m 단위 즉시 반영"
-                        android:textSize="11sp" android:textColor="#9CA3AF"
-                        android:layout_width="match_parent" android:layout_height="wrap_content"
-                        android:layout_marginTop="6dp"/>
                 </LinearLayout>
             </androidx.cardview.widget.CardView>
 
         </LinearLayout>
     </ScrollView>
-
 </LinearLayout>

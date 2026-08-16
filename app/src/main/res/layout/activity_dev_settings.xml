@@ -1,779 +1,607 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+<!-- (v1.1.63) 개발자 설정 — 아코디언 6섹션(전부 접힘): [송수신·통신] [소리·진동 세부] [판정 파라미터] [협력·교환] [UWB 고급] [앱 정보].
+     공통 스타일 SA.* (values/themes.xml). 섹션 헤더 탭=펼침/접힘 토글, 헤더 요약값은 DevSettingsActivity.updateSectionSummaries() 가 갱신.
+     이동: 경보 볼륨 → BLE 감지 설정(50~100%) · 에코편차 집계+자동보정 → BLE 감지 설정(단일 위치, 여기서 제거)
+          / 협력 2종(상호 RSSI·완화)·UWB 승격 3종 ← BLE 감지 설정. 오픈소스 라이선스 버튼 → [앱 정보].
+     hidden_advanced_group(7탭 게이트: [앱 정보]의 버전 7회 터치)·btn_reset 은 그대로 보존. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
-    android:layout_height="match_parent">
-
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:padding="16dp">
-
-        <!-- [v1.1.24] 오픈소스 라이선스 — 화면 최상단 바로가기 -->
-        <Button android:id="@+id/btn_open_source_licenses"
-            android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:text="오픈소스 라이선스"
-            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-            android:textColor="#374151" android:textSize="13sp"/>
-
-        <!-- 송수신 설정 -->
-        <TextView android:text="송수신 모드" android:textStyle="bold" android:textSize="16sp"
-            android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="8dp"/>
-        <androidx.cardview.widget.CardView
-            android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:layout_marginTop="8dp">
-            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                android:orientation="vertical" android:padding="16dp">
-
-                <TextView android:text="🚛 장비 작업자" android:textStyle="bold"
-                    android:textSize="13sp" android:textColor="#374151"
-                    android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:layout_marginTop="10dp">
-                    <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content"
-                        android:layout_weight="1" android:orientation="vertical">
-                        <TextView android:text="신호 송신 (TX)" android:textSize="13sp"
-                            android:textColor="#111827"
-                            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-                        <TextView android:text="BLE 신호를 주변에 송출"
-                            android:textSize="11sp" android:textColor="#9CA3AF"
-                            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-                    </LinearLayout>
-                    <Switch android:id="@+id/switch_device_tx"
-                        android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-                </LinearLayout>
-
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:layout_marginTop="12dp">
-                    <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content"
-                        android:layout_weight="1" android:orientation="vertical">
-                        <TextView android:text="신호 수신 (RX)" android:textSize="13sp"
-                            android:textColor="#111827"
-                            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-                        <TextView android:text="주변 장비·보행자 감지"
-                            android:textSize="11sp" android:textColor="#9CA3AF"
-                            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-                    </LinearLayout>
-                    <Switch android:id="@+id/switch_device_rx"
-                        android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-                </LinearLayout>
-
-                <!-- 보행자끼리 경보 -->
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:layout_marginTop="12dp">
-                    <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content"
-                        android:layout_weight="1" android:orientation="vertical">
-                        <TextView android:text="보행자끼리 경보" android:textSize="13sp"
-                            android:textColor="#111827"
-                            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-                        <TextView android:text="보행자가 다른 보행자를 감지해도 경보 (기본: OFF)"
-                            android:textSize="11sp" android:textColor="#9CA3AF"
-                            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-                    </LinearLayout>
-                    <Switch android:id="@+id/switch_walker_detects_walker"
-                        android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-                </LinearLayout>
-
-                <View android:layout_width="match_parent" android:layout_height="1dp"
-                    android:background="#F3F4F6" android:layout_marginTop="16dp" android:layout_marginBottom="4dp"/>
-
-                <TextView android:text="🚶 보행자" android:textStyle="bold"
-                    android:textSize="13sp" android:textColor="#374151"
-                    android:layout_width="wrap_content" android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"/>
-
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:layout_marginTop="10dp">
-                    <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content"
-                        android:layout_weight="1" android:orientation="vertical">
-                        <TextView android:text="신호 송신 (TX)" android:textSize="13sp"
-                            android:textColor="#111827"
-                            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-                        <TextView android:text="BLE 신호를 주변에 송출 (기본: OFF)"
-                            android:textSize="11sp" android:textColor="#9CA3AF"
-                            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-                    </LinearLayout>
-                    <Switch android:id="@+id/switch_walker_tx"
-                        android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-                </LinearLayout>
-
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:layout_marginTop="12dp">
-                    <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content"
-                        android:layout_weight="1" android:orientation="vertical">
-                        <TextView android:text="신호 수신 (RX)" android:textSize="13sp"
-                            android:textColor="#111827"
-                            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-                        <TextView android:text="주변 장비 감지"
-                            android:textSize="11sp" android:textColor="#9CA3AF"
-                            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-                    </LinearLayout>
-                    <Switch android:id="@+id/switch_walker_rx"
-                        android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-                </LinearLayout>
-
-            </LinearLayout>
-        </androidx.cardview.widget.CardView>
-
-        <!-- BLE 설정 -->
-        <TextView android:text="BLE 설정" android:textStyle="bold" android:textSize="16sp"
-            android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="8dp"/>
-        <androidx.cardview.widget.CardView
-            android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:layout_marginTop="8dp">
-            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                android:orientation="vertical" android:padding="16dp">
-                <TextView android:text="스캔 주기" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-                <Spinner android:id="@+id/spinner_scan_period" android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:entries="@array/scan_period_labels"/>
-                <TextView android:text="광고 간격" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="8dp"/>
-                <Spinner android:id="@+id/spinner_advertise" android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:entries="@array/advertise_labels"/>
-            </LinearLayout>
-        </androidx.cardview.widget.CardView>
-
-        <!-- 경보 볼륨 -->
-        <TextView android:text="경보 볼륨" android:textStyle="bold" android:textSize="16sp"
-            android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="16dp"/>
-        <androidx.cardview.widget.CardView
-            android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:layout_marginTop="8dp">
-            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                android:orientation="vertical" android:padding="16dp">
-
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:gravity="center_vertical">
-                    <TextView android:text="알람 볼륨 게인"
-                        android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
-                        android:textSize="13sp" android:textColor="#111827"/>
-                    <TextView android:id="@+id/tv_alarm_volume_val"
-                        android:layout_width="48dp" android:layout_height="wrap_content"
-                        android:gravity="end" android:textSize="13sp" android:textColor="#374151"/>
-                </LinearLayout>
-                <TextView android:text="진동/무음 모드에서도 알람 스트림으로 강제 출력됩니다"
-                    android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:textSize="11sp" android:textColor="#9CA3AF" android:layout_marginTop="2dp"/>
-                <SeekBar android:id="@+id/seek_alarm_volume"
-                    android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:max="100"/>
-
-            </LinearLayout>
-        </androidx.cardview.widget.CardView>
-
-        <!-- 경보 동작 -->
-        <TextView android:text="경보 동작" android:textStyle="bold" android:textSize="16sp"
-            android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="16dp"/>
-        <androidx.cardview.widget.CardView
-            android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:layout_marginTop="8dp">
-            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                android:orientation="vertical" android:padding="16dp">
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
-                    <TextView android:text="진동 사용" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"/>
-                    <Switch android:id="@+id/switch_vibration" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-                </LinearLayout>
-                <TextView android:text="경고 진동 시간" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="8dp"/>
-                <Spinner android:id="@+id/spinner_vib_warning" android:layout_width="match_parent"
-                    android:layout_height="wrap_content" android:entries="@array/vib_warning_labels"/>
-                <TextView android:text="위험 진동 반복 횟수" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="8dp"/>
-                <Spinner android:id="@+id/spinner_vib_count" android:layout_width="match_parent"
-                    android:layout_height="wrap_content" android:entries="@array/vib_count_labels"/>
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:layout_marginTop="8dp">
-                    <TextView android:text="경보음 사용" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"/>
-                    <Switch android:id="@+id/switch_sound" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-                </LinearLayout>
-            </LinearLayout>
-        </androidx.cardview.widget.CardView>
-
-        <!-- 판정 파라미터 (고급) — BleService 핵심 상수의 라이브 조절. 기본값 = 기존 하드코딩값 -->
-        <TextView android:text="판정 파라미터 (고급)" android:textStyle="bold" android:textSize="16sp"
-            android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="16dp"/>
-        <androidx.cardview.widget.CardView
-            android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:layout_marginTop="8dp">
-            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                android:orientation="vertical" android:padding="16dp">
-
-                <TextView android:text="경보 판정·필터의 핵심 수치. 기본값은 현장 검증값이며 저장 즉시 서비스에 반영됩니다. '기본값으로 초기화'로 전체 복원."
-                    android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:textSize="11sp" android:textColor="#9CA3AF"/>
-
-                <!-- [v1.1.24] 역할별 조기경보 오프셋 — effWarning/effDanger 를 역할쌍별로 더 먼 거리로 당김 -->
-                <TextView android:text="역할별 조기경보 오프셋" android:textStyle="bold"
-                    android:textSize="13sp" android:textColor="#374151"
-                    android:layout_width="wrap_content" android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"/>
-                <TextView android:text="값이 클수록 더 먼 거리(약한 신호)에서 미리 경보합니다. 0=중립(일반 임계와 동일). 금속 캐빈 차폐로 신호가 약해지는 장비끼리도 놓치지 않도록 보정."
-                    android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:textSize="11sp" android:textColor="#9CA3AF" android:layout_marginTop="2dp"/>
-
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="10dp">
-                    <TextView android:text="보행자 ↔ 지게차 (dB)" android:layout_width="0dp" android:layout_height="wrap_content"
-                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
-                    <TextView android:id="@+id/tv_walker_equip_bias_val" android:layout_width="64dp" android:layout_height="wrap_content"
-                        android:gravity="end" android:textSize="13sp" android:textColor="#374151"/>
-                </LinearLayout>
-                <SeekBar android:id="@+id/seek_walker_equip_bias" android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp" android:max="15"/>
-                <TextView android:text="유효 0~15 dB (기본 6). 보행자와 지게차 사이 조기경보 강도. 가장 강하게 보호."
-                    android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:textSize="11sp" android:textColor="#9CA3AF"/>
-
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="10dp">
-                    <TextView android:text="보행자 ↔ EPJ (dB)" android:layout_width="0dp" android:layout_height="wrap_content"
-                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
-                    <TextView android:id="@+id/tv_walker_epj_bias_val" android:layout_width="64dp" android:layout_height="wrap_content"
-                        android:gravity="end" android:textSize="13sp" android:textColor="#374151"/>
-                </LinearLayout>
-                <SeekBar android:id="@+id/seek_walker_epj_bias" android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp" android:max="15"/>
-                <TextView android:text="유효 0~15 dB (기본 2). EPJ(전동 파레트 잭)는 저속·동일공간 작업이라 지게차보다 완화."
-                    android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:textSize="11sp" android:textColor="#9CA3AF"/>
-
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="10dp">
-                    <TextView android:text="장비 ↔ 장비 (dB)" android:layout_width="0dp" android:layout_height="wrap_content"
-                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
-                    <TextView android:id="@+id/tv_equip_equip_bias_val" android:layout_width="64dp" android:layout_height="wrap_content"
-                        android:gravity="end" android:textSize="13sp" android:textColor="#374151"/>
-                </LinearLayout>
-                <SeekBar android:id="@+id/seek_equip_equip_bias" android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp" android:max="15"/>
-                <TextView android:text="유효 0~15 dB (기본 8). 지게차끼리·EPJ끼리·지게차↔EPJ. 금속 캐빈 차폐로 약해진 신호를 잡으려면 가장 큰 값 필요."
-                    android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:textSize="11sp" android:textColor="#9CA3AF"/>
-
-                <View android:layout_width="match_parent" android:layout_height="1dp"
-                    android:background="#F3F4F6" android:layout_marginTop="12dp"/>
-
-                <TextView android:text="경보 판정" android:textStyle="bold"
-                    android:textSize="13sp" android:textColor="#374151"
-                    android:layout_width="wrap_content" android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"/>
-
-                <TextView android:text="TTC 선발령 임계" android:layout_width="wrap_content" android:layout_height="wrap_content"
-                    android:textSize="13sp" android:textColor="#111827" android:layout_marginTop="10dp"/>
-                <TextView android:text="예상 충돌까지 남은 시간(초)이 임계 이하면 위험 경보를 선발령. 민감할수록 멀리서 일찍 울리고(오탐 증가), 둔감할수록 임박해야 울립니다."
-                    android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:textSize="11sp" android:textColor="#9CA3AF" android:layout_marginTop="2dp"/>
-                <Spinner android:id="@+id/sp_ttc_threshold" android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:entries="@array/ttc_threshold_labels"/>
-
-                <TextView android:text="TTC 최소 접근속도 (dBm/s)" android:layout_width="wrap_content" android:layout_height="wrap_content"
-                    android:textSize="13sp" android:textColor="#111827" android:layout_marginTop="10dp"/>
-                <TextView android:text="이보다 느린 접근은 충돌 시간 계산에서 제외. 민감할수록 천천히 오는 대상까지 감지하고(오탐 증가), 둔감할수록 확실히 빠른 접근만 봅니다."
-                    android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:textSize="11sp" android:textColor="#9CA3AF" android:layout_marginTop="2dp"/>
-                <Spinner android:id="@+id/sp_min_approach_vel" android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:entries="@array/min_approach_vel_labels"/>
-
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="10dp">
-                    <TextView android:text="Time-Gate 평상 (ms)" android:layout_width="0dp" android:layout_height="wrap_content"
-                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
-                    <EditText android:id="@+id/et_timegate_ms" android:layout_width="96dp" android:layout_height="wrap_content"
-                        android:inputType="number" android:gravity="end" android:textSize="13sp"/>
-                </LinearLayout>
-                <TextView android:text="유효 0~3000 ms (기본 500). 접근이 이 시간 이상 지속돼야 경보 확정. 높이면 스침 오탐이 줄지만 반응이 느려지고, 낮추면 즉각 울리는 대신 오탐이 늘어납니다."
-                    android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:textSize="11sp" android:textColor="#9CA3AF"/>
-
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="10dp">
-                    <TextView android:text="Time-Gate 코너링 (ms)" android:layout_width="0dp" android:layout_height="wrap_content"
-                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
-                    <EditText android:id="@+id/et_timegate_cornering" android:layout_width="96dp" android:layout_height="wrap_content"
-                        android:inputType="number" android:gravity="end" android:textSize="13sp"/>
-                </LinearLayout>
-                <TextView android:text="유효 0~5000 ms (기본 1000). 회전(코너링) 중에 적용되는 더 긴 확인 시간. 높이면 교차로 스침 오탐이 줄고, 낮추면 코너 상황 반응이 빨라집니다."
-                    android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:textSize="11sp" android:textColor="#9CA3AF"/>
-
-                <TextView android:text="Time-Gate 접근 판정속도 (dBm/s)" android:layout_width="wrap_content" android:layout_height="wrap_content"
-                    android:textSize="13sp" android:textColor="#111827" android:layout_marginTop="10dp"/>
-                <TextView android:text="Time-Gate에서 '접근 중'으로 인정하는 최소 속도. 민감할수록 느린 접근도 게이트 시간을 채워 경보가 빨라지고, 둔감할수록 확실한 접근만 인정합니다."
-                    android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:textSize="11sp" android:textColor="#9CA3AF" android:layout_marginTop="2dp"/>
-                <Spinner android:id="@+id/sp_timegate_vel" android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:entries="@array/timegate_vel_labels"/>
-
-                <View android:layout_width="match_parent" android:layout_height="1dp"
-                    android:background="#F3F4F6" android:layout_marginTop="12dp"/>
-
-                <TextView android:text="쿨다운·해제" android:textStyle="bold"
-                    android:textSize="13sp" android:textColor="#374151"
-                    android:layout_width="wrap_content" android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"/>
-
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="10dp">
-                    <TextView android:text="경고 재알람 쿨다운 (ms)" android:layout_width="0dp" android:layout_height="wrap_content"
-                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
-                    <EditText android:id="@+id/et_warning_cooldown" android:layout_width="96dp" android:layout_height="wrap_content"
-                        android:inputType="number" android:gravity="end" android:textSize="13sp"/>
-                </LinearLayout>
-                <TextView android:text="유효 500~10000 ms (기본 3000). 경고 경보 후 재알람까지 최소 간격. 높이면 알림 피로가 줄고, 낮추면 재알람이 잦아집니다."
-                    android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:textSize="11sp" android:textColor="#9CA3AF"/>
-
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="10dp">
-                    <TextView android:text="위험 재알람 쿨다운 (ms)" android:layout_width="0dp" android:layout_height="wrap_content"
-                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
-                    <EditText android:id="@+id/et_danger_cooldown" android:layout_width="96dp" android:layout_height="wrap_content"
-                        android:inputType="number" android:gravity="end" android:textSize="13sp"/>
-                </LinearLayout>
-                <TextView android:text="유효 500~10000 ms (기본 2000). 위험 경보 후 재알람까지 최소 간격. 높이면 조용해지고, 낮추면 연속으로 울립니다."
-                    android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:textSize="11sp" android:textColor="#9CA3AF"/>
-
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="10dp">
-                    <TextView android:text="격하 히스테리시스 (dB)" android:layout_width="0dp" android:layout_height="wrap_content"
-                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
-                    <EditText android:id="@+id/et_hysteresis" android:layout_width="96dp" android:layout_height="wrap_content"
-                        android:inputType="number" android:gravity="end" android:textSize="13sp"/>
-                </LinearLayout>
-                <TextView android:text="유효 0~15 dB (기본 5). 경보 단계를 내릴 때 요구하는 여유폭. 높이면 경보가 잘 안 풀려 깜빡임이 줄고, 낮추면 멀어지자마자 금방 해제됩니다."
-                    android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:textSize="11sp" android:textColor="#9CA3AF"/>
-
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="10dp">
-                    <TextView android:text="이탈 중 재경보 마진 (dB)" android:layout_width="0dp" android:layout_height="wrap_content"
-                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
-                    <EditText android:id="@+id/et_departing_hysteresis" android:layout_width="96dp" android:layout_height="wrap_content"
-                        android:inputType="number" android:gravity="end" android:textSize="13sp"/>
-                </LinearLayout>
-                <TextView android:text="유효 0~20 dB (기본 8). 멀어지는 대상이 다시 경보를 올리려면 필요한 추가 신호. 높이면 이탈 중 재경보가 억제되고, 낮추면 재경보가 쉬워집니다."
-                    android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:textSize="11sp" android:textColor="#9CA3AF"/>
-
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="10dp">
-                    <TextView android:text="페이드아웃 지속시간 (ms)" android:layout_width="0dp" android:layout_height="wrap_content"
-                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
-                    <EditText android:id="@+id/et_receding_clear_ms" android:layout_width="96dp" android:layout_height="wrap_content"
-                        android:inputType="number" android:gravity="end" android:textSize="13sp"/>
-                </LinearLayout>
-                <TextView android:text="유효 500~10000 ms (기본 2500). 멀어짐이 이 시간 지속되면 경보 해제. 높이면 해제가 신중해지고, 낮추면 빨리 조용해집니다."
-                    android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:textSize="11sp" android:textColor="#9CA3AF"/>
-
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="10dp">
-                    <TextView android:text="페이드아웃 하락폭 (dB)" android:layout_width="0dp" android:layout_height="wrap_content"
-                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
-                    <EditText android:id="@+id/et_receding_drop" android:layout_width="96dp" android:layout_height="wrap_content"
-                        android:inputType="number" android:gravity="end" android:textSize="13sp"/>
-                </LinearLayout>
-                <TextView android:text="유효 1~20 dB (기본 5). 최고 신호에서 이만큼 떨어지면 '멀어짐'으로 판단. 높이면 이탈 판정이 신중해지고, 낮추면 해제가 빨리 시작됩니다."
-                    android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:textSize="11sp" android:textColor="#9CA3AF"/>
-
-                <View android:layout_width="match_parent" android:layout_height="1dp"
-                    android:background="#F3F4F6" android:layout_marginTop="12dp"/>
-
-                <TextView android:text="충돌 기하학" android:textStyle="bold"
-                    android:textSize="13sp" android:textColor="#374151"
-                    android:layout_width="wrap_content" android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"/>
-
-                <TextView android:text="속도 환산계수 (km/h → dBm/s)" android:layout_width="wrap_content" android:layout_height="wrap_content"
-                    android:textSize="13sp" android:textColor="#111827" android:layout_marginTop="10dp"/>
-                <TextView android:text="GPS 상대속도를 예상 신호 상승률로 바꾸는 계수. 민감할수록 정면충돌 판정이 쉬워져 즉시 경보가 늘고, 둔감할수록 판정이 엄격해집니다."
-                    android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:textSize="11sp" android:textColor="#9CA3AF" android:layout_marginTop="2dp"/>
-                <Spinner android:id="@+id/sp_closing_factor" android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:entries="@array/closing_factor_labels"/>
-
-                <TextView android:text="정면충돌 접근비 (이상)" android:layout_width="wrap_content" android:layout_height="wrap_content"
-                    android:textSize="13sp" android:textColor="#111827" android:layout_marginTop="10dp"/>
-                <TextView android:text="실측/예상 접근 비율이 이 이상이면 정면충돌로 보고 대기 없이 즉시 경보. 민감할수록 즉시 경보가 잦고, 둔감할수록 확실할 때만 통과시킵니다."
-                    android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:textSize="11sp" android:textColor="#9CA3AF" android:layout_marginTop="2dp"/>
-                <Spinner android:id="@+id/sp_headon_ratio" android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:entries="@array/headon_ratio_labels"/>
-
-                <TextView android:text="측면 접근비 (이하)" android:layout_width="wrap_content" android:layout_height="wrap_content"
-                    android:textSize="13sp" android:textColor="#111827" android:layout_marginTop="10dp"/>
-                <TextView android:text="접근 비율이 이 이하면 측면 통과·나란히 주행으로 보고 경보를 보류. 민감할수록 보류가 줄어 경보가 늘고, 둔감할수록 오탐이 줄어듭니다."
-                    android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:textSize="11sp" android:textColor="#9CA3AF" android:layout_marginTop="2dp"/>
-                <Spinner android:id="@+id/sp_side_ratio" android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:entries="@array/side_ratio_labels"/>
-
-                <View android:layout_width="match_parent" android:layout_height="1dp"
-                    android:background="#F3F4F6" android:layout_marginTop="12dp"/>
-
-                <TextView android:text="전처리 필터 (EMA)" android:textStyle="bold"
-                    android:textSize="13sp" android:textColor="#374151"
-                    android:layout_width="wrap_content" android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"/>
-
-                <TextView android:text="상승 알파 (접근 추종)" android:layout_width="wrap_content" android:layout_height="wrap_content"
-                    android:textSize="13sp" android:textColor="#111827" android:layout_marginTop="10dp"/>
-                <TextView android:text="신호가 세질 때(접근) 필터가 따라가는 속도. 민감할수록 접근 반응이 빠르지만 노이즈도 타고, 둔감할수록 부드럽지만 늦습니다."
-                    android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:textSize="11sp" android:textColor="#9CA3AF" android:layout_marginTop="2dp"/>
-                <Spinner android:id="@+id/sp_ema_rise" android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:entries="@array/ema_rise_labels"/>
-
-                <TextView android:text="하강 알파 (난수 무시)" android:layout_width="wrap_content" android:layout_height="wrap_content"
-                    android:textSize="13sp" android:textColor="#111827" android:layout_marginTop="10dp"/>
-                <TextView android:text="신호가 약해질 때(이탈) 따라가는 속도. 민감할수록 이탈을 빨리 반영해 해제가 빠르고, 둔감할수록 순간적인 신호 요동을 무시합니다."
-                    android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:textSize="11sp" android:textColor="#9CA3AF" android:layout_marginTop="2dp"/>
-                <Spinner android:id="@+id/sp_ema_fall" android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:entries="@array/ema_fall_labels"/>
-
-                <TextView android:text="D-Boost 알파 (돌진 개방)" android:layout_width="wrap_content" android:layout_height="wrap_content"
-                    android:textSize="13sp" android:textColor="#111827" android:layout_marginTop="10dp"/>
-                <TextView android:text="강한 돌진을 감지했을 때 필터를 여는 정도. 민감할수록 돌진에 최대 속도로 반응하고, 둔감할수록 평소 필터를 유지합니다."
-                    android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:textSize="11sp" android:textColor="#9CA3AF" android:layout_marginTop="2dp"/>
-                <Spinner android:id="@+id/sp_ema_dboost" android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:entries="@array/ema_dboost_labels"/>
-
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="10dp">
-                    <TextView android:text="워밍업 대칭 푸시 수" android:layout_width="0dp" android:layout_height="wrap_content"
-                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
-                    <EditText android:id="@+id/et_ema_warmup" android:layout_width="96dp" android:layout_height="wrap_content"
-                        android:inputType="number" android:gravity="end" android:textSize="13sp"/>
-                </LinearLayout>
-                <TextView android:text="유효 0~30 (기본 10, 0=끄기). 기기별 첫 N개 수신 동안 하강 알파를 상승 알파와 같게 적용해, 앱 재시작 직후 첫 신호가 우연히 높게 잡혔을 때 기준선을 빠르게 교정합니다. 접근 반응 속도에는 영향이 없습니다."
-                    android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:textSize="11sp" android:textColor="#9CA3AF"/>
-
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="10dp">
-                    <TextView android:text="필터 보존 밴드 (dB)" android:layout_width="0dp" android:layout_height="wrap_content"
-                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
-                    <EditText android:id="@+id/et_preserve_band" android:layout_width="96dp" android:layout_height="wrap_content"
-                        android:inputType="number" android:gravity="end" android:textSize="13sp"/>
-                </LinearLayout>
-                <TextView android:text="유효 0~30 dB (기본 10). 경고 임계 아래 이 구간에서는 필터 상태를 미리 데워 둠. 높이면 경고권 진입 즉시 판정이 빠르고, 낮추면 진입 직후 몇 초 늦을 수 있습니다."
-                    android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:textSize="11sp" android:textColor="#9CA3AF"/>
-
-                <View android:layout_width="match_parent" android:layout_height="1dp"
-                    android:background="#F3F4F6" android:layout_marginTop="12dp"/>
-
-                <TextView android:text="전력·통신" android:textStyle="bold"
-                    android:textSize="13sp" android:textColor="#374151"
-                    android:layout_width="wrap_content" android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"/>
-
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="10dp">
-                    <TextView android:text="광고 웨이크 RSSI (dBm)" android:layout_width="0dp" android:layout_height="wrap_content"
-                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
-                    <EditText android:id="@+id/et_wake_rssi" android:layout_width="96dp" android:layout_height="wrap_content"
-                        android:inputType="number|numberSigned" android:gravity="end" android:textSize="13sp"/>
-                </LinearLayout>
-                <TextView android:text="유효 -100~-60 dBm (기본 -89). 이 신호 이상이 잡히면 절전 해제. 0에 가깝게 하면 절전이 늘지만 감지가 늦고, -100 쪽이면 멀리서도 깨어납니다."
-                    android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:textSize="11sp" android:textColor="#9CA3AF"/>
-
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="10dp">
-                    <TextView android:text="신호 부재 간주 (ms)" android:layout_width="0dp" android:layout_height="wrap_content"
-                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
-                    <EditText android:id="@+id/et_stale_ms" android:layout_width="96dp" android:layout_height="wrap_content"
-                        android:inputType="number" android:gravity="end" android:textSize="13sp"/>
-                </LinearLayout>
-                <TextView android:text="유효 2000~30000 ms (기본 6000). 이 시간 동안 신호가 없으면 대상을 목록에서 정리. 높이면 끊겨도 오래 추적하고, 낮추면 빨리 정리합니다."
-                    android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:textSize="11sp" android:textColor="#9CA3AF"/>
-
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="10dp">
-                    <TextView android:text="Firebase 저장 스로틀 (ms)" android:layout_width="0dp" android:layout_height="wrap_content"
-                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
-                    <EditText android:id="@+id/et_fb_throttle" android:layout_width="96dp" android:layout_height="wrap_content"
-                        android:inputType="number" android:gravity="end" android:textSize="13sp"/>
-                </LinearLayout>
-                <TextView android:text="유효 5000~600000 ms (기본 60000). 같은 기기 이벤트를 서버에 다시 저장하기까지 최소 간격. 높이면 통신량이 줄고, 낮추면 기록이 촘촘해집니다."
-                    android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:textSize="11sp" android:textColor="#9CA3AF"/>
-
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="10dp">
-                    <TextView android:text="속도 송신 주기 (ms)" android:layout_width="0dp" android:layout_height="wrap_content"
-                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
-                    <EditText android:id="@+id/et_speed_push" android:layout_width="96dp" android:layout_height="wrap_content"
-                        android:inputType="number" android:gravity="end" android:textSize="13sp"/>
-                </LinearLayout>
-                <TextView android:text="유효 500~10000 ms (기본 1500). 내 속도를 상대에게 송출하는 주기. 높이면 배터리를 아끼고, 낮추면 상대방의 충돌 판정이 정밀해집니다."
-                    android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:textSize="11sp" android:textColor="#9CA3AF"/>
-
-            </LinearLayout>
-        </androidx.cardview.widget.CardView>
-
-        <!-- (v1.1.38 B·C) UWB 진단·강제 — 항상 표시(7탭 숨김 게이트 밖). 실가동 상태 확인 + 강제 활성화 -->
-        <TextView android:text="UWB 진단·강제" android:textStyle="bold" android:textSize="16sp"
-            android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="16dp"/>
-        <androidx.cardview.widget.CardView
-            android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:layout_marginTop="8dp">
-            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                android:orientation="vertical" android:padding="16dp">
-
-                <!-- 실시간 상태 라인 — 개발자설정 화면 표시 중 약 1.2초 주기 폴링 갱신 -->
-                <TextView android:id="@+id/tv_uwb_diag"
-                    android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:text="UWB 상태 확인 중…"
-                    android:textSize="13sp" android:textColor="#111827"
-                    android:fontFamily="monospace" android:lineSpacingExtra="3dp"/>
-                <TextView android:text="HW=하드웨어 지원 · 권한=UWB_RANGING · 시스템=기기 UWB 토글 · 세션=UWB 실측 중인 상대 수. 세션이 가동이면 목록 거리가 m(UWB)로 표시됩니다."
-                    android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:layout_marginTop="6dp" android:textSize="11sp" android:textColor="#9CA3AF"/>
-
-                <!-- 강제 활성화 토글 -->
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="12dp">
-                    <TextView android:text="UWB 강제 활성화" android:layout_width="0dp" android:layout_height="wrap_content"
-                        android:layout_weight="1" android:textColor="#111827"/>
-                    <Switch android:id="@+id/sw_uwb_force" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-                </LinearLayout>
-                <TextView android:text="켜면 거리 시작 게이트와 UWB 토글을 무시하고 지원 기기끼리 UWB 세션을 무조건 시도합니다. 하드웨어 미지원·권한 거부·기기 UWB 설정 OFF는 강제로도 우회되지 않습니다(위 진단 참고). 기본 OFF."
-                    android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:layout_marginTop="6dp" android:textSize="11sp" android:textColor="#9CA3AF"/>
-
-            </LinearLayout>
-        </androidx.cardview.widget.CardView>
-
-        <!-- [v1.1.54→55] 에코편차 집계(상호 RSSI) + Level 2 자동보정. 항상 표시(7탭 숨김 게이트 밖) -->
-        <TextView android:text="에코편차 집계 (상호 RSSI)" android:textStyle="bold" android:textSize="16sp"
-            android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="16dp"/>
-        <androidx.cardview.widget.CardView
-            android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:layout_marginTop="8dp">
-            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                android:orientation="vertical" android:padding="16dp">
-
-                <!-- 기기별 에코편차 통계 라인 — 개발자설정 화면 표시 중 약 1.2초 주기 폴링 갱신 -->
-                <TextView android:id="@+id/tv_echo_diag"
-                    android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:text="수집된 에코 표본 없음"
-                    android:textSize="13sp" android:textColor="#111827"
-                    android:fontFamily="monospace" android:lineSpacingExtra="3dp"/>
-                <TextView android:text="편차 = 내가 측정한 상대 RSSI − 상대가 나를 측정해 되돌린 에코. 중앙값=기기 간 체계적 비대칭(모델별 오프셋의 실측 근거), 산포=채널 노이즈(보정 불가 성분), 에코%=상호 RSSI 응답 비율(0%=비콘·구버전). 수집은 판정과 독립이며 앱을 재시작해도 누적됩니다. 아래 자동보정을 켜면 이 통계의 중앙값이 판정 임계 보정(echoCal)에 사용됩니다."
-                    android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:layout_marginTop="6dp" android:textSize="11sp" android:textColor="#9CA3AF"/>
-
-                <!-- [v1.1.55] Level 2 자동보정 — 중앙값 기반 echoCal 을 판정 오프셋(totalOffset)에 주입 -->
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="12dp">
-                    <TextView android:text="에코편차 자동보정 (Level 2)" android:layout_width="0dp" android:layout_height="wrap_content"
-                        android:layout_weight="1" android:textColor="#111827"/>
-                    <Switch android:id="@+id/sw_echo_auto_calib" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-                </LinearLayout>
-                <TextView android:text="켜면 기기쌍별 중앙값의 −1/2 을 클램프로 잘라 판정 임계에 반영합니다(거울쌍 양쪽 수렴). 표본 부족 시 Firebase 모델쌍 프라이어로 시작, 산포 과다 기기는 보정 0. 실기 검증 전 기본 OFF."
-                    android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:layout_marginTop="6dp" android:textSize="11sp" android:textColor="#9CA3AF"/>
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="10dp">
-                    <TextView android:text="보정 성립 최소 에코틱 (n)" android:layout_width="0dp" android:layout_height="wrap_content"
-                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
-                    <EditText android:id="@+id/et_echo_min_ticks" android:layout_width="96dp" android:layout_height="wrap_content"
-                        android:inputType="number" android:gravity="end" android:textSize="13sp"/>
-                </LinearLayout>
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="10dp">
-                    <TextView android:text="산포 상한 (±dB, 초과=보정 0)" android:layout_width="0dp" android:layout_height="wrap_content"
-                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
-                    <EditText android:id="@+id/et_echo_max_iqr" android:layout_width="96dp" android:layout_height="wrap_content"
-                        android:inputType="number" android:gravity="end" android:textSize="13sp"/>
-                </LinearLayout>
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="10dp">
-                    <TextView android:text="보정 클램프 (±dB)" android:layout_width="0dp" android:layout_height="wrap_content"
-                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
-                    <EditText android:id="@+id/et_echo_clamp" android:layout_width="96dp" android:layout_height="wrap_content"
-                        android:inputType="number" android:gravity="end" android:textSize="13sp"/>
-                </LinearLayout>
-
-                <Button android:id="@+id/btn_echo_reset" android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:layout_marginTop="10dp" android:text="에코편차 통계 초기화" android:backgroundTint="#9E9E9E"/>
-
-            </LinearLayout>
-        </androidx.cardview.widget.CardView>
-
-        <!-- 앱 정보 -->
-        <TextView android:text="앱 정보" android:textStyle="bold" android:textSize="16sp"
-            android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="16dp"/>
-        <androidx.cardview.widget.CardView
-            android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:layout_marginTop="8dp">
-            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                android:orientation="vertical" android:padding="16dp">
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:gravity="center_vertical">
-                    <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content"
-                        android:layout_weight="1" android:orientation="vertical">
-                        <TextView android:id="@+id/tv_app_version"
-                            android:layout_width="wrap_content" android:layout_height="wrap_content"
-                            android:text="SafeAlert v1.0.6"
-                            android:textSize="13sp" android:textStyle="bold" android:textColor="#111827"/>
-                        <TextView
-                            android:layout_width="wrap_content" android:layout_height="wrap_content"
-                            android:text="Copyright 2024-2026 WF11 Team"
-                            android:textSize="11sp" android:textColor="#9CA3AF"/>
-                    </LinearLayout>
-                </LinearLayout>
-            </LinearLayout>
-        </androidx.cardview.widget.CardView>
-
-        <!-- [v1.1.26 D] 개발자 고급(숨김) — '앱 정보' 7회 빠른 터치로 노출. Firebase·디버그·후진대비·초기화 -->
-        <LinearLayout android:id="@+id/hidden_advanced_group"
-            android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:visibility="gone">
-
-        <!-- Firebase -->
-        <TextView android:text="Firebase" android:textStyle="bold" android:textSize="16sp"
-            android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="16dp"/>
-        <androidx.cardview.widget.CardView
-            android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:layout_marginTop="8dp">
-            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                android:orientation="vertical" android:padding="16dp">
-                <TextView android:text="DB 루트 경로" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-                <EditText android:id="@+id/et_firebase_root" android:layout_width="match_parent"
-                    android:layout_height="wrap_content" android:inputType="text"/>
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:layout_marginTop="8dp">
-                    <TextView android:text="경보 자동 저장" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"/>
-                    <Switch android:id="@+id/switch_auto_save" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-                </LinearLayout>
-            </LinearLayout>
-        </androidx.cardview.widget.CardView>
-
-        <!-- 디버그 -->
-        <TextView android:text="디버그" android:textStyle="bold" android:textSize="16sp"
-            android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="16dp"/>
-        <androidx.cardview.widget.CardView
-            android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:layout_marginTop="8dp">
-            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                android:orientation="vertical" android:padding="16dp">
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
-                    <TextView android:text="디버그 모드" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"/>
-                    <Switch android:id="@+id/switch_debug" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-                </LinearLayout>
-                <TextView android:text="테스트 시뮬레이션 RSSI (dBm)" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="8dp"/>
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
-                    <SeekBar android:id="@+id/seek_sim_rssi" android:layout_width="0dp"
-                        android:layout_height="wrap_content" android:layout_weight="1" android:max="60"/>
-                    <TextView android:id="@+id/tv_sim_rssi_val" android:layout_width="64dp"
-                        android:layout_height="wrap_content" android:gravity="end"/>
-                </LinearLayout>
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:layout_marginTop="8dp">
-                    <TextView android:text="상세 로그" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"/>
-                    <Switch android:id="@+id/switch_verbose" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-                </LinearLayout>
-            </LinearLayout>
-        </androidx.cardview.widget.CardView>
-
-        <!-- [v1.1.7 #2] 후진(전진) 대비 감지 -->
-        <TextView android:text="후진(전진) 대비 감지" android:textStyle="bold" android:textSize="16sp"
-            android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="16dp"/>
-        <androidx.cardview.widget.CardView
-            android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:layout_marginTop="8dp">
-            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                android:orientation="vertical" android:padding="16dp">
-
-                <!-- 감지 on/off -->
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
-                    <TextView android:text="후진(전진) 대비 감지 사용" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"/>
-                    <Switch android:id="@+id/switch_reverse_prep" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-                </LinearLayout>
-                <TextView android:text="접근 중인 차량 신호가 정체/약화 상태에서 약 1초 내 갑자기 강해지면 '후진(전진)을 대비해주세요'를 표시합니다."
-                    android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:textSize="11sp" android:textColor="#9CA3AF" android:layout_marginTop="2dp"/>
-
-                <!-- 반전 상승폭 -->
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="12dp">
-                    <TextView android:text="반전 상승폭 (dB)" android:layout_width="0dp" android:layout_height="wrap_content"
-                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
-                    <TextView android:id="@+id/tv_reverse_rise_val" android:layout_width="64dp" android:layout_height="wrap_content"
-                        android:gravity="end" android:textSize="13sp" android:textColor="#374151"/>
-                </LinearLayout>
-                <SeekBar android:id="@+id/seek_reverse_rise" android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp" android:max="18"/>
-                <TextView android:text="유효 2~20 dB (추천 6). 윈도 전반 최저점 대비 현재 신호가 이만큼 강해지면 후보. 낮출수록 민감(오탐↑)."
-                    android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:textSize="11sp" android:textColor="#9CA3AF"/>
-
-                <!-- 관측 윈도 -->
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="10dp">
-                    <TextView android:text="추세 관측 윈도 (ms)" android:layout_width="0dp" android:layout_height="wrap_content"
-                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
-                    <TextView android:id="@+id/tv_reverse_window_val" android:layout_width="64dp" android:layout_height="wrap_content"
-                        android:gravity="end" android:textSize="13sp" android:textColor="#374151"/>
-                </LinearLayout>
-                <SeekBar android:id="@+id/seek_reverse_window" android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp" android:max="25"/>
-                <TextView android:text="유효 500~3000 ms (추천 1200). 이 구간을 시간 기준 전/후반으로 나눠 반전을 판정합니다."
-                    android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:textSize="11sp" android:textColor="#9CA3AF"/>
-
-                <!-- 전반 안정 허용치 -->
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="10dp">
-                    <TextView android:text="전반 안정 허용치 (dB)" android:layout_width="0dp" android:layout_height="wrap_content"
-                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
-                    <TextView android:id="@+id/tv_reverse_stabletol_val" android:layout_width="64dp" android:layout_height="wrap_content"
-                        android:gravity="end" android:textSize="13sp" android:textColor="#374151"/>
-                </LinearLayout>
-                <SeekBar android:id="@+id/seek_reverse_stabletol" android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp" android:max="10"/>
-                <TextView android:text="유효 0~10 dB (추천 2). 전반부 변화량이 이하라야 '정체/약화'로 인정 — 단조 접근은 자동 제외됩니다."
-                    android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:textSize="11sp" android:textColor="#9CA3AF"/>
-
-                <!-- 라벨 유지 -->
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="10dp">
-                    <TextView android:text="감지 후 라벨 유지 (ms)" android:layout_width="0dp" android:layout_height="wrap_content"
-                        android:layout_weight="1" android:textSize="13sp" android:textColor="#111827"/>
-                    <TextView android:id="@+id/tv_reverse_hold_val" android:layout_width="64dp" android:layout_height="wrap_content"
-                        android:gravity="end" android:textSize="13sp" android:textColor="#374151"/>
-                </LinearLayout>
-                <SeekBar android:id="@+id/seek_reverse_hold" android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp" android:max="9"/>
-                <TextView android:text="유효 1000~10000 ms (추천 4000). 감지 시점부터 이 시간 동안 경고 라벨을 유지합니다."
-                    android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:textSize="11sp" android:textColor="#9CA3AF"/>
-
-            </LinearLayout>
-        </androidx.cardview.widget.CardView>
-
-        <!-- 버튼 — [v1.1.15] 저장 버튼 제거(즉시 라이브 반영), 기본값 초기화만 유지 -->
-        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:orientation="horizontal" android:layout_marginTop="24dp">
-            <Button android:id="@+id/btn_reset" android:layout_width="match_parent" android:layout_height="wrap_content"
-                android:text="기본값으로 초기화" android:backgroundTint="#9E9E9E"/>
-        </LinearLayout>
-
-        </LinearLayout>
-        <!-- /hidden_advanced_group [v1.1.26 D] -->
-
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="#F5F6F8">
+
+    <!-- 상단 헤더 바 (테마 NoActionBar — 액티비티 supportActionBar 는 없음) -->
+    <LinearLayout style="@style/SA.TopBar">
+        <TextView style="@style/SA.TopBarTitle" android:text="개발자 설정" />
     </LinearLayout>
-</ScrollView>
+    <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#EAECF0" />
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <!-- ═══════════ [송수신·통신] ═══════════ -->
+            <androidx.cardview.widget.CardView style="@style/SA.Card">
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical">
+
+                    <LinearLayout android:id="@+id/sec_txrx_header" style="@style/SA.SectionHeader">
+                        <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
+                            <TextView style="@style/SA.SectionTitle" android:text="송수신·통신" />
+                            <TextView android:id="@+id/sec_txrx_summary" style="@style/SA.SectionSummary" android:text="스캔 1000ms · 광고 200ms" />
+                        </LinearLayout>
+                        <ImageView android:id="@+id/sec_txrx_chevron" style="@style/SA.Chevron" android:contentDescription="펼침/접힘" />
+                    </LinearLayout>
+
+                    <LinearLayout android:id="@+id/sec_txrx_body" style="@style/SA.SectionBody">
+
+                        <TextView style="@style/SA.SubHeader" android:layout_marginTop="0dp" android:text="🚛 장비 작업자" />
+
+                        <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
+                            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
+                                <TextView style="@style/SA.Label" android:text="신호 송신 (TX)" />
+                                <TextView style="@style/SA.Hint" android:layout_marginTop="1dp" android:text="BLE 신호를 주변에 송출" />
+                            </LinearLayout>
+                            <Switch android:id="@+id/switch_device_tx" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                        </LinearLayout>
+
+                        <LinearLayout style="@style/SA.Row">
+                            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
+                                <TextView style="@style/SA.Label" android:text="신호 수신 (RX)" />
+                                <TextView style="@style/SA.Hint" android:layout_marginTop="1dp" android:text="주변 장비·보행자 감지" />
+                            </LinearLayout>
+                            <Switch android:id="@+id/switch_device_rx" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                        </LinearLayout>
+
+                        <!-- 보행자끼리 경보 -->
+                        <LinearLayout style="@style/SA.Row">
+                            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
+                                <TextView style="@style/SA.Label" android:text="보행자끼리 경보" />
+                                <TextView style="@style/SA.Hint" android:layout_marginTop="1dp" android:text="보행자가 다른 보행자를 감지해도 경보 (기본: OFF)" />
+                            </LinearLayout>
+                            <Switch android:id="@+id/switch_walker_detects_walker" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                        </LinearLayout>
+
+                        <View style="@style/SA.Divider" />
+
+                        <TextView style="@style/SA.SubHeader" android:text="🚶 보행자" />
+
+                        <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
+                            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
+                                <TextView style="@style/SA.Label" android:text="신호 송신 (TX)" />
+                                <TextView style="@style/SA.Hint" android:layout_marginTop="1dp" android:text="BLE 신호를 주변에 송출 (기본: OFF)" />
+                            </LinearLayout>
+                            <Switch android:id="@+id/switch_walker_tx" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                        </LinearLayout>
+
+                        <LinearLayout style="@style/SA.Row">
+                            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
+                                <TextView style="@style/SA.Label" android:text="신호 수신 (RX)" />
+                                <TextView style="@style/SA.Hint" android:layout_marginTop="1dp" android:text="주변 장비 감지" />
+                            </LinearLayout>
+                            <Switch android:id="@+id/switch_walker_rx" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                        </LinearLayout>
+
+                        <View style="@style/SA.Divider" />
+
+                        <TextView style="@style/SA.SubHeader" android:text="BLE 통신" />
+
+                        <TextView style="@style/SA.Label" android:layout_marginTop="10dp" android:text="스캔 주기" />
+                        <Spinner android:id="@+id/spinner_scan_period" android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:entries="@array/scan_period_labels" />
+                        <TextView style="@style/SA.Label" android:layout_marginTop="8dp" android:text="광고 간격" />
+                        <Spinner android:id="@+id/spinner_advertise" android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:entries="@array/advertise_labels" />
+
+                    </LinearLayout>
+                </LinearLayout>
+            </androidx.cardview.widget.CardView>
+
+            <!-- ═══════════ [소리·진동 세부] — 경보 볼륨은 BLE 감지 설정으로 이동 ═══════════ -->
+            <androidx.cardview.widget.CardView style="@style/SA.Card">
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical">
+
+                    <LinearLayout android:id="@+id/sec_sound_header" style="@style/SA.SectionHeader">
+                        <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
+                            <TextView style="@style/SA.SectionTitle" android:text="소리·진동 세부" />
+                            <TextView android:id="@+id/sec_sound_summary" style="@style/SA.SectionSummary" android:text="진동 ON · 소리 ON" />
+                        </LinearLayout>
+                        <ImageView android:id="@+id/sec_sound_chevron" style="@style/SA.Chevron" android:contentDescription="펼침/접힘" />
+                    </LinearLayout>
+
+                    <LinearLayout android:id="@+id/sec_sound_body" style="@style/SA.SectionBody">
+
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="0dp"
+                            android:text="경보 볼륨은 BLE 감지 설정 › 경보 기본에서 조절합니다 (50~100%)" />
+
+                        <LinearLayout style="@style/SA.Row">
+                            <TextView style="@style/SA.RowLabel" android:text="진동 사용" />
+                            <Switch android:id="@+id/switch_vibration" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                        </LinearLayout>
+                        <TextView style="@style/SA.Label" android:layout_marginTop="10dp" android:text="경고 진동 시간" />
+                        <Spinner android:id="@+id/spinner_vib_warning" android:layout_width="match_parent"
+                            android:layout_height="wrap_content" android:entries="@array/vib_warning_labels" />
+                        <TextView style="@style/SA.Label" android:layout_marginTop="8dp" android:text="위험 진동 반복 횟수" />
+                        <Spinner android:id="@+id/spinner_vib_count" android:layout_width="match_parent"
+                            android:layout_height="wrap_content" android:entries="@array/vib_count_labels" />
+                        <LinearLayout style="@style/SA.Row">
+                            <TextView style="@style/SA.RowLabel" android:text="경보음 사용" />
+                            <Switch android:id="@+id/switch_sound" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                        </LinearLayout>
+
+                    </LinearLayout>
+                </LinearLayout>
+            </androidx.cardview.widget.CardView>
+
+            <!-- ═══════════ [판정 파라미터] — BleService 핵심 상수의 라이브 조절. 기본값 = 기존 하드코딩값 ═══════════ -->
+            <androidx.cardview.widget.CardView style="@style/SA.Card">
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical">
+
+                    <LinearLayout android:id="@+id/sec_param_header" style="@style/SA.SectionHeader">
+                        <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
+                            <TextView style="@style/SA.SectionTitle" android:text="판정 파라미터" />
+                            <TextView android:id="@+id/sec_param_summary" style="@style/SA.SectionSummary" android:text="TTC · 오프셋 6/2/8 dB" />
+                        </LinearLayout>
+                        <ImageView android:id="@+id/sec_param_chevron" style="@style/SA.Chevron" android:contentDescription="펼침/접힘" />
+                    </LinearLayout>
+
+                    <LinearLayout android:id="@+id/sec_param_body" style="@style/SA.SectionBody">
+
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="0dp"
+                            android:text="경보 판정·필터의 핵심 수치. 기본값은 현장 검증값이며 저장 즉시 서비스에 반영됩니다. '기본값으로 초기화'로 전체 복원." />
+
+                        <!-- [v1.1.24] 역할별 조기경보 오프셋 — effWarning/effDanger 를 역할쌍별로 더 먼 거리로 당김 -->
+                        <TextView style="@style/SA.SubHeader" android:text="역할별 조기경보 오프셋" />
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="2dp"
+                            android:text="값이 클수록 더 먼 거리(약한 신호)에서 미리 경보합니다. 0=중립(일반 임계와 동일). 금속 캐빈 차폐로 신호가 약해지는 장비끼리도 놓치지 않도록 보정." />
+
+                        <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
+                            <TextView style="@style/SA.RowLabel" android:text="보행자 ↔ 지게차 (dB)" />
+                            <TextView android:id="@+id/tv_walker_equip_bias_val" style="@style/SA.Value" />
+                        </LinearLayout>
+                        <SeekBar android:id="@+id/seek_walker_equip_bias" android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:layout_marginTop="4dp" android:max="15" />
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="0dp"
+                            android:text="유효 0~15 dB (기본 6). 보행자와 지게차 사이 조기경보 강도. 가장 강하게 보호." />
+
+                        <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
+                            <TextView style="@style/SA.RowLabel" android:text="보행자 ↔ EPJ (dB)" />
+                            <TextView android:id="@+id/tv_walker_epj_bias_val" style="@style/SA.Value" />
+                        </LinearLayout>
+                        <SeekBar android:id="@+id/seek_walker_epj_bias" android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:layout_marginTop="4dp" android:max="15" />
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="0dp"
+                            android:text="유효 0~15 dB (기본 2). EPJ(전동 파레트 잭)는 저속·동일공간 작업이라 지게차보다 완화." />
+
+                        <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
+                            <TextView style="@style/SA.RowLabel" android:text="장비 ↔ 장비 (dB)" />
+                            <TextView android:id="@+id/tv_equip_equip_bias_val" style="@style/SA.Value" />
+                        </LinearLayout>
+                        <SeekBar android:id="@+id/seek_equip_equip_bias" android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:layout_marginTop="4dp" android:max="15" />
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="0dp"
+                            android:text="유효 0~15 dB (기본 8). 지게차끼리·EPJ끼리·지게차↔EPJ. 금속 캐빈 차폐로 약해진 신호를 잡으려면 가장 큰 값 필요." />
+
+                        <View style="@style/SA.Divider" />
+
+                        <TextView style="@style/SA.SubHeader" android:text="경보 판정" />
+
+                        <TextView style="@style/SA.Label" android:layout_marginTop="10dp" android:text="TTC 선발령 임계" />
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="2dp"
+                            android:text="예상 충돌까지 남은 시간(초)이 임계 이하면 위험 경보를 선발령. 민감할수록 멀리서 일찍 울리고(오탐 증가), 둔감할수록 임박해야 울립니다." />
+                        <Spinner android:id="@+id/sp_ttc_threshold" android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:entries="@array/ttc_threshold_labels" />
+
+                        <TextView style="@style/SA.Label" android:layout_marginTop="10dp" android:text="TTC 최소 접근속도 (dBm/s)" />
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="2dp"
+                            android:text="이보다 느린 접근은 충돌 시간 계산에서 제외. 민감할수록 천천히 오는 대상까지 감지하고(오탐 증가), 둔감할수록 확실히 빠른 접근만 봅니다." />
+                        <Spinner android:id="@+id/sp_min_approach_vel" android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:entries="@array/min_approach_vel_labels" />
+
+                        <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
+                            <TextView style="@style/SA.RowLabel" android:text="Time-Gate 평상 (ms)" />
+                            <EditText android:id="@+id/et_timegate_ms" style="@style/SA.EditNumber" />
+                        </LinearLayout>
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="0dp"
+                            android:text="유효 0~3000 ms (기본 500). 접근이 이 시간 이상 지속돼야 경보 확정. 높이면 스침 오탐이 줄지만 반응이 느려지고, 낮추면 즉각 울리는 대신 오탐이 늘어납니다." />
+
+                        <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
+                            <TextView style="@style/SA.RowLabel" android:text="Time-Gate 코너링 (ms)" />
+                            <EditText android:id="@+id/et_timegate_cornering" style="@style/SA.EditNumber" />
+                        </LinearLayout>
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="0dp"
+                            android:text="유효 0~5000 ms (기본 1000). 회전(코너링) 중에 적용되는 더 긴 확인 시간. 높이면 교차로 스침 오탐이 줄고, 낮추면 코너 상황 반응이 빨라집니다." />
+
+                        <TextView style="@style/SA.Label" android:layout_marginTop="10dp" android:text="Time-Gate 접근 판정속도 (dBm/s)" />
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="2dp"
+                            android:text="Time-Gate에서 '접근 중'으로 인정하는 최소 속도. 민감할수록 느린 접근도 게이트 시간을 채워 경보가 빨라지고, 둔감할수록 확실한 접근만 인정합니다." />
+                        <Spinner android:id="@+id/sp_timegate_vel" android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:entries="@array/timegate_vel_labels" />
+
+                        <View style="@style/SA.Divider" />
+
+                        <TextView style="@style/SA.SubHeader" android:layout_marginTop="8dp" android:text="쿨다운·해제" />
+
+                        <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
+                            <TextView style="@style/SA.RowLabel" android:text="경고 재알람 쿨다운 (ms)" />
+                            <EditText android:id="@+id/et_warning_cooldown" style="@style/SA.EditNumber" />
+                        </LinearLayout>
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="0dp"
+                            android:text="유효 500~10000 ms (기본 3000). 경고 경보 후 재알람까지 최소 간격. 높이면 알림 피로가 줄고, 낮추면 재알람이 잦아집니다." />
+
+                        <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
+                            <TextView style="@style/SA.RowLabel" android:text="위험 재알람 쿨다운 (ms)" />
+                            <EditText android:id="@+id/et_danger_cooldown" style="@style/SA.EditNumber" />
+                        </LinearLayout>
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="0dp"
+                            android:text="유효 500~10000 ms (기본 2000). 위험 경보 후 재알람까지 최소 간격. 높이면 조용해지고, 낮추면 연속으로 울립니다." />
+
+                        <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
+                            <TextView style="@style/SA.RowLabel" android:text="격하 히스테리시스 (dB)" />
+                            <EditText android:id="@+id/et_hysteresis" style="@style/SA.EditNumber" />
+                        </LinearLayout>
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="0dp"
+                            android:text="유효 0~15 dB (기본 5). 경보 단계를 내릴 때 요구하는 여유폭. 높이면 경보가 잘 안 풀려 깜빡임이 줄고, 낮추면 멀어지자마자 금방 해제됩니다." />
+
+                        <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
+                            <TextView style="@style/SA.RowLabel" android:text="이탈 중 재경보 마진 (dB)" />
+                            <EditText android:id="@+id/et_departing_hysteresis" style="@style/SA.EditNumber" />
+                        </LinearLayout>
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="0dp"
+                            android:text="유효 0~20 dB (기본 8). 멀어지는 대상이 다시 경보를 올리려면 필요한 추가 신호. 높이면 이탈 중 재경보가 억제되고, 낮추면 재경보가 쉬워집니다." />
+
+                        <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
+                            <TextView style="@style/SA.RowLabel" android:text="페이드아웃 지속시간 (ms)" />
+                            <EditText android:id="@+id/et_receding_clear_ms" style="@style/SA.EditNumber" />
+                        </LinearLayout>
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="0dp"
+                            android:text="유효 500~10000 ms (기본 2500). 멀어짐이 이 시간 지속되면 경보 해제. 높이면 해제가 신중해지고, 낮추면 빨리 조용해집니다." />
+
+                        <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
+                            <TextView style="@style/SA.RowLabel" android:text="페이드아웃 하락폭 (dB)" />
+                            <EditText android:id="@+id/et_receding_drop" style="@style/SA.EditNumber" />
+                        </LinearLayout>
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="0dp"
+                            android:text="유효 1~20 dB (기본 5). 최고 신호에서 이만큼 떨어지면 '멀어짐'으로 판단. 높이면 이탈 판정이 신중해지고, 낮추면 해제가 빨리 시작됩니다." />
+
+                        <View style="@style/SA.Divider" />
+
+                        <TextView style="@style/SA.SubHeader" android:layout_marginTop="8dp" android:text="충돌 기하학" />
+
+                        <TextView style="@style/SA.Label" android:layout_marginTop="10dp" android:text="속도 환산계수 (km/h → dBm/s)" />
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="2dp"
+                            android:text="GPS 상대속도를 예상 신호 상승률로 바꾸는 계수. 민감할수록 정면충돌 판정이 쉬워져 즉시 경보가 늘고, 둔감할수록 판정이 엄격해집니다." />
+                        <Spinner android:id="@+id/sp_closing_factor" android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:entries="@array/closing_factor_labels" />
+
+                        <TextView style="@style/SA.Label" android:layout_marginTop="10dp" android:text="정면충돌 접근비 (이상)" />
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="2dp"
+                            android:text="실측/예상 접근 비율이 이 이상이면 정면충돌로 보고 대기 없이 즉시 경보. 민감할수록 즉시 경보가 잦고, 둔감할수록 확실할 때만 통과시킵니다." />
+                        <Spinner android:id="@+id/sp_headon_ratio" android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:entries="@array/headon_ratio_labels" />
+
+                        <TextView style="@style/SA.Label" android:layout_marginTop="10dp" android:text="측면 접근비 (이하)" />
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="2dp"
+                            android:text="접근 비율이 이 이하면 측면 통과·나란히 주행으로 보고 경보를 보류. 민감할수록 보류가 줄어 경보가 늘고, 둔감할수록 오탐이 줄어듭니다." />
+                        <Spinner android:id="@+id/sp_side_ratio" android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:entries="@array/side_ratio_labels" />
+
+                        <View style="@style/SA.Divider" />
+
+                        <TextView style="@style/SA.SubHeader" android:layout_marginTop="8dp" android:text="전처리 필터 (EMA)" />
+
+                        <TextView style="@style/SA.Label" android:layout_marginTop="10dp" android:text="상승 알파 (접근 추종)" />
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="2dp"
+                            android:text="신호가 세질 때(접근) 필터가 따라가는 속도. 민감할수록 접근 반응이 빠르지만 노이즈도 타고, 둔감할수록 부드럽지만 늦습니다." />
+                        <Spinner android:id="@+id/sp_ema_rise" android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:entries="@array/ema_rise_labels" />
+
+                        <TextView style="@style/SA.Label" android:layout_marginTop="10dp" android:text="하강 알파 (난수 무시)" />
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="2dp"
+                            android:text="신호가 약해질 때(이탈) 따라가는 속도. 민감할수록 이탈을 빨리 반영해 해제가 빠르고, 둔감할수록 순간적인 신호 요동을 무시합니다." />
+                        <Spinner android:id="@+id/sp_ema_fall" android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:entries="@array/ema_fall_labels" />
+
+                        <TextView style="@style/SA.Label" android:layout_marginTop="10dp" android:text="D-Boost 알파 (돌진 개방)" />
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="2dp"
+                            android:text="강한 돌진을 감지했을 때 필터를 여는 정도. 민감할수록 돌진에 최대 속도로 반응하고, 둔감할수록 평소 필터를 유지합니다." />
+                        <Spinner android:id="@+id/sp_ema_dboost" android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:entries="@array/ema_dboost_labels" />
+
+                        <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
+                            <TextView style="@style/SA.RowLabel" android:text="워밍업 대칭 푸시 수" />
+                            <EditText android:id="@+id/et_ema_warmup" style="@style/SA.EditNumber" />
+                        </LinearLayout>
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="0dp"
+                            android:text="유효 0~30 (기본 10, 0=끄기). 기기별 첫 N개 수신 동안 하강 알파를 상승 알파와 같게 적용해, 앱 재시작 직후 첫 신호가 우연히 높게 잡혔을 때 기준선을 빠르게 교정합니다. 접근 반응 속도에는 영향이 없습니다." />
+
+                        <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
+                            <TextView style="@style/SA.RowLabel" android:text="필터 보존 밴드 (dB)" />
+                            <EditText android:id="@+id/et_preserve_band" style="@style/SA.EditNumber" />
+                        </LinearLayout>
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="0dp"
+                            android:text="유효 0~30 dB (기본 10). 경고 임계 아래 이 구간에서는 필터 상태를 미리 데워 둠. 높이면 경고권 진입 즉시 판정이 빠르고, 낮추면 진입 직후 몇 초 늦을 수 있습니다." />
+
+                        <View style="@style/SA.Divider" />
+
+                        <TextView style="@style/SA.SubHeader" android:layout_marginTop="8dp" android:text="전력·통신" />
+
+                        <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
+                            <TextView style="@style/SA.RowLabel" android:text="광고 웨이크 RSSI (dBm)" />
+                            <EditText android:id="@+id/et_wake_rssi" style="@style/SA.EditNumber" android:inputType="number|numberSigned" />
+                        </LinearLayout>
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="0dp"
+                            android:text="유효 -100~-60 dBm (기본 -89). 이 신호 이상이 잡히면 절전 해제. 0에 가깝게 하면 절전이 늘지만 감지가 늦고, -100 쪽이면 멀리서도 깨어납니다." />
+
+                        <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
+                            <TextView style="@style/SA.RowLabel" android:text="신호 부재 간주 (ms)" />
+                            <EditText android:id="@+id/et_stale_ms" style="@style/SA.EditNumber" />
+                        </LinearLayout>
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="0dp"
+                            android:text="유효 2000~30000 ms (기본 6000). 이 시간 동안 신호가 없으면 대상을 목록에서 정리. 높이면 끊겨도 오래 추적하고, 낮추면 빨리 정리합니다." />
+
+                        <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
+                            <TextView style="@style/SA.RowLabel" android:text="Firebase 저장 스로틀 (ms)" />
+                            <EditText android:id="@+id/et_fb_throttle" style="@style/SA.EditNumber" />
+                        </LinearLayout>
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="0dp"
+                            android:text="유효 5000~600000 ms (기본 60000). 같은 기기 이벤트를 서버에 다시 저장하기까지 최소 간격. 높이면 통신량이 줄고, 낮추면 기록이 촘촘해집니다." />
+
+                        <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
+                            <TextView style="@style/SA.RowLabel" android:text="속도 송신 주기 (ms)" />
+                            <EditText android:id="@+id/et_speed_push" style="@style/SA.EditNumber" />
+                        </LinearLayout>
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="0dp"
+                            android:text="유효 500~10000 ms (기본 1500). 내 속도를 상대에게 송출하는 주기. 높이면 배터리를 아끼고, 낮추면 상대방의 충돌 판정이 정밀해집니다." />
+
+                    </LinearLayout>
+                </LinearLayout>
+            </androidx.cardview.widget.CardView>
+
+            <!-- ═══════════ [협력·교환] ← BLE 감지 설정에서 이동(상호 RSSI 교환·협력 수용 완화) ═══════════ -->
+            <androidx.cardview.widget.CardView style="@style/SA.Card">
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical">
+
+                    <LinearLayout android:id="@+id/sec_coop_header" style="@style/SA.SectionHeader">
+                        <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
+                            <TextView style="@style/SA.SectionTitle" android:text="협력·교환" />
+                            <TextView android:id="@+id/sec_coop_summary" style="@style/SA.SectionSummary" android:text="상호 RSSI ON · 완화 +8 dB" />
+                        </LinearLayout>
+                        <ImageView android:id="@+id/sec_coop_chevron" style="@style/SA.Chevron" android:contentDescription="펼침/접힘" />
+                    </LinearLayout>
+
+                    <LinearLayout android:id="@+id/sec_coop_body" style="@style/SA.SectionBody">
+
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="0dp"
+                            android:text="협력 알림 완화 (비대칭 보정) · 같은 거리인데 내 폰만 안 울릴 때 · 값을 올릴수록 상대의 위험 신호를 더 약하게 받아도 함께 울림" />
+
+                        <LinearLayout style="@style/SA.Row">
+                            <TextView style="@style/SA.RowLabel" android:text="상호 RSSI 교환 (대칭 판정)" />
+                            <Switch android:id="@+id/sw_reciprocal_rssi" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                        </LinearLayout>
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="2dp"
+                            android:text="기본 켜짐 · 서로가 상대에게서 들은 RSSI를 되돌려 교환해 두 값의 평균으로 양 폰이 같은 문턱에서 함께 울린다(비대칭·2중 보정 제거). 상대 응답이 없거나(구버전·비콘) 두 측정이 25dB 넘게 어긋나면 아래 완화 폴백 · UWB 실측(대칭) 판정에는 개입 안 함." />
+
+                        <LinearLayout style="@style/SA.Row">
+                            <TextView style="@style/SA.RowLabel" android:text="협력 수용 완화 (폴백)" />
+                            <TextView android:id="@+id/tv_coop_slack" style="@style/SA.Value" android:text="+8 dB" />
+                        </LinearLayout>
+                        <SeekBar android:id="@+id/seek_coop_slack" android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:layout_marginTop="4dp" android:max="20" />
+                        <TextView style="@style/SA.Hint"
+                            android:text="폴백 전용 · 상호 RSSI 교환이 꺼졌거나 상대 응답이 없을 때만 적용 · 0 ~ 20 dB (기본 8). 상대가 위험을 보낼 때 내 RSSI 수용 문턱을 경고 임계보다 이만큼 낮춰(예 -75→-83) 약하게 받아도 함께 울린다. 일반 경보 임계는 그대로 · UWB 실측(대칭) 판정에는 개입 안 함." />
+
+                    </LinearLayout>
+                </LinearLayout>
+            </androidx.cardview.widget.CardView>
+
+            <!-- ═══════════ [UWB 고급] — (v1.1.38 B·C) 진단·강제 + ← BLE 감지 설정에서 이동(승격 3종). 항상 표시(7탭 숨김 게이트 밖) ═══════════ -->
+            <androidx.cardview.widget.CardView style="@style/SA.Card">
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical">
+
+                    <LinearLayout android:id="@+id/sec_uwbadv_header" style="@style/SA.SectionHeader">
+                        <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
+                            <TextView style="@style/SA.SectionTitle" android:text="UWB 고급" />
+                            <TextView android:id="@+id/sec_uwbadv_summary" style="@style/SA.SectionSummary" android:text="강제 OFF · 승격 OFF/OFF/OFF" />
+                        </LinearLayout>
+                        <ImageView android:id="@+id/sec_uwbadv_chevron" style="@style/SA.Chevron" android:contentDescription="펼침/접힘" />
+                    </LinearLayout>
+
+                    <LinearLayout android:id="@+id/sec_uwbadv_body" style="@style/SA.SectionBody">
+
+                        <!-- 실시간 상태 라인 — 개발자설정 화면 표시 중 약 1.2초 주기 폴링 갱신 -->
+                        <TextView android:id="@+id/tv_uwb_diag" style="@style/SA.Mono" android:text="UWB 상태 확인 중…" />
+                        <TextView style="@style/SA.Hint"
+                            android:text="HW=하드웨어 지원 · 권한=UWB_RANGING · 시스템=기기 UWB 토글 · 세션=UWB 실측 중인 상대 수. 세션이 가동이면 목록 거리가 m(UWB)로 표시됩니다." />
+
+                        <!-- 강제 활성화 토글 -->
+                        <LinearLayout style="@style/SA.Row">
+                            <TextView style="@style/SA.RowLabel" android:text="UWB 강제 활성화" />
+                            <Switch android:id="@+id/sw_uwb_force" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                        </LinearLayout>
+                        <TextView style="@style/SA.Hint"
+                            android:text="켜면 거리 시작 게이트와 UWB 토글을 무시하고 지원 기기끼리 UWB 세션을 무조건 시도합니다. 하드웨어 미지원·권한 거부·기기 UWB 설정 OFF는 강제로도 우회되지 않습니다(위 진단 참고). 기본 OFF." />
+
+                        <View style="@style/SA.Divider" />
+
+                        <TextView style="@style/SA.SubHeader" android:text="UWB 승격·해제 (실측 개입)" />
+
+                        <LinearLayout style="@style/SA.Row">
+                            <TextView style="@style/SA.RowLabel" android:text="UWB 위험 승격" />
+                            <Switch android:id="@+id/sw_uwb_promote" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                        </LinearLayout>
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="2dp"
+                            android:text="UWB 실측거리로 승격만: 지게차 쌍 15m 경고·8m 위험, 그 외 5m 경고·3m 위험 · 끄거나 늦추는 개입 없음 · 기본 꺼짐" />
+
+                        <LinearLayout style="@style/SA.Row">
+                            <TextView style="@style/SA.RowLabel" android:text="UWB 접근속도 승격" />
+                            <Switch android:id="@+id/sw_uwb_vel_promote" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                        </LinearLayout>
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="2dp"
+                            android:text="실측 접근속도가 6km/h 이상 지속이면 최소 경고로 조기 승격 · 승격만 · 기본 꺼짐" />
+
+                        <LinearLayout style="@style/SA.Row">
+                            <TextView style="@style/SA.RowLabel" android:text="UWB 이탈 시 경보 해제" />
+                            <Switch android:id="@+id/sw_uwb_vel_release" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                        </LinearLayout>
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="2dp"
+                            android:text="실측으로 3샘플 연속 멀어지면 경보 완화(경고 반경 밖=해제) · 위험 반경 안·급접근 중엔 개입 없음 · 기본 꺼짐" />
+
+                    </LinearLayout>
+                </LinearLayout>
+            </androidx.cardview.widget.CardView>
+
+            <!-- ═══════════ [앱 정보] — 버전 7회 빠른 터치 = 숨김 고급 옵션 노출(v1.1.26 D 게이트 유지) ═══════════ -->
+            <androidx.cardview.widget.CardView style="@style/SA.Card">
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical">
+
+                    <LinearLayout android:id="@+id/sec_appinfo_header" style="@style/SA.SectionHeader">
+                        <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
+                            <TextView style="@style/SA.SectionTitle" android:text="앱 정보" />
+                            <TextView android:id="@+id/sec_appinfo_summary" style="@style/SA.SectionSummary" android:text="SafeAlert" />
+                        </LinearLayout>
+                        <ImageView android:id="@+id/sec_appinfo_chevron" style="@style/SA.Chevron" android:contentDescription="펼침/접힘" />
+                    </LinearLayout>
+
+                    <LinearLayout android:id="@+id/sec_appinfo_body" style="@style/SA.SectionBody">
+
+                        <TextView android:id="@+id/tv_app_version" style="@style/SA.Label"
+                            android:text="SafeAlert v1.0.6" android:textStyle="bold" android:textColor="#111827"
+                            android:paddingTop="6dp" android:paddingBottom="6dp" />
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="0dp"
+                            android:text="Copyright 2024-2026 WF11 Team" />
+
+                        <!-- [v1.1.24] 오픈소스 라이선스 (v1.1.63 최상단 → 앱 정보로 이동) -->
+                        <Button android:id="@+id/btn_open_source_licenses"
+                            android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:layout_marginTop="12dp"
+                            android:text="오픈소스 라이선스"
+                            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                            android:textColor="#374151" android:textSize="13sp" />
+
+                    </LinearLayout>
+                </LinearLayout>
+            </androidx.cardview.widget.CardView>
+
+            <!-- [v1.1.26 D] 개발자 고급(숨김) — '앱 정보' 버전 7회 빠른 터치로 노출. Firebase·디버그·후진대비·초기화 -->
+            <LinearLayout android:id="@+id/hidden_advanced_group"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <!-- Firebase -->
+                <androidx.cardview.widget.CardView style="@style/SA.Card">
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:orientation="vertical" android:padding="16dp">
+                        <TextView style="@style/SA.SectionTitle" android:text="Firebase" />
+                        <TextView style="@style/SA.Label" android:layout_marginTop="10dp" android:text="DB 루트 경로" />
+                        <EditText android:id="@+id/et_firebase_root" android:layout_width="match_parent"
+                            android:layout_height="wrap_content" android:inputType="text" android:textSize="13sp" android:textColor="#111827" />
+                        <LinearLayout style="@style/SA.Row" android:layout_marginTop="8dp">
+                            <TextView style="@style/SA.RowLabel" android:text="경보 자동 저장" />
+                            <Switch android:id="@+id/switch_auto_save" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                        </LinearLayout>
+                    </LinearLayout>
+                </androidx.cardview.widget.CardView>
+
+                <!-- 디버그 -->
+                <androidx.cardview.widget.CardView style="@style/SA.Card">
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:orientation="vertical" android:padding="16dp">
+                        <TextView style="@style/SA.SectionTitle" android:text="디버그" />
+                        <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
+                            <TextView style="@style/SA.RowLabel" android:text="디버그 모드" />
+                            <Switch android:id="@+id/switch_debug" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                        </LinearLayout>
+                        <TextView style="@style/SA.Label" android:layout_marginTop="8dp" android:text="테스트 시뮬레이션 RSSI (dBm)" />
+                        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:orientation="horizontal" android:gravity="center_vertical">
+                            <SeekBar android:id="@+id/seek_sim_rssi" android:layout_width="0dp"
+                                android:layout_height="wrap_content" android:layout_weight="1" android:max="60" />
+                            <TextView android:id="@+id/tv_sim_rssi_val" style="@style/SA.Value"
+                                android:layout_width="64dp" android:gravity="end" />
+                        </LinearLayout>
+                        <LinearLayout style="@style/SA.Row" android:layout_marginTop="8dp">
+                            <TextView style="@style/SA.RowLabel" android:text="상세 로그" />
+                            <Switch android:id="@+id/switch_verbose" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                        </LinearLayout>
+                    </LinearLayout>
+                </androidx.cardview.widget.CardView>
+
+                <!-- [v1.1.7 #2] 후진(전진) 대비 감지 -->
+                <androidx.cardview.widget.CardView style="@style/SA.Card">
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:orientation="vertical" android:padding="16dp">
+                        <TextView style="@style/SA.SectionTitle" android:text="후진(전진) 대비 감지" />
+
+                        <!-- 감지 on/off -->
+                        <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
+                            <TextView style="@style/SA.RowLabel" android:text="후진(전진) 대비 감지 사용" />
+                            <Switch android:id="@+id/switch_reverse_prep" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                        </LinearLayout>
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="2dp"
+                            android:text="접근 중인 차량 신호가 정체/약화 상태에서 약 1초 내 갑자기 강해지면 '후진(전진)을 대비해주세요'를 표시합니다." />
+
+                        <!-- 반전 상승폭 -->
+                        <LinearLayout style="@style/SA.Row">
+                            <TextView style="@style/SA.RowLabel" android:text="반전 상승폭 (dB)" />
+                            <TextView android:id="@+id/tv_reverse_rise_val" style="@style/SA.Value" />
+                        </LinearLayout>
+                        <SeekBar android:id="@+id/seek_reverse_rise" android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:layout_marginTop="4dp" android:max="18" />
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="0dp"
+                            android:text="유효 2~20 dB (추천 6). 윈도 전반 최저점 대비 현재 신호가 이만큼 강해지면 후보. 낮출수록 민감(오탐↑)." />
+
+                        <!-- 관측 윈도 -->
+                        <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
+                            <TextView style="@style/SA.RowLabel" android:text="추세 관측 윈도 (ms)" />
+                            <TextView android:id="@+id/tv_reverse_window_val" style="@style/SA.Value" />
+                        </LinearLayout>
+                        <SeekBar android:id="@+id/seek_reverse_window" android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:layout_marginTop="4dp" android:max="25" />
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="0dp"
+                            android:text="유효 500~3000 ms (추천 1200). 이 구간을 시간 기준 전/후반으로 나눠 반전을 판정합니다." />
+
+                        <!-- 전반 안정 허용치 -->
+                        <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
+                            <TextView style="@style/SA.RowLabel" android:text="전반 안정 허용치 (dB)" />
+                            <TextView android:id="@+id/tv_reverse_stabletol_val" style="@style/SA.Value" />
+                        </LinearLayout>
+                        <SeekBar android:id="@+id/seek_reverse_stabletol" android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:layout_marginTop="4dp" android:max="10" />
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="0dp"
+                            android:text="유효 0~10 dB (추천 2). 전반부 변화량이 이하라야 '정체/약화'로 인정 — 단조 접근은 자동 제외됩니다." />
+
+                        <!-- 라벨 유지 -->
+                        <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
+                            <TextView style="@style/SA.RowLabel" android:text="감지 후 라벨 유지 (ms)" />
+                            <TextView android:id="@+id/tv_reverse_hold_val" style="@style/SA.Value" />
+                        </LinearLayout>
+                        <SeekBar android:id="@+id/seek_reverse_hold" android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:layout_marginTop="4dp" android:max="9" />
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="0dp"
+                            android:text="유효 1000~10000 ms (추천 4000). 감지 시점부터 이 시간 동안 경고 라벨을 유지합니다." />
+
+                    </LinearLayout>
+                </androidx.cardview.widget.CardView>
+
+                <!-- 버튼 — [v1.1.15] 저장 버튼 제거(즉시 라이브 반영), 기본값 초기화만 유지 -->
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:layout_marginTop="12dp">
+                    <Button android:id="@+id/btn_reset" style="@style/SA.Button"
+                        android:text="기본값으로 초기화" android:backgroundTint="#9E9E9E" />
+                </LinearLayout>
+
+            </LinearLayout>
+            <!-- /hidden_advanced_group [v1.1.26 D] -->
+
+        </LinearLayout>
+    </ScrollView>
+</LinearLayout>
