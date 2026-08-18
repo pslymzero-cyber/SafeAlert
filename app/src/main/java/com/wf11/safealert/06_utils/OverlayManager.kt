@@ -55,6 +55,21 @@ object OverlayManager {
     private var touchRawY = 0f
     private var moved = false
 
+    // (v1.1.64 패치3-7) 화면 경보를 띄우지 못하게 된 사유. 정상이면 null.
+    //   기존에는 권한 없음·addView 실패가 모두 로그로만 끝나 사용자는 "경보가 안 뜬다"는
+    //   사실 자체를 알 수 없었다. BleService 가 이 값을 상시 알림으로 승격한다.
+    @Volatile var overlayFaultReason: String? = null
+        private set
+
+    /** 화면 경보 이상/복구 통지 콜백. 인자가 null 이면 복구. */
+    var onOverlayFault: ((String?) -> Unit)? = null
+
+    private fun setFault(reason: String?) {
+        if (overlayFaultReason == reason) return
+        overlayFaultReason = reason
+        runCatching { onOverlayFault?.invoke(reason) }
+    }
+
     fun canDrawOverlays(context: Context): Boolean = Settings.canDrawOverlays(context)
 
     /**
@@ -63,7 +78,11 @@ object OverlayManager {
      */
     // (v1.1.31) distText: UWB 실측/역산 거리 문자열. 빈값이면 기존 dBm 표기로 폴백(뒤호환 기본값).
     fun showFloating(context: Context, deviceId: String, name: String, rssi: Int, danger: Boolean, distText: String = "") {
-        if (!canDrawOverlays(context)) { Log.w(TAG, "오버레이 권한 없음"); return }
+        if (!canDrawOverlays(context)) {
+            Log.w(TAG, "오버레이 권한 없음")
+            setFault("화면 경보 권한 꺼짐 — 소리·진동만 동작")
+            return
+        }
         currentDeviceId = deviceId
         if (floatingView != null) {
             updateContent(name, rssi, danger, distText)
@@ -141,7 +160,6 @@ object OverlayManager {
             addView(icon)
             addView(textCol)
         }
-        floatingView = container
         container.setOnTouchListener(buildTouchListener())
 
         val lp = WindowManager.LayoutParams(
@@ -159,11 +177,26 @@ object OverlayManager {
 
         try {
             wm.addView(container, lp)
+            // (v1.1.64 패치3-7) floatingView 대입은 addView 성공 이후에만 한다.
+            //   기존에는 addView 앞에서 대입해, 실패해도 참조가 non-null 로 남았다.
+            //   그러면 showFloating() 이 영구히 updateContent() 분기로 빠져
+            //   다시는 addView 를 시도하지 않는다 = 재부팅 전까지 화면 경보 영구 소실.
+            floatingView  = container
             currentDanger = danger
             startPulse(danger)
+            setFault(null)
             Log.d(TAG, "플로팅 위젯 표시: $name (${if (danger) "위험" else "경고"})")
         } catch (e: Exception) {
             Log.e(TAG, "플로팅 추가 실패: ${e.message}")
+            floatingView  = null
+            params        = null
+            windowManager = null
+            iconText      = null
+            nameText      = null
+            rssiText      = null
+            background    = null
+            currentDanger = null
+            setFault("화면 경보 표시 실패 — 소리·진동만 동작")
         }
     }
 

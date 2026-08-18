@@ -10,6 +10,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.location.LocationManager
 import android.media.AudioManager
 import android.os.Build
 import android.os.IBinder
@@ -347,8 +348,22 @@ class BleService : LifecycleService() {
                     Log.d(TAG, "블루투스 꺼짐")
                     sendStatusBroadcast("⚠ 블루투스 꺼짐")
                     stopBle()
+                    // (v1.1.64 패치3-4) 기존에는 브로드캐스트만 보냈다 = 화면을 열어 둔 사람만 인지.
+                    //   주머니 속에서 BT 가 꺼지면 무방비인데 아무 통지가 없었다 → 상시 알림으로 승격.
+                    checkSystemHealth()
                 }
             }
+        }
+    }
+
+    /**
+     * (v1.1.64 패치3-4) 위치 기능 on/off 감시.
+     * API 30 이하에서는 위치 서비스가 꺼지면 BLE 스캔 결과가 나오지 않는다(스캔은 '성공'인데 무결과).
+     * API 31+ 는 BLUETOOTH_SCAN 에 neverForLocation 을 선언(AndroidManifest:7-8)해 해당 없음.
+     */
+    private val locationReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            checkSystemHealth()
         }
     }
 
@@ -358,6 +373,17 @@ class BleService : LifecycleService() {
     private val WARNING_COOLDOWN_MS: Long get() = DevSettings.warningCooldownMs
     private val DANGER_COOLDOWN_MS:  Long get() = DevSettings.dangerCooldownMs
     private val SCAN_HEALTH_CHECK_MS   = 15_000L
+
+    // ── (v1.1.64 패치3-3) 무성 실패 표면화 ────────────────────────────────
+    //   기존에는 상시 알림이 '송신 ON · 수신 ON' 문구로 고정돼, 블루투스가 꺼지든
+    //   권한이 회수되든 광고가 실패하든 알림은 계속 정상이라고 표시했다.
+    //   = 보호가 끊긴 사실을 착용자가 알 방법이 없었다.
+    //   각 서브시스템의 이상 사유를 아래로 모아 같은 알림 ID 를 갱신한다. 정상이면 null.
+    @Volatile private var systemFault:  String? = null   // BT·권한·위치 (checkSystemHealth)
+    @Volatile private var txFault:      String? = null   // BleAdvertiser.onTxFault
+    @Volatile private var soundFault:   String? = null   // AlertSoundPlayer.onSoundFault
+    @Volatile private var overlayFault: String? = null   // OverlayManager.onOverlayFault
+    @Volatile private var faultBeeped   = false          // 이상 진입 시 1회만 경고음
 
     @Volatile private var lastScanResultMs = 0L
     private val healthCheckHandler = android.os.Handler(android.os.Looper.getMainLooper())
@@ -816,6 +842,19 @@ class BleService : LifecycleService() {
             addAction(Intent.ACTION_SCREEN_OFF)
         }
         registerReceiver(screenReceiver, screenFilter)
+        // (v1.1.64 패치3-4) API 30 이하에서는 위치 기능이 꺼지면 BLE 스캔이 '성공'인 채 결과만 0건이 된다.
+        //   콜백도 오류도 없는 완전한 무성 실패 → provider 변경을 직접 구독해 즉시 재평가한다.
+        registerReceiver(locationReceiver, IntentFilter(LocationManager.PROVIDERS_CHANGED_ACTION))
+
+        // (v1.1.64 패치3-3) 경보음·화면 경보 이상을 상시 알림으로 승격.
+        //   두 대상은 싱글턴 object 라 이 람다가 서비스 인스턴스를 붙든다 → stopAll() 에서 반드시 null 로 끊는다.
+        AlertSoundPlayer.onSoundFault = { reason -> soundFault   = reason; refreshNotification() }
+        OverlayManager.onOverlayFault = { reason -> overlayFault = reason; refreshNotification() }
+        //   싱글턴은 프로세스가 살아 있는 한 사유를 유지한다. setFault 는 같은 사유의 반복 통지를 막으므로,
+        //   여기서 현재 값을 이어받지 않으면 서비스 재생성 전에 발생한 이상은 새 서비스에 영원히 전달되지 않는다.
+        soundFault   = AlertSoundPlayer.soundFaultReason
+        overlayFault = OverlayManager.overlayFaultReason
+
         loadEchoPriors()   // [v1.1.55] FB 에코 프라이어 — 캐시 즉시 복원+비동기 갱신(판정 경로는 메모리만 읽음)
         ImuFusion.init(this)
         // [v1.0.27] IMU 정지↔이동 전환 구독 → 동적 스캔 모드 제어 (DEVICE·WALKER 공통)
@@ -957,12 +996,18 @@ class BleService : LifecycleService() {
 
         if (btAdapter == null) {
             sendStatusBroadcast("❌ 블루투스 미지원 기기")
+            checkSystemHealth()   // (v1.1.64 패치3-4) 브로드캐스트는 화면을 연 사람만 본다 → 상시 알림 승격
             return
         }
         if (!btAdapter.isEnabled) {
             sendStatusBroadcast("❌ 블루투스 꺼짐 — 켜주세요")
+            checkSystemHealth()
             return
         }
+
+        // (v1.1.64 패치3-3) 여기부터 새 광고자·스캐너를 만든다. 이전 인스턴스가 남긴 송신 이상
+        //   사유는 유효하지 않으므로 먼저 지운다(새 광고자가 또 실패하면 콜백이 다시 채운다).
+        txFault = null
 
         val doTx = if (myMode == "DEVICE") DevSettings.deviceTx else DevSettings.walkerTx
         val doRx = if (myMode == "DEVICE") DevSettings.deviceRx else DevSettings.walkerRx
@@ -976,6 +1021,8 @@ class BleService : LifecycleService() {
                     onStatusUpdate = { msg -> sendStatusBroadcast(msg) }
                 )
                 bleAdvertiser = bleAdv
+                // (v1.1.64 패치3-3) 광고 실패가 로그로만 끝나던 경로 → 상시 알림으로 승격
+                bleAdv.onTxFault = { reason -> txFault = reason; refreshNotification() }
                 bleAdv.startAdvertising(myId)
                 // (v1.1.30) UWB 는 광고 시작 후 별도 적용 — 모드 전환 대비 이전 세션 정리 후 재생성
                 uwbRanger?.stop(); uwbRanger = null
@@ -987,6 +1034,7 @@ class BleService : LifecycleService() {
             } else {
                 sendStatusBroadcast("❌ TX 오류: 이 기기는 BLE 광고 미지원")
                 Log.e(TAG, "TX: bluetoothLeAdvertiser null")
+                txFault = "이 기기는 BLE 송신을 지원하지 않음"   // (v1.1.64 패치3-3)
             }
         }
 
@@ -1127,6 +1175,16 @@ class BleService : LifecycleService() {
                 Log.e(TAG, "RX: bluetoothLeScanner null")
             }
         }
+
+        // (v1.1.64 패치3-4) 주기 점검은 스캔 여부와 무관하게 돌려야 한다.
+        //   기존에는 startScanHealthCheck() 가 if (doRx) 안에서만 호출돼, 송신 전용 기기는
+        //   주기 점검 자체가 없었다 = 권한 회수·BT off 를 영원히 알아채지 못한다.
+        //   러너블 첫 줄이 removeCallbacksAndMessages(null) 이라 이중 호출은 무해.
+        startScanHealthCheck()
+        checkSystemHealth()
+        // (v1.1.64 패치3-3) startForeground 가 심어 둔 알림은 이 시점 상태를 모른다.
+        //   checkSystemHealth 가 '변화 없음'으로 끝나도(예: 시작부터 정상) 한 번은 현재 상태로 다시 그린다.
+        refreshNotification()
     }
 
     private fun calcLevelWithHysteresis(deviceId: String, rssi: Int, rssiOffset: Int = 0): Int {
@@ -3008,7 +3066,9 @@ class BleService : LifecycleService() {
                     }
                 }
                 val elapsed = System.currentTimeMillis() - lastScanResultMs
-                if (elapsed > SCAN_HEALTH_CHECK_MS) {
+                // (v1.1.64 패치3-4) bleScanner 가드 — 송신 전용 구성에서도 이 루프가 돌게 되면서
+                //   스캐너가 없는 기기가 15초마다 "결과 없음" 경고를 찍는 로그 스팸이 생긴다.
+                if (bleScanner != null && elapsed > SCAN_HEALTH_CHECK_MS) {
                     // [v1.0.46 #9] stopBle()+applyMode() 전체 재시작은 TX 광고까지 끊어 상대 기기에서
                     //   내가 사라지는 가시성 갭을 냈다(주변 무기기 정상 상황에서도 15초마다 반복).
                     //   수신(RX) 스캐너만 재시작 — 송신(TX)은 무중단. 상태 브로드캐스트 스팸도 제거.
@@ -3016,6 +3076,8 @@ class BleService : LifecycleService() {
                     bleScanner?.restartScan()
                     lastScanResultMs = System.currentTimeMillis()
                 }
+                // (v1.1.64 패치3-4) 권한 회수는 콜백이 없다 — 주기적으로 직접 확인하는 수밖에 없다.
+                checkSystemHealth()
                 if (isRunning) healthCheckHandler.postDelayed(this, SCAN_HEALTH_CHECK_MS)
             }
         }, SCAN_HEALTH_CHECK_MS)
@@ -3535,6 +3597,16 @@ class BleService : LifecycleService() {
         try { unregisterReceiver(btStateReceiver) } catch (_: Exception) {}
         try { unregisterReceiver(volumeReceiver)  } catch (_: Exception) {}
         try { unregisterReceiver(screenReceiver)  } catch (_: Exception) {}
+        try { unregisterReceiver(locationReceiver) } catch (_: Exception) {}   // (v1.1.64 패치3-4)
+        // (v1.1.64 패치3-3) 싱글턴 object 가 서비스 인스턴스를 캡처한 람다를 계속 붙들면
+        //   서비스가 GC 되지 않는다 → 반드시 끊고, 이상 상태도 초기화한다.
+        AlertSoundPlayer.onSoundFault = null
+        OverlayManager.onOverlayFault = null
+        systemFault  = null
+        txFault      = null
+        soundFault   = null
+        overlayFault = null
+        faultBeeped  = false
         isRunning  = false
         lastStatus = ""
         bleScanCount   = 0
@@ -3578,4 +3650,116 @@ class BleService : LifecycleService() {
             .addAction(android.R.drawable.ic_lock_silent_mode, "무음", mutePi)
             .build()
     }
+
+    // ── (v1.1.64 패치3-3) 상시 알림 = 보호 상태의 유일한 진실 ────────────────
+    //   소스 전역에 NotificationManager.notify 호출이 하나도 없어, 알림 내용은
+    //   startForeground 시점에 고정된 뒤 절대 갱신되지 않았다.
+    //   이제 이상 사유가 생기거나 사라질 때마다 같은 NOTIF_ID 로 갱신한다.
+
+    /** 현재 살아 있는 이상 사유를 한 줄로 합친다. 모두 정상이면 null. */
+    private fun faultSummary(): String? =
+        listOfNotNull(systemFault, txFault, soundFault, overlayFault)
+            .joinToString(" · ")
+            .ifEmpty { null }
+
+    /**
+     * 상시 알림을 현재 상태로 다시 그린다.
+     * 이상 진입 시 1회 경고음을 울려, 알림을 보지 않는 사용자도 인지하게 한다.
+     * (재진입 안전: faultBeeped 를 playWarning 앞에서 세워 두므로,
+     *  경보음 생성 실패 → onSoundFault → 이 함수 재진입 시 경고음은 건너뛰고 끝난다.)
+     */
+    private fun refreshNotification() {
+        if (!isRunning || myMode.isEmpty()) return
+
+        val fault        = faultSummary()
+        val fallbackNote = if (AlertSoundPlayer.isUsingMusicFallback) " · 경보음 미디어 대체 중" else ""
+
+        val title: String
+        val body:  String
+        if (fault != null) {
+            title = "SafeAlert 이상 — 보호가 끊겼습니다"
+            body  = fault + fallbackNote
+        } else {
+            val doTx = if (myMode == "DEVICE") DevSettings.deviceTx else DevSettings.walkerTx
+            val doRx = if (myMode == "DEVICE") DevSettings.deviceRx else DevSettings.walkerRx
+            title = "${categoryRoleName(myCategory)} 실행 중"
+            body  = buildSubText(doTx, doRx) + fallbackNote
+        }
+
+        runCatching {
+            (getSystemService(NOTIFICATION_SERVICE) as NotificationManager)
+                .notify(NOTIF_ID, buildNotification(title, body))
+        }.onFailure { Log.w(TAG, "알림 갱신 실패: ${it.message}") }
+
+        if (fault != null) {
+            if (!faultBeeped) {
+                faultBeeped = true
+                runCatching { AlertSoundPlayer.playWarning(this) }
+            }
+        } else {
+            faultBeeped = false
+        }
+    }
+
+    // ── (v1.1.64 패치3-4) BT·권한·위치 이상 감시 ──────────────────────────
+    //   기존에는 BT 상태 변화를 브로드캐스트로만 알려 화면을 열어 둔 사람만 볼 수 있었고,
+    //   런타임 권한 회수·위치 기능 off 는 아예 감시 대상이 아니었다.
+    //   권한이 회수되면 스캔은 조용히 결과 0건이 되고, 앱은 계속 '정상'으로 보인다.
+
+    private fun setSystemFault(reason: String?) {
+        if (systemFault == reason) return
+        systemFault = reason
+        if (reason != null) Log.w(TAG, "시스템 이상: $reason") else Log.i(TAG, "시스템 이상 해소")
+        refreshNotification()
+    }
+
+    /** BT 어댑터·런타임 권한·위치 기능을 한 번에 재평가한다. 이상이면 상시 알림으로 승격. */
+    private fun checkSystemHealth() {
+        if (!isRunning || myMode.isEmpty()) return
+
+        val doTx = if (myMode == "DEVICE") DevSettings.deviceTx else DevSettings.walkerTx
+        val doRx = if (myMode == "DEVICE") DevSettings.deviceRx else DevSettings.walkerRx
+
+        val adapter = runCatching {
+            (getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
+        }.getOrNull()
+
+        if (adapter == null) {
+            setSystemFault("이 기기는 블루투스를 지원하지 않음"); return
+        }
+        if (!adapter.isEnabled) {
+            setSystemFault("블루투스 꺼짐 — 감지 중단"); return
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            if (doRx && !hasPermission(Manifest.permission.BLUETOOTH_SCAN)) {
+                setSystemFault("주변 기기 검색 권한 꺼짐 — 감지 중단"); return
+            }
+            if (doTx && !hasPermission(Manifest.permission.BLUETOOTH_ADVERTISE)) {
+                setSystemFault("주변 기기 알림 권한 꺼짐 — 내 신호 송출 중단"); return
+            }
+        } else if (doRx) {
+            // API 30 이하에서만 BLE 스캔에 위치 권한·위치 기능이 필요하다.
+            // API 31+ 는 BLUETOOTH_SCAN 에 neverForLocation 선언(AndroidManifest:7-8) → 해당 없음.
+            if (!hasPermission(Manifest.permission.ACCESS_FINE_LOCATION)) {
+                setSystemFault("위치 권한 꺼짐 — 감지 중단"); return
+            }
+            if (!isLocationEnabled()) {
+                setSystemFault("위치 기능 꺼짐 — 감지 중단"); return
+            }
+        }
+
+        setSystemFault(null)
+    }
+
+    private fun hasPermission(perm: String): Boolean =
+        ContextCompat.checkSelfPermission(this, perm) == PackageManager.PERMISSION_GRANTED
+
+    /** 확인 자체가 실패하면 정상으로 간주한다 — 없는 이상을 알리는 오탐이 더 나쁘다. */
+    private fun isLocationEnabled(): Boolean = runCatching {
+        val lm = getSystemService(Context.LOCATION_SERVICE) as LocationManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) lm.isLocationEnabled
+        else lm.isProviderEnabled(LocationManager.GPS_PROVIDER) ||
+             lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER)
+    }.getOrDefault(true)
 }

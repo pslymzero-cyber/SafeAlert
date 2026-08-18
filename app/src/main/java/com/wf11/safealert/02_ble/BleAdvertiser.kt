@@ -50,6 +50,14 @@ class BleAdvertiser(
         //   내 광고를 최소 BALANCED(~250ms)로 승격 유지하는 시간. requestHazardAdv() 가 설정.
         private const val HAZARD_ADV_HOLD_MS = 5000L
 
+        // (v1.1.64 패치3-1) 광고 시작 실패 재시도 백오프. 1s → 2s → 4s … 최대 30s.
+        //   기존에는 onStartFailure 가 로그 한 줄과 상태문자열만 남기고 끝나, 한 번 실패하면
+        //   재광고 트리거(STATE 변경 등)가 올 때까지 '송신 0' 상태로 방치됐다.
+        private const val ADV_RETRY_BASE_MS = 1000L
+        private const val ADV_RETRY_MAX_MS  = 30_000L
+        // 연속 이 횟수 이상 실패하면 사용자에게 보이는 이상 상태로 승격(상시 알림).
+        private const val ADV_FAIL_ESCALATE = 3
+
         private fun mapAdvertiseMode(intervalMs: Int): Int = when {
             intervalMs <= 100 -> AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY
             intervalMs <= 250 -> AdvertiseSettings.ADVERTISE_MODE_BALANCED
@@ -57,9 +65,32 @@ class BleAdvertiser(
         }
     }
 
+    // (v1.1.64 패치3-1) 연속 광고 시작 실패 횟수 — 성공(또는 ALREADY_STARTED)에서 0으로 복귀.
+    @Volatile private var advFailStreak = 0
+    // 재시도가 이미 예약돼 있는지. stateHandler.removeCallbacksAndMessages(null) 를 부르는
+    //   pause/resume/stop 세 곳에서 반드시 false 로 되돌려야 재시도가 영구히 막히지 않는다.
+    @Volatile private var retryScheduled = false
+
+    // (v1.1.64 패치3-1) 내 신호를 못 보내고 있는 사유. 정상이면 null.
+    //   BleService 가 이 값을 상시 알림으로 승격해 '송신이 죽은 줄 모르는' 무성 실패를 없앤다.
+    @Volatile var txFaultReason: String? = null
+        private set
+
+    /** 송신 이상/복구 통지 콜백. 인자가 null 이면 복구. */
+    var onTxFault: ((String?) -> Unit)? = null
+
+    private fun setFault(reason: String?) {
+        if (txFaultReason == reason) return
+        txFaultReason = reason
+        runCatching { onTxFault?.invoke(reason) }
+    }
+
     private val callback = object : AdvertiseCallback() {
         override fun onStartSuccess(settingsInEffect: AdvertiseSettings) {
             Log.d(TAG, "광고 시작 성공 ✓")
+            advFailStreak = 0
+            cancelRetry()
+            setFault(null)
             onStatusUpdate?.invoke("TX 송출 확인됨 ✓")
         }
         override fun onStartFailure(errorCode: Int) {
@@ -71,8 +102,24 @@ class BleAdvertiser(
                 else                                  -> "오류($errorCode)"
             }
             Log.e(TAG, "광고 실패: $reason")
-            if (errorCode != ADVERTISE_FAILED_ALREADY_STARTED) {
-                onStatusUpdate?.invoke("❌ TX 실패: $reason")
+            // (v1.1.64 패치3-1) ALREADY_STARTED = 이전 광고가 아직 살아 있다는 뜻 → 송출은 정상.
+            //   재시도도 이상 승격도 하지 않고 정상으로 계수한다.
+            if (errorCode == ADVERTISE_FAILED_ALREADY_STARTED) {
+                advFailStreak = 0
+                setFault(null)
+                return
+            }
+            onStatusUpdate?.invoke("❌ TX 실패: $reason")
+            // 하드웨어가 광고 자체를 지원하지 않으면 재시도는 의미가 없다 → 즉시 이상 승격.
+            if (errorCode == ADVERTISE_FAILED_FEATURE_UNSUPPORTED) {
+                cancelRetry()
+                setFault("이 기기는 BLE 송신을 지원하지 않음")
+                return
+            }
+            advFailStreak++
+            scheduleRetry()
+            if (advFailStreak >= ADV_FAIL_ESCALATE) {
+                setFault("내 신호를 보내지 못하는 중 ($reason)")
             }
         }
     }
@@ -137,6 +184,31 @@ class BleAdvertiser(
     private var lastAdvertisedEcho: ByteArray = ByteArray(0)
     private var lastEchoAdvAt = 0L
     private val stateHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
+    // (v1.1.64 패치3-1) 광고 시작 실패 자동 재시도.
+    //   paused(저전력 유지) 상태에서도 광고 자체는 계속돼야 하므로 stopped 만 가드한다.
+    private val retryRunnable = Runnable {
+        retryScheduled = false
+        if (stopped) return@Runnable
+        Log.w(TAG, "광고 재시도 (연속 실패 ${advFailStreak}회)")
+        try { advertiser.stopAdvertising(callback) } catch (_: Exception) {}
+        startAdvertising(currentDeviceId, lastUwbAddress)
+    }
+
+    private fun cancelRetry() {
+        if (!retryScheduled) return
+        stateHandler.removeCallbacks(retryRunnable)
+        retryScheduled = false
+    }
+
+    private fun scheduleRetry() {
+        if (stopped || retryScheduled) return
+        val shift = (advFailStreak - 1).coerceIn(0, 5)
+        val delay = (ADV_RETRY_BASE_MS shl shift).coerceAtMost(ADV_RETRY_MAX_MS)
+        retryScheduled = true
+        stateHandler.postDelayed(retryRunnable, delay)
+        Log.w(TAG, "광고 재시도 예약: ${delay}ms 후")
+    }
 
     // [v1.0.51 #1] Rate-Limit 드롭 보완 — throttle 에 걸려 적용 못 한 최신 STATE 보류 저장(-1=없음).
     //   IMU 모션 통지는 '전이 순간'에만 오므로 한 번 드롭되면 다음 전이까지 낡은 상태로 고착된다
@@ -251,12 +323,25 @@ class BleAdvertiser(
             b.build()
         } else null
 
-        if (scanResponse != null) {
-            advertiser.startAdvertising(settings, advertiseData, scanResponse, callback)
-            Log.d(TAG, "광고+SR 시작: id=$deviceId uwb=${if (hasUwb) uwbLocalAddress!!.take(4).joinToString("") { "%02X".format(it) } else "-"} echo=${echoToSend.size / BleConstants.ECHO_ENTRY_SIZE}엔트리")
-        } else {
-            advertiser.startAdvertising(settings, advertiseData, callback)
-            Log.d(TAG, "광고 시작: companyId=0x${companyId.toString(16).uppercase()} id=$deviceId")
+        // (v1.1.64 패치3-2) startAdvertising 자체가 던지면(SecurityException=권한 회수,
+        //   IllegalStateException=BT 어댑터 종료 중) AdvertiseCallback 은 아예 오지 않는다.
+        //   기존에는 이 예외가 호출부로 그대로 올라가 재시도도 통지도 없이 송신이 멈췄다.
+        try {
+            if (scanResponse != null) {
+                advertiser.startAdvertising(settings, advertiseData, scanResponse, callback)
+                Log.d(TAG, "광고+SR 시작: id=$deviceId uwb=${if (hasUwb) uwbLocalAddress!!.take(4).joinToString("") { "%02X".format(it) } else "-"} echo=${echoToSend.size / BleConstants.ECHO_ENTRY_SIZE}엔트리")
+            } else {
+                advertiser.startAdvertising(settings, advertiseData, callback)
+                Log.d(TAG, "광고 시작: companyId=0x${companyId.toString(16).uppercase()} id=$deviceId")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "광고 시작 호출 실패: ${e.message}")
+            onStatusUpdate?.invoke("❌ TX 실패: 송출 시작 오류")
+            advFailStreak++
+            scheduleRetry()
+            if (advFailStreak >= ADV_FAIL_ESCALATE) {
+                setFault("내 신호를 보내지 못하는 중 (송출 시작 오류)")
+            }
         }
     }
 
@@ -500,6 +585,7 @@ class BleAdvertiser(
         paused = true
         burstUntilMs = 0L                                  // [v1.1.26 B] 슬립 진입 시 버스트 해제(근접 신호 사라짐)
         stateHandler.removeCallbacksAndMessages(null)      // 예약된 재광고 콜백 전부 취소
+        retryScheduled = false                             // (v1.1.64 패치3-1) 위에서 재시도도 지워졌음을 반영
         try { advertiser.stopAdvertising(callback) } catch (_: Exception) {}
         // stop→start OS 정리 대기 후 재광고 — paused=true 이므로 startAdvertising 이 LOW_POWER 연속으로 송출.
         //   [v1.1.58 fix3] 단, hazard 홀드가 살아 있으면 BALANCED 플로어 유지(위험 근접 중 슬립 진입 케이스).
@@ -522,6 +608,7 @@ class BleAdvertiser(
         val wasPaused = paused
         paused = false
         stateHandler.removeCallbacksAndMessages(null)      // 슬립 측 예약 콜백 제거
+        retryScheduled = false                             // (v1.1.64 패치3-1) 재시도 예약도 함께 지워짐
         try { advertiser.stopAdvertising(callback) } catch (_: Exception) {}
         startAdvertising(currentDeviceId, lastUwbAddress)  // 0ms 즉시 연속 광고 ON(버스트 중이면 LOW_LATENCY)
         // [v1.1.26 B] 위에서 콜백을 전부 지웠으므로, 진행 중이던 버스트가 있으면 만료 타이머를 다시 건다.
@@ -538,6 +625,7 @@ class BleAdvertiser(
         //   restartWithUwbAddress 의 postDelayed)가 stop 직후 광고를 되살리는 누수를 차단.
         stopped = true
         stateHandler.removeCallbacksAndMessages(null)
+        retryScheduled = false                             // (v1.1.64 패치3-1) 재시도 예약 해제
         try { advertiser.stopAdvertising(callback) } catch (_: Exception) {}
         Log.d(TAG, "광고 중지(예약 재광고 취소 포함)")
     }
