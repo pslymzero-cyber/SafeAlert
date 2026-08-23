@@ -3702,9 +3702,24 @@ class BleService : LifecycleService() {
     private fun switchTargetName(): String = if (myMode == "WALKER") "지게차" else "보행자"
 
     private fun buildNotification(title: String, subText: String): android.app.Notification {
+        // (v1.1.68) 본문 탭 = 무음. 액션 버튼이 아니라 알림 본문(제목·내용) 전체가 대상이다.
+        //   경보가 울리는 순간 손이 가는 곳은 가장 넓은 면이고, 버튼 두 개를 조준할 여유가 없다.
+        //   ongoing 알림이라 탭해도 알림은 남는다 — 무음만 걸리고 감시 표시는 유지된다.
         val mutePi = android.app.PendingIntent.getService(
             this, 0,
             Intent(this, BleService::class.java).apply { action = ACTION_MUTE_TEMP },
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+        )
+        // (v1.1.68) 앱 열기 액션 — 본문 탭을 무음에 내주면서 앱 진입 경로가 사라졌다.
+        //   액션 없이 MainActivity 만 띄운다(handleSwitchRoleIntent 는 액션 불일치로 무시).
+        //   requestCode 는 3종이 서로 달라야 한다. FLAG_UPDATE_CURRENT 라 같으면 덮어써진다.
+        val openPi = android.app.PendingIntent.getActivity(
+            this, 2,
+            Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                        Intent.FLAG_ACTIVITY_SINGLE_TOP
+            },
             android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
         )
         // (v1.1.67) 작업 전환 액션 — 사이드바는 위험 0대면 사라지고(OverlayManager.showSidebar),
@@ -3728,7 +3743,8 @@ class BleService : LifecycleService() {
             .setSmallIcon(android.R.drawable.ic_dialog_alert)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
-            .addAction(android.R.drawable.ic_lock_silent_mode, "무음", mutePi)
+            .setContentIntent(mutePi)
+            .addAction(android.R.drawable.ic_menu_view, "앱 열기", openPi)
             .addAction(android.R.drawable.ic_menu_rotate, "${switchTargetName()}로 전환", switchPi)
             .build()
     }
