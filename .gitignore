@@ -10,3 +10,6 @@
 local.properties
 app/build/
 app/google-services.json
+
+# graphify가 생성하는 지식 그래프 산출물 (`graphify update .` 로 언제든 재생성)
+graphify-out/
