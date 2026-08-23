@@ -142,8 +142,8 @@
 
                         <ImageView
                             android:id="@+id/iv_role_icon"
-                            android:layout_width="46dp"
-                            android:layout_height="46dp"
+                            android:layout_width="@dimen/sa_icon_role"
+                            android:layout_height="@dimen/sa_icon_role"
                             android:layout_marginEnd="@dimen/sa_space_md"
                             android:src="@drawable/ic_walker"
                             android:contentDescription="@null"/>
@@ -353,8 +353,8 @@
                         android:gravity="center_vertical">
 
                         <LinearLayout
-                            android:layout_width="44dp"
-                            android:layout_height="44dp"
+                            android:layout_width="@dimen/sa_icon_badge"
+                            android:layout_height="@dimen/sa_icon_badge"
                             android:gravity="center"
                             android:background="@drawable/shape_icon_bg_green"
                             android:layout_marginEnd="14dp">
@@ -417,8 +417,8 @@
                         android:gravity="center_vertical">
 
                         <LinearLayout
-                            android:layout_width="44dp"
-                            android:layout_height="44dp"
+                            android:layout_width="@dimen/sa_icon_badge"
+                            android:layout_height="@dimen/sa_icon_badge"
                             android:gravity="center"
                             android:background="@drawable/shape_icon_bg_gray"
                             android:layout_marginEnd="14dp">
@@ -478,8 +478,8 @@
                         android:gravity="center_vertical">
 
                         <LinearLayout
-                            android:layout_width="44dp"
-                            android:layout_height="44dp"
+                            android:layout_width="@dimen/sa_icon_badge"
+                            android:layout_height="@dimen/sa_icon_badge"
                             android:gravity="center"
                             android:background="@drawable/shape_icon_bg_blue"
                             android:layout_marginEnd="14dp">
@@ -539,8 +539,8 @@
                         android:gravity="center_vertical">
 
                         <LinearLayout
-                            android:layout_width="44dp"
-                            android:layout_height="44dp"
+                            android:layout_width="@dimen/sa_icon_badge"
+                            android:layout_height="@dimen/sa_icon_badge"
                             android:gravity="center"
                             android:background="@drawable/shape_icon_bg_gray"
                             android:layout_marginEnd="14dp">
@@ -592,7 +592,7 @@
                     <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
                         android:orientation="horizontal" android:paddingHorizontal="@dimen/sa_space_lg"
                         android:paddingVertical="@dimen/sa_space_md" android:gravity="center_vertical">
-                        <LinearLayout android:layout_width="44dp" android:layout_height="44dp"
+                        <LinearLayout android:layout_width="@dimen/sa_icon_badge" android:layout_height="@dimen/sa_icon_badge"
                             android:gravity="center" android:background="@drawable/shape_icon_bg_blue"
                             android:layout_marginEnd="14dp">
                             <ImageView
@@ -638,8 +638,8 @@
                         android:gravity="center_vertical">
 
                         <LinearLayout
-                            android:layout_width="44dp"
-                            android:layout_height="44dp"
+                            android:layout_width="@dimen/sa_icon_badge"
+                            android:layout_height="@dimen/sa_icon_badge"
                             android:gravity="center"
                             android:background="@drawable/shape_icon_bg_gray"
                             android:layout_marginEnd="14dp">

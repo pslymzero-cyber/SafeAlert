@@ -288,6 +288,15 @@ class MainActivity : AppCompatActivity() {
         checkBluetoothStatus()
         requestBatteryOptimizationOnStart()
         requestOverlayPermissionIfNeeded()  // 오버레이 권한 요청
+        handleSwitchRoleIntent(intent)      // (v1.1.67) 상시 알림 '전환' 액션으로 진입한 경우
+    }
+
+    // (v1.1.67) 앱이 이미 떠 있는 상태에서 알림 액션을 누른 경로.
+    //   PendingIntent 가 CLEAR_TOP|SINGLE_TOP 이라 새 인스턴스 대신 여기로 들어온다.
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleSwitchRoleIntent(intent)
     }
 
     override fun onResume() {
@@ -656,6 +665,15 @@ class MainActivity : AppCompatActivity() {
     //   매핑: WALKER→지게차(DEVICE·CAT_FORKLIFT) / DEVICE(레거시 EPJ 포함)→보행자(WALKER·CAT_WALKER).
     private fun switchTargetLabel(): String =
         if (currentMode == "WALKER") "지게차" else "보행자"
+
+    // (v1.1.67) 상시 알림의 '전환' 액션 처리. 액션을 소비(action=null)해 화면 회전·재개 때
+    //   같은 인텐트로 다이얼로그가 되살아나는 것을 막는다. 감시 중이 아니면 무시한다.
+    private fun handleSwitchRoleIntent(intent: Intent?) {
+        if (intent?.action != BleService.ACTION_OPEN_SWITCH_ROLE) return
+        intent.action = null
+        if (currentMode == null) return
+        confirmSwitchRole()
+    }
 
     private fun confirmSwitchRole() {
         val mode = currentMode ?: return

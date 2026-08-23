@@ -28,6 +28,7 @@ import com.wf11.safealert.ble.MedianFilter
 import com.wf11.safealert.ble.RssiPreFilter
 import com.wf11.safealert.firebase.FirebaseManager
 import com.wf11.safealert.utils.BeaconRegistry
+import com.wf11.safealert.ui.MainActivity
 import com.wf11.safealert.utils.DevSettings
 import com.wf11.safealert.utils.ImuFusion
 import com.wf11.safealert.utils.OverlayManager
@@ -52,6 +53,10 @@ class BleService : LifecycleService() {
         const val ACTION_MUTE_ALL      = "ACTION_MUTE_ALL"     // (v1.1.65) 사이드바를 끝까지 드래그해 닫음 → 현재 위험 기기 일괄 ACK 음소거
         const val ACTION_TEST_STATE    = "ACTION_TEST_STATE"   // [v1.0.34] 개발자 수동 STATE 주입(후진/하역 예약비트 송신 테스트)
         const val ACTION_REAPPLY_UWB   = "ACTION_REAPPLY_UWB"  // (v1.1.38 A) 권한 부여·강제 토글 직후 UWB 세션 재평가 넛지
+        // (v1.1.67) 상시 알림 → MainActivity 역할 전환 확인 다이얼로그 직행. 서비스가 아니라
+        //   Activity 가 받는 액션이다. 전환 자체는 정지→재시작(v1.1.60)이라 서비스 단독 처리 시
+        //   prefs·UI 상태가 이원화된다. 기존 confirmSwitchRole() 재사용이 유일 안전 경로.
+        const val ACTION_OPEN_SWITCH_ROLE = "ACTION_OPEN_SWITCH_ROLE"
         const val EXTRA_ID             = "extra_id"
         const val EXTRA_CATEGORY       = "extra_category"       // [v1.0.34] 송신자 역할 Category(CAT_*)
         const val EXTRA_PSTATE         = "extra_pstate"         // [v1.0.34] ACTION_TEST_STATE 용 STATE 값(PSTATE_*)
@@ -3692,10 +3697,29 @@ class BleService : LifecycleService() {
         (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(channel)
     }
 
+    // (v1.1.67) 알림 액션 라벨용 전환 대상 — MainActivity.switchTargetLabel() 과 같은 매핑이다.
+    //   WALKER→지게차 / DEVICE(레거시 EPJ 포함)→보행자.
+    private fun switchTargetName(): String = if (myMode == "WALKER") "지게차" else "보행자"
+
     private fun buildNotification(title: String, subText: String): android.app.Notification {
         val mutePi = android.app.PendingIntent.getService(
             this, 0,
             Intent(this, BleService::class.java).apply { action = ACTION_MUTE_TEMP },
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+        )
+        // (v1.1.67) 작업 전환 액션 — 사이드바는 위험 0대면 사라지고(OverlayManager.showSidebar),
+        //   역할 전환 버튼은 activity_main 안에만 있어 평상시 공정 변경 경로가 없었다. 상시 알림은
+        //   감시 중 항상 떠 있으므로 여기가 유일하게 안정적인 진입점이다.
+        //   즉시 전환이 아니라 확인 다이얼로그를 거치게 한다 — 주머니 속 오탭이 곧 감시 공백이다.
+        //   CLEAR_TOP|SINGLE_TOP = 기존 인스턴스 재사용(onNewIntent). 중복 생성 방지.
+        val switchPi = android.app.PendingIntent.getActivity(
+            this, 1,
+            Intent(this, MainActivity::class.java).apply {
+                action = ACTION_OPEN_SWITCH_ROLE
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                        Intent.FLAG_ACTIVITY_SINGLE_TOP
+            },
             android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
@@ -3705,6 +3729,7 @@ class BleService : LifecycleService() {
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .addAction(android.R.drawable.ic_lock_silent_mode, "무음", mutePi)
+            .addAction(android.R.drawable.ic_menu_rotate, "${switchTargetName()}로 전환", switchPi)
             .build()
     }
 

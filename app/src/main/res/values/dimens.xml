@@ -43,6 +43,10 @@
     <dimen name="sa_touch_min">48dp</dimen>
     <dimen name="sa_topbar_height">56dp</dimen>
     <dimen name="sa_icon_sm">22dp</dimen>
+    <!-- 아이콘 배지 컨테이너(shape_icon_bg_*). 탭 대상이 아니므로 sa_touch_min 과 무관하다. -->
+    <dimen name="sa_icon_badge">44dp</dimen>
+    <!-- 역할 아이콘(보행자·장비). 배지보다 한 단계 크게 잡아 먼저 읽히게 한다. -->
+    <dimen name="sa_icon_role">46dp</dimen>
     <dimen name="sa_edit_number_width">96dp</dimen>
 
 </resources>
