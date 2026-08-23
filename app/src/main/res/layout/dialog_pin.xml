@@ -3,8 +3,8 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
-    android:paddingStart="32dp"
-    android:paddingEnd="32dp"
+    android:paddingStart="@dimen/sa_space_xxl"
+    android:paddingEnd="@dimen/sa_space_xxl"
     android:paddingTop="36dp"
     android:paddingBottom="28dp"
     android:background="@drawable/shape_dialog_bg">
@@ -14,7 +14,7 @@
         android:layout_height="wrap_content"
         android:layout_gravity="center_horizontal"
         android:text="개발자 설정"
-        android:textSize="20sp"
+        android:textSize="@dimen/sa_type_display"
         android:textStyle="bold"
         android:textColor="@color/sa_text_primary" />
 
@@ -32,8 +32,8 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="center_horizontal"
-        android:layout_marginTop="32dp"
-        android:layout_marginBottom="12dp"
+        android:layout_marginTop="@dimen/sa_space_xxl"
+        android:layout_marginBottom="@dimen/sa_space_md"
         android:orientation="horizontal">
         <View android:id="@+id/dot1" android:layout_width="18dp" android:layout_height="18dp"
             android:layout_marginEnd="20dp" android:background="@drawable/shape_pin_dot_empty"/>
@@ -49,7 +49,7 @@
         android:layout_width="wrap_content"
         android:layout_height="24dp"
         android:layout_gravity="center_horizontal"
-        android:layout_marginBottom="12dp"
+        android:layout_marginBottom="@dimen/sa_space_md"
         android:text="PIN이 올바르지 않습니다"
         android:textSize="@dimen/sa_type_body"
         android:textColor="@color/sa_danger"
@@ -74,7 +74,7 @@
     <LinearLayout android:layout_width="match_parent" android:layout_height="72dp" android:orientation="horizontal">
         <Space android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
         <TextView android:id="@+id/btn0" style="@style/PinButton" android:text="0"/>
-        <TextView android:id="@+id/btn_back" style="@style/PinButton" android:text="⌫"/>
+        <TextView android:id="@+id/btn_back" style="@style/PinButton" android:drawableStart="@drawable/ic_backspace" android:drawableTint="@color/sa_text_primary" android:contentDescription="지우기"/>
     </LinearLayout>
 
 </LinearLayout>

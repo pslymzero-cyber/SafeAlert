@@ -241,7 +241,7 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
                 else                                    -> "오류($errorCode)"
             }
             Log.e(TAG, "스캔 실패: $reason")
-            onStatusUpdate?.invoke("⚠ 스캔 오류: $reason")
+            onStatusUpdate?.invoke("스캔 오류: $reason")
             scanCallback?.onScanError(errorCode)
             val delayMs = if (errorCode == 6) 31_000L else 2_000L
             handler.postDelayed({ if (isScanning) restartScanInternal() }, delayMs)
@@ -377,9 +377,9 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
             scanner.startScan(buildFilters(), settings, bleScanCallback)
             Log.d(TAG, "스캔 시작 (${scanModeName(currentScanMode)} · batch=${batchDelay}ms)")
         } catch (e: SecurityException) {
-            Log.e(TAG, "스캔 권한 없음"); onStatusUpdate?.invoke("❌ 스캔 권한 없음")
+            Log.e(TAG, "스캔 권한 없음"); onStatusUpdate?.invoke("스캔 권한 없음")
         } catch (e: Exception) {
-            Log.e(TAG, "스캔 실패: ${e.message}"); onStatusUpdate?.invoke("❌ 스캔 시작 실패")
+            Log.e(TAG, "스캔 실패: ${e.message}"); onStatusUpdate?.invoke("스캔 시작 실패")
         }
     }
 

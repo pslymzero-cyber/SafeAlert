@@ -119,7 +119,7 @@ class MainActivity : AppCompatActivity() {
                 val text = when {
                     !BleService.isRunning -> "서비스 시작 중..."
                     BleService.lastStatus.isNotEmpty() -> BleService.lastStatus
-                    else -> "✓ 블루투스 ON · BLE 시작 중..."
+                    else -> "블루투스 ON · BLE 시작 중..."
                 }
                 if (detectedDevices.isEmpty()) {
                     if (text != lastText) {
@@ -443,9 +443,9 @@ class MainActivity : AppCompatActivity() {
         sorted.forEachIndexed { idx, (name, level, rssi, dist) ->
             if (idx > 0) sb.append("\n")
             val prefix = when (level) {
-                BleConstants.LEVEL_DANGER  -> "🚨"
-                BleConstants.LEVEL_WARNING -> "⚠"
-                else                       -> "📡"
+                BleConstants.LEVEL_DANGER  -> "위험"
+                BleConstants.LEVEL_WARNING -> "경고"
+                else                       -> "감지"
             }
             // (v1.1.31) 서비스가 준 거리 문자열이 있으면 그대로, 없으면 기존 dBm 표기 폴백.
             val meas = if (dist.isNotEmpty()) dist else "${rssi}dBm"
@@ -710,8 +710,8 @@ class MainActivity : AppCompatActivity() {
         // 블루투스 상태 즉시 표시
         val btManager = getSystemService(android.bluetooth.BluetoothManager::class.java)
         binding.tvBleStatus.text = when {
-            btManager?.adapter?.isEnabled != true -> "⚠ 블루투스 꺼짐! 설정에서 켜주세요"
-            else -> "✓ 블루투스 ON · BLE 시작 중..."
+            btManager?.adapter?.isEnabled != true -> "블루투스 꺼짐! 설정에서 켜주세요"
+            else -> "블루투스 ON · BLE 시작 중..."
         }
     }
 
@@ -812,9 +812,9 @@ class MainActivity : AppCompatActivity() {
     private fun checkBluetoothStatus() {
         val btManager = getSystemService(android.bluetooth.BluetoothManager::class.java)
         val status = when {
-            btManager?.adapter == null         -> "❌ 블루투스 미지원 기기"
-            btManager.adapter?.isEnabled != true -> "⚠ 블루투스 꺼짐 — 설정에서 켜주세요"
-            else                                -> "✓ 블루투스 ON — 모드 선택 후 시작하세요"
+            btManager?.adapter == null         -> "블루투스 미지원 기기"
+            btManager.adapter?.isEnabled != true -> "블루투스 꺼짐 — 설정에서 켜주세요"
+            else                                -> "블루투스 ON — 모드 선택 후 시작하세요"
         }
         if (::binding.isInitialized && binding.cardRunning.visibility == android.view.View.VISIBLE) {
             binding.tvBleStatus.text = status

@@ -363,11 +363,13 @@ object OverlayManager {
 
         override fun onBindViewHolder(holder: VH, position: Int) {
             val item = items[position]
-            holder.icon.text = if (item.danger) "🚨" else "⚠"
-            holder.name.text = item.name
-            holder.name.setTextColor(
-                ContextCompat.getColor(ctx, if (item.danger) R.color.sa_danger else R.color.sa_warning)
+            val lvColor = ContextCompat.getColor(
+                ctx, if (item.danger) R.color.sa_danger else R.color.sa_warning
             )
+            holder.icon.text = if (item.danger) "위험" else "경고"
+            holder.icon.setTextColor(lvColor)
+            holder.name.text = item.name
+            holder.name.setTextColor(lvColor)
             val meas = if (item.distText.isNotEmpty()) item.distText else "${item.rssi}dBm"
             holder.meas.text = "${meas} · 탭하면 30초 확인"
             // shape_overlay_row 는 흰색 판이며, 여기서 위험/경고 틴트를 곱해 색을 결정한다.

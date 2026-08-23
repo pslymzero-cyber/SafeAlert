@@ -91,7 +91,7 @@ class BleAdvertiser(
             advFailStreak = 0
             cancelRetry()
             setFault(null)
-            onStatusUpdate?.invoke("TX 송출 확인됨 ✓")
+            onStatusUpdate?.invoke("TX 송출 확인됨")
         }
         override fun onStartFailure(errorCode: Int) {
             val reason = when (errorCode) {
@@ -109,7 +109,7 @@ class BleAdvertiser(
                 setFault(null)
                 return
             }
-            onStatusUpdate?.invoke("❌ TX 실패: $reason")
+            onStatusUpdate?.invoke("TX 실패: $reason")
             // 하드웨어가 광고 자체를 지원하지 않으면 재시도는 의미가 없다 → 즉시 이상 승격.
             if (errorCode == ADVERTISE_FAILED_FEATURE_UNSUPPORTED) {
                 cancelRetry()
@@ -336,7 +336,7 @@ class BleAdvertiser(
             }
         } catch (e: Exception) {
             Log.e(TAG, "광고 시작 호출 실패: ${e.message}")
-            onStatusUpdate?.invoke("❌ TX 실패: 송출 시작 오류")
+            onStatusUpdate?.invoke("TX 실패: 송출 시작 오류")
             advFailStreak++
             scheduleRetry()
             if (advFailStreak >= ADV_FAIL_ESCALATE) {

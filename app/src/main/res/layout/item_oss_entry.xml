@@ -33,10 +33,10 @@
         android:id="@+id/tv_oss_license"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:paddingHorizontal="8dp"
+        android:paddingHorizontal="@dimen/sa_space_sm"
         android:paddingVertical="3dp"
         android:background="@drawable/bg_license_badge"
-        android:textSize="10sp"
+        android:textSize="@dimen/sa_type_micro"
         android:textColor="@color/sa_accent"
         android:text="Apache 2.0"/>
 

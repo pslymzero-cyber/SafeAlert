@@ -355,7 +355,7 @@ class BleService : LifecycleService() {
                 }
                 BluetoothAdapter.STATE_OFF -> {
                     Log.d(TAG, "블루투스 꺼짐")
-                    sendStatusBroadcast("⚠ 블루투스 꺼짐")
+                    sendStatusBroadcast("블루투스 꺼짐")
                     stopBle()
                     // (v1.1.64 패치3-4) 기존에는 브로드캐스트만 보냈다 = 화면을 열어 둔 사람만 인지.
                     //   주머니 속에서 BT 가 꺼지면 무방비인데 아무 통지가 없었다 → 상시 알림으로 승격.
@@ -1005,12 +1005,12 @@ class BleService : LifecycleService() {
         sendStatusBroadcast("설정: $modeStr")
 
         if (btAdapter == null) {
-            sendStatusBroadcast("❌ 블루투스 미지원 기기")
+            sendStatusBroadcast("블루투스 미지원 기기")
             checkSystemHealth()   // (v1.1.64 패치3-4) 브로드캐스트는 화면을 연 사람만 본다 → 상시 알림 승격
             return
         }
         if (!btAdapter.isEnabled) {
-            sendStatusBroadcast("❌ 블루투스 꺼짐 — 켜주세요")
+            sendStatusBroadcast("블루투스 꺼짐 — 켜주세요")
             checkSystemHealth()
             return
         }
@@ -1042,7 +1042,7 @@ class BleService : LifecycleService() {
                 startAdvPowerManager()  // [v1.0.42 Req3] RSSI 기반 송출 전력 관리(슬립/웨이크) 시작
                 Log.d(TAG, "TX 시작: $prefix$myId")
             } else {
-                sendStatusBroadcast("❌ TX 오류: 이 기기는 BLE 광고 미지원")
+                sendStatusBroadcast("TX 오류: 이 기기는 BLE 광고 미지원")
                 Log.e(TAG, "TX: bluetoothLeAdvertiser null")
                 txFault = "이 기기는 BLE 송신을 지원하지 않음"   // (v1.1.64 패치3-3)
             }
@@ -1188,7 +1188,7 @@ class BleService : LifecycleService() {
                 sendStatusBroadcast("RX 스캔 시작")
                 Log.d(TAG, "RX 시작")
             } else {
-                sendStatusBroadcast("❌ RX 오류: BluetoothLeScanner null")
+                sendStatusBroadcast("RX 오류: BluetoothLeScanner null")
                 Log.e(TAG, "RX: bluetoothLeScanner null")
             }
         }
@@ -1737,7 +1737,7 @@ class BleService : LifecycleService() {
             activeSoundLevel = BleConstants.LEVEL_DANGER   // [v1.0.46 #2] 사이렌 레벨 동기 — 후속 WARNING 의 조기차단/영구지속 방지
             updateFloatingOverlay()
             sendAlertBroadcast(deviceId, BleConstants.LEVEL_DANGER)
-            sendStatusBroadcast("⚡ ${suddenLabelMap[deviceId]}")
+            sendStatusBroadcast("${suddenLabelMap[deviceId]}")
             return
         }
         // 0x02 해제(또는 미근접) → 특수 라벨 제거 후 일반 경보 로직 진행
@@ -2276,7 +2276,7 @@ class BleService : LifecycleService() {
                 activeSoundLevel = BleConstants.LEVEL_DANGER   // [v1.0.46 #2] 사이렌 레벨 동기
                 updateFloatingOverlay()
                 sendAlertBroadcast(deviceId, BleConstants.LEVEL_DANGER)
-                sendStatusBroadcast("⚡ 충돌 예측 %.0f초: ${extractDisplayName(deviceId)}".format(ttc))
+                sendStatusBroadcast("충돌 예측 %.0f초: ${extractDisplayName(deviceId)}".format(ttc))
                 return
             }
         }
@@ -2642,7 +2642,7 @@ class BleService : LifecycleService() {
             activeSoundLevel = BleConstants.LEVEL_DANGER
             updateFloatingOverlay()
             sendAlertBroadcast(deviceId, BleConstants.LEVEL_DANGER)
-            sendStatusBroadcast("⚡ ${suddenLabelMap[deviceId]} UWB ${"%.1f".format(uwbD)}m")
+            sendStatusBroadcast("${suddenLabelMap[deviceId]} UWB ${"%.1f".format(uwbD)}m")
             return
         }
         suddenLabelMap.remove(deviceId)
@@ -2919,7 +2919,7 @@ class BleService : LifecycleService() {
         activeSoundLevel = BleConstants.LEVEL_SAFE
         // 이 기기를 제외한 최우선 기기로 플로팅 갱신(없으면 숨김)
         updateFloatingOverlay()
-        sendStatusBroadcast("✋ ${extractDisplayName(deviceId)} 확인됨 — 30초 무음")
+        sendStatusBroadcast("${extractDisplayName(deviceId)} 확인됨 — 30초 무음")
         Log.d(TAG, "기기 음소거(Acknowledge): $deviceId (30초)")
     }
 
@@ -2939,7 +2939,7 @@ class BleService : LifecycleService() {
         VibrationHelper.stopVibration(this)
         activeSoundLevel = BleConstants.LEVEL_SAFE
         updateFloatingOverlay()
-        sendStatusBroadcast("✋ 전체 확인됨 (${targets.size}대) — 30초 무음")
+        sendStatusBroadcast("전체 확인됨 (${targets.size}대) — 30초 무음")
         Log.d(TAG, "전체 음소거(Acknowledge): ${targets.size}대 (30초)")
     }
 

@@ -4,7 +4,7 @@
     android:layout_height="56dp"
     android:layout_columnWeight="1"
     android:gravity="center"
-    android:textSize="20sp"
+    android:textSize="@dimen/sa_type_display"
     android:textStyle="bold"
     android:textColor="@color/sa_text_primary"
     android:background="?attr/selectableItemBackground"

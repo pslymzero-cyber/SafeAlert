@@ -7,69 +7,74 @@
     android:background="@color/sa_bg">
 
     <!-- 상단 바 -->
-    <LinearLayout android:layout_width="match_parent" android:layout_height="56dp"
-        android:orientation="horizontal" android:paddingStart="16dp" android:paddingEnd="8dp"
-        android:gravity="center_vertical" android:background="@color/sa_surface_alt">
-        <TextView android:layout_width="0dp" android:layout_height="wrap_content"
-            android:layout_weight="1" android:text="비콘 관리"
-            android:textSize="@dimen/sa_type_topbar" android:textStyle="bold" android:textColor="@color/sa_text_primary"/>
+    <LinearLayout style="@style/SA.TopBar">
+        <TextView style="@style/SA.TopBarTitle" android:text="비콘 관리"/>
         <TextView android:id="@+id/tv_count"
             android:layout_width="wrap_content" android:layout_height="wrap_content"
-            android:textSize="@dimen/sa_type_caption" android:textColor="@color/sa_text_tertiary" android:layout_marginEnd="8dp"/>
+            android:layout_marginEnd="@dimen/sa_space_sm"
+            android:textSize="@dimen/sa_type_caption" android:textColor="@color/sa_text_tertiary"/>
     </LinearLayout>
-    <View android:layout_width="match_parent" android:layout_height="1dp" android:background="@color/sa_divider"/>
+    <View android:layout_width="match_parent" android:layout_height="@dimen/sa_stroke_hairline"
+        android:background="@color/sa_divider"/>
 
     <!-- 안내 배너 -->
     <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:background="@color/sa_tint_blue" android:padding="10dp"
+        android:background="@color/sa_tint_blue" android:padding="@dimen/sa_space_md"
         android:text="같은 UUID로 설정된 비콘은 전부 자동 감지됩니다.  iBeacon · Eddystone · 커스텀 UUID 지원"
         android:textSize="@dimen/sa_type_caption" android:textColor="@color/sa_accent"/>
 
     <!-- 버튼 영역 -->
     <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:orientation="horizontal" android:padding="12dp" android:gravity="center">
+        android:orientation="horizontal" android:padding="@dimen/sa_space_md" android:gravity="center">
         <Button android:id="@+id/btn_add_uuid"
-            android:layout_width="0dp" android:layout_height="46dp" android:layout_weight="1"
+            android:layout_width="0dp" android:layout_height="@dimen/sa_touch_min" android:layout_weight="1"
             android:text="+ UUID"
             style="@style/Widget.MaterialComponents.Button.UnelevatedButton"
-            app:cornerRadius="12dp"
+            app:cornerRadius="@dimen/sa_radius_sm"
             android:backgroundTint="@color/sa_tint_blue" android:textColor="@color/sa_accent"/>
-        <View android:layout_width="6dp" android:layout_height="1dp"/>
+        <View android:layout_width="@dimen/sa_space_sm" android:layout_height="@dimen/sa_stroke_hairline"/>
         <Button android:id="@+id/btn_add_mac"
-            android:layout_width="0dp" android:layout_height="46dp" android:layout_weight="1"
+            android:layout_width="0dp" android:layout_height="@dimen/sa_touch_min" android:layout_weight="1"
             android:text="+ MAC"
             style="@style/Widget.MaterialComponents.Button.UnelevatedButton"
-            app:cornerRadius="12dp"
+            app:cornerRadius="@dimen/sa_radius_sm"
             android:backgroundTint="@color/sa_tint_amber" android:textColor="@color/sa_orange"/>
-        <View android:layout_width="6dp" android:layout_height="1dp"/>
+        <View android:layout_width="@dimen/sa_space_sm" android:layout_height="@dimen/sa_stroke_hairline"/>
         <Button android:id="@+id/btn_scan"
-            android:layout_width="0dp" android:layout_height="46dp" android:layout_weight="1"
+            android:layout_width="0dp" android:layout_height="@dimen/sa_touch_min" android:layout_weight="1"
             android:text="스캔"
             app:icon="@drawable/ic_search"
             app:iconTint="@color/sa_safe"
             app:iconGravity="textStart"
             style="@style/Widget.MaterialComponents.Button.UnelevatedButton"
-            app:cornerRadius="12dp"
+            app:cornerRadius="@dimen/sa_radius_sm"
             android:backgroundTint="@color/sa_tint_green" android:textColor="@color/sa_safe"/>
     </LinearLayout>
 
     <!-- 기기 간 공유 영역 -->
     <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
         android:orientation="horizontal"
-        android:paddingStart="12dp" android:paddingEnd="12dp" android:paddingBottom="12dp"
+        android:paddingStart="@dimen/sa_space_md" android:paddingEnd="@dimen/sa_space_md"
+        android:paddingBottom="@dimen/sa_space_md"
         android:gravity="center">
         <Button android:id="@+id/btn_share"
-            android:layout_width="0dp" android:layout_height="46dp" android:layout_weight="1"
-            android:text="↗ 기기 간 공유"
+            android:layout_width="0dp" android:layout_height="@dimen/sa_touch_min" android:layout_weight="1"
+            android:text="기기 간 공유"
+            app:icon="@drawable/ic_share_out"
+            app:iconTint="@color/sa_violet"
+            app:iconGravity="textStart"
             style="@style/Widget.MaterialComponents.Button.UnelevatedButton"
-            app:cornerRadius="12dp"
+            app:cornerRadius="@dimen/sa_radius_sm"
             android:backgroundTint="@color/sa_tint_violet" android:textColor="@color/sa_violet"/>
-        <View android:layout_width="6dp" android:layout_height="1dp"/>
+        <View android:layout_width="@dimen/sa_space_sm" android:layout_height="@dimen/sa_stroke_hairline"/>
         <Button android:id="@+id/btn_receive"
-            android:layout_width="0dp" android:layout_height="46dp" android:layout_weight="1"
-            android:text="↙ 받기"
+            android:layout_width="0dp" android:layout_height="@dimen/sa_touch_min" android:layout_weight="1"
+            android:text="받기"
+            app:icon="@drawable/ic_receive_in"
+            app:iconTint="@color/sa_cyan"
+            app:iconGravity="textStart"
             style="@style/Widget.MaterialComponents.Button.UnelevatedButton"
-            app:cornerRadius="12dp"
+            app:cornerRadius="@dimen/sa_radius_sm"
             android:backgroundTint="@color/sa_tint_cyan" android:textColor="@color/sa_cyan"/>
     </LinearLayout>
 
@@ -82,8 +87,10 @@
         android:visibility="gone">
 
         <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:orientation="horizontal" android:paddingStart="16dp" android:paddingEnd="16dp"
-            android:paddingTop="8dp" android:paddingBottom="4dp" android:gravity="center_vertical">
+            android:orientation="horizontal"
+            android:paddingStart="@dimen/sa_space_lg" android:paddingEnd="@dimen/sa_space_lg"
+            android:paddingTop="@dimen/sa_space_sm" android:paddingBottom="@dimen/sa_space_xs"
+            android:gravity="center_vertical">
             <TextView android:layout_width="0dp" android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:text="주변 발견 기기 (탭하여 등록)"
@@ -99,9 +106,9 @@
             android:layout_height="0dp"
             android:layout_weight="1"
             android:background="@color/sa_surface"
-            android:paddingStart="8dp" android:paddingEnd="8dp"/>
+            android:paddingStart="@dimen/sa_space_sm" android:paddingEnd="@dimen/sa_space_sm"/>
 
-        <View android:layout_width="match_parent" android:layout_height="1dp"
+        <View android:layout_width="match_parent" android:layout_height="@dimen/sa_stroke_hairline"
             android:background="@color/sa_divider"/>
     </LinearLayout>
 
@@ -115,7 +122,8 @@
         <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
             android:text="등록된 비콘 프로파일"
             android:textSize="@dimen/sa_type_hint" android:textColor="@color/sa_text_tertiary" android:textStyle="bold"
-            android:paddingStart="16dp" android:paddingTop="8dp" android:paddingBottom="4dp"/>
+            android:paddingStart="@dimen/sa_space_lg" android:paddingTop="@dimen/sa_space_sm"
+            android:paddingBottom="@dimen/sa_space_xs"/>
 
         <androidx.recyclerview.widget.RecyclerView
             android:id="@+id/rv_registered"
@@ -123,10 +131,10 @@
             android:layout_height="0dp"
             android:layout_weight="1"
             android:background="@color/sa_surface"
-            android:paddingStart="8dp" android:paddingEnd="8dp"/>
+            android:paddingStart="@dimen/sa_space_sm" android:paddingEnd="@dimen/sa_space_sm"/>
 
         <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:padding="12dp"
+            android:padding="@dimen/sa_space_md"
             android:text="비콘 설정: 제조사 앱에서 Proximity UUID(iBeacon) 또는 Service UUID로 설정하세요."
             android:drawableStart="@drawable/ic_bulb"
             android:drawableTint="@color/sa_text_tertiary"

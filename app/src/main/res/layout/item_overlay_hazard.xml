@@ -18,7 +18,8 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginEnd="@dimen/sa_space_sm"
-        android:textSize="@dimen/sa_type_topbar" />
+        android:textSize="@dimen/sa_type_caption"
+        android:textStyle="bold" />
 
     <LinearLayout
         android:layout_width="0dp"

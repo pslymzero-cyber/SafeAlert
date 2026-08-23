@@ -379,7 +379,7 @@ class BeaconManagerActivity : AppCompatActivity() {
         runCatching {
             (getSystemService(BluetoothManager::class.java))?.adapter?.bluetoothLeScanner?.stopScan(scanCallback)
         }
-        binding.btnScan.text = "🔍 스캔으로 발견"
+        binding.btnScan.text = "스캔으로 발견"
         binding.tvScanStatus.text = "${foundMap.size}개 발견"
         foundAdapter.update(foundMap.values.sortedByDescending { it.rssi })
     }

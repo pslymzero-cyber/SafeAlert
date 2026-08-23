@@ -341,8 +341,8 @@ class DevSettingsActivity : AppCompatActivity() {
     }
 
     private fun buildUwbDiagText(hw: Boolean, perm: Boolean, sys: Boolean?): String {
-        fun mk(b: Boolean) = if (b) "✓" else "✗"
-        val sysMark = when (sys) { true -> "✓"; false -> "✗"; null -> "…" }
+        fun mk(b: Boolean) = if (b) "OK" else "NO"
+        val sysMark = when (sys) { true -> "OK"; false -> "NO"; null -> "…" }
         val active = UwbRanger.liveActive
         val role   = UwbRanger.liveRole
         val sess   = UwbRanger.liveSessionCount

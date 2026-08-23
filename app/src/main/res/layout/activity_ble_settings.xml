@@ -18,7 +18,7 @@
     </LinearLayout>
     <View
         android:layout_width="match_parent"
-        android:layout_height="1dp"
+        android:layout_height="@dimen/sa_stroke_hairline"
         android:background="@color/sa_divider" />
 
     <ScrollView
@@ -30,7 +30,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:padding="16dp">
+            android:padding="@dimen/sa_space_lg">
 
             <!-- ═══════════ [경보 기본] — 기본 펼침 ═══════════ -->
             <androidx.cardview.widget.CardView style="@style/SA.Card">
@@ -113,7 +113,7 @@
                             android:id="@+id/seek_warn_dist"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:layout_marginTop="4dp"
+                            android:layout_marginTop="@dimen/sa_space_xs"
                             android:min="30"
                             android:max="100" />
 
@@ -131,7 +131,7 @@
                             android:id="@+id/seek_dang_dist"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:layout_marginTop="4dp"
+                            android:layout_marginTop="@dimen/sa_space_xs"
                             android:min="30"
                             android:max="100" />
 
@@ -151,7 +151,7 @@
                             android:id="@+id/seek_alarm_volume"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:layout_marginTop="4dp"
+                            android:layout_marginTop="@dimen/sa_space_xs"
                             android:min="50"
                             android:max="100" />
                         <TextView
@@ -186,7 +186,7 @@
                         </LinearLayout>
                         <TextView
                             style="@style/SA.Hint"
-                            android:layout_marginTop="2dp"
+                            android:layout_marginTop="@dimen/sa_space_hairline"
                             android:text="기본 켜짐 · 기기쌍별 상호 RSSI 편차 중앙값으로 판정 임계를 자동 보정 · 행을 누르면 통계·보정 항목 표시" />
 
                         <LinearLayout
@@ -198,7 +198,7 @@
 
                             <TextView
                                 style="@style/SA.Hint"
-                                android:layout_marginTop="8dp"
+                                android:layout_marginTop="@dimen/sa_space_sm"
                                 android:text="켜면 기기쌍별 중앙값의 −1/2 을 클램프로 잘라 판정 임계에 반영합니다(거울쌍 양쪽 수렴). 표본 부족 시 Firebase 모델쌍 프라이어로 시작, 산포 과다 기기는 보정 0. 기본 켜짐." />
 
                             <TextView
@@ -295,7 +295,7 @@
                             android:id="@+id/seek_beacon_gain"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:layout_marginTop="4dp"
+                            android:layout_marginTop="@dimen/sa_space_xs"
                             android:max="30" />
                         <TextView
                             style="@style/SA.Hint"
@@ -312,7 +312,7 @@
                                 android:text="EPJ끼리 근접 경보" />
                             <TextView
                                 style="@style/SA.Hint"
-                                android:layout_marginTop="2dp"
+                                android:layout_marginTop="@dimen/sa_space_hairline"
                                 android:text="EPJ끼리는 5m 공존이 정상 · 값을 낮출수록(음수) 더 가까이(3m) 와야 울림" />
                             <LinearLayout style="@style/SA.Row">
                                 <TextView
@@ -327,7 +327,7 @@
                                 android:id="@+id/seek_epj_bias"
                                 android:layout_width="match_parent"
                                 android:layout_height="wrap_content"
-                                android:layout_marginTop="4dp"
+                                android:layout_marginTop="@dimen/sa_space_xs"
                                 android:max="25" />
                             <TextView
                                 style="@style/SA.Hint"
@@ -387,13 +387,13 @@
                         <TextView
                             android:id="@+id/tv_uwb_hint"
                             style="@style/SA.Hint"
-                            android:layout_marginTop="2dp"
+                            android:layout_marginTop="@dimen/sa_space_hairline"
                             android:text="기본 켜짐 · UWB 신호가 오는 동안은 실측 거리로만 경고/위험 판정 · 신호가 없으면 BLE 신호로 판정" />
 
                         <Button
                             android:id="@+id/btn_uwb_permission"
                             style="@style/SA.Button"
-                            android:layout_marginTop="12dp"
+                            android:layout_marginTop="@dimen/sa_space_md"
                             android:text="UWB 권한 허용 / 시스템 UWB 설정" />
                         <TextView
                             android:id="@+id/tv_uwb_system_hint"
@@ -425,13 +425,13 @@
                         </RadioGroup>
                         <TextView
                             style="@style/SA.Hint"
-                            android:layout_marginTop="2dp"
+                            android:layout_marginTop="@dimen/sa_space_hairline"
                             android:text="전부 m: UWB 페어는 실측, 그 외는 신호 기반 추정(약 X m)" />
 
                         <TextView
                             style="@style/SA.Label"
                             android:layout_marginTop="14dp"
-                            android:layout_marginBottom="4dp"
+                            android:layout_marginBottom="@dimen/sa_space_xs"
                             android:text="사업장 코드 (보정 프로파일)" />
                         <EditText
                             android:id="@+id/et_uwb_site"
@@ -444,7 +444,7 @@
                             android:maxLines="1" />
                         <TextView
                             style="@style/SA.Hint"
-                            android:layout_marginTop="2dp"
+                            android:layout_marginTop="@dimen/sa_space_hairline"
                             android:text="UWB 보정 학습값을 사업장별로 저장·전환 · 사업장 학습은 지워지지 않고 코드 변경 시 즉시 불러옴" />
 
                         <View style="@style/SA.Divider" />
@@ -454,7 +454,7 @@
                             android:text="UWB 판정 반경" />
                         <TextView
                             style="@style/SA.Hint"
-                            android:layout_marginTop="2dp"
+                            android:layout_marginTop="@dimen/sa_space_hairline"
                             android:text="UWB 실측 신호가 오는 상대에게 적용 · 지게차가 낀 쌍/그 외 쌍 각각 경고·위험 거리" />
 
                         <LinearLayout style="@style/SA.Row">
@@ -471,7 +471,7 @@
                             android:id="@+id/seek_uwb_fk_warn"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:layout_marginTop="4dp"
+                            android:layout_marginTop="@dimen/sa_space_xs"
                             android:min="2"
                             android:max="80" />
 
@@ -489,7 +489,7 @@
                             android:id="@+id/seek_uwb_fk_danger"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:layout_marginTop="4dp"
+                            android:layout_marginTop="@dimen/sa_space_xs"
                             android:min="1"
                             android:max="60" />
 
@@ -507,7 +507,7 @@
                             android:id="@+id/seek_uwb_pair_warn"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:layout_marginTop="4dp"
+                            android:layout_marginTop="@dimen/sa_space_xs"
                             android:min="2"
                             android:max="40" />
 
@@ -525,7 +525,7 @@
                             android:id="@+id/seek_uwb_pair_danger"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:layout_marginTop="4dp"
+                            android:layout_marginTop="@dimen/sa_space_xs"
                             android:min="1"
                             android:max="30" />
                         <TextView

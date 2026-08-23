@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- (v1.1.66) 기기 간 공유(내보내기) 아이콘 - 문자 화살표 대체 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="22dp"
+    android:height="22dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M9,5v2h6.59L4,18.59 5.41,20 17,8.41V15h2V5z" />
+</vector>
