@@ -16,7 +16,7 @@
         android:text="개발자 설정"
         android:textSize="20sp"
         android:textStyle="bold"
-        android:textColor="#111827" />
+        android:textColor="@color/sa_text_primary" />
 
     <TextView
         android:layout_width="wrap_content"
@@ -24,8 +24,8 @@
         android:layout_gravity="center_horizontal"
         android:layout_marginTop="6dp"
         android:text="PIN을 입력하세요"
-        android:textSize="14sp"
-        android:textColor="#9CA3AF" />
+        android:textSize="@dimen/sa_type_value"
+        android:textColor="@color/sa_text_tertiary" />
 
     <!-- PIN 점 3개 -->
     <LinearLayout
@@ -51,8 +51,8 @@
         android:layout_gravity="center_horizontal"
         android:layout_marginBottom="12dp"
         android:text="PIN이 올바르지 않습니다"
-        android:textSize="13sp"
-        android:textColor="#EF4444"
+        android:textSize="@dimen/sa_type_body"
+        android:textColor="@color/sa_danger"
         android:visibility="invisible" />
 
     <!-- 숫자 패드 -->

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- (v1.1.66) 보행자 소형 래퍼 — 원본 48dp intrinsic 을 서브헤더용으로 축소. 역할 색 보존(틴트 금지) -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:width="@dimen/sa_icon_sm"
+        android:height="@dimen/sa_icon_sm"
+        android:drawable="@drawable/ic_walker"
+        android:gravity="center" />
+</layer-list>

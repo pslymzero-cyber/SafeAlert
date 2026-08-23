@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- (v1.1.66) 안테나 — 비콘 관리 카드 아이콘. 문자 아이콘 대체 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="@dimen/sa_icon_sm"
+    android:height="@dimen/sa_icon_sm"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="@color/sa_text_secondary"
+        android:pathData="M12,5c-3.87,0 -7,3.13 -7,7h2c0,-2.76 2.24,-5 5,-5s5,2.24 5,5h2c0,-3.87 -3.13,-7 -7,-7zM13,14.29c0.88,-0.39 1.5,-1.26 1.5,-2.29 0,-1.38 -1.12,-2.5 -2.5,-2.5S9.5,10.62 9.5,12c0,1.02 0.62,1.9 1.5,2.29v3.3L7.59,21 9,22.41l3,-3 3,3L16.41,21 13,17.59v-3.3zM12,1C6.48,1 2,5.48 2,11h2c0,-4.42 3.58,-8 8,-8s8,3.58 8,8h2c0,-5.52 -4.48,-10 -10,-10z" />
+</vector>

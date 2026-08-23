@@ -48,7 +48,8 @@ class BleService : LifecycleService() {
         const val ACTION_TEST_STOP     = "ACTION_TEST_STOP"
         const val ACTION_MUTE_TEMP     = "ACTION_MUTE_TEMP"
         const val ACTION_UNMUTE        = "ACTION_UNMUTE"
-        const val ACTION_MUTE_DEVICE   = "ACTION_MUTE_DEVICE"   // v1.0.25: 플로팅 터치 → 특정 기기 10초 음소거
+        const val ACTION_MUTE_DEVICE   = "ACTION_MUTE_DEVICE"   // v1.0.25: 사이드바 행 터치 → 특정 기기 ACK 음소거(v1.1.65: 30초)
+        const val ACTION_MUTE_ALL      = "ACTION_MUTE_ALL"     // (v1.1.65) 사이드바를 끝까지 드래그해 닫음 → 현재 위험 기기 일괄 ACK 음소거
         const val ACTION_TEST_STATE    = "ACTION_TEST_STATE"   // [v1.0.34] 개발자 수동 STATE 주입(후진/하역 예약비트 송신 테스트)
         const val ACTION_REAPPLY_UWB   = "ACTION_REAPPLY_UWB"  // (v1.1.38 A) 권한 부여·강제 토글 직후 UWB 세션 재평가 넛지
         const val EXTRA_ID             = "extra_id"
@@ -210,6 +211,9 @@ class BleService : LifecycleService() {
     private val testHandler = android.os.Handler(android.os.Looper.getMainLooper())
 
     private val MUTE_DURATION_MS = 10_000L
+    // (v1.1.65) ACK(확인) 뮤트 전용 지속시간 — 화면 터치 임시 무음(MUTE_DURATION_MS 10초)과 분리한다.
+    //   사이드바 행 탭(muteDevice)·끝까지 드래그(muteAllHazards)가 이 값을 쓴다. 계획서 2-2 "ACK 뮤트 10초 → 30초".
+    private val ACK_MUTE_DURATION_MS = 30_000L
     // (v1.1.61) 항목4: 같은 경보레벨(WARNING/DANGER) 연속 체류 → 자동 뮤트까지의 시간.
     //   하드코드 상수 — 옵션 UI 는 사용자가 '추후'로 보류(임의 설정 노출 금지).
     private val DWELL_MUTE_MS = 5_000L
@@ -231,8 +235,13 @@ class BleService : LifecycleService() {
 
     @Volatile private var activeSoundLevel = BleConstants.LEVEL_SAFE
 
+    // (v1.1.66) 세이프존 안이면 광고 위험레벨을 SAFE 로 고정 — '존 안에서는 알림을 보내지도 않는다'.
+    //   호출처 4곳이 전부 bleAdvertiser.updateRisk() 전용이라 판정·표시에는 영향이 없다.
+    //   IN_ZONE 비트를 모르는 구버전(v1.1.61 이하) 상대도 SAFE 레벨은 해석하므로 하위호환된다.
+    //   광고 자체는 유지 — 존 밖 기기 화면에서 내가 사라지지는 않는다(존재는 보이되 무해로 보임).
     private fun getCurrentMaxLevel() =
-        alertState.values.maxOfOrNull { it.first } ?: BleConstants.LEVEL_SAFE
+        if (myZoneInside) BleConstants.LEVEL_SAFE
+        else alertState.values.maxOfOrNull { it.first } ?: BleConstants.LEVEL_SAFE
 
     // (v1.1.61) '가청' 최대레벨 — dwell 뮤트된 기기를 제외한 소리 소유권 판정 전용.
     //   무음(뮤트) 기기가 canonical globalMax/잔여 재정합을 점유해 신규·잔여 기기의 가청 경보까지
@@ -635,7 +644,7 @@ class BleService : LifecycleService() {
     //    하므로 오경보 없음. 밴드 밖(원거리)은 기존대로 전삭제. 소실 기기 정리는 onDeviceLost 담당.
     private val FILTER_PRESERVE_BAND_DB: Int get() = DevSettings.filterPreserveBandDb  // [판정 파라미터] 기본 10 = 기존값
     // #3 게이트 보류 기기 목록 표시: 워밍업/기하학 보류로 alertState 등록 전인 기기를 '감지됨(SAFE)'
-    //    행으로 하단 목록에 노출 — 경보 발령 전 불가시 구간 제거. 오버레이(topPriorityDevice)는
+    //    행으로 하단 목록에 노출 — 경보 발령 전 불가시 구간 제거. 오버레이(hazardListForOverlay)는
     //    경보 전용 의미를 지키기 위해 제외. TTL(스캐너 타임아웃 정렬) 경과 시 목록에서 자동 제거.
     private val PENDING_DISPLAY_TTL_MS = 6000L
     private val pendingDisplayMap = mutableMapOf<String, Long>()   // deviceId → 마지막 보류 시각(ms)
@@ -958,6 +967,7 @@ class BleService : LifecycleService() {
             ACTION_MUTE_TEMP   -> muteTemporarily("화면 터치")
             ACTION_UNMUTE      -> unmuteImmediately()
             ACTION_MUTE_DEVICE -> muteDevice(intent.getStringExtra(EXTRA_ID))
+            ACTION_MUTE_ALL    -> muteAllHazards()
             // [v1.0.42] 개발자 수동 STATE 주입 — 후진(PSTATE_REVERSE=2)/하역(PSTATE_LOADING=3) 특수상태.
             //   송신 무결성을 2-기기 현장 테스트로 검증하기 위한 훅(평상 복귀=PSTATE_IDLE).
             //   예) adb shell am startservice -n .../BleService -a ACTION_TEST_STATE --ei extra_pstate 2
@@ -1066,6 +1076,12 @@ class BleService : LifecycleService() {
                                 && !deviceId.contains("BEA_")   // [v1.1.58 fix1] 비콘(BEA_)은 walker 게이트 면제 — 보행자도 비콘 경보 수신(기존: 100% 차단)
                                 && !DevSettings.walkerDetectsWalker) return
 
+                            // (v1.1.66) 세이프존 전면 억제 — 존 안에서는 '존 비콘 신호만' 받는다.
+                            //   존 비콘은 BleScanner 가 onZoneBeaconSignal 전용 경로로 흘려보내 여기 도달하지
+                            //   않으므로, 이 리턴이 존 수신을 막지는 않는다(존 진입·이탈 판정 정상 동작).
+                            //   진입 시점의 잔존 기기는 refreshMyZoneInside 의 forceLoseAll 이 이미 정리했다.
+                            if (myZoneInside) return
+
                             val effectiveRssi = if (DevSettings.debugMode) DevSettings.simulatedRssi else rssi
                             noteRssiForWake(deviceId, effectiveRssi)   // [v1.0.42 Req3] 근접 신호 → 즉시 웨이크 판단
                             acquireDetectionWakeLock(effectiveRssi)   // [v1.1.13] 화면 꺼짐+근접(>=WAKE) → 처리체인 완주용 짧은 CPU 점유
@@ -1142,7 +1158,8 @@ class BleService : LifecycleService() {
                                 VibrationHelper.stopVibration(this@BleService)
                                 OverlayManager.hideOverlay()
                                 activeSoundLevel = BleConstants.LEVEL_SAFE
-                                sendStatusBroadcast("기기 이탈 → 경보 중지")
+                                // (v1.1.66) 존 안에서 마지막 기기가 빠지면 '경보 중지' 가 세이프존 표기를 덮어쓴다 — 분기.
+                                sendStatusBroadcast(if (myZoneInside) "세이프존 — 경보 억제 중" else "기기 이탈 → 경보 중지")
                             } else {
                                 resyncSoundToRemaining()  // [v1.1.37 ②] 상위 기기 이탈 → 남은 최대레벨로 사운드 하향 정합
                                 updateFloatingOverlay()   // 다른 위험 기기로 플로팅 전환
@@ -1524,8 +1541,8 @@ class BleService : LifecycleService() {
         //   · deviceRssiMap : 목록 강도순 정렬용 RSSI(평활 kalmanRssi). 아래 하드게이트에서 경보가 차단돼도
         //     목록엔 남도록 게이트 '앞'에서 채운다. (경보 기기는 이후 일반/특수 경로에서 avgRssi 등으로 덮어씀)
         //   · pendingDisplayMap : 비경보 기기의 표시 멤버십(+TTL). alertState 미등록 기기만 등록.
-        //   경보 발령은 아래 하드게이트·판정옵션이 독립 결정(R4/R5). 위젯 최우선(topPriorityDevice)은
-        //   alertState 만 보므로 약신호는 위젯에 뜨지 않고 목록에만 SAFE 행으로 노출된다.
+        //   경보 발령은 아래 하드게이트·판정옵션이 독립 결정(R4/R5). 사이드바(hazardListForOverlay)는
+        //   alertState 만 보므로 약신호는 사이드바에 뜨지 않고 목록에만 SAFE 행으로 노출된다.
         deviceRssiMap[deviceId] = kalmanRssi
         if (!alertState.containsKey(deviceId)) pendingDisplayMap[deviceId] = now
 
@@ -2243,6 +2260,9 @@ class BleService : LifecycleService() {
             if (ttc != null && ttc <= TTC_THRESHOLD_SEC) {
                 alertState[deviceId] = Pair(BleConstants.LEVEL_DANGER, now)  // ★ 먼저 업데이트 → 목록에 DANGER 반영
                 pendingDisplayMap.remove(deviceId)   // [v1.0.49 #3] 경보 등록 → 보류 표시 해제
+                // (v1.1.65) TTC 로 새로 접근이 감지된 기기는 ACK 뮤트(개별·전체)를 뚫고 재알림한다.
+                //   계획서 2-2 "단, TTC 로 새로 접근 감지된 항목은 뮤트 중에도 재알림".
+                mutedDevices.remove(deviceId)
                 Log.w(TAG, "TTC 선발령: $deviceId TTC=%.1fs kfVel=%.2fdBm/s".format(ttc, kfVel))
                 forceAlarmVolume()
                 // [v1.0.48 #4] TTC 급접근 진동 — 보행자·EPJ(작업자)는 전용 빠른 패턴(vibrateRapidApproach)으로
@@ -2889,18 +2909,38 @@ class BleService : LifecycleService() {
     }
 
     // ── [v1.0.25 Req4] 기기별 Acknowledge 무음 + 플로팅 위젯 최우선 기기 ──────────
-    /** 플로팅 위젯을 터치한 운전자가 육안 확인 → 해당 기기 알림(사이렌·플로팅)을 10초간 중지. */
+    /** 사이드바 행을 터치한 운전자가 육안 확인 → 해당 기기 알림(사이렌·사이드바 행)을 30초간 중지. */
     private fun muteDevice(deviceId: String?) {
         if (deviceId.isNullOrEmpty()) return
-        mutedDevices[deviceId] = System.currentTimeMillis() + MUTE_DURATION_MS
+        mutedDevices[deviceId] = System.currentTimeMillis() + ACK_MUTE_DURATION_MS
         // 현재 울리는 소리·진동 즉시 정지 (다른 위험 기기가 남아있으면 다음 스캔에서 재발령됨)
         AlertSoundPlayer.stopSound()
         VibrationHelper.stopVibration(this)
         activeSoundLevel = BleConstants.LEVEL_SAFE
         // 이 기기를 제외한 최우선 기기로 플로팅 갱신(없으면 숨김)
         updateFloatingOverlay()
-        sendStatusBroadcast("✋ ${extractDisplayName(deviceId)} 확인됨 — 10초 무음")
-        Log.d(TAG, "기기 음소거(Acknowledge): $deviceId (10초)")
+        sendStatusBroadcast("✋ ${extractDisplayName(deviceId)} 확인됨 — 30초 무음")
+        Log.d(TAG, "기기 음소거(Acknowledge): $deviceId (30초)")
+    }
+
+    /**
+     * (v1.1.65) 사이드바를 끝까지 드래그해 닫음 = 전체 뮤트.
+     *   현재 경보 중(WARNING 이상)인 기기 전부에 ACK 뮤트를 일괄 적용한다. 새 상태를 만들지 않고
+     *   기존 mutedDevices 맵을 재사용하므로 30초 자동 만료·기기 소실/SAFE 확정 시 정리가 그대로 적용된다.
+     *   뮤트 이후 새로 진입하는 기기는 맵에 없으므로 정상 발령되고, TTC 선발령은 뮤트를 해제하고 재알림한다.
+     */
+    private fun muteAllHazards() {
+        val until = System.currentTimeMillis() + ACK_MUTE_DURATION_MS
+        val targets = alertState.entries
+            .filter { it.value.first >= BleConstants.LEVEL_WARNING }
+            .map { it.key }
+        targets.forEach { mutedDevices[it] = until }
+        AlertSoundPlayer.stopSound()
+        VibrationHelper.stopVibration(this)
+        activeSoundLevel = BleConstants.LEVEL_SAFE
+        updateFloatingOverlay()
+        sendStatusBroadcast("✋ 전체 확인됨 (${targets.size}대) — 30초 무음")
+        Log.d(TAG, "전체 음소거(Acknowledge): ${targets.size}대 (30초)")
     }
 
     /** 해당 기기가 현재 Acknowledge 무음 중인지. 만료 시 자동 정리 후 false. */
@@ -3003,49 +3043,66 @@ class BleService : LifecycleService() {
         bleAdvertiser?.updateInZone(myZoneInside)   // self-heal — 동일값이면 no-op
     }
 
-    /** 존 접촉 총괄 갱신 — 진입=능동 사운드 정지·이탈=즉시 복원 + IN_ZONE 광고 반영. */
+    /**
+     * 존 접촉 총괄 갱신 — (v1.1.66) 세이프존 '전면' 억제 전이.
+     *   진입: 감지 중인 전 기기를 정상 소실 경로로 정리(판정·표시·오버레이·UWB 세션 일괄 해제).
+     *         이후 onDeviceDetected 가 조기 리턴하므로 존 안에서는 존 비콘 신호만 처리된다.
+     *         광고 위험레벨도 getCurrentMaxLevel 클램프로 SAFE 고정 — 보내지도, 받지도 않는다.
+     *   이탈: detectedDevices 가 비어 있어 다음 광고부터 신규 기기처럼 깨끗하게 재개된다.
+     *   ※ myZoneInside 를 먼저 세우고 정리에 들어가야 onDeviceLost 안의 상태 문구·
+     *      getCurrentMaxLevel(SAFE) 이 존 기준으로 동작한다(순서 의존).
+     */
     private fun refreshMyZoneInside() {
         val inside = zoneInsideMap.values.any { it }
         if (inside == myZoneInside) return
         myZoneInside = inside
+        if (inside) {
+            bleScanner?.forceLoseAll()          // 전 기기 정상 소실 — 27종 상태맵·필터·UWB 정리
+            AlertSoundPlayer.stopSound()        // 잔존 사이렌 즉시 정지(이중 안전)
+            VibrationHelper.stopVibration(this)
+            OverlayManager.hideOverlay()        // 표시도 하지 않는다
+            activeSoundLevel = BleConstants.LEVEL_SAFE
+        } else {
+            updateFloatingOverlay()             // 이탈 — 오버레이 상태 재동기
+        }
         resyncSoundToRemaining()   // getAudibleMaxLevel 이 존 안=SAFE 반환 → 진입=능동 정지, 이탈=즉시 복원
         bleAdvertiser?.updateInZone(inside)
-        sendStatusBroadcast(if (inside) "존 비콘 접촉 — 경보 무음(안전구역)" else "존 이탈 — 경보 복원")
-        Log.i(TAG, "(v1.1.62) myZoneInside=$inside")
+        bleAdvertiser?.updateRisk(getCurrentMaxLevel())   // 진입=SAFE 송출, 이탈=실제 레벨 복귀
+        broadcastDeviceList(force = true)
+        sendStatusBroadcast(if (inside) "세이프존 — 경보 억제 중(존 비콘 접촉)" else "존 이탈 — 경보 복원")
+        refreshNotification()
+        Log.i(TAG, "(v1.1.66) myZoneInside=$inside (세이프존 전면 억제)")
     }
 
     /**
-     * 현재 경보 중(WARNING 이상)이며 Acknowledge 무음이 아닌 기기 중,
-     * 위험도 → RSSI(가까운 순) 우선의 단 1대 최우선 기기 id 반환. 없으면 null.
+     * (v1.1.65) 사이드바에 표시할 위험 기기 전체 목록.
+     *   경보 중(WARNING 이상)이며 Acknowledge 무음이 아닌 기기를 위험도 → RSSI(가까운 순)으로 정렬한다.
+     *   기존 topPriorityDevice() 의 정렬 기준은 그대로 두고 1대 제한만 없앴다.
      */
-    private fun topPriorityDevice(): String? =
+    private fun hazardListForOverlay(): List<OverlayManager.HazardItem> =
         alertState.entries
             .filter { it.value.first >= BleConstants.LEVEL_WARNING && !isDeviceMuted(it.key) }
-            .maxWithOrNull(
-                compareBy<Map.Entry<String, Pair<Int, Long>>> { it.value.first }
-                    .thenBy { deviceRssiMap[it.key] ?: -100 }
-            )?.key
+            .sortedWith(
+                compareByDescending<Map.Entry<String, Pair<Int, Long>>> { it.value.first }
+                    .thenByDescending { deviceRssiMap[it.key] ?: -100 }
+            )
+            .map { e ->
+                val id   = e.key
+                val rssi = deviceRssiMap[id] ?: -99
+                // (v1.1.31) 거리 문자열(빈값=기존 dBm 폴백) — 목록과 동일 표기 규칙.
+                //   (v1.1.46) 신선한 실측만 ·UWB 표기(freshUwbDistM) — 죽은 숫자를 실측으로 오인하지 않게.
+                OverlayManager.HazardItem(
+                    deviceId = id,
+                    name     = suddenLabelMap[id] ?: makeApproachLabel(id),
+                    rssi     = rssi,
+                    danger   = e.value.first >= BleConstants.LEVEL_DANGER,
+                    distText = UwbCalibrator.distanceTextFor(uwbPairKeyFor(id), rssi, freshUwbDistM(id))
+                )
+            }
 
-    /** 최우선 기기 1대만 플로팅 위젯에 표시. 대상이 없으면 위젯을 숨긴다. */
+    /** (v1.1.65) 위험 기기 전체를 사이드바에 표시. 대상이 없으면 사이드바를 접는다. */
     private fun updateFloatingOverlay() {
-        val topId = topPriorityDevice()
-        if (topId == null) {
-            OverlayManager.hideOverlay()
-            return
-        }
-        val level = alertState[topId]?.first ?: BleConstants.LEVEL_SAFE
-        val rssi  = deviceRssiMap[topId] ?: -99
-        // (v1.1.31) 거리 문자열(빈값=기존 dBm 폴백)을 플로팅에도 전달 — 목록과 동일 표기 규칙.
-        //   [v1.1.46] 신선한 실측만 ·UWB 표기(freshUwbDistM) — 죽은 숫자를 실측으로 오인하지 않게.
-        val dist  = UwbCalibrator.distanceTextFor(uwbPairKeyFor(topId), rssi, freshUwbDistM(topId))
-        OverlayManager.showFloating(
-            context  = this,
-            deviceId = topId,
-            name     = suddenLabelMap[topId] ?: makeApproachLabel(topId),
-            rssi     = rssi,
-            danger   = level >= BleConstants.LEVEL_DANGER,
-            distText = dist
-        )
+        OverlayManager.showSidebar(this, hazardListForOverlay())
     }
 
     private fun startScanHealthCheck() {
@@ -3679,6 +3736,11 @@ class BleService : LifecycleService() {
         if (fault != null) {
             title = "SafeAlert 이상 — 보호가 끊겼습니다"
             body  = fault + fallbackNote
+        } else if (myZoneInside) {
+            // (v1.1.66) 세이프존 명시 — 이상(fault) 다음 우선순위.
+            //   보호가 끊긴 사실이 '안전구역' 표기에 가려지면 안 되므로 fault 를 앞에 둔다.
+            title = "세이프존 — ${categoryRoleName(myCategory)}"
+            body  = "안전구역 안입니다 · 경보 송수신 중지" + fallbackNote
         } else {
             val doTx = if (myMode == "DEVICE") DevSettings.deviceTx else DevSettings.walkerTx
             val doRx = if (myMode == "DEVICE") DevSettings.deviceRx else DevSettings.walkerRx

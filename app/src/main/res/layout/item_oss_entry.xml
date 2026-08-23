@@ -15,16 +15,16 @@
             android:id="@+id/tv_oss_name"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:textSize="13sp"
+            android:textSize="@dimen/sa_type_body"
             android:textStyle="bold"
-            android:textColor="#111827"
+            android:textColor="@color/sa_text_primary"
             android:text="Library Name"/>
         <TextView
             android:id="@+id/tv_oss_version"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:textSize="11sp"
-            android:textColor="#6B7280"
+            android:textSize="@dimen/sa_type_hint"
+            android:textColor="@color/sa_text_tertiary"
             android:text="v0.0.0"/>
     </LinearLayout>
 
@@ -37,7 +37,7 @@
         android:paddingVertical="3dp"
         android:background="@drawable/bg_license_badge"
         android:textSize="10sp"
-        android:textColor="#1D4ED8"
+        android:textColor="@color/sa_accent"
         android:text="Apache 2.0"/>
 
 </LinearLayout>

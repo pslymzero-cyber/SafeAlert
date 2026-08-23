@@ -8,7 +8,7 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:background="#F5F6F8">
+    android:background="@color/sa_bg">
 
     <!-- 상단 헤더 바 -->
     <LinearLayout style="@style/SA.TopBar">
@@ -19,7 +19,7 @@
     <View
         android:layout_width="match_parent"
         android:layout_height="1dp"
-        android:background="#EAECF0" />
+        android:background="@color/sa_divider" />
 
     <ScrollView
         android:layout_width="match_parent"
@@ -106,7 +106,7 @@
                             <TextView
                                 android:id="@+id/tv_warn_dist"
                                 style="@style/SA.Value"
-                                android:textColor="#F59E0B"
+                                android:textColor="@color/sa_warning"
                                 android:text="-75 dBm" />
                         </LinearLayout>
                         <SeekBar
@@ -124,7 +124,7 @@
                             <TextView
                                 android:id="@+id/tv_dang_dist"
                                 style="@style/SA.Value"
-                                android:textColor="#EF4444"
+                                android:textColor="@color/sa_danger"
                                 android:text="-80 dBm" />
                         </LinearLayout>
                         <SeekBar
@@ -239,7 +239,8 @@
                                 android:id="@+id/btn_echo_reset"
                                 style="@style/SA.Button"
                                 android:layout_marginTop="10dp"
-                                android:backgroundTint="#9E9E9E"
+                                android:backgroundTint="@color/sa_tint_gray"
+                                android:textColor="@color/sa_text_secondary"
                                 android:text="에코편차 통계 초기화" />
                         </LinearLayout>
                     </LinearLayout>
@@ -437,8 +438,8 @@
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:hint="예: WF11 (빈 값 = 공용 프로파일)"
-                            android:textSize="13sp"
-                            android:textColor="#374151"
+                            android:textSize="@dimen/sa_type_body"
+                            android:textColor="@color/sa_text_secondary"
                             android:inputType="text"
                             android:maxLines="1" />
                         <TextView
@@ -463,7 +464,7 @@
                             <TextView
                                 android:id="@+id/tv_uwb_fk_warn"
                                 style="@style/SA.Value"
-                                android:textColor="#F59E0B"
+                                android:textColor="@color/sa_warning"
                                 android:text="15m" />
                         </LinearLayout>
                         <SeekBar
@@ -481,7 +482,7 @@
                             <TextView
                                 android:id="@+id/tv_uwb_fk_danger"
                                 style="@style/SA.Value"
-                                android:textColor="#EF4444"
+                                android:textColor="@color/sa_danger"
                                 android:text="8m" />
                         </LinearLayout>
                         <SeekBar
@@ -499,7 +500,7 @@
                             <TextView
                                 android:id="@+id/tv_uwb_pair_warn"
                                 style="@style/SA.Value"
-                                android:textColor="#F59E0B"
+                                android:textColor="@color/sa_warning"
                                 android:text="5m" />
                         </LinearLayout>
                         <SeekBar
@@ -517,7 +518,7 @@
                             <TextView
                                 android:id="@+id/tv_uwb_pair_danger"
                                 style="@style/SA.Value"
-                                android:textColor="#EF4444"
+                                android:textColor="@color/sa_danger"
                                 android:text="3m" />
                         </LinearLayout>
                         <SeekBar

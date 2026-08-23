@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- (v1.1.65) 사이드바 위험 기기 행 배경.
+     solid 의 흰색은 런타임 backgroundTintList 곱셈용 placeholder 다 (shape_target_box 와 동일 기법).
+     OverlayManager 가 경보 레벨별 색(sa_tint_rose / sa_tint_amber)으로 tint 를 갈아끼운다.
+     ★ 이 색을 바꾸면 tint 결과가 어두워지므로 절대 변경 금지. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#FFFFFFFF" />
+    <corners android:radius="@dimen/sa_radius_sm" />
+</shape>

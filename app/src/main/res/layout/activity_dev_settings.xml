@@ -9,13 +9,13 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:background="#F5F6F8">
+    android:background="@color/sa_bg">
 
     <!-- 상단 헤더 바 (테마 NoActionBar — 액티비티 supportActionBar 는 없음) -->
     <LinearLayout style="@style/SA.TopBar">
         <TextView style="@style/SA.TopBarTitle" android:text="개발자 설정" />
     </LinearLayout>
-    <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#EAECF0" />
+    <View android:layout_width="match_parent" android:layout_height="1dp" android:background="@color/sa_divider" />
 
     <ScrollView
         android:layout_width="match_parent"
@@ -42,7 +42,9 @@
 
                     <LinearLayout android:id="@+id/sec_txrx_body" style="@style/SA.SectionBody">
 
-                        <TextView style="@style/SA.SubHeader" android:layout_marginTop="0dp" android:text="🚛 장비 작업자" />
+                        <TextView style="@style/SA.SubHeader" android:layout_marginTop="0dp" android:text="장비 작업자"
+                            android:drawableStart="@drawable/ic_forklift_sm"
+                            android:drawablePadding="@dimen/sa_space_sm" />
 
                         <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
                             <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
@@ -71,7 +73,9 @@
 
                         <View style="@style/SA.Divider" />
 
-                        <TextView style="@style/SA.SubHeader" android:text="🚶 보행자" />
+                        <TextView style="@style/SA.SubHeader" android:text="보행자"
+                            android:drawableStart="@drawable/ic_walker_sm"
+                            android:drawablePadding="@dimen/sa_space_sm" />
 
                         <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
                             <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
@@ -473,7 +477,7 @@
                     <LinearLayout android:id="@+id/sec_appinfo_body" style="@style/SA.SectionBody">
 
                         <TextView android:id="@+id/tv_app_version" style="@style/SA.Label"
-                            android:text="SafeAlert v1.0.6" android:textStyle="bold" android:textColor="#111827"
+                            android:text="SafeAlert v1.0.6" android:textStyle="bold" android:textColor="@color/sa_text_primary"
                             android:paddingTop="6dp" android:paddingBottom="6dp" />
                         <TextView style="@style/SA.Hint" android:layout_marginTop="0dp"
                             android:text="Copyright 2024-2026 WF11 Team" />
@@ -484,7 +488,7 @@
                             android:layout_marginTop="12dp"
                             android:text="오픈소스 라이선스"
                             style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                            android:textColor="#374151" android:textSize="13sp" />
+                            android:textColor="@color/sa_text_secondary" android:textSize="@dimen/sa_type_body" />
 
                     </LinearLayout>
                 </LinearLayout>
@@ -503,7 +507,7 @@
                         <TextView style="@style/SA.SectionTitle" android:text="Firebase" />
                         <TextView style="@style/SA.Label" android:layout_marginTop="10dp" android:text="DB 루트 경로" />
                         <EditText android:id="@+id/et_firebase_root" android:layout_width="match_parent"
-                            android:layout_height="wrap_content" android:inputType="text" android:textSize="13sp" android:textColor="#111827" />
+                            android:layout_height="wrap_content" android:inputType="text" android:textSize="@dimen/sa_type_body" android:textColor="@color/sa_text_primary" />
                         <LinearLayout style="@style/SA.Row" android:layout_marginTop="8dp">
                             <TextView style="@style/SA.RowLabel" android:text="경보 자동 저장" />
                             <Switch android:id="@+id/switch_auto_save" android:layout_width="wrap_content" android:layout_height="wrap_content" />
@@ -596,7 +600,7 @@
                 <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
                     android:orientation="horizontal" android:layout_marginTop="12dp">
                     <Button android:id="@+id/btn_reset" style="@style/SA.Button"
-                        android:text="기본값으로 초기화" android:backgroundTint="#9E9E9E" />
+                        android:text="기본값으로 초기화" android:backgroundTint="@color/sa_tint_gray" android:textColor="@color/sa_text_secondary" />
                 </LinearLayout>
 
             </LinearLayout>

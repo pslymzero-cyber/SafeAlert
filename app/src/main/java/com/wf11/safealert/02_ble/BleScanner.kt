@@ -284,6 +284,18 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
         }
     }
 
+    /**
+     * (v1.1.66) 감지 중인 전 기기를 즉시 소실 처리 — 세이프존 진입 등 '전면 억제' 전환 전용.
+     *   BleService.onDeviceLost 정상 경로를 그대로 태워 27종 상태맵·필터·UWB 세션을 한 번에 정리한다.
+     *   detectedDevices 도 비우므로 억제 해제 후 첫 광고부터 신규 기기처럼 깨끗하게 재개된다.
+     */
+    fun forceLoseAll() {
+        val ids = detectedDevices.keys.toList()
+        detectedDevices.clear()
+        ids.forEach { scanCallback?.onDeviceLost(it) }
+        if (ids.isNotEmpty()) Log.i(TAG, "강제 소실 처리: ${ids.size}대")
+    }
+
     // [v1.0.27 Req1] 하드웨어 스캔 필터 의무 적용 — emptyList() 금지.
     // SERVICE_UUID(우리 비콘 규격) 필터를 블루투스 칩셋에 오프로딩 → 무관한 BLE 잡음은
     // 메인 CPU 를 깨우지 않고 칩셋 단에서 즉시 폐기된다(화면 꺼짐·절전 모드 배터리 절감 핵심).

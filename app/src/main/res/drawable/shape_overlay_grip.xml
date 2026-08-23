@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- (v1.1.65) 사이드바 헤더의 드래그 손잡이 바. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/sa_text_tertiary" />
+    <corners android:radius="@dimen/sa_space_hairline" />
+</shape>

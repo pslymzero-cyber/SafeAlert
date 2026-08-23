@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- (v1.1.65) 치수 토큰. 흩어져 있던 값을 한 벌로 수렴한다.
+       간격  18종 → 7종 (2 / 4 / 8 / 12 / 16 / 24 / 32)
+       반경   7종 → 4종 (4 / 12 / 18 / 24)
+       글자  12종 → 7종 (11 / 12 / 13 / 14 / 15 / 17 / 22)
+     레이아웃의 하드코딩 dp/sp 는 다크 통일 작업에서 파일을 손댈 때 함께 이 토큰으로 옮긴다. -->
+<resources>
+
+    <!-- ── 간격 ─────────────────────────────────────────────────────────── -->
+    <dimen name="sa_space_hairline">2dp</dimen>
+    <dimen name="sa_space_xs">4dp</dimen>
+    <dimen name="sa_space_sm">8dp</dimen>
+    <dimen name="sa_space_md">12dp</dimen>
+    <dimen name="sa_space_lg">16dp</dimen>
+    <dimen name="sa_space_xl">24dp</dimen>
+    <dimen name="sa_space_xxl">32dp</dimen>
+
+    <!-- ── 모서리 반경 ──────────────────────────────────────────────────── -->
+    <dimen name="sa_radius_xs">4dp</dimen>     <!-- 라벨 배지 -->
+    <dimen name="sa_radius_sm">12dp</dimen>    <!-- 버튼·아이콘 판·작은 박스 -->
+    <dimen name="sa_radius_md">18dp</dimen>    <!-- 카드 -->
+    <dimen name="sa_radius_lg">24dp</dimen>    <!-- 다이얼로그 -->
+
+    <!-- ── 선 ───────────────────────────────────────────────────────────── -->
+    <dimen name="sa_stroke_hairline">1dp</dimen>
+    <dimen name="sa_stroke_focus">1.5dp</dimen>
+
+    <!-- ── 글자 크기 ────────────────────────────────────────────────────── -->
+    <dimen name="sa_type_hint">11sp</dimen>
+    <dimen name="sa_type_caption">12sp</dimen>
+    <dimen name="sa_type_body">13sp</dimen>
+    <dimen name="sa_type_value">14sp</dimen>
+    <dimen name="sa_type_section">15sp</dimen>
+    <dimen name="sa_type_topbar">17sp</dimen>
+    <dimen name="sa_type_display">22sp</dimen>
+    <!-- 메인 계기값 전용(상태 문구·거리 수치). 설정 화면에는 쓰지 않는다. -->
+    <dimen name="sa_type_metric">26sp</dimen>
+
+    <!-- ── 고정 치수 ────────────────────────────────────────────────────── -->
+    <!-- 터치 표적 최소치. 장갑 낀 손 전제 — 탭 가능한 모든 행/버튼의 하한. -->
+    <dimen name="sa_touch_min">48dp</dimen>
+    <dimen name="sa_topbar_height">56dp</dimen>
+    <dimen name="sa_icon_sm">22dp</dimen>
+    <dimen name="sa_edit_number_width">96dp</dimen>
+
+</resources>

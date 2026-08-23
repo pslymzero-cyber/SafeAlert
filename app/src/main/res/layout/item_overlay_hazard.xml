@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- (v1.1.65) 사이드바 위험 기기 1행. 배경 tint 는 OverlayManager 가 경보 레벨별로 갈아끼운다. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:background="@drawable/shape_overlay_row"
+    android:paddingStart="@dimen/sa_space_sm"
+    android:paddingEnd="@dimen/sa_space_md"
+    android:paddingTop="@dimen/sa_space_sm"
+    android:paddingBottom="@dimen/sa_space_sm"
+    android:clickable="true"
+    android:focusable="true">
+
+    <TextView
+        android:id="@+id/row_icon"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginEnd="@dimen/sa_space_sm"
+        android:textSize="@dimen/sa_type_topbar" />
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/row_name"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textSize="@dimen/sa_type_value"
+            android:textStyle="bold"
+            android:textColor="@color/sa_text_primary"
+            android:maxLines="1"
+            android:ellipsize="end" />
+
+        <TextView
+            android:id="@+id/row_meas"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textSize="@dimen/sa_type_caption"
+            android:textColor="@color/sa_text_secondary"
+            android:maxLines="1"
+            android:ellipsize="end" />
+    </LinearLayout>
+</LinearLayout>

@@ -1,16 +1,64 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- (v1.1.65) 앱 고정 다크 팔레트.
+     기준값은 메인 화면(activity_main.xml)에서 이미 쓰이던 다크 색을 이름 있는 토큰으로 승격한 것.
+     새 색을 발명하지 않았다 — 메인의 톤이 곧 앱 전체의 톤이다.
+     values-night/ 는 만들지 않는다. 시스템 다크 설정과 무관하게 항상 이 한 벌을 쓴다.
+
+     대비(WCAG, 카드 #1A2233 기준):
+       sa_text_primary   14.3:1   sa_text_secondary  9.7:1   sa_text_tertiary  5.5:1
+       sa_accent          9.5:1   sa_danger          5.9:1   sa_warning       11.0:1   sa_safe  9.1:1 -->
 <resources>
-    <color name="purple_200">#FFBB86FC</color>
-    <color name="purple_500">#FF6200EE</color>
-    <color name="purple_700">#FF3700B3</color>
-    <color name="teal_200">#FF03DAC5</color>
-    <color name="teal_700">#FF018786</color>
+
+    <!-- ── 배경·표면 ────────────────────────────────────────────────────── -->
+    <color name="sa_bg">#0B1220</color>            <!-- 화면 바탕 -->
+    <color name="sa_surface">#1A2233</color>       <!-- 카드 -->
+    <color name="sa_surface_alt">#161D2B</color>   <!-- 보조 카드·상단 바 -->
+    <color name="sa_surface_veil">#E6141B2B</color><!-- 배경 이미지 위 반투명 카드 -->
+    <color name="sa_bar">#C20D1424</color>         <!-- 메인 상·하단 반투명 바 -->
+    <color name="sa_overlay">#E8101A2C</color>     <!-- 옅은 판(버튼 틴트 등) -->
+    <color name="sa_divider">#1FFFFFFF</color>     <!-- 반투명 흰 헤어라인 -->
+    <color name="sa_stroke">#56627A</color>        <!-- 윤곽선 -->
+
+    <!-- ── 글자 (3단 램프) ──────────────────────────────────────────────── -->
+    <color name="sa_text_primary">#F1F5F9</color>   <!-- 제목·본문 -->
+    <color name="sa_text_secondary">#C3CDDC</color> <!-- 라벨 -->
+    <color name="sa_text_tertiary">#8B98AC</color>  <!-- 요약·힌트·셰브런 -->
+    <color name="sa_on_accent">#0B1220</color>      <!-- 강조색 배경 위 글자 -->
+
+    <!-- ── 강조 ─────────────────────────────────────────────────────────── -->
+    <color name="sa_accent">#7DD3FC</color>       <!-- 기본 강조(값·버튼) -->
+    <color name="sa_accent_dim">#60A5FA</color>   <!-- 포커스 테두리·링크 -->
+    <color name="sa_accent_soft">#8FB4E8</color>  <!-- 입력 힌트 -->
+
+    <!-- ── 상태 의미색 ──────────────────────────────────────────────────── -->
+    <color name="sa_safe">#4ADE80</color>
+    <color name="sa_warning">#FCD34D</color>
+    <color name="sa_warning_dim">#FBBF24</color>
+    <color name="sa_danger">#FB7185</color>
+
+    <!-- ── 배지·칩 판 ───────────────────────────────── -->
+    <!-- 라이트의 옷은 파스텔 판(#EFF6FF 등)을 뒤집은 값.
+         앞서 메인 화면 아이콘 판(shape_icon_bg_*)이 쓰던 값과 동일하며,
+         그 drawable 들도 이 토큰을 참조하도록 바꿨다. 색은 글자가 지고 판은 깔만 깔린다. -->
+    <color name="sa_tint_blue">#17283F</color>
+    <color name="sa_tint_amber">#33291A</color>
+    <color name="sa_tint_rose">#3A1B24</color>
+    <color name="sa_tint_green">#16301F</color>
+    <color name="sa_tint_violet">#241B3D</color>
+    <color name="sa_tint_cyan">#12303A</color>
+    <color name="sa_tint_gray">#28303F</color>
+    <color name="sa_tint_amber_stroke">#574518</color>   <!-- amber 판 테두리 -->
+
+    <!-- 칩 판 위 글자 — sa_accent·sa_safe·sa_danger 로 못 덤는 3종 -->
+    <color name="sa_orange">#FB923C</color>
+    <color name="sa_violet">#C4B5FD</color>
+    <color name="sa_cyan">#67E8F9</color>
+
+    <!-- ── 중립 버튼 (보조 액션) ───────────────────────────────────────── -->
+    <color name="sa_button_neutral">#E2E8F0</color>   <!-- 중지 등 반전 버튼 판 -->
+
+    <!-- ── 시스템 ───────────────────────────────────────────────────────── -->
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
 
-    <color name="color_safe">#4CAF50</color>
-    <color name="color_warning">#FFC107</color>
-    <color name="color_danger">#F44336</color>
-    <color name="color_device_mode">#2196F3</color>
-    <color name="color_walker_mode">#4CAF50</color>
 </resources>

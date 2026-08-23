@@ -14,25 +14,25 @@
             android:layout_weight="1" android:orientation="vertical">
             <TextView android:id="@+id/tv_device_name"
                 android:layout_width="wrap_content" android:layout_height="wrap_content"
-                android:textSize="14sp" android:textStyle="bold" android:textColor="#111827"/>
+                android:textSize="@dimen/sa_type_value" android:textStyle="bold" android:textColor="@color/sa_text_primary"/>
             <!-- MAC 주소 -->
             <TextView android:id="@+id/tv_mac_addr"
                 android:layout_width="wrap_content" android:layout_height="wrap_content"
                 android:layout_marginTop="2dp"
-                android:textSize="12sp" android:textColor="#6B7280"
+                android:textSize="@dimen/sa_type_caption" android:textColor="@color/sa_text_tertiary"
                 android:fontFamily="monospace"/>
             <!-- UUID (있을 때만 표시) -->
             <TextView android:id="@+id/tv_uuid"
                 android:layout_width="wrap_content" android:layout_height="wrap_content"
                 android:layout_marginTop="2dp"
-                android:textSize="10sp" android:textColor="#9CA3AF"
+                android:textSize="10sp" android:textColor="@color/sa_text_tertiary"
                 android:fontFamily="monospace"
                 android:visibility="gone"/>
         </LinearLayout>
         <!-- RSSI -->
         <TextView android:id="@+id/tv_rssi"
             android:layout_width="wrap_content" android:layout_height="wrap_content"
-            android:textSize="12sp" android:textColor="#6B7280"/>
+            android:textSize="@dimen/sa_type_caption" android:textColor="@color/sa_text_tertiary"/>
     </LinearLayout>
 
     <!-- 등록 버튼 행 -->
@@ -40,15 +40,15 @@
         android:orientation="horizontal" android:layout_marginTop="8dp">
         <Button android:id="@+id/btn_add_uuid"
             android:layout_width="wrap_content" android:layout_height="34dp"
-            android:text="UUID 등록" android:textSize="12sp"
+            android:text="UUID 등록" android:textSize="@dimen/sa_type_caption"
             style="@style/Widget.MaterialComponents.Button.UnelevatedButton"
-            android:backgroundTint="#EFF6FF" android:textColor="#2563EB"
+            android:backgroundTint="@color/sa_tint_blue" android:textColor="@color/sa_accent"
             android:visibility="gone"/>
         <View android:layout_width="8dp" android:layout_height="1dp"/>
         <Button android:id="@+id/btn_add_mac"
             android:layout_width="wrap_content" android:layout_height="34dp"
-            android:text="MAC 등록" android:textSize="12sp"
+            android:text="MAC 등록" android:textSize="@dimen/sa_type_caption"
             style="@style/Widget.MaterialComponents.Button.UnelevatedButton"
-            android:backgroundTint="#FFF7ED" android:textColor="#C2410C"/>
+            android:backgroundTint="@color/sa_tint_amber" android:textColor="@color/sa_orange"/>
     </LinearLayout>
 </LinearLayout>
