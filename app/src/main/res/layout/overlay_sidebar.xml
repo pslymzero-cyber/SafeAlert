@@ -3,6 +3,8 @@
   (v1.1.65) 화면 경보 사이드바 — 기존 플로팅 위젯(최우선 1대)을 대체한다.
     · 헤더 행(overlay_header)이 드래그 손잡이다. 리스트가 터치를 먼저 가져가므로
       루트가 아니라 헤더에만 드래그 리스너를 건다.
+    · (v1.1.69) 상시 노출. 위험 0대 = 접힘(헤더만), 위험 1대 이상 = 펼침(목록 표시).
+      접힘 상태의 헤더 탭이 공정 변경 진입점이다 — 상시 접근 가능해야 하므로 사이드바를 걷지 않는다.
     · 색·치수는 전부 SA 토큰. 코드 리터럴 색을 남기지 않는다.
     · Material 위젯 미사용 — Service 컨텍스트에서 인플레이트되므로 순수 위젯만 쓴다.
 -->
@@ -43,9 +45,22 @@
             android:maxLines="1"
             android:ellipsize="end"
             android:text="위험 감지" />
+
+        <!-- (v1.1.69) 접힘(평상시) 상태에서만 노출. 헤더 탭 = 공정 변경 진입 안내. -->
+        <TextView
+            android:id="@+id/overlay_action"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="@dimen/sa_space_sm"
+            android:textSize="@dimen/sa_type_hint"
+            android:textColor="@color/sa_accent"
+            android:maxLines="1"
+            android:text="공정 변경"
+            android:visibility="gone" />
     </LinearLayout>
 
     <View
+        android:id="@+id/overlay_divider"
         android:layout_width="match_parent"
         android:layout_height="@dimen/sa_stroke_hairline"
         android:background="@color/sa_divider" />

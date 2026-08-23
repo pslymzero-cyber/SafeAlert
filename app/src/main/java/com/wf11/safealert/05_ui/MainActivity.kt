@@ -501,10 +501,18 @@ class MainActivity : AppCompatActivity() {
         val wantUwb = UwbRanger.isHardwareSupported(this) &&
                 ContextCompat.checkSelfPermission(this, Manifest.permission.UWB_RANGING) !=
                     PackageManager.PERMISSION_GRANTED
-        if (hasAllPermissions() && !wantUwb) requestBatteryOptimizationExclusion()
-        else permissionLauncher.launch(
-            if (wantUwb) blePermissions + Manifest.permission.UWB_RANGING else blePermissions
-        )
+        // (v1.1.69) 알림 권한. targetSdk 33+ 에서 이게 없으면 포그라운드 서비스 상시 알림도
+        //   상태바에 뜨지 않는다. UWB 와 같이 '선택' 취급 — 거부해도 감시·경보는 그대로 돈다.
+        val wantNotif = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
+                    PackageManager.PERMISSION_GRANTED
+        if (hasAllPermissions() && !wantUwb && !wantNotif) requestBatteryOptimizationExclusion()
+        else {
+            var req = blePermissions
+            if (wantUwb)   req += Manifest.permission.UWB_RANGING
+            if (wantNotif) req += Manifest.permission.POST_NOTIFICATIONS
+            permissionLauncher.launch(req)
+        }
     }
 
     private fun hasAllPermissions() = blePermissions.all {

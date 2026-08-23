@@ -50,13 +50,20 @@ object OverlayManager {
 
     private var headerView: View? = null
     private var titleView: TextView? = null
+    private var actionView: TextView? = null
+    private var dividerView: View? = null
     private var listView: RecyclerView? = null
+    private var hintView: TextView? = null
     private var adapter: HazardAdapter? = null
 
     private var pulseAnimator: ValueAnimator? = null
     private var snapAnimator: ValueAnimator? = null
 
     private var currentDanger: Boolean? = null
+
+    // (v1.1.69) 접힘/펼침 상태. 위험 0대 = 접힘(헤더만), 1대 이상 = 펼침(목록 표시).
+    //   사이드바 자체는 서비스가 도는 동안 늘 떠 있다 = 공정 변경 진입점이 상시 확보된다.
+    private var collapsed: Boolean? = null
 
     // 사용자가 드래그로 옮긴 위치 기억 (재표시 시 그대로 유지)
     private var savedX = Int.MIN_VALUE
@@ -78,6 +85,9 @@ object OverlayManager {
     /** 화면 경보 이상/복구 통지 콜백. 인자가 null 이면 복구. */
     var onOverlayFault: ((String?) -> Unit)? = null
 
+    /** (v1.1.69) 접힘 상태에서 헤더를 탭했을 때 통지. 공정(역할) 변경 진입점이다. */
+    var onHeaderTap: (() -> Unit)? = null
+
     private fun setFault(reason: String?) {
         if (overlayFaultReason == reason) return
         overlayFaultReason = reason
@@ -96,14 +106,13 @@ object OverlayManager {
     )
 
     /**
-     * 위험 기기 전체를 사이드바에 표시. 목록이 비면 접는다(= 모든 경보 해제 시 자동 접힘).
+     * (v1.1.69) 사이드바 상시 표시. 위험 대상이 0대여도 걷지 않는다.
+     *   - 접힘(평상시): 헤더만. 현재 공정명 + [공정 변경] 배지. 헤더 탭 = 공정 변경 진입.
+     *   - 펼침(경보 중): 위험 기기 목록까지. 경보가 뜨면 자동으로 펼쳐진다.
+     * 걷지 않는 이유 = 공정 변경 경로가 경보 유무와 무관하게 늘 살아 있어야 하기 때문이다.
      * 이미 떠 있으면 removeView/addView 없이 내용만 갱신 → 깜빡임/위치 리셋 방지.
      */
-    fun showSidebar(context: Context, hazards: List<HazardItem>) {
-        if (hazards.isEmpty()) {
-            hideOverlay()
-            return
-        }
+    fun showSidebar(context: Context, hazards: List<HazardItem>, roleLabel: String = "") {
         if (!canDrawOverlays(context)) {
             Log.w(TAG, "오버레이 권한 없음")
             setFault("화면 경보 권한 꺼짐 — 소리·진동만 동작")
@@ -111,10 +120,30 @@ object OverlayManager {
         }
         if (rootView == null) createSidebar(context)
         if (rootView == null) return   // addView 실패 — 사유는 createSidebar 가 이미 setFault 로 기록
-        updateContent(hazards)
+        updateContent(hazards, roleLabel)
     }
 
-    private fun updateContent(hazards: List<HazardItem>) {
+    private fun updateContent(hazards: List<HazardItem>, roleLabel: String) {
+        val nowCollapsed = hazards.isEmpty()
+        if (collapsed != nowCollapsed) {
+            val bodyVis = if (nowCollapsed) View.GONE else View.VISIBLE
+            dividerView?.visibility = bodyVis
+            listView?.visibility    = bodyVis
+            hintView?.visibility    = bodyVis
+            actionView?.visibility  = if (nowCollapsed) View.VISIBLE else View.GONE
+            collapsed = nowCollapsed
+        }
+        if (nowCollapsed) {
+            titleView?.text = if (roleLabel.isNotEmpty()) roleLabel else "감시 중"
+            adapter?.submit(hazards)
+            // 평상시에 헤더가 깜빡이면 그 자체가 오인 신호가 된다. 펄스는 접힘 진입 시 정지.
+            if (currentDanger != null) {
+                pulseAnimator?.cancel(); pulseAnimator = null
+                headerView?.alpha = 1.0f
+                currentDanger = null
+            }
+            return
+        }
         val danger = hazards.any { it.danger }
         titleView?.text = if (danger) "위험 ${hazards.size}대" else "경고 ${hazards.size}대"
         // 갱신은 ~120ms 마다 들어온다. 행 개수가 그대로면 높이를 다시 재지 않는다
@@ -133,10 +162,13 @@ object OverlayManager {
         val root   = LayoutInflater.from(themed)
             .inflate(R.layout.overlay_sidebar, null) as LinearLayout
 
-        val header = root.findViewById<View>(R.id.overlay_header)
-        val title  = root.findViewById<TextView>(R.id.overlay_title)
-        val list   = root.findViewById<RecyclerView>(R.id.overlay_list)
-        val ad     = HazardAdapter(themed)
+        val header  = root.findViewById<View>(R.id.overlay_header)
+        val title   = root.findViewById<TextView>(R.id.overlay_title)
+        val action  = root.findViewById<TextView>(R.id.overlay_action)
+        val divider = root.findViewById<View>(R.id.overlay_divider)
+        val list    = root.findViewById<RecyclerView>(R.id.overlay_list)
+        val hint    = root.findViewById<TextView>(R.id.overlay_hint)
+        val ad      = HazardAdapter(themed)
 
         list.layoutManager = LinearLayoutManager(themed)
         list.adapter       = ad
@@ -166,9 +198,13 @@ object OverlayManager {
             params        = lp
             headerView    = header
             titleView     = title
+            actionView    = action
+            dividerView   = divider
             listView      = list
+            hintView      = hint
             adapter       = ad
             currentDanger = null
+            collapsed     = null
             setFault(null)
             Log.d(TAG, "사이드바 표시")
         } catch (e: Exception) {
@@ -178,9 +214,13 @@ object OverlayManager {
             params        = null
             headerView    = null
             titleView     = null
+            actionView    = null
+            dividerView   = null
             listView      = null
+            hintView      = null
             adapter       = null
             currentDanger = null
+            collapsed     = null
             setFault("화면 경보 표시 실패 — 소리·진동만 동작")
         }
     }
@@ -241,7 +281,12 @@ object OverlayManager {
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     if (moved) settleAfterDrag(view.context, root, p)
-                    else       view.performClick()   // 접근성 대응. 헤더 탭 자체에 동작은 없다.
+                    else {
+                        view.performClick()   // 접근성 대응
+                        // (v1.1.69) 접힘(평상시)에서만 공정 변경으로 넘어간다.
+                        //   펼침 = 경보 중이므로, 오조작으로 경보 목록이 가려지지 않게 무동작을 유지한다.
+                        if (collapsed == true) runCatching { onHeaderTap?.invoke() }
+                    }
                     true
                 }
                 else -> false
@@ -265,7 +310,7 @@ object OverlayManager {
         val slack   = (w * DISMISS_RATIO).toInt()
 
         if (p.x < -slack || p.x + w > screenW + slack) {
-            // 다음 표시 때 화면 밖에서 뜨지 않도록, 밀어낸 쪽 가장자리 도킹 좌표로 되돌려 기억한다.
+            // 밀어낸 쪽 가장자리 도킹 좌표로 되돌려 기억한다.
             savedX = if (p.x < 0) margin else screenW - w - margin
             savedY = p.y.coerceIn(margin, maxY)
             Log.d(TAG, "사이드바 끝까지 드래그 → 전체 확인(ACTION_MUTE_ALL)")
@@ -274,7 +319,11 @@ object OverlayManager {
                     action = BleService.ACTION_MUTE_ALL
                 })
             }.onFailure { Log.w(TAG, "전체 확인 전송 실패: ${it.message}") }
-            hideOverlay()
+            // (v1.1.69) 사이드바는 상시 노출이다. 걷지 않고 도킹 위치로 돌려놓는다
+            //   (경보 해제는 BleService 가 처리하고, 그 결과가 접힘 상태 갱신으로 돌아온다).
+            p.x = savedX
+            p.y = savedY
+            try { windowManager?.updateViewLayout(root, p) } catch (_: Exception) {}
             return
         }
 
@@ -318,7 +367,11 @@ object OverlayManager {
         }
     }
 
-    /** 사이드바를 접는다. 위험 대상이 0대일 때(자동 접힘)와 전체 확인 시 호출된다. */
+    /**
+     * 사이드바를 화면에서 완전히 걷는다.
+     * (v1.1.69) 감시 종료(서비스 정지) 때만 호출한다.
+     *   위험 대상 0대는 '접힘'이지 철거가 아니다 — 여기서 걷으면 공정 변경 진입점이 사라진다.
+     */
     fun hideOverlay() {
         pulseAnimator?.cancel(); pulseAnimator = null
         snapAnimator?.cancel();  snapAnimator  = null
@@ -330,11 +383,15 @@ object OverlayManager {
         rootView      = null
         headerView    = null
         titleView     = null
+        actionView    = null
+        dividerView   = null
         listView      = null
+        hintView      = null
         adapter       = null
         params        = null
         windowManager = null
         currentDanger = null
+        collapsed     = null
     }
 
     /** 위험 기기 목록 어댑터. 행 탭 = 그 기기만 30초 Acknowledge 무음. */

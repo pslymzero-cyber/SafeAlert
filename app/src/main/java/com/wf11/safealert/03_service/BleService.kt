@@ -864,6 +864,18 @@ class BleService : LifecycleService() {
         //   두 대상은 싱글턴 object 라 이 람다가 서비스 인스턴스를 붙든다 → stopAll() 에서 반드시 null 로 끊는다.
         AlertSoundPlayer.onSoundFault = { reason -> soundFault   = reason; refreshNotification() }
         OverlayManager.onOverlayFault = { reason -> overlayFault = reason; refreshNotification() }
+        // (v1.1.69) 접힘 상태 사이드바의 헤더 탭 = 공정 변경. 사이드바가 상시 노출이므로 이 경로는 항상 살아 있다.
+        //   즉시 전환이 아니라 MainActivity 확인 다이얼로그를 거친다 — 주머니 속 오탭이 곧 감시 공백이다.
+        OverlayManager.onHeaderTap = {
+            runCatching {
+                startActivity(Intent(this, MainActivity::class.java).apply {
+                    action = ACTION_OPEN_SWITCH_ROLE
+                    flags  = Intent.FLAG_ACTIVITY_NEW_TASK or
+                             Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                             Intent.FLAG_ACTIVITY_SINGLE_TOP
+                })
+            }.onFailure { Log.w(TAG, "공정 변경 화면 열기 실패: ${it.message}") }
+        }
         //   싱글턴은 프로세스가 살아 있는 한 사유를 유지한다. setFault 는 같은 사유의 반복 통지를 막으므로,
         //   여기서 현재 값을 이어받지 않으면 서비스 재생성 전에 발생한 이상은 새 서비스에 영원히 전달되지 않는다.
         soundFault   = AlertSoundPlayer.soundFaultReason
@@ -1002,6 +1014,10 @@ class BleService : LifecycleService() {
     }
 
     private fun applyMode() {
+        // (v1.1.69) 감시가 도는 동안 사이드바는 상시 노출이다. 위험 대상이 0대여도 접힘 상태로 떠 있어야
+        //   헤더 탭으로 공정을 바꿀 수 있다. 블루투스 점검보다 먼저 띄운다 — BT 가 꺼져 아래에서 조기
+        //   반환하더라도 공정 변경 진입점은 살아 있어야 하기 때문이다.
+        updateFloatingOverlay()
         val btManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
         val btAdapter = btManager.adapter
 
@@ -1161,7 +1177,7 @@ class BleService : LifecycleService() {
                             if (alertState.isEmpty()) {
                                 AlertSoundPlayer.stopSound()
                                 VibrationHelper.stopVibration(this@BleService)
-                                OverlayManager.hideOverlay()
+                                collapseOverlay()
                                 activeSoundLevel = BleConstants.LEVEL_SAFE
                                 // (v1.1.65) 존 안에서 마지막 기기가 빠지면 '경보 중지' 가 세이프존 표기를 덮어쓴다 — 분기.
                                 sendStatusBroadcast(if (myZoneInside) "세이프존 — 경보 억제 중" else "기기 이탈 → 경보 중지")
@@ -2078,7 +2094,7 @@ class BleService : LifecycleService() {
                     AlertSoundPlayer.stopSound()
                     activeSoundLevel = BleConstants.LEVEL_SAFE
                     VibrationHelper.stopVibration(this)
-                    OverlayManager.hideOverlay()
+                    collapseOverlay()
                 } else {
                     resyncSoundToRemaining()  // [v1.1.37 ②] 상위 기기 이탈 → 남은 최대레벨로 사운드 하향 정합
                     updateFloatingOverlay()   // 다른 위험 기기로 플로팅 전환
@@ -2173,7 +2189,7 @@ class BleService : LifecycleService() {
                 if (!hasOtherAlerts) {
                     AlertSoundPlayer.stopSound()
                     VibrationHelper.stopVibration(this)
-                    OverlayManager.hideOverlay()
+                    collapseOverlay()
                     activeSoundLevel = BleConstants.LEVEL_SAFE
                 }
                 Log.d(TAG, "이탈 감지 즉시 소리 중지: $deviceId (peak=%.1f, ref=%.1f, drop=%.1f dBm)".format(recedePeak, recedeRef, recedePeak - recedeRef))
@@ -2214,7 +2230,7 @@ class BleService : LifecycleService() {
                 if (alertState.isEmpty()) {
                     AlertSoundPlayer.stopSound()
                     VibrationHelper.stopVibration(this)
-                    OverlayManager.hideOverlay()
+                    collapseOverlay()
                     activeSoundLevel = BleConstants.LEVEL_SAFE
                 } else {
                     resyncSoundToRemaining()  // [v1.1.37 ②] 이탈 확인된 상위 기기 → 남은 최대레벨로 사운드 하향 정합
@@ -2697,7 +2713,7 @@ class BleService : LifecycleService() {
                     AlertSoundPlayer.stopSound()
                     activeSoundLevel = BleConstants.LEVEL_SAFE
                     VibrationHelper.stopVibration(this)
-                    OverlayManager.hideOverlay()
+                    collapseOverlay()
                 } else {
                     resyncSoundToRemaining()
                     updateFloatingOverlay()
@@ -2888,7 +2904,9 @@ class BleService : LifecycleService() {
         isMutedPublic = true
         AlertSoundPlayer.stopSound()
         VibrationHelper.stopVibration(this)
-        OverlayManager.hideOverlay()
+        // (v1.1.69) 전체 무음 = 목록만 접는다. 사이드바는 남아 공정 변경 진입점이 유지된다.
+        //   isDeviceMuted 가 전체 무음을 보지 않으므로 updateFloatingOverlay() 로는 접히지 않는다.
+        collapseOverlay()
         val now = System.currentTimeMillis()
         alertState.entries.forEach { (key, value) ->
             alertState[key] = Pair(value.first, now)
@@ -3065,7 +3083,7 @@ class BleService : LifecycleService() {
             bleScanner?.forceLoseAll()          // 전 기기 정상 소실 — 27종 상태맵·필터·UWB 정리
             AlertSoundPlayer.stopSound()        // 잔존 사이렌 즉시 정지(이중 안전)
             VibrationHelper.stopVibration(this)
-            OverlayManager.hideOverlay()        // 표시도 하지 않는다
+            collapseOverlay()                   // (v1.1.69) 목록은 접는다(사이드바 자체는 유지)
             activeSoundLevel = BleConstants.LEVEL_SAFE
         } else {
             updateFloatingOverlay()             // 이탈 — 오버레이 상태 재동기
@@ -3105,9 +3123,21 @@ class BleService : LifecycleService() {
                 )
             }
 
-    /** (v1.1.65) 위험 기기 전체를 사이드바에 표시. 대상이 없으면 사이드바를 접는다. */
+    /**
+     * (v1.1.69) 위험 기기 전체를 사이드바에 표시. 대상이 0대면 걷는 것이 아니라 '접힘' 으로 간다
+     *   (헤더만 남아 현재 공정명 + [공정 변경] 배지를 띄운다). 사이드바 자체는 감시 중 늘 떠 있다.
+     */
     private fun updateFloatingOverlay() {
-        OverlayManager.showSidebar(this, hazardListForOverlay())
+        OverlayManager.showSidebar(this, hazardListForOverlay(), categoryRoleName(myCategory))
+    }
+
+    /**
+     * (v1.1.69) 사이드바를 접힘 상태로 되돌린다 — 철거가 아니다.
+     *   hazardListForOverlay() 는 전체 무음(isMuted)·세이프존을 반영하지 않는다. 그 경로에서
+     *   updateFloatingOverlay() 를 부르면 목록이 그대로 남아 접히지 않으므로, 빈 목록을 명시한다.
+     */
+    private fun collapseOverlay() {
+        OverlayManager.showSidebar(this, emptyList(), categoryRoleName(myCategory))
     }
 
     private fun startScanHealthCheck() {
@@ -3664,6 +3694,7 @@ class BleService : LifecycleService() {
         //   서비스가 GC 되지 않는다 → 반드시 끊고, 이상 상태도 초기화한다.
         AlertSoundPlayer.onSoundFault = null
         OverlayManager.onOverlayFault = null
+        OverlayManager.onHeaderTap    = null
         systemFault  = null
         txFault      = null
         soundFault   = null

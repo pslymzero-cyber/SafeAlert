@@ -17,6 +17,11 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
 
+    <!-- (v1.1.69) 상시 알림 표시 권한. targetSdk 33+ 에서 이 권한이 없으면
+         포그라운드 서비스 알림조차 상태바에 나타나지 않는다 = 상태바 미노출의 원인.
+         거부돼도 감시는 계속 돌아야 하므로 필수 판정(hasAllPermissions)에는 넣지 않는다. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <!-- 진동 + 부팅 수신 -->
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
