@@ -1,90 +1,133 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  (v1.1.65) 화면 경보 사이드바 — 기존 플로팅 위젯(최우선 1대)을 대체한다.
-    · 헤더 행(overlay_header)이 드래그 손잡이다. 리스트가 터치를 먼저 가져가므로
-      루트가 아니라 헤더에만 드래그 리스너를 건다.
-    · (v1.1.69) 상시 노출. 위험 0대 = 접힘(헤더만), 위험 1대 이상 = 펼침(목록 표시).
-      접힘 상태의 헤더 탭이 공정 변경 진입점이다 — 상시 접근 가능해야 하므로 사이드바를 걷지 않는다.
+  (v1.1.70) 화면 경보 사이드바 — 화면 가장자리에 밀착하는 엣지 패널이다.
+    · 루트는 서로 배타인 두 자식만 갖는다. 보이는 쪽이 곧 사이드바의 폭이 된다.
+        접힘(평상시) = overlay_handle 만        → 폭 20dp. 화면을 사실상 가리지 않는다.
+        펼침(경보·공정변경) = overlay_panel 만  → 폭 236dp.
+    · v1.1.69 까지는 접혀도 폭이 236dp 그대로여서, 가장자리에서 12dp 떨어진 큰 카드가
+      화면에 남았다 = 플로팅 위젯. 사이드바가 아니었다. 폭 자체를 접는 것이 이 판의 요점이다.
+    · 바깥쪽 모서리는 각지다(shape_overlay_panel_end/start). 둥글면 화면 끝과 틈이 벌어져
+      다시 '떠 있는 카드'로 보인다.
+    · 헤더 행(overlay_header)과 핸들이 드래그 손잡이다. 리스트가 터치를 먼저 가져가므로
+      루트가 아니라 이 둘에만 리스너를 건다.
     · 색·치수는 전부 SA 토큰. 코드 리터럴 색을 남기지 않는다.
     · Material 위젯 미사용 — Service 컨텍스트에서 인플레이트되므로 순수 위젯만 쓴다.
 -->
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/overlay_root"
-    android:layout_width="236dp"
-    android:layout_height="wrap_content"
-    android:orientation="vertical"
-    android:background="@drawable/shape_overlay_sidebar"
-    android:paddingBottom="@dimen/sa_space_sm">
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content">
 
-    <LinearLayout
-        android:id="@+id/overlay_header"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:gravity="center_vertical"
-        android:paddingStart="@dimen/sa_space_md"
-        android:paddingEnd="@dimen/sa_space_md"
-        android:paddingTop="@dimen/sa_space_sm"
-        android:paddingBottom="@dimen/sa_space_sm">
+    <!-- 접힘 상태. 평상시 화면에 남는 유일한 요소다. -->
+    <FrameLayout
+        android:id="@+id/overlay_handle"
+        android:layout_width="20dp"
+        android:layout_height="96dp"
+        android:background="@drawable/shape_overlay_handle_end">
 
         <View
-            android:id="@+id/overlay_grip"
-            android:layout_width="20dp"
-            android:layout_height="4dp"
-            android:layout_marginEnd="@dimen/sa_space_sm"
+            android:id="@+id/overlay_handle_grip"
+            android:layout_width="3dp"
+            android:layout_height="32dp"
+            android:layout_gravity="center"
             android:background="@drawable/shape_overlay_grip" />
+    </FrameLayout>
+
+    <!-- 펼침 상태. -->
+    <LinearLayout
+        android:id="@+id/overlay_panel"
+        android:layout_width="236dp"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="@drawable/shape_overlay_panel_end"
+        android:paddingBottom="@dimen/sa_space_sm"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:id="@+id/overlay_header"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingStart="@dimen/sa_space_md"
+            android:paddingEnd="@dimen/sa_space_md"
+            android:paddingTop="@dimen/sa_space_sm"
+            android:paddingBottom="@dimen/sa_space_sm">
+
+            <View
+                android:id="@+id/overlay_grip"
+                android:layout_width="20dp"
+                android:layout_height="4dp"
+                android:layout_marginEnd="@dimen/sa_space_sm"
+                android:background="@drawable/shape_overlay_grip" />
+
+            <TextView
+                android:id="@+id/overlay_title"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:textSize="@dimen/sa_type_section"
+                android:textStyle="bold"
+                android:textColor="@color/sa_text_primary"
+                android:maxLines="1"
+                android:ellipsize="end"
+                android:text="위험 감지" />
+
+            <!-- 위험 0대 펼침에서만 노출. 헤더 탭 = 공정 변경 진입 안내. -->
+            <TextView
+                android:id="@+id/overlay_action"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="@dimen/sa_space_sm"
+                android:textSize="@dimen/sa_type_hint"
+                android:textColor="@color/sa_accent"
+                android:maxLines="1"
+                android:text="공정 변경"
+                android:visibility="gone" />
+        </LinearLayout>
+
+        <View
+            android:id="@+id/overlay_divider"
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/sa_stroke_hairline"
+            android:background="@color/sa_divider" />
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/overlay_list"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingStart="@dimen/sa_space_sm"
+            android:paddingEnd="@dimen/sa_space_sm"
+            android:paddingTop="@dimen/sa_space_sm"
+            android:clipToPadding="false"
+            android:overScrollMode="never"
+            android:scrollbars="none" />
 
         <TextView
-            android:id="@+id/overlay_title"
-            android:layout_width="0dp"
+            android:id="@+id/overlay_hint"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:textSize="@dimen/sa_type_section"
-            android:textStyle="bold"
-            android:textColor="@color/sa_text_primary"
-            android:maxLines="1"
-            android:ellipsize="end"
-            android:text="위험 감지" />
-
-        <!-- (v1.1.69) 접힘(평상시) 상태에서만 노출. 헤더 탭 = 공정 변경 진입 안내. -->
-        <TextView
-            android:id="@+id/overlay_action"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="@dimen/sa_space_sm"
+            android:paddingStart="@dimen/sa_space_md"
+            android:paddingEnd="@dimen/sa_space_md"
+            android:paddingTop="@dimen/sa_space_sm"
             android:textSize="@dimen/sa_type_hint"
-            android:textColor="@color/sa_accent"
+            android:textColor="@color/sa_text_tertiary"
+            android:maxLines="2"
+            android:text="행 탭 = 30초 확인 · 손잡이를 옆으로 끝까지 밀면 전체 확인" />
+
+        <!-- 위험 0대 펼침에서만 노출. 다시 접는 유일한 경로다(경보 중에는 접히지 않는다). -->
+        <TextView
+            android:id="@+id/overlay_collapse"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingStart="@dimen/sa_space_md"
+            android:paddingEnd="@dimen/sa_space_md"
+            android:paddingTop="@dimen/sa_space_sm"
+            android:paddingBottom="@dimen/sa_space_xs"
+            android:textSize="@dimen/sa_type_hint"
+            android:textColor="@color/sa_text_tertiary"
             android:maxLines="1"
-            android:text="공정 변경"
+            android:text="닫기"
             android:visibility="gone" />
     </LinearLayout>
-
-    <View
-        android:id="@+id/overlay_divider"
-        android:layout_width="match_parent"
-        android:layout_height="@dimen/sa_stroke_hairline"
-        android:background="@color/sa_divider" />
-
-    <androidx.recyclerview.widget.RecyclerView
-        android:id="@+id/overlay_list"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:paddingStart="@dimen/sa_space_sm"
-        android:paddingEnd="@dimen/sa_space_sm"
-        android:paddingTop="@dimen/sa_space_sm"
-        android:clipToPadding="false"
-        android:overScrollMode="never"
-        android:scrollbars="none" />
-
-    <TextView
-        android:id="@+id/overlay_hint"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:paddingStart="@dimen/sa_space_md"
-        android:paddingEnd="@dimen/sa_space_md"
-        android:paddingTop="@dimen/sa_space_sm"
-        android:textSize="@dimen/sa_type_hint"
-        android:textColor="@color/sa_text_tertiary"
-        android:maxLines="2"
-        android:text="행 탭 = 30초 확인 · 손잡이를 옆으로 끝까지 밀면 전체 확인" />
-</LinearLayout>
+</FrameLayout>

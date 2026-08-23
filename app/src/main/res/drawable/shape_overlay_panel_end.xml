@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  (v1.1.70) 사이드바 패널 판 — 화면 오른쪽 가장자리에 붙는 경우.
+    바깥(오른쪽) 모서리는 각지게 둔다. 가장자리에 밀착한 판은 바깥 모서리가 둥글면
+    화면 끝과 틈이 생겨 '떠 있는 카드'로 보인다 = 플로팅. 안쪽만 둥글려야 엣지 패널이다.
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/sa_overlay" />
+    <corners
+        android:topLeftRadius="@dimen/sa_radius_md"
+        android:bottomLeftRadius="@dimen/sa_radius_md"
+        android:topRightRadius="0dp"
+        android:bottomRightRadius="0dp" />
+    <stroke
+        android:width="@dimen/sa_stroke_hairline"
+        android:color="@color/sa_stroke" />
+</shape>
