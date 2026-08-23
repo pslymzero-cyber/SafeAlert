@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- (v1.1.66) 돋보기 — 스캔 버튼 아이콘. app:iconTint 로 재도색 -->
+<!-- (v1.1.65) 돋보기 — 스캔 버튼 아이콘. app:iconTint 로 재도색 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="@dimen/sa_icon_sm"
     android:height="@dimen/sa_icon_sm"

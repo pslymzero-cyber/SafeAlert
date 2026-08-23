@@ -235,7 +235,7 @@ class BleService : LifecycleService() {
 
     @Volatile private var activeSoundLevel = BleConstants.LEVEL_SAFE
 
-    // (v1.1.66) 세이프존 안이면 광고 위험레벨을 SAFE 로 고정 — '존 안에서는 알림을 보내지도 않는다'.
+    // (v1.1.65) 세이프존 안이면 광고 위험레벨을 SAFE 로 고정 — '존 안에서는 알림을 보내지도 않는다'.
     //   호출처 4곳이 전부 bleAdvertiser.updateRisk() 전용이라 판정·표시에는 영향이 없다.
     //   IN_ZONE 비트를 모르는 구버전(v1.1.61 이하) 상대도 SAFE 레벨은 해석하므로 하위호환된다.
     //   광고 자체는 유지 — 존 밖 기기 화면에서 내가 사라지지는 않는다(존재는 보이되 무해로 보임).
@@ -1076,7 +1076,7 @@ class BleService : LifecycleService() {
                                 && !deviceId.contains("BEA_")   // [v1.1.58 fix1] 비콘(BEA_)은 walker 게이트 면제 — 보행자도 비콘 경보 수신(기존: 100% 차단)
                                 && !DevSettings.walkerDetectsWalker) return
 
-                            // (v1.1.66) 세이프존 전면 억제 — 존 안에서는 '존 비콘 신호만' 받는다.
+                            // (v1.1.65) 세이프존 전면 억제 — 존 안에서는 '존 비콘 신호만' 받는다.
                             //   존 비콘은 BleScanner 가 onZoneBeaconSignal 전용 경로로 흘려보내 여기 도달하지
                             //   않으므로, 이 리턴이 존 수신을 막지는 않는다(존 진입·이탈 판정 정상 동작).
                             //   진입 시점의 잔존 기기는 refreshMyZoneInside 의 forceLoseAll 이 이미 정리했다.
@@ -1158,7 +1158,7 @@ class BleService : LifecycleService() {
                                 VibrationHelper.stopVibration(this@BleService)
                                 OverlayManager.hideOverlay()
                                 activeSoundLevel = BleConstants.LEVEL_SAFE
-                                // (v1.1.66) 존 안에서 마지막 기기가 빠지면 '경보 중지' 가 세이프존 표기를 덮어쓴다 — 분기.
+                                // (v1.1.65) 존 안에서 마지막 기기가 빠지면 '경보 중지' 가 세이프존 표기를 덮어쓴다 — 분기.
                                 sendStatusBroadcast(if (myZoneInside) "세이프존 — 경보 억제 중" else "기기 이탈 → 경보 중지")
                             } else {
                                 resyncSoundToRemaining()  // [v1.1.37 ②] 상위 기기 이탈 → 남은 최대레벨로 사운드 하향 정합
@@ -3044,7 +3044,7 @@ class BleService : LifecycleService() {
     }
 
     /**
-     * 존 접촉 총괄 갱신 — (v1.1.66) 세이프존 '전면' 억제 전이.
+     * 존 접촉 총괄 갱신 — (v1.1.65) 세이프존 '전면' 억제 전이.
      *   진입: 감지 중인 전 기기를 정상 소실 경로로 정리(판정·표시·오버레이·UWB 세션 일괄 해제).
      *         이후 onDeviceDetected 가 조기 리턴하므로 존 안에서는 존 비콘 신호만 처리된다.
      *         광고 위험레벨도 getCurrentMaxLevel 클램프로 SAFE 고정 — 보내지도, 받지도 않는다.
@@ -3071,7 +3071,7 @@ class BleService : LifecycleService() {
         broadcastDeviceList(force = true)
         sendStatusBroadcast(if (inside) "세이프존 — 경보 억제 중(존 비콘 접촉)" else "존 이탈 — 경보 복원")
         refreshNotification()
-        Log.i(TAG, "(v1.1.66) myZoneInside=$inside (세이프존 전면 억제)")
+        Log.i(TAG, "(v1.1.65) myZoneInside=$inside (세이프존 전면 억제)")
     }
 
     /**
@@ -3737,7 +3737,7 @@ class BleService : LifecycleService() {
             title = "SafeAlert 이상 — 보호가 끊겼습니다"
             body  = fault + fallbackNote
         } else if (myZoneInside) {
-            // (v1.1.66) 세이프존 명시 — 이상(fault) 다음 우선순위.
+            // (v1.1.65) 세이프존 명시 — 이상(fault) 다음 우선순위.
             //   보호가 끊긴 사실이 '안전구역' 표기에 가려지면 안 되므로 fault 를 앞에 둔다.
             title = "세이프존 — ${categoryRoleName(myCategory)}"
             body  = "안전구역 안입니다 · 경보 송수신 중지" + fallbackNote

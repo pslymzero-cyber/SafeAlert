@@ -285,7 +285,7 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
     }
 
     /**
-     * (v1.1.66) 감지 중인 전 기기를 즉시 소실 처리 — 세이프존 진입 등 '전면 억제' 전환 전용.
+     * (v1.1.65) 감지 중인 전 기기를 즉시 소실 처리 — 세이프존 진입 등 '전면 억제' 전환 전용.
      *   BleService.onDeviceLost 정상 경로를 그대로 태워 27종 상태맵·필터·UWB 세션을 한 번에 정리한다.
      *   detectedDevices 도 비우므로 억제 해제 후 첫 광고부터 신규 기기처럼 깨끗하게 재개된다.
      */
