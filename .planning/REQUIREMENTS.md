@@ -79,28 +79,38 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| TEST-01 | — | Pending |
-| TEST-02 | — | Pending |
-| TEST-03 | — | Pending |
-| TEST-04 | — | Pending |
-| CI-01 | — | Pending |
-| CI-02 | — | Pending |
-| REFACTOR-01 | — | Pending |
-| REFACTOR-02 | — | Pending |
-| REFACTOR-03 | — | Pending |
-| REFACTOR-04 | — | Pending |
-| STATE-01 | — | Pending |
-| STATE-02 | — | Pending |
-| STATE-03 | — | Pending |
-| PERF-01 | — | Pending |
-| BUG-01 | — | Pending |
-| BUG-02 | — | Pending |
+| TEST-01 | Phase 2 | Pending |
+| TEST-02 | Phase 2 | Pending |
+| TEST-03 | Phase 1 | Pending |
+| TEST-04 | Phase 1 | Pending |
+| CI-01 | Phase 1 | Pending |
+| CI-02 | Phase 1 | Pending |
+| REFACTOR-01 | Phase 3 | Pending |
+| REFACTOR-02 | Phase 3 | Pending |
+| REFACTOR-03 | Phase 3 | Pending |
+| REFACTOR-04 | Phase 3 | Pending |
+| STATE-01 | Phase 4 | Pending |
+| STATE-02 | Phase 4 | Pending |
+| STATE-03 | Phase 4 | Pending |
+| PERF-01 | Phase 5 | Pending |
+| BUG-01 | Phase 4 | Pending |
+| BUG-02 | Phase 2 | Pending |
 
 **Coverage:**
 - v1 requirements: 16 total
-- Mapped to phases: 0
-- Unmapped: 16 (로드맵 생성 전)
+- Mapped to phases: 16
+- Unmapped: 0
+
+Phase 별 묶음:
+
+| Phase | 이름 | Requirements |
+|-------|------|--------------|
+| 1 | 테스트 하네스와 CI 회귀 게이트 | TEST-03, TEST-04, CI-01, CI-02 |
+| 2 | 안전 크리티컬 경로 골든 테스트 | TEST-01, TEST-02, BUG-02 |
+| 3 | BleService 분해 | REFACTOR-01, REFACTOR-02, REFACTOR-03, REFACTOR-04 |
+| 4 | 기기 상태 단일화 | STATE-01, STATE-02, STATE-03, BUG-01 |
+| 5 | 판정 워커 분리 | PERF-01 |
 
 ---
 *Requirements defined: 2026-08-24*
-*Last updated: 2026-08-24 after initial definition*
+*Last updated: 2026-08-24 after roadmap creation (traceability mapped)*
