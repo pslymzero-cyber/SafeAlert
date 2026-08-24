@@ -12,7 +12,7 @@ provides:
   - "로컬 레드 트라이얼 2건: Kalman(1e-6)·Median(+1) 기대값 변조가 각각 non-zero exit + D-19 4요소 실패 메시지를 유발함을 실증(Task 1)"
   - "프로덕션 diff 감사(KalmanFilter.kt 단일 시임) — 사람이 Task 2 체크포인트에서 승인 완료"
   - "release.yml 에 citest 태그용 Firebase 갱신 가드 추가 — 검증 태그가 프로덕션 자동업데이트 포인터를 오염시키지 않음(Task 3 사전조치, 배포됨)"
-  - "실제 GitHub Actions 태그 push 2건(그린 v0.0.1-citest1 / 레드 v0.0.1-citest2)으로 CI-01(게이트 위치·차단)·CI-02(아티팩트 기반 진단) 종단 실증 완료 — 사람 최종 승인 대기 중(Task 3 체크포인트)"
+  - "실제 GitHub Actions 태그 push 2건(그린 v0.0.1-citest1 / 레드 v0.0.1-citest2)으로 CI-01(게이트 위치·차단)·CI-02(아티팩트 기반 진단) 종단 실증 완료 — 사용자 승인 완료(Task 3 체크포인트, 2026-08-24)"
   - "D-21 문서 정정 상태 재확인 — REQUIREMENTS.md/ROADMAP.md 모두 이미 정정된 문구로 확인, 추가 편집 불필요"
 affects: ["01-ci 완료 여부", "CI-01/CI-02 요구사항 최종 충족 판정", "이 SUMMARY 를 requires 하는 모든 후속 phase"]
 
@@ -81,19 +81,20 @@ coverage:
 
 duration: ~2h (Task 1/2 는 이전 세션, Task 3 는 이번 세션 — 세션 압축으로 정확한 누적 시각 유실, STATE.md 세션 타임스탬프 대비 근사치)
 completed: 2026-08-24
-status: halted
+approved: 2026-08-24 (Task 3 blocking-human 체크포인트 — 사용자 "승인 — 다음 단계 진행")
+status: complete
 ---
 
-# Phase 01 Plan 2: 테스트 하네스와 CI 회귀 게이트 — CI 종단 실증 완료, 최종 승인 대기 Summary
+# Phase 01 Plan 2: 테스트 하네스와 CI 회귀 게이트 — CI 종단 실증 완료, 승인됨 Summary
 
-**로컬 레드 트라이얼(Task 1)과 프로덕션 diff 감사(Task 2, 승인됨)에 이어, 실제 GitHub Actions 태그 push 2건(그린/레드)으로 CI-01 게이트 차단 위치와 CI-02 아티팩트 기반 진단 가능성을 실증 — Firebase 갱신 가드를 선행 배포한 뒤 진행했고, 최종 승인만 남은 상태로 정지**
+**로컬 레드 트라이얼(Task 1)과 프로덕션 diff 감사(Task 2, 승인됨)에 이어, 실제 GitHub Actions 태그 push 2건(그린/레드)으로 CI-01 게이트 차단 위치와 CI-02 아티팩트 기반 진단 가능성을 실증 — Firebase 갱신 가드를 선행 배포한 뒤 진행했고, 사용자 최종 승인으로 CI-01/CI-02 를 요구사항 충족으로 확정**
 
 ## Performance
 
 - **Duration:** ~2h (근사치)
 - **Completed (Task 1/2):** 2026-08-24 (이전 세션)
 - **Completed (Task 3 증거 수집):** 2026-08-24T07:26:00Z 경 (레드 실행 07:24:49Z 실패 로그 기준)
-- **Tasks:** 3/3 실행 완료 (Task 3 는 checkpoint 자체가 done 조건 — 증거 수집까지 완료, 최종 "승인"만 대기)
+- **Tasks:** 3/3 완료 (Task 3 체크포인트 = 2026-08-24 사용자 승인으로 done)
 - **Files modified (committed):** 2 (release.yml 순net, RssiCascadeTest.kt net 0)
 
 ## Accomplishments
@@ -182,18 +183,19 @@ CI 워크플로에 원격 태그를 지우는 스텝을 넣지 않는 이유: �
 
 ## Next Phase Readiness
 
-**정지 지점:** Task 3 (`gate="blocking-human"` 체크포인트, 이 계획의 마지막 task) — 아래 CHECKPOINT REACHED 섹션 참조.
+**승인 지점:** Task 3 (`gate="blocking-human"` 체크포인트, 이 계획의 마지막 task) — 2026-08-24 사용자 승인. 아래 CHECKPOINT 섹션 참조.
 
-이 플랜은 완료되지 않았다(`status: halted`). 계획 원문: "승인 시: Phase 1 완료. CI-01 과 CI-02 가 실증으로 충족됩니다." — 사람의 명시적 "승인" 없이는 CI-01/CI-02 요구사항이 완료 처리되지 않으며, 이 SUMMARY 에 의존하는 후속 phase 는 이 플랜이 `status: complete` 로 재작성되기 전까지 차단된 것으로 보고되어야 한다.
+이 플랜은 완료됐다(`status: complete`). 계획 원문 "승인 시: Phase 1 완료. CI-01 과 CI-02 가 실증으로 충족됩니다." 의 조건이 충족되어 CI-01/CI-02 를 요구사항 충족으로 확정한다. 이 SUMMARY 를 requires 하는 후속 phase 의 차단은 해제된다.
 
 ---
 
-## CHECKPOINT REACHED
+## CHECKPOINT — 승인 완료 (2026-08-24)
 
 **Type:** human-verify
 **Gate:** blocking-human
 **Plan:** 01-ci-02
-**Progress:** 3/3 tasks 실행 완료 (Task 3 는 최종 승인 대기)
+**Progress:** 3/3 tasks 완료 (Task 3 = 사용자 승인으로 done)
+**Resolution:** 사용자 응답 "승인 — 다음 단계 진행" (2026-08-24). 태그·Release 정리는 사용자가 직접 수행하기로 선택 — 에이전트 미수행.
 
 ### Completed Tasks
 
@@ -205,11 +207,11 @@ CI 워크플로에 원격 태그를 지우는 스텝을 넣지 않는 이유: �
 | 3 | CI 종단 실증 — 레드 변조 | `3ee1f4a` | `RssiCascadeTest.kt` |
 | 3 | CI 종단 실증 — 원복 | `9068696` | `RssiCascadeTest.kt` |
 
-### Current Task
+### Final Task
 
 **Task 3:** 실제 태그 push 로 CI-01 / CI-02 종단 실증
-**Status:** 증거 수집 완료, 최종 승인 대기
-**Blocked by:** `gate="blocking-human"` — 사람의 명시적 "승인" 필요 (auto 모드에서도 자동승인 대상 아님)
+**Status:** 증거 수집 완료 → 2026-08-24 사용자 승인 → done
+**Gate:** `gate="blocking-human"` — 오케스트레이터·executor 자체 승인 없이 사람 입력으로만 통과 (프로토콜 준수)
 
 ### Checkpoint Details
 
@@ -241,20 +243,23 @@ CI 워크플로에 원격 태그를 지우는 스텝을 넣지 않는 이유: �
 
 **정리 필요 항목(사람 수동)** — 본 SUMMARY 상단 "정리 필요 항목" 섹션 참조 (`v0.0.1-citest1`/`v0.0.1-citest2` 태그, "SafeAlert v0.0.1-citest1" Release)
 
-### Awaiting
+### Approval Record
 
-계획 원문의 8개 acceptance_criteria 를 모두 충족했다고 판단합니다(위 증거 참조). 아래를 확인 후 "승인"이라고 입력해 주시면 CI-01/CI-02 를 요구사항 충족으로 확정하고 이 플랜을 완료 처리합니다:
-1. 그린 실행 스텝 순서·결과가 예상대로인지
-2. 레드 실행에서 차단이 올바른 위치(테스트 직후)에서 일어났는지, Release 가 정말 생성 안 됐는지
-3. 레드 실행 아티팩트만으로 원인(approach/coldStart/frame=10/kalman)을 지목한 것이 납득되는지
-4. 프로덕션 Firebase 갱신 가드(`e41a97d`, Rule 2 편차)를 계획 밖 추가로서 받아들이는지
-5. 태그/Release 정리(`v0.0.1-citest1`, `v0.0.1-citest2`)를 언제/어떻게 직접 수행하실지(선택 — 지금 안 하셔도 무방)
+계획 원문의 8개 acceptance_criteria 를 모두 충족한 증거를 제시했고, 사용자가 2026-08-24 에 **"승인 — 다음 단계 진행"** 으로 확정했다.
 
-어긋난 항목이 있으면 번호와 내용을 알려 주십시오 — 01-01 의 `release.yml` 배선으로 되돌아갑니다.
+| # | 확인 항목 | 결과 |
+|---|---|---|
+| 1 | 그린 실행 스텝 순서·결과 | 승인 — 13스텝 success, Firebase 갱신만 skipped |
+| 2 | 레드 차단 위치·Release 미생성 | 승인 — `Run unit tests` 실패 후 5스텝 skipped, `release not found` |
+| 3 | 아티팩트만으로 원인 지목 | 승인 — approach/coldStart/frame=10/kalman |
+| 4 | Firebase 가드(`e41a97d`) Rule 2 편차 수용 | 승인 |
+| 5 | 태그/Release 정리 시점 | **사용자가 직접 수행** — 에이전트는 삭제하지 않음 |
+
+**확정 효과:** CI-01(레드 빌드가 APK 빌드·GitHub Release 를 실제로 차단) · CI-02(실기 없이 아티팩트만으로 진단) 요구사항 충족.
 
 ---
 *Phase: 01-ci*
-*Halted at Task 3 checkpoint (final): 2026-08-24*
+*Task 3 checkpoint (final) approved: 2026-08-24*
 
 ## Self-Check: PASSED
 

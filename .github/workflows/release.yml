@@ -54,10 +54,49 @@ jobs:
             app/build/test-results/testDebugUnitTest/
           retention-days: 14
 
+      # CI-01 보강: Gradle 8.6 에는 failOnNoDiscoveredTests(8.13+) 가 없어 '테스트 0건 발견'도
+      #   BUILD SUCCESSFUL 로 끝난다. 소스셋 경로가 한 번 어긋나면 이 게이트가 조용히 그린
+      #   no-op 으로 퇴화하므로, 골든 테스트가 실제로 실행됐는지 결과 XML 로 직접 확인한다.
+      - name: Assert golden tests actually ran
+        run: |
+          set -euo pipefail
+          XML_DIR=app/build/test-results/testDebugUnitTest
+          REQUIRED="RssiCascadeTest RssiCascadeIsolationTest MedianFilterWarmupTest"
+          MIN_TOTAL=17   # 8 + 3 + 6. 테스트를 늘리면 이 하한도 함께 올린다.
+
+          if [ ! -d "$XML_DIR" ]; then
+            echo "::error::테스트 결과 디렉터리가 없다: $XML_DIR — 테스트가 한 건도 실행되지 않았다"
+            exit 1
+          fi
+
+          for cls in $REQUIRED; do
+            f="$XML_DIR/TEST-com.wf11.safealert.ble.$cls.xml"
+            if [ ! -f "$f" ]; then
+              echo "::error::골든 테스트 클래스 결과 누락: $cls — 소스셋 경로 이탈 또는 클래스 삭제 의심"
+              exit 1
+            fi
+          done
+
+          TOTAL=$(awk -F'tests="' '/<testsuite/ {split($2, a, "\""); s += a[1]} END {print s+0}' "$XML_DIR"/*.xml)
+          echo "discovered tests = $TOTAL (floor $MIN_TOTAL)"
+          if [ "$TOTAL" -lt "$MIN_TOTAL" ]; then
+            echo "::error::실행된 테스트가 $TOTAL 건으로 하한 $MIN_TOTAL 미만이다 — 테스트가 조용히 사라졌다"
+            exit 1
+          fi
+
       # 태그명에서 v 제거 → 버전 번호 추출 (예: v1.0.52 → 1.0.52)
+      # is_release: 정확히 vX.Y.Z 형태인 정식 릴리스 태그만 true (거부목록이 아니라 허용목록).
+      #   citest·rc·오타 등 무엇이 붙어도 false → Firebase 프로덕션 채널 무접촉.
       - name: Extract version
         id: ver
-        run: echo "name=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+        run: |
+          echo "name=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+          if printf '%s' "$GITHUB_REF_NAME" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "is_release=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_release=false" >> $GITHUB_OUTPUT
+            echo "::notice::'$GITHUB_REF_NAME' 은 정식 릴리스 태그(vX.Y.Z)가 아니다 — Firebase 업데이트를 건너뛴다"
+          fi
 
       - name: Build debug APK
         run: ./gradlew assembleDebug --no-daemon --console=plain
@@ -73,7 +112,7 @@ jobs:
           generate_release_notes: true   # 마지막 릴리즈 이후 커밋 자동 정리
 
       - name: Update Firebase Realtime DB
-        if: ${{ !contains(github.ref_name, 'citest') }}
+        if: ${{ steps.ver.outputs.is_release == 'true' }}
         run: |
           VER="${{ steps.ver.outputs.name }}"
           APK_URL="https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/safealert-${VER}.apk"

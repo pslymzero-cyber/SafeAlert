@@ -18,7 +18,7 @@ v1.0.1부터 v1.1.70까지 3개월간 70회 이상 릴리스하며 실제로 동
 
 - ✓ BLE 스캔·광고 양방향 통신 (`BleScanner` / `BleAdvertiser` / `BleScanCallback`) — existing
 - ✓ 1바이트 비트팩 프로토콜 (2-2-2-2: CAT / STATE / TURN / RISK, `BleConstants.encodePayload`·`decodePayload`) — existing
-- ✓ 3단 RSSI 필터 캐스케이드 (`RssiPreFilter` → `MedianFilter` 5샘플 창 → `KalmanFilter` ~120ms 주기) — existing
+- ✓ 3단 RSSI 필터 캐스케이드 (`MedianFilter` 3샘플 창 → `RssiPreFilter` → `KalmanFilter` ~120ms 주기) — existing *(Phase 01 정정: 종전 기술의 순서·창크기가 실제와 달랐다. 실측 근거 `BleService.kt:1473`→`:1507`→`:1511`, `MedianFilter.kt:22` `DEFAULT_WINDOW = 3`)*
 - ✓ SAFE / WARNING / DANGER 3단 경보 상태머신 (`BleService` 내부) — existing
 - ✓ 역할 기반 판정 — 지게차 / 보행자 / EPJ 역할쌍별 차등 반경·오프셋 (`pairKey` 세그먼트 보정) — existing
 - ✓ UWB 정밀 거리 측정 (`UwbRanger`, `androidx.core.uwb` alpha09, 멀티캐스트 최대 6대, 0x9ABC OOB 광고) — existing
@@ -41,7 +41,7 @@ v1.0.1부터 v1.1.70까지 3개월간 70회 이상 릴리스하며 실제로 동
 - [ ] **경보 타이밍·거리 판정의 재현성 확보** — 같은 접근 상황에서 같은 시점에 같은 등급이 나온다. 현재 세 증상이 동시에 관측됨: (1) 알림 타이밍이 어긋남 (2) 거리가 실제와 안 맞음 (3) 고칠수록 같은 증상이 재발
 - [ ] **`BleService.kt` 분해** — 3,899줄 / 80+ 함수 단일 클래스가 스캔·경보 상태·UWB·오디오·오버레이·Firebase·캘리브레이션·존·생명주기를 전부 담당. 분리안: `AlertStateMachine` / `UwbDistanceManager` / `CalibrationEngine` (기술부채 1순위)
 - [ ] **분산 상태 통합** — 기기 상태가 40개 이상 mutable Map(`BleService.kt:384-655`)에 흩어져 있고 정리 시점이 제각각 → 좀비 상태가 경보 오작동으로 직결. 통합안: `DeviceTrackingState` 데이터 클래스 (기술부채 2순위)
-- [ ] **리팩터링 안전망 테스트** — 유닛·통합 테스트 0건 상태에서 안전 크리티컬 로직을 분해하지 않는다. 분해 **선행 조건**으로 골든 테스트 고정: ① 경보 격상·해제 전체 경로 ② UWB 세션 상태머신 (사이렌 플랩 진원지) (기술부채 3순위)
+- [~] **리팩터링 안전망 테스트** *(Phase 01 부분 달성 — RSSI 캐스케이드 동결 + CI 게이트 완료. ①경보 격상·해제 전 경로 ②UWB 세션 상태머신 은 Phase 2 잔여)* — 유닛·통합 테스트 0건 상태에서 안전 크리티컬 로직을 분해하지 않는다. 분해 **선행 조건**으로 골든 테스트 고정: ① 경보 격상·해제 전체 경로 ② UWB 세션 상태머신 (사이렌 플랩 진원지) (기술부채 3순위)
 
 ### Out of Scope
 
@@ -103,8 +103,11 @@ v1.0.1부터 v1.1.70까지 3개월간 70회 이상 릴리스하며 실제로 동
 | BLE RSSI를 主 판정 권위로 유지, UWB·iBeacon·Firebase는 보조 수단으로 전부 존치 | 사용자 명시: "모두 유지. 보조 수단으로서 기능". 보조 수단이 전부 실패해도 RSSI 단독으로 경보가 성립해야 함 | — Pending |
 | 판정 반경 현행 확정 (지게차 15m/8m, 그 외 5m/3m) | 값 자체는 현장에서 맞다고 확인됨. 문제는 값이 아니라 값대로 동작하지 않는 것 | — Pending |
 | 증상 대응이 아니라 기술부채 1·2순위 구조 정리를 본체 작업으로 채택 | 사용자 선택: "기술 부채 1순위와 2순위 정리". 같은 계열 수정이 v1.1.28·43·50에서 반복된 이력이 증상 대응의 한계를 보여줌 | — Pending |
-| 테스트(3순위)를 별도 과제가 아니라 리팩터링 **선행 안전망**으로 편입 | 안전 크리티컬 3,899줄을 회귀 검증 수단 없이 분해하면 지금의 "실기에서 회귀 발견" 방식이 리팩터링 중에도 그대로 남음 | — Pending |
+| 테스트(3순위)를 별도 과제가 아니라 리팩터링 **선행 안전망**으로 편입 | 안전 크리티컬 3,899줄을 회귀 검증 수단 없이 분해하면 지금의 "실기에서 회귀 발견" 방식이 리팩터링 중에도 그대로 남음 | ✅ Phase 01 — JVM 유닛 17건(캐스케이드 8·격리 3·워밍업 6) + CI 차단 게이트 가동. 실기 없이 회귀 검출 성립 |
 | 신규 기능 추가는 이번 범위에서 제외 | 사용자가 핵심 범위를 "이게 전부다"로 확정 | — Pending |
+| 골든 기대값은 record-then-freeze 로 동결 (D-09) | 부동소수 캐스케이드의 기대값을 손으로 계산하면 테스트가 구현이 아니라 계산 실수를 검증하게 된다. 실측 출력을 1회 기록해 리터럴로 못박는 방식이 회귀 민감도를 그대로 유지한다 | ✅ Phase 01 — 21개 리터럴 동결. Phase 3 REFACTOR-04 수용 게이트가 이 규율에 직결 |
+| 시간 의존성은 기본 인자 주입으로 이음매를 만든다 | `KalmanFilter` 가 내부에서 `System.currentTimeMillis()` 를 직접 부르면 JVM 테스트가 비결정적이 된다. 기본 인자로 노출하면 호출부 무변경(런타임 동작 불변)으로 테스트만 시각을 주입할 수 있다 | ✅ Phase 01 — `KalmanFilter.kt:27-30`. 분해 단계에서 같은 패턴 재사용 |
+| CI 게이트는 "테스트 통과"가 아니라 "테스트가 실제로 실행됐는가"까지 검증한다 | Gradle 8.6 에는 `failOnNoDiscoveredTests`(8.13+) 가 없어 테스트 0건 발견도 BUILD SUCCESSFUL 로 끝난다. 소스셋 경로가 한 번 어긋나면 게이트가 조용히 그린 no-op 으로 퇴화한다 | ✅ Phase 01 — 결과 XML 로 필수 클래스 3종 + 최소 건수 17 직접 확인 (`release.yml:60-85`) |
 
 ## Evolution
 
@@ -124,4 +127,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-08-23 after initialization*
+*Last updated: 2026-08-24 after Phase 01 close (테스트 하네스와 CI 회귀 게이트)*
