@@ -32,6 +32,15 @@ class RssiCascadeTest {
         // ── 입력 시퀀스 (수기 설계 합성값, 실기 캡처 아님 — D-10 / P-06) ────────────────
         val INPUT_APPROACH = intArrayOf(-92, -90, -88, -87, -85, -83, -82, -80, -78, -77, -75, -73, -72, -70, -68, -67, -65, -63, -62, -60)
 
+        /** 단조 이탈. approach 의 역순 — RssiPreFilter 의 상승/하강 비대칭 α 를 반대 방향으로 드러낸다. */
+        val INPUT_DEPARTURE = intArrayOf(-60, -62, -63, -65, -67, -68, -70, -72, -73, -75, -77, -78, -80, -82, -83, -85, -87, -88, -90, -92)
+
+        /** 평탄 구간 + 인덱스 5(-45, 비현실적 근접)·11(-105, 비현실적 원거리) 이상치 주입. MedianFilter(3) 흡수 대상. */
+        val INPUT_IMPULSE = intArrayOf(-78, -77, -78, -79, -78, -45, -78, -77, -79, -78, -78, -105, -77, -78, -79, -78, -77, -78, -79, -78)
+
+        /** ±2dBm 잡음이 있는 정지. */
+        val INPUT_STATIONARY = intArrayOf(-80, -81, -79, -80, -82, -80, -79, -81, -80, -78, -80, -81, -80, -79, -82, -80, -81, -79, -80, -80)
+
         // ── approach / coldStart 기대값 (record-then-freeze, D-09) ─────────────────────
         val EXPECTED_APPROACH_COLD_MEDIAN = intArrayOf(-92, -91, -90, -88, -87, -85, -83, -82, -80, -78, -77, -75, -73, -72, -70, -68, -67, -65, -63, -62)
         val EXPECTED_APPROACH_COLD_PREFILTER = intArrayOf(-92, -92, -91, -90, -89, -88, -86, -85, -84, -82, -80, -79, -77, -76, -74, -72, -71, -69, -67, -66)
@@ -41,6 +50,72 @@ class RssiCascadeTest {
             -85.09866000454736, -83.44452861835482, -81.86148522275899, -80.13245981903054,
             -78.50938197083461, -76.77428376274302, -74.95424539896467, -73.26355599791144,
             -71.49592904663851, -69.66797990132058, -67.96613409211149
+        )
+
+        // ── approach / warmStart 기대값 (record-then-freeze, D-09) ──────────────────────
+        val EXPECTED_APPROACH_WARM_MEDIAN = EXPECTED_APPROACH_COLD_MEDIAN
+        val EXPECTED_APPROACH_WARM_PREFILTER = EXPECTED_APPROACH_COLD_PREFILTER
+        val EXPECTED_APPROACH_WARM_KALMAN = doubleArrayOf(
+            -92.0, -92.0, -91.66995714217292, -91.20307811031887, -90.61941825644338,
+            -89.91475287524315, -88.8554556108965, -87.72247461460532, -86.5370171056721,
+            -85.09005197034018, -83.43904689817683, -81.8604605205382, -80.1375747597521,
+            -78.51989397759719, -76.79075123301752, -74.9767876917531, -73.29037633268841,
+            -71.52704385948275, -69.70323222447453, -68.00385608534748
+        )
+
+        // ── departure / coldStart 기대값 (record-then-freeze, D-09) ─────────────────────
+        val EXPECTED_DEPARTURE_COLD_MEDIAN = intArrayOf(-60, -61, -62, -63, -65, -67, -68, -70, -72, -73, -75, -77, -78, -80, -82, -83, -85, -87, -88, -90)
+        val EXPECTED_DEPARTURE_COLD_PREFILTER = intArrayOf(-60, -60, -61, -61, -63, -64, -65, -67, -68, -70, -70, -71, -72, -73, -74, -75, -76, -78, -79, -80)
+        val EXPECTED_DEPARTURE_COLD_KALMAN = doubleArrayOf(
+            -60.0, -60.0, -60.347334990418695, -60.54031765286672, -61.1763418055104,
+            -61.91726077458193, -62.77033166779593, -63.960976668399326, -65.20177147633451,
+            -66.70140949617127, -67.94077202568587, -69.17191118668546, -70.38668856292966,
+            -71.58128516479908, -72.75474432869454, -73.9077948273253, -75.04203378420709,
+            -76.34580673727558, -77.60726711804473, -78.8325052843884
+        )
+
+        // ── departure / warmStart 기대값 (record-then-freeze, D-09) ─────────────────────
+        val EXPECTED_DEPARTURE_WARM_MEDIAN = EXPECTED_DEPARTURE_COLD_MEDIAN
+        val EXPECTED_DEPARTURE_WARM_PREFILTER = EXPECTED_DEPARTURE_COLD_PREFILTER
+        val EXPECTED_DEPARTURE_WARM_KALMAN = doubleArrayOf(
+            -60.0, -60.0, -60.33004285782709, -60.52413822032519, -61.15918345051288,
+            -61.90602011519336, -62.76696661151057, -63.96414102919661, -65.20836665832549,
+            -66.7076425635268, -67.9453083756323, -69.17368548505489, -70.38534372517007,
+            -71.57691474946593, -72.74768022164587, -73.8984638791784, -75.03087331427541,
+            -76.33167756646728, -77.59092282393796, -78.8145740405902
+        )
+
+        // ── impulse / coldStart 기대값 (record-then-freeze, D-09) ───────────────────────
+        // 인덱스 5(-45)·11(-105) 이상치는 3-윈도 중앙값에 절대 등장하지 않는다(항상 이웃 2개에 밀려 흡수됨).
+        val EXPECTED_IMPULSE_COLD_MEDIAN = intArrayOf(-78, -77, -78, -78, -78, -78, -78, -77, -78, -78, -78, -78, -78, -78, -78, -78, -78, -78, -78, -78)
+        val EXPECTED_IMPULSE_COLD_PREFILTER = intArrayOf(-78, -78, -78, -78, -78, -78, -78, -78, -78, -78, -78, -78, -78, -78, -78, -78, -78, -78, -78, -78)
+        val EXPECTED_IMPULSE_COLD_KALMAN = doubleArrayOf(
+            -78.0, -78.0, -78.0, -78.0, -78.0, -78.0, -78.0, -78.0, -78.0, -78.0,
+            -78.0, -78.0, -78.0, -78.0, -78.0, -78.0, -78.0, -78.0, -78.0, -78.0
+        )
+
+        // ── impulse / warmStart 기대값 (record-then-freeze, D-09) ───────────────────────
+        val EXPECTED_IMPULSE_WARM_MEDIAN = intArrayOf(-78, -77, -78, -78, -78, -78, -78, -77, -78, -78, -78, -78, -78, -78, -78, -78, -78, -78, -78, -78)
+        val EXPECTED_IMPULSE_WARM_PREFILTER = EXPECTED_IMPULSE_COLD_PREFILTER
+        val EXPECTED_IMPULSE_WARM_KALMAN = doubleArrayOf(
+            -78.0, -78.0, -78.0, -78.0, -78.0, -78.0, -78.0, -78.0, -78.0, -78.0,
+            -78.0, -78.0, -78.0, -78.0, -78.0, -78.0, -78.0, -78.0, -78.0, -78.0
+        )
+
+        // ── stationary / coldStart 기대값 (record-then-freeze, D-09) ────────────────────
+        val EXPECTED_STATIONARY_COLD_MEDIAN = intArrayOf(-80, -80, -80, -80, -80, -80, -80, -80, -80, -80, -80, -80, -80, -80, -80, -80, -81, -80, -80, -80)
+        val EXPECTED_STATIONARY_COLD_PREFILTER = intArrayOf(-80, -80, -80, -80, -80, -80, -80, -80, -80, -80, -80, -80, -80, -80, -80, -80, -80, -80, -80, -80)
+        val EXPECTED_STATIONARY_COLD_KALMAN = doubleArrayOf(
+            -80.0, -80.0, -80.0, -80.0, -80.0, -80.0, -80.0, -80.0, -80.0, -80.0,
+            -80.0, -80.0, -80.0, -80.0, -80.0, -80.0, -80.0, -80.0, -80.0, -80.0
+        )
+
+        // ── stationary / warmStart 기대값 (record-then-freeze, D-09) ────────────────────
+        val EXPECTED_STATIONARY_WARM_MEDIAN = EXPECTED_STATIONARY_COLD_MEDIAN
+        val EXPECTED_STATIONARY_WARM_PREFILTER = EXPECTED_STATIONARY_COLD_PREFILTER
+        val EXPECTED_STATIONARY_WARM_KALMAN = doubleArrayOf(
+            -80.0, -80.0, -80.0, -80.0, -80.0, -80.0, -80.0, -80.0, -80.0, -80.0,
+            -80.0, -80.0, -80.0, -80.0, -80.0, -80.0, -80.0, -80.0, -80.0, -80.0
         )
     }
 
@@ -103,6 +178,69 @@ class RssiCascadeTest {
         assertCascade(
             "approach", "coldStart", actual,
             EXPECTED_APPROACH_COLD_MEDIAN, EXPECTED_APPROACH_COLD_PREFILTER, EXPECTED_APPROACH_COLD_KALMAN,
+        )
+    }
+
+    @Test
+    fun approach_warmStart_matchesGolden() {
+        val actual = runCascade(INPUT_APPROACH, warmStart = true)
+        assertCascade(
+            "approach", "warmStart", actual,
+            EXPECTED_APPROACH_WARM_MEDIAN, EXPECTED_APPROACH_WARM_PREFILTER, EXPECTED_APPROACH_WARM_KALMAN,
+        )
+    }
+
+    @Test
+    fun departure_coldStart_matchesGolden() {
+        val actual = runCascade(INPUT_DEPARTURE, warmStart = false)
+        assertCascade(
+            "departure", "coldStart", actual,
+            EXPECTED_DEPARTURE_COLD_MEDIAN, EXPECTED_DEPARTURE_COLD_PREFILTER, EXPECTED_DEPARTURE_COLD_KALMAN,
+        )
+    }
+
+    @Test
+    fun departure_warmStart_matchesGolden() {
+        val actual = runCascade(INPUT_DEPARTURE, warmStart = true)
+        assertCascade(
+            "departure", "warmStart", actual,
+            EXPECTED_DEPARTURE_WARM_MEDIAN, EXPECTED_DEPARTURE_WARM_PREFILTER, EXPECTED_DEPARTURE_WARM_KALMAN,
+        )
+    }
+
+    @Test
+    fun impulse_coldStart_matchesGolden() {
+        val actual = runCascade(INPUT_IMPULSE, warmStart = false)
+        assertCascade(
+            "impulse", "coldStart", actual,
+            EXPECTED_IMPULSE_COLD_MEDIAN, EXPECTED_IMPULSE_COLD_PREFILTER, EXPECTED_IMPULSE_COLD_KALMAN,
+        )
+    }
+
+    @Test
+    fun impulse_warmStart_matchesGolden() {
+        val actual = runCascade(INPUT_IMPULSE, warmStart = true)
+        assertCascade(
+            "impulse", "warmStart", actual,
+            EXPECTED_IMPULSE_WARM_MEDIAN, EXPECTED_IMPULSE_WARM_PREFILTER, EXPECTED_IMPULSE_WARM_KALMAN,
+        )
+    }
+
+    @Test
+    fun stationary_coldStart_matchesGolden() {
+        val actual = runCascade(INPUT_STATIONARY, warmStart = false)
+        assertCascade(
+            "stationary", "coldStart", actual,
+            EXPECTED_STATIONARY_COLD_MEDIAN, EXPECTED_STATIONARY_COLD_PREFILTER, EXPECTED_STATIONARY_COLD_KALMAN,
+        )
+    }
+
+    @Test
+    fun stationary_warmStart_matchesGolden() {
+        val actual = runCascade(INPUT_STATIONARY, warmStart = true)
+        assertCascade(
+            "stationary", "warmStart", actual,
+            EXPECTED_STATIONARY_WARM_MEDIAN, EXPECTED_STATIONARY_WARM_PREFILTER, EXPECTED_STATIONARY_WARM_KALMAN,
         )
     }
 }
