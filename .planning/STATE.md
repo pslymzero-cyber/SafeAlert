@@ -4,11 +4,11 @@ milestone: v1.1.70
 current_phase: 01
 current_phase_name: 테스트 하네스와 CI 회귀 게이트
 status: executing
-stopped_at: Halted at 01-ci-02-PLAN.md Task 2 checkpoint (gate=blocking-human, awaiting production diff approval)
-last_updated: "2026-08-24T05:22:07.577Z"
+stopped_at: "01-ci-02 Task 3: CI 종단 실증(그린/레드) 증거 수집 완료, 최종 blocking-human 체크포인트에서 정지 — 사람 승인 대기"
+last_updated: "2026-08-24T07:33:12.120Z"
 last_activity: 2026-08-24
 last_activity_desc: Phase 01 execution resumed (wave continue)
-state_head: 7ccf88004b2f321a72528069b774f749c55e4a1d
+state_head: 79fe5024e3392bb4166055521b01601d73371ec2
 progress:
   total_phases: 5
   completed_phases: 0
@@ -77,6 +77,7 @@ Recent decisions affecting current work:
 - [Phase 01]: 격리 테스트는 record-then-freeze 대신 관계형(soloBaseline 일치) 기대값 사용 — 비간섭 속성은 관계로 정의되므로
 - [Phase 01]: Task 1 precondition('작업 트리가 깨끗해야 한다')을 baseline-porcelain-equivalence로 해석 — 범위 밖 14건 기존 미커밋 항목 존재로 문자 그대로의 공백 불가능, git status --porcelain 베이스라인 일치로 판정
 - [Phase 01]: 01-02 Task 1 레드 트라이얼 2건(Kalman 1e-6/Median +1) non-zero exit + D-19 4요소 메시지 확인, D-21 문서 재확인 결과 REQUIREMENTS.md/ROADMAP.md 편집 불필요
+- [Phase 01]: 01-ci-02 Task 3 착수 전 release.yml Firebase 갱신 스텝에 citest 태그 가드(1줄) 선추가 — Rule 2 편차, 검증 태그가 프로덕션 자동업데이트 포인터를 오염시키지 않도록 함
 
 ### Pending Todos
 
@@ -89,6 +90,7 @@ None yet.
 - **`androidx.core.uwb:1.0.0-alpha09` 프리릴리스**: 경보 로직의 30~40% 가 의존. API 파괴 변경 리스크 상존 (REFACTOR-02 / TEST-02 에 직접 영향)
 - **BLE 페이로드 호환성**: 1바이트 비트팩 레이아웃은 현장 배포된 구버전 기기와 통신해야 하므로 변경 불가
 - 01-ci-02 Task 2 체크포인트(gate=blocking-human) 정지 중: 프로덕션 diff(KalmanFilter.kt 단일 시임, 945c729..HEAD 기준 1파일/9삽입/6삭제) 사람 승인 대기. 승인 시 Task 3(실제 태그 push 종단 실증)로 진행 가능
+- 01-ci-02 Task 3 (checkpoint:human-verify gate=blocking-human): CI-01/CI-02 종단 실증 증거(그린 run 32700966688, 레드 run 32701255911) 수집 완료, 사람의 '승인' 입력 대기 중. 승인 전까지 01-ci 는 완료 처리되지 않음. 상세는 .planning/phases/01-ci/01-02-SUMMARY.md CHECKPOINT REACHED 섹션
 
 ## Deferred Items
 
@@ -100,6 +102,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-08-24T05:22:07.563Z
-Stopped at: Halted at 01-ci-02-PLAN.md Task 2 checkpoint (gate=blocking-human, awaiting production diff approval)
+Last session: 2026-08-24T07:33:11.226Z
+Stopped at: 01-ci-02 Task 3: CI 종단 실증(그린/레드) 증거 수집 완료, 최종 blocking-human 체크포인트에서 정지 — 사람 승인 대기
 Resume file: .planning/phases/01-ci/01-02-SUMMARY.md
