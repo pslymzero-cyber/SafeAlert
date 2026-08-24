@@ -24,7 +24,10 @@ import kotlin.math.pow
  *   NORMAL — q=0.15, R=5.0   균형 (기본값)
  *   SMOOTH — q=0.05, R=10.0  느린 반응, 속도 추정 안정
  */
-class KalmanFilter(private var preset: Int = DevSettings.KALMAN_PRESET_NORMAL) {
+class KalmanFilter(
+    private var preset: Int = DevSettings.KALMAN_PRESET_NORMAL,
+    private val nowMs: () -> Long = { System.currentTimeMillis() },
+) {
 
     // ── 상태 변수 ─────────────────────────────────────────────────────
     private var rssi: Double = 0.0    // 추정 RSSI (dBm)
@@ -75,7 +78,7 @@ class KalmanFilter(private var preset: Int = DevSettings.KALMAN_PRESET_NORMAL) {
      */
     fun update(filteredRssi: Int, imuQScale: Double = 1.0): Pair<Double, Double> {
         val meas  = filteredRssi.toDouble()
-        val nowMs = System.currentTimeMillis()
+        val now = nowMs()
         updateCnt++   // [v1.0.49 #1] 초기화/정상 양 경로 공통 증가
 
         if (!initialized) {
@@ -85,12 +88,12 @@ class KalmanFilter(private var preset: Int = DevSettings.KALMAN_PRESET_NORMAL) {
             pRV         = 0.0
             pVV         = 5.0
             initialized = true
-            lastTsMs    = nowMs
+            lastTsMs    = now
             return Pair(rssi, vel)
         }
 
-        val dt = ((nowMs - lastTsMs) / 1000.0).coerceIn(0.05, 2.0)
-        lastTsMs = nowMs
+        val dt = ((now - lastTsMs) / 1000.0).coerceIn(0.05, 2.0)
+        lastTsMs = now
 
         // ── 예측 단계 ─────────────────────────────────────────────────
         val predRssi = rssi + vel * dt
@@ -140,7 +143,7 @@ class KalmanFilter(private var preset: Int = DevSettings.KALMAN_PRESET_NORMAL) {
         pRV         = 0.0
         pVV         = 5.0    // (v1.1.29) 1.0 → 5.0: 초기 속도 불확실성 정직화
         initialized = true
-        lastTsMs    = System.currentTimeMillis()
+        lastTsMs    = nowMs()
     }
 
     /** 상태 초기화 (기기 소실 / SAFE 전환 시) */

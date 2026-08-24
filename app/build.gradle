@@ -48,6 +48,14 @@ android {
         viewBinding true
         buildConfig true
     }
+    testOptions {
+        unitTests.all {
+            testLogging {
+                events 'failed'
+                exceptionFormat 'full'
+            }
+        }
+    }
 }
 
 dependencies {

@@ -41,6 +41,19 @@ jobs:
       - name: Grant execute permission
         run: chmod +x gradlew
 
+      - name: Run unit tests (golden RSSI cascade)
+        run: ./gradlew testDebugUnitTest --no-daemon --console=plain
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: unit-test-reports
+          path: |
+            app/build/reports/tests/testDebugUnitTest/
+            app/build/test-results/testDebugUnitTest/
+          retention-days: 14
+
       # 태그명에서 v 제거 → 버전 번호 추출 (예: v1.0.52 → 1.0.52)
       - name: Extract version
         id: ver
