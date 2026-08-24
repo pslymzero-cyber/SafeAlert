@@ -33,11 +33,11 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Requirements**: TEST-03, TEST-04, CI-01, CI-02
 **Success Criteria** (what must be TRUE):
   1. 유지보수자가 실기기·에뮬레이터 없이 JVM 유닛 테스트를 실행해 통과 결과를 얻는다 (TEST-04)
-  2. 동일 RSSI 입력 시퀀스를 `RssiPreFilter` → `MedianFilter`(5샘플) → `KalmanFilter` 에 흘리면 항상 동일 출력이 나오고, 필터 상수나 로직이 바뀌면 테스트가 실패한다 (TEST-03)
+  2. 동일 RSSI 입력 시퀀스를 `MedianFilter`(3샘플) → `RssiPreFilter` → `KalmanFilter` 에 흘리면 항상 동일 출력이 나오고, 필터 상수나 로직이 바뀌면 테스트가 실패한다 (TEST-03)
   3. GitHub Actions 빌드가 테스트를 자동 실행하고, 테스트가 실패하면 APK 릴리스가 차단된다 (CI-01)
   4. 유지보수자가 CI 실행 결과 아티팩트만 열어 어떤 테스트가 어떤 기대값에서 깨졌는지 실기 없이 판별한다 (CI-02)
 **Plans**: TBD
-**출하 상태**: 앱 프로덕션 코드 무변경. 배포되는 APK 는 v1.1.70 과 동일하게 동작한다. 현장 검증 항목은 "설치·경보 동작이 이전과 같은가" 뿐이며, 이 Phase 는 앱을 가장 안전한 상태(무변경)로 남긴다
+**출하 상태**: 앱 동작 무변경. 프로덕션 코드 변경은 `KalmanFilter` 생성자에 시간 시임 기본인자 1건을 추가하는 것뿐이고, 기본값이 현행 경로(`System.currentTimeMillis()`)라 배포되는 APK 는 v1.1.70 과 동일하게 동작한다. 현장 검증 항목은 "설치·경보 동작이 이전과 같은가" 뿐이다
 
 ### Phase 2: 안전 크리티컬 경로 골든 테스트
 **Goal**: 경보 격상·해제 전 경로와 UWB 세션 전환의 현재 동작이 기대값으로 고정되고, 그 안전망이 저속 접근 WARNING 미도달 버그를 실제로 잡아낸다
