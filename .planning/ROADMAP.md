@@ -36,7 +36,12 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. 동일 RSSI 입력 시퀀스를 `MedianFilter`(3샘플) → `RssiPreFilter` → `KalmanFilter` 에 흘리면 항상 동일 출력이 나오고, 필터 상수나 로직이 바뀌면 테스트가 실패한다 (TEST-03)
   3. GitHub Actions 빌드가 테스트를 자동 실행하고, 테스트가 실패하면 APK 릴리스가 차단된다 (CI-01)
   4. 유지보수자가 CI 실행 결과 아티팩트만 열어 어떤 테스트가 어떤 기대값에서 깨졌는지 실기 없이 판별한다 (CI-02)
-**Plans**: TBD
+**Plans:** 2 plans
+
+Plans:
+- [ ] 01-01-PLAN.md — 시간 시임 + 3단 RSSI 캐스케이드 골든 테스트(4시나리오 × 2시작상태) + Gradle 실패 로깅 + `release.yml` 테스트 게이트·리포트 아티팩트 배선
+- [ ] 01-02-PLAN.md — 레드 트라이얼로 게이트 차단 실증, 프로덕션 diff 감사, 실제 태그 push 로 CI-01/CI-02 종단 확인
+
 **출하 상태**: 앱 동작 무변경. 프로덕션 코드 변경은 `KalmanFilter` 생성자에 시간 시임 기본인자 1건을 추가하는 것뿐이고, 기본값이 현행 경로(`System.currentTimeMillis()`)라 배포되는 APK 는 v1.1.70 과 동일하게 동작한다. 현장 검증 항목은 "설치·경보 동작이 이전과 같은가" 뿐이다
 
 ### Phase 2: 안전 크리티컬 경로 골든 테스트
