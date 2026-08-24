@@ -73,6 +73,7 @@ jobs:
           generate_release_notes: true   # 마지막 릴리즈 이후 커밋 자동 정리
 
       - name: Update Firebase Realtime DB
+        if: ${{ !contains(github.ref_name, 'citest') }}
         run: |
           VER="${{ steps.ver.outputs.name }}"
           APK_URL="https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/safealert-${VER}.apk"
