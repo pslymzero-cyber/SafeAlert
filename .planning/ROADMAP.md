@@ -40,7 +40,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. GitHub Actions 빌드가 테스트를 자동 실행하고, 테스트가 실패하면 APK 릴리스가 차단된다 (CI-01)
   4. 유지보수자가 CI 실행 결과 아티팩트만 열어 어떤 테스트가 어떤 기대값에서 깨졌는지 실기 없이 판별한다 (CI-02)
 
-**Plans:** 2 plans
+**Plans:** 2/2 plans executed
 
 Plans:
 **Wave 1**
@@ -49,7 +49,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 01-02-PLAN.md — 레드 트라이얼로 게이트 차단 실증, 프로덕션 diff 감사, 실제 태그 push 로 CI-01/CI-02 종단 확인
+- [x] 01-02-PLAN.md — 레드 트라이얼로 게이트 차단 실증, 프로덕션 diff 감사, 실제 태그 push 로 CI-01/CI-02 종단 확인
 
 **출하 상태**: 앱 동작 무변경. 프로덕션 코드 변경은 `KalmanFilter` 생성자에 시간 시임 기본인자 1건을 추가하는 것뿐이고, 기본값이 현행 경로(`System.currentTimeMillis()`)라 배포되는 APK 는 v1.1.70 과 동일하게 동작한다. 현장 검증 항목은 "설치·경보 동작이 이전과 같은가" 뿐이다
 
@@ -129,7 +129,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. 테스트 하네스와 CI 회귀 게이트 | 0/TBD | Not started | - |
+| 1. 테스트 하네스와 CI 회귀 게이트 | 2/2 | In Progress|  |
 | 2. 안전 크리티컬 경로 골든 테스트 | 0/TBD | Not started | - |
 | 3. BleService 분해 | 0/TBD | Not started | - |
 | 4. 기기 상태 단일화 | 0/TBD | Not started | - |

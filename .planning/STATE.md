@@ -4,16 +4,16 @@ milestone: v1.1.70
 current_phase: 01
 current_phase_name: 테스트 하네스와 CI 회귀 게이트
 status: executing
-stopped_at: Completed 01-ci-01-PLAN.md
-last_updated: "2026-08-24T04:36:08.698Z"
+stopped_at: Halted at 01-ci-02-PLAN.md Task 2 checkpoint (gate=blocking-human, awaiting production diff approval)
+last_updated: "2026-08-24T05:22:07.577Z"
 last_activity: 2026-08-24
 last_activity_desc: Phase 01 execution resumed (wave continue)
-state_head: 953fab3211d3441f23518eceb3aa556c74395e2c
+state_head: 7ccf88004b2f321a72528069b774f749c55e4a1d
 progress:
   total_phases: 5
   completed_phases: 0
   total_plans: 2
-  completed_plans: 1
+  completed_plans: 2
 ---
 
 # Project State
@@ -75,6 +75,8 @@ Recent decisions affecting current work:
 - [Phase 01]: Task 2 골든 8테스트는 shared-helper(runCascade/assertCascade)로 DRY 유지 — grep 리터럴카운트 휴리스틱보다 명시적 <action> 지시 우선
 - [Phase 01]: KalmanFilter는 기기별 별도 인스턴스(공유맵 없음)이므로 D-07 격리 테스트 범위에서 제외 — MedianFilter/RssiPreFilter만 검증
 - [Phase 01]: 격리 테스트는 record-then-freeze 대신 관계형(soloBaseline 일치) 기대값 사용 — 비간섭 속성은 관계로 정의되므로
+- [Phase 01]: Task 1 precondition('작업 트리가 깨끗해야 한다')을 baseline-porcelain-equivalence로 해석 — 범위 밖 14건 기존 미커밋 항목 존재로 문자 그대로의 공백 불가능, git status --porcelain 베이스라인 일치로 판정
+- [Phase 01]: 01-02 Task 1 레드 트라이얼 2건(Kalman 1e-6/Median +1) non-zero exit + D-19 4요소 메시지 확인, D-21 문서 재확인 결과 REQUIREMENTS.md/ROADMAP.md 편집 불필요
 
 ### Pending Todos
 
@@ -86,6 +88,7 @@ None yet.
 - **실기 검증 사이클**: 회귀 확인 수단이 사용자 현장 가용 시간에 묶여 있다. 모든 Phase 는 출하 가능·현장 검증 가능 상태로 끝나야 하며, 반쯤 분해된 검증 불가 상태로 오래 머무는 것이 실패 모드
 - **`androidx.core.uwb:1.0.0-alpha09` 프리릴리스**: 경보 로직의 30~40% 가 의존. API 파괴 변경 리스크 상존 (REFACTOR-02 / TEST-02 에 직접 영향)
 - **BLE 페이로드 호환성**: 1바이트 비트팩 레이아웃은 현장 배포된 구버전 기기와 통신해야 하므로 변경 불가
+- 01-ci-02 Task 2 체크포인트(gate=blocking-human) 정지 중: 프로덕션 diff(KalmanFilter.kt 단일 시임, 945c729..HEAD 기준 1파일/9삽입/6삭제) 사람 승인 대기. 승인 시 Task 3(실제 태그 push 종단 실증)로 진행 가능
 
 ## Deferred Items
 
@@ -97,6 +100,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-08-24T04:36:08.685Z
-Stopped at: Completed 01-ci-01-PLAN.md
-Resume file: None
+Last session: 2026-08-24T05:22:07.563Z
+Stopped at: Halted at 01-ci-02-PLAN.md Task 2 checkpoint (gate=blocking-human, awaiting production diff approval)
+Resume file: .planning/phases/01-ci/01-02-SUMMARY.md
