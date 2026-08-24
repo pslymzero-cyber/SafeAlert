@@ -13,15 +13,15 @@ Requirements for initial release. Each maps to roadmap phases.
 
 - [ ] **TEST-01**: 유지보수자는 고정 RSSI 시퀀스를 재생해 SAFE→WARNING→DANGER 격상과 역방향 해제의 등급·전이 시점을 기대값과 비교할 수 있다 (경보 전체 경로 골든 테스트)
 - [ ] **TEST-02**: 유지보수자는 UWB 세션 **6대 이하** 범위에서 Case A/B 전환·좀비 워치독 발화·재연결 경로를 기대값과 비교할 수 있다 (6대 초과 플립 경로는 v1 대상 외 — BUG-03 참조)
-- [ ] **TEST-03**: 유지보수자는 MedianFilter(3샘플) → RssiPreFilter → KalmanFilter 3단 캐스케이드가 동일 입력 시퀀스에 동일 출력을 내는지 확인할 수 있다
-- [ ] **TEST-04**: 위 테스트들은 Android 프레임워크·실기기 없이 JVM 유닛 테스트로 실행된다 (분해 대상 로직이 순수 함수로 격리 가능해야 성립)
+- [x] **TEST-03**: 유지보수자는 MedianFilter(3샘플) → RssiPreFilter → KalmanFilter 3단 캐스케이드가 동일 입력 시퀀스에 동일 출력을 내는지 확인할 수 있다
+- [x] **TEST-04**: 위 테스트들은 Android 프레임워크·실기기 없이 JVM 유닛 테스트로 실행된다 (분해 대상 로직이 순수 함수로 격리 가능해야 성립)
 
 ### CI 회귀 게이트 (CI)
 
 현재 회귀를 CI가 아니라 사용자가 실기에서 발견한다. 측정 수단 없이는 재현성을 주장할 수 없다.
 
-- [ ] **CI-01**: 골든 테스트가 GitHub Actions 빌드에서 자동 실행되고, 실패 시 빌드가 차단된다
-- [ ] **CI-02**: 유지보수자는 CI 실행 결과에서 어떤 테스트가 왜 깨졌는지 실기 없이 판별할 수 있다 (테스트 리포트 아티팩트 보존)
+- [x] **CI-01**: 골든 테스트가 GitHub Actions 빌드에서 자동 실행되고, 실패 시 빌드가 차단된다
+- [x] **CI-02**: 유지보수자는 CI 실행 결과에서 어떤 테스트가 왜 깨졌는지 실기 없이 판별할 수 있다 (테스트 리포트 아티팩트 보존)
 
 ### 구조 분해 (REFACTOR)
 
@@ -81,10 +81,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 |-------------|-------|--------|
 | TEST-01 | Phase 2 | Pending |
 | TEST-02 | Phase 2 | Pending |
-| TEST-03 | Phase 1 | Pending |
-| TEST-04 | Phase 1 | Pending |
-| CI-01 | Phase 1 | Pending |
-| CI-02 | Phase 1 | Pending |
+| TEST-03 | Phase 1 | Complete |
+| TEST-04 | Phase 1 | Complete |
+| CI-01 | Phase 1 | Complete |
+| CI-02 | Phase 1 | Complete |
 | REFACTOR-01 | Phase 3 | Pending |
 | REFACTOR-02 | Phase 3 | Pending |
 | REFACTOR-03 | Phase 3 | Pending |
@@ -97,6 +97,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | BUG-02 | Phase 2 | Pending |
 
 **Coverage:**
+
 - v1 requirements: 16 total
 - Mapped to phases: 16
 - Unmapped: 0

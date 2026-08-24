@@ -45,7 +45,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 Plans:
 **Wave 1**
 
-- [ ] 01-01-PLAN.md — 시간 시임 + 3단 RSSI 캐스케이드 골든 테스트(4시나리오 × 2시작상태) + Gradle 실패 로깅 + `release.yml` 테스트 게이트·리포트 아티팩트 배선
+- [x] 01-01-PLAN.md — 시간 시임 + 3단 RSSI 캐스케이드 골든 테스트(4시나리오 × 2시작상태) + Gradle 실패 로깅 + `release.yml` 테스트 게이트·리포트 아티팩트 배선
 
 **Wave 2** *(blocked on Wave 1 completion)*
 

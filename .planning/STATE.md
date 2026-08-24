@@ -2,18 +2,18 @@
 gsd_state_version: 1.0
 milestone: v1.1.70
 current_phase: 01
-current_phase_name: ci
+current_phase_name: 테스트 하네스와 CI 회귀 게이트
 status: executing
-stopped_at: Phase 1 context gathered
-last_updated: "2026-08-24T02:35:04.839Z"
+stopped_at: Completed 01-ci-01-PLAN.md
+last_updated: "2026-08-24T04:36:08.698Z"
 last_activity: 2026-08-24
-last_activity_desc: ROADMAP.md 생성, v1 요구사항 16건 전부 매핑 완료
-state_head: fc6cf1d7debe7f6acfaf7f967c488696663b9334
+last_activity_desc: Phase 01 execution resumed (wave continue)
+state_head: 953fab3211d3441f23518eceb3aa556c74395e2c
 progress:
   total_phases: 5
   completed_phases: 0
   total_plans: 2
-  completed_plans: 0
+  completed_plans: 1
 ---
 
 # Project State
@@ -23,14 +23,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-08-23)
 
 **Core value:** BLE RSSI 근접 판정이 같은 상황에서 같은 결과를 낸다. 경보가 떠야 할 때 뜨고, 꺼져야 할 때 꺼지며, 한 번 고친 증상이 다시 돌아오지 않는다.
-**Current focus:** Phase 1 — 테스트 하네스와 CI 회귀 게이트
+**Current focus:** Phase 01 — 테스트 하네스와 CI 회귀 게이트
 
 ## Current Position
 
-Phase: 01 (ci) — READY TO EXECUTE
-Plan: 0 of TBD in current phase
+Phase: 01 (테스트 하네스와 CI 회귀 게이트) — EXECUTING
+Plan: 2 of 2
 Status: Ready to execute
-Last activity: 2026-08-24 — ROADMAP.md 생성, v1 요구사항 16건 전부 매핑 완료
+Last activity: 2026-08-24 — Phase 01 execution resumed (wave continue)
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -54,6 +54,11 @@ Progress: [░░░░░░░░░░] 0%
 - Trend: —
 
 *Updated after each plan completion*
+**Per-Plan Metrics:**
+
+| Plan | Duration | Tasks | Files |
+|------|----------|-------|-------|
+| Phase 01-ci P01 | 26min | 3 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -67,6 +72,9 @@ Recent decisions affecting current work:
 - [Roadmap]: PERF-01 을 REFACTOR-01 과 분리해 Phase 5 단독 배치. 동시성 변경을 다른 변경과 섞으면 현장 회귀의 원인 귀속이 불가능
 - [Roadmap]: BUG-02 를 Phase 2 에 편입. 현장에 나가 있는 미탐지이며, 여기서 고쳐야 REFACTOR-04 가 버그가 아닌 올바른 동작을 보존
 - [Roadmap]: BUG-03(UWB 6대 초과 플립)은 v2 이월. TEST-02 를 6대 이하로 한정한 이유가 이것
+- [Phase 01]: Task 2 골든 8테스트는 shared-helper(runCascade/assertCascade)로 DRY 유지 — grep 리터럴카운트 휴리스틱보다 명시적 <action> 지시 우선
+- [Phase 01]: KalmanFilter는 기기별 별도 인스턴스(공유맵 없음)이므로 D-07 격리 테스트 범위에서 제외 — MedianFilter/RssiPreFilter만 검증
+- [Phase 01]: 격리 테스트는 record-then-freeze 대신 관계형(soloBaseline 일치) 기대값 사용 — 비간섭 속성은 관계로 정의되므로
 
 ### Pending Todos
 
@@ -89,6 +97,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-08-24T00:54:54.415Z
-Stopped at: Phase 1 context gathered
-Resume file: .planning/phases/01-ci/01-CONTEXT.md
+Last session: 2026-08-24T04:36:08.685Z
+Stopped at: Completed 01-ci-01-PLAN.md
+Resume file: None
