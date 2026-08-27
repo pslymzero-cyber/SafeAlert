@@ -71,7 +71,7 @@ Plans:
 Plans:
 **Wave 1**
 
-- [ ] 02-01-PLAN.md — Robolectric 공급망 차단 체크포인트 + `ServiceController.get()` 무-`onCreate()` 하네스와 `processAlert` 시간 시임(트레이서) + 골든용 `DevSettings` 고정
+- [x] 02-01-PLAN.md — Robolectric 공급망 차단 체크포인트 + `ServiceController.get()` 무-`onCreate()` 하네스와 `processAlert` 시간 시임(트레이서) + 골든용 `DevSettings` 고정
 
 **Wave 2** *(blocked on Wave 1 completion; 02-02 ∥ 02-03 병렬)*
 

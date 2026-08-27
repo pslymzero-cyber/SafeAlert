@@ -2,18 +2,18 @@
 gsd_state_version: 1.0
 milestone: v1.1.70
 current_phase: 02
-current_phase_name: golden
+current_phase_name: 안전 크리티컬 경로 골든 테스트
 status: executing
-stopped_at: Phase 2 context gathered
-last_updated: "2026-08-27T15:11:24.821Z"
-last_activity: 2026-08-24
-last_activity_desc: Phase 01 marked complete
-state_head: 5ff023019896939d1fbc7fa51d97b6fd26f1baab
+stopped_at: Completed 02-01-PLAN.md
+last_updated: "2026-08-27T23:56:23.580Z"
+last_activity: 2026-08-28
+last_activity_desc: Phase 02 execution started
+state_head: b7f4b551618967e7f740174a9d2f88ea1b92525a
 progress:
   total_phases: 5
   completed_phases: 0
   total_plans: 6
-  completed_plans: 2
+  completed_plans: 3
 ---
 
 # Project State
@@ -23,14 +23,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-08-23)
 
 **Core value:** BLE RSSI 근접 판정이 같은 상황에서 같은 결과를 낸다. 경보가 떠야 할 때 뜨고, 꺼져야 할 때 꺼지며, 한 번 고친 증상이 다시 돌아오지 않는다.
-**Current focus:** Phase 01 — 테스트 하네스와 CI 회귀 게이트
+**Current focus:** Phase 02 — 안전 크리티컬 경로 골든 테스트
 
 ## Current Position
 
-Phase: 02 (golden) — READY TO EXECUTE
-Plan: 2 of 2
+Phase: 02 (안전 크리티컬 경로 골든 테스트) — EXECUTING
+Plan: 2 of 4
 Status: Ready to execute
-Last activity: 2026-08-24 — Phase 01 marked complete
+Last activity: 2026-08-28 — Phase 02 execution started
 
 Progress: [██░░░░░░░░] 20%
 
@@ -59,6 +59,7 @@ Progress: [██░░░░░░░░] 20%
 | Plan | Duration | Tasks | Files |
 |------|----------|-------|-------|
 | Phase 01-ci P01 | 26min | 3 tasks | 4 files |
+| Phase 02-golden P01 | 61min | 3 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -78,6 +79,9 @@ Recent decisions affecting current work:
 - [Phase 01]: Task 1 precondition('작업 트리가 깨끗해야 한다')을 baseline-porcelain-equivalence로 해석 — 범위 밖 14건 기존 미커밋 항목 존재로 문자 그대로의 공백 불가능, git status --porcelain 베이스라인 일치로 판정
 - [Phase 01]: 01-02 Task 1 레드 트라이얼 2건(Kalman 1e-6/Median +1) non-zero exit + D-19 4요소 메시지 확인, D-21 문서 재확인 결과 REQUIREMENTS.md/ROADMAP.md 편집 불필요
 - [Phase 01]: 01-ci-02 Task 3 착수 전 release.yml Firebase 갱신 스텝에 citest 태그 가드(1줄) 선추가 — Rule 2 편차, 검증 태그가 프로덕션 자동업데이트 포인터를 오염시키지 않도록 함
+- [Phase 02]: Robolectric 4.15.1(testImplementation) 사람 승인 채택 — 좌표/저장소/스코프 확인
+- [Phase 02]: 골든 스모크 '1프레임'을 '2프레임 연속(마지막 콜 관측)'으로 재해석 — production 게이트(streak/warmingUp) 수학적 제약
+- [Phase 02]: 골든 DevSettings 프로파일 30줄 명시 대입, kalmanPreset=KALMAN_PRESET_NORMAL 명시 고정(출하 기본과 동일)
 
 ### Pending Todos
 
@@ -102,6 +106,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-08-27T10:40:02.644Z
-Stopped at: Phase 2 context gathered
-Resume file: .planning/phases/02-golden/02-CONTEXT.md
+Last session: 2026-08-27T23:56:23.445Z
+Stopped at: Completed 02-01-PLAN.md
+Resume file: None

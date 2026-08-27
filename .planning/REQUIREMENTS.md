@@ -11,8 +11,8 @@ Requirements for initial release. Each maps to roadmap phases.
 
 리팩터링 **선행 조건**. 안전 크리티컬 로직을 분해하기 전에 현재 동작을 기대값으로 고정한다.
 
-- [ ] **TEST-01**: 유지보수자는 고정 RSSI 시퀀스를 재생해 SAFE→WARNING→DANGER 격상과 역방향 해제의 등급·전이 시점을 기대값과 비교할 수 있다 (경보 전체 경로 골든 테스트)
-- [ ] **TEST-02**: 유지보수자는 UWB 세션 **6대 이하** 범위에서 Case A/B 전환·좀비 워치독 발화·재연결 경로를 기대값과 비교할 수 있다 (6대 초과 플립 경로는 v1 대상 외 — BUG-03 참조)
+- [x] **TEST-01**: 유지보수자는 고정 RSSI 시퀀스를 재생해 SAFE→WARNING→DANGER 격상과 역방향 해제의 등급·전이 시점을 기대값과 비교할 수 있다 (경보 전체 경로 골든 테스트)
+- [x] **TEST-02**: 유지보수자는 UWB 세션 **6대 이하** 범위에서 Case A/B 전환·좀비 워치독 발화·재연결 경로를 기대값과 비교할 수 있다 (6대 초과 플립 경로는 v1 대상 외 — BUG-03 참조)
 - [x] **TEST-03**: 유지보수자는 MedianFilter(3샘플) → RssiPreFilter → KalmanFilter 3단 캐스케이드가 동일 입력 시퀀스에 동일 출력을 내는지 확인할 수 있다
 - [x] **TEST-04**: 위 테스트들은 Android 프레임워크·실기기 없이 JVM 유닛 테스트로 실행된다 (분해 대상 로직이 순수 함수로 격리 가능해야 성립)
 
@@ -47,7 +47,7 @@ Requirements for initial release. Each maps to roadmap phases.
 ### 알려진 버그 (BUG)
 
 - [ ] **BUG-01**: `onDeviceLost` ↔ `healthCheck` 비원자 정리로 인한 `filterPreserveMap` 누수가 제거되어, 2시간 이상 연속 구동에서 힙이 단조 증가하지 않는다
-- [ ] **BUG-02**: `injectWarmup` 프리셋 최소값 포화가 해소되어, 저속 접근 시에도 WARNING 등급에 도달한다
+- [x] **BUG-02**: `injectWarmup` 프리셋 최소값 포화가 해소되어, 저속 접근 시에도 WARNING 등급에 도달한다
 
 ## v2 Requirements
 
@@ -79,8 +79,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| TEST-01 | Phase 2 | Pending |
-| TEST-02 | Phase 2 | Pending |
+| TEST-01 | Phase 2 | Complete |
+| TEST-02 | Phase 2 | Complete |
 | TEST-03 | Phase 1 | Complete |
 | TEST-04 | Phase 1 | Complete |
 | CI-01 | Phase 1 | Complete |
@@ -94,7 +94,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | STATE-03 | Phase 4 | Pending |
 | PERF-01 | Phase 5 | Pending |
 | BUG-01 | Phase 4 | Pending |
-| BUG-02 | Phase 2 | Pending |
+| BUG-02 | Phase 2 | Complete |
 
 **Coverage:**
 
