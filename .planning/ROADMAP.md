@@ -66,7 +66,22 @@ Plans:
   3. 약한 콜드스타트 RSSI 에서 저속으로 접근하는 시퀀스가 WARNING 등급에 도달하며, 이 시나리오가 골든 테스트에 회귀 케이스로 남는다 (BUG-02)
   4. 사용자가 현장에서 지게차가 천천히 다가올 때 경고가 뜨는 것을 확인한다 (BUG-02)
 
-**Plans**: TBD
+**Plans:** 4 plans
+
+Plans:
+**Wave 1**
+
+- [ ] 02-01-PLAN.md — Robolectric 공급망 차단 체크포인트 + `ServiceController.get()` 무-`onCreate()` 하네스와 `processAlert` 시간 시임(트레이서) + 골든용 `DevSettings` 고정
+
+**Wave 2** *(blocked on Wave 1 completion; 02-02 ∥ 02-03 병렬)*
+
+- [ ] 02-02-PLAN.md — 격상 SAFE→WARNING→DANGER · 역방향 해제 캐스케이드 record-then-freeze 골든 + 판정 상수 레드 트라이얼 (TEST-01)
+- [ ] 02-03-PLAN.md — UWB Case A/B 전환 · 실측 신선도 경계 · 좀비 DANGER 부재 · 6대 이하 다기기 비오염 골든 (TEST-02)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 02-04-PLAN.md — 저속 접근 시퀀스를 버그가 살아 있는 상태로 골든 동결 → 원인 규명·수정·재동결 + CI 필수 테스트 목록 등록 + 현장 확인 (BUG-02)
+
 **출하 상태**: 현장 관측 가능한 수정 1건(저속 접근 WARNING 도달)이 포함된 APK 를 배포한다. 나머지는 테스트 추가이므로 다른 동작은 불변. 현장 검증은 "천천히 접근하는 지게차에 경고가 뜨는가" 단일 항목
 **Note**: TEST-02 는 UWB 세션 6대 이하로 의도적으로 한정한다. 6대 초과 플립은 BUG-03 으로 v2 이월 — 수정 없이 그 경로를 기대값으로 고정하면 CI 가 상시 빨간색이 되거나 버그를 스펙으로 승격시키게 된다. BUG-02 를 이 Phase 에 둔 이유는 두 가지 — (a) 현장에 나가 있는 미탐지(missed alert) 이므로 분해를 기다릴 이유가 없고, (b) Phase 3 의 REFACTOR-04 "기대값 불변" 게이트가 버그가 아니라 올바른 동작을 보존하게 된다
 
