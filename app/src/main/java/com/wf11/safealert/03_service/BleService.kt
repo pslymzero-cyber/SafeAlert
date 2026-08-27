@@ -1403,7 +1403,7 @@ class BleService : LifecycleService() {
         }
     }
 
-    private fun processAlert(deviceId: String, rssi: Int, remoteState: Int = 0x00, remoteTurn: Int = BleConstants.TURN_STRAIGHT, payloadPresent: Boolean = false, peerEchoRssi: Int = BleConstants.NO_ECHO_RSSI) {
+    private fun processAlert(deviceId: String, rssi: Int, remoteState: Int = 0x00, remoteTurn: Int = BleConstants.TURN_STRAIGHT, payloadPresent: Boolean = false, peerEchoRssi: Int = BleConstants.NO_ECHO_RSSI, nowMs: () -> Long = { System.currentTimeMillis() }) {
         // [v1.0.36→v1.1.7 #1] 수신 1바이트 페이로드 언패킹 → Category / State / Turn(2비트).
         //   remoteState 는 BleScanner 가 ServiceData 1바이트를 0~255 로 그대로 넘긴 값.
         //   remoteTurn = 상대 송신 회전 방향(TURN_*, bits 3:2). 표시 라벨/디버그용(속도 비트는 제거됨).
@@ -1419,7 +1419,7 @@ class BleService : LifecycleService() {
         //   (UWB 주소 교환 세션은 유지하되, ToF 거리는 더 이상 경보 판정에 사용하지 않는다.)
         val inputRssi: Int = rssi
 
-        val now      = System.currentTimeMillis()
+        val now      = nowMs()   // (02-01 D-2C) 골든 하네스 시각 주입 seam — 기본인자 호출 시 기존 동작과 동일
 
         // [v1.1.58 fix4] lost 후 재발견 복원 판정 — 보존 스냅샷이 있으면 여기서 단 한 번 소비.
         //   신선(30s 내)·연속(±10dB) 충족 → 필터 맵이 산 채로 남아 있어 아래 getOrPut 이 웜 칼만을
@@ -1509,7 +1509,7 @@ class BleService : LifecycleService() {
         // ── 2D 칼만 필터 업데이트 (RSSI 공간) ────────────────────────────
         // kfRssi: 추정 RSSI(dBm) / kfVel: 변화율(dBm/s), 양수=접근 / 음수=이탈
         val (kfRssi, kfVel) = kf.update(preFiltered, ImuFusion.adaptiveQFactor)
-        if (kfVel > 0.0) lastApproachAtMs = System.currentTimeMillis()  // [v1.1.12 L1] 접근(다가옴) 표본 시각 기록 → isDangerPresent 절전 게이트
+        if (kfVel > 0.0) lastApproachAtMs = nowMs()  // [v1.1.12 L1] 접근(다가옴) 표본 시각 기록 → isDangerPresent 절전 게이트 (02-01 D-2C seam)
         val kalmanRssi = kfRssi.toInt()
 
         // ── [v1.0.45] 후처리 P-EMA: 거리(P)항 전용 평활 — kfRssi → 비대칭 P-EMA → 거리판정 ──
