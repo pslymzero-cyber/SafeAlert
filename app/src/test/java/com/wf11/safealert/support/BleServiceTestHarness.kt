@@ -43,7 +43,36 @@ object BleServiceTestHarness {
      * 소리/Firebase 저장을 차단한다(오버레이는 canDrawOverlays() 기본 false 로 이미 무해화).
      */
     fun applyGoldenDevSettings() {
-        // RED stub(TDD) — GREEN 커밋에서 29개 var + beaconGainPercent 30줄 명시 대입으로 채워진다.
+        DevSettings.autoSaveAlerts = false                 // 부작용 무해화 — FirebaseManager.saveAlert 차단
+        DevSettings.beaconGainPercent = 100                // beaconGainDbm(val) 간접 세팅 — 출하 기본(0dB 가산)
+        DevSettings.coopSlackDb = 8
+        DevSettings.debugMode = false
+        DevSettings.echoAutoCalibEnabled = true
+        DevSettings.fastApproachBypassVelDbm = 2.0
+        DevSettings.idleIdleSuppressEnabled = false
+        DevSettings.idleIdleSuppressEpjPairsEnabled = true
+        DevSettings.imuShadowFusionEnabled = true
+        DevSettings.kalmanPreset = DevSettings.KALMAN_PRESET_NORMAL  // 출하 기본과 동일(일반 창고 환경) 명시 고정
+        DevSettings.logVerbose = false
+        DevSettings.reciprocalMaxDisagreeDb = 25
+        DevSettings.reciprocalRssiEnabled = true
+        DevSettings.reversePrepEnabled = true
+        DevSettings.reversePrepHoldMs = 4000L
+        DevSettings.reverseRiseDbm = 6
+        DevSettings.reverseStableTolDb = 2
+        DevSettings.reverseWindowMs = 1200L
+        DevSettings.rssiWarning = -75
+        DevSettings.soundEnabled = false                   // 부작용 무해화 — 소리 재생 차단
+        DevSettings.uwbApproachSpeedKmh = 6.0f
+        DevSettings.uwbForkliftDangerMeters = 8.0f
+        DevSettings.uwbForkliftWarnMeters = 15.0f
+        DevSettings.uwbPairDangerMeters = 3.0f
+        DevSettings.uwbPairWarnMeters = 5.0f
+        DevSettings.uwbPrimaryAuthorityEnabled = true
+        DevSettings.uwbPromoteEnabled = false
+        DevSettings.uwbVelPromoteEnabled = false
+        DevSettings.uwbVelReleaseEnabled = false
+        DevSettings.vibrationEnabled = false                // 부작용 무해화 — 진동 차단
     }
 
     /**
