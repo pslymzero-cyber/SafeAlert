@@ -53,7 +53,7 @@ created: 2026-08-27
 ## Wave 0 Requirements
 
 - [ ] `app/src/test/java/com/wf11/safealert/ble/AlertCascadeGoldenTest.kt` — TEST-01 커버
-- [ ] `app/src/test/java/com/wf11/safealert/uwb/UwbSessionGoldenTest.kt` — TEST-02 커버
+- [ ] `app/src/test/java/com/wf11/safealert/ble/UwbSessionGoldenTest.kt` — TEST-02 커버
 - [ ] `app/src/test/java/com/wf11/safealert/ble/LowSpeedApproachRegressionTest.kt` — BUG-02 커버
 - [ ] `app/src/test/java/com/wf11/safealert/support/BleServiceTestHarness.kt` — ServiceController 생성·리플렉션 래퍼·shared helper (runCascade/assertCascade)
 - [ ] Framework install: `app/build.gradle`에 `testImplementation 'org.robolectric:robolectric:4.15.1'` 추가 — 현재 없음

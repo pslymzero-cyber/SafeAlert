@@ -75,10 +75,10 @@
 - `.github/workflows/release.yml` :65 — MIN_TOTAL=17. 골든을 추가하면 같이 올려야 한다.
 
 ### processAlert·관측면
-- `app/src/main/java/com/wf11/safealert/02_ble/BleService.kt` :1406-2543 — processAlert 본체 1,138줄. :1422 벽시계 유일 제어점(val now), :1512 lastApproachAtMs(D-2H), :1115 호출부.
+- `app/src/main/java/com/wf11/safealert/03_service/BleService.kt` :1406-2543 — processAlert 본체 1,138줄. :1422 벽시계 유일 제어점(val now), :1512 lastApproachAtMs(D-2H), :1115 호출부.
 - `BleService.kt` :2042 — 'broadcastDeviceList() 가 alertState 전체를 한 번에 송출(단일 진실 공급원)' 주석. alertState 를 판정 결과 관측면으로 삼는 근거.
 - `BleService.kt` :3610 — sendAlertBroadcast 정의(EXTRA_ID·EXTRA_ALERT_LEVEL·EXTRA_DISPLAY_NAME).
-- `app/src/main/java/com/wf11/safealert/06_utils/KalmanFilter.kt` :63-68 — estimatedRssi/estimatedVel/isInitialized/updateCount public 게터. kfVel 은 리플렉션 없이 읽힌다.
+- `app/src/main/java/com/wf11/safealert/02_ble/KalmanFilter.kt` :63-68 — estimatedRssi/estimatedVel/isInitialized/updateCount public 게터. kfVel 은 리플렉션 없이 읽힌다.
 - `app/src/main/java/com/wf11/safealert/06_utils/OverlayManager.kt` :141 — showSidebar 첫 줄 canDrawOverlays 게이트(D-2D 부작용 무해화 근거).
 - `app/src/main/java/com/wf11/safealert/06_utils/DevSettings.kt` :63-66 — lateinit prefs / init(context).
 
@@ -92,7 +92,7 @@
 - `BleService.kt` :2554-2560 — uwbJudgeModeExclusive. Case A 성립 4조건.
 - `BleService.kt` :2566-2570 — freshUwbDistM. System.currentTimeMillis() 직접 호출(시임 없음) — D-4C 근거.
 - `BleService.kt` :680,682 — uwbSampleAtMsMap(private), UWB_MEAS_FRESH_MS = 1_000L.
-- `app/src/main/java/com/wf11/safealert/05_uwb/UwbRanger.kt` :123,137,185 — uwbDistances public ConcurrentHashMap / uwbManager private var null / createInstance 는 initSession() 안에서만 — D-4B 근거.
+- `app/src/main/java/com/wf11/safealert/06_utils/UwbRanger.kt` :123,137,185 — uwbDistances public ConcurrentHashMap / uwbManager private var null / createInstance 는 initSession() 안에서만 — D-4B 근거.
 - `UwbRanger.kt` companion — MULTICAST_MAX = 6(TEST-02 6대 이하 한정의 코드 근거), REJOIN_DELAY_MS = 250L.
 - `BleService.kt` :2545-2553 — v1.1.46 이 철거 워치독(UWB_LINK_ZOMBIE_MS)을 폐지한 사유 — D-4A 근거.
 - `BleService.kt` :1171-1173 — BLE 타임아웃 경로: uwbRanger?.onDeviceLost(id) + uwbSampleAtMsMap.remove(id) — D-4D 범위 경계.

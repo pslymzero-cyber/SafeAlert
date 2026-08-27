@@ -178,8 +178,7 @@ app/src/test/java/com/wf11/safealert/
 ├── ble/
 │   ├── RssiCascadeTest.kt          # 기존(Phase 1, TEST-03) — 참고용, 수정 없음
 │   ├── AlertCascadeGoldenTest.kt   # 신규(TEST-01) — SAFE→WARNING→DANGER 격상/해제 골든
-│   └── LowSpeedApproachRegressionTest.kt  # 신규(BUG-02) — 저속 접근 회귀 케이스
-├── uwb/
+│   ├── LowSpeedApproachRegressionTest.kt  # 신규(BUG-02) — 저속 접근 회귀 케이스
 │   └── UwbSessionGoldenTest.kt     # 신규(TEST-02) — Case A/B, 신선도 게이트, 재연결
 └── support/
     └── BleServiceTestHarness.kt    # 신규 — ServiceController 생성, ReflectionHelpers 래퍼,
@@ -328,27 +327,26 @@ class AlertCascadeGoldenTest {
 
 **If this table is empty:** N/A — 위 5건 존재.
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **`.create()` 미호출 시 `onCreate()` 스킵이 실제로 보장되는가?**
+> 4건 전부 계획 단계(02-01~02-04 작성·리비전)에서 해소됨. 각 항목의 **Resolution** 이 해소 근거다.
+
+1. **[RESOLVED]** **`.create()` 미호출 시 `onCreate()` 스킵이 실제로 보장되는가?**
    - What we know: WebSearch 합성 다수가 이 패턴을 관용구로 제시(`.create().get()` 이 `onCreate()` 트리거라는 대비 설명).
    - What's unclear: Robolectric 원본 소스(`ServiceController.java`)나 공식 테스트에서 직접 확인하지 못함(404 / 특정 테스트 미발견).
-   - Recommendation: 계획 단계 첫 태스크로 "트라이얼 테스트 1개 작성 — `.create()` 없이 `get()` 만 호출 후 `onCreate()` 부작용(예: `NotificationManager` 상호작용, `startForeground` 호출 여부)이 실제로 없는지 확인"을 배치할 것을 권고.
+   - **Resolution:** 권고대로 트라이얼 게이트가 계획에 배치됨 — **02-01-PLAN.md Task 2 (a-2) `assumptionA1_getWithoutCreate_staysInitialized()`**. `.create()` 없이 `get()` 만 호출한 인스턴스에서 `onCreate()` 부작용(포그라운드 알림 등록 등)이 없음을 실행 단계 첫 자동 검증으로 확인하며, 실패 시 후속 태스크가 진행되지 않는 게이트다. 가정 A1 은 문서 추정이 아니라 실측 대상으로 이관 완료.
 
-2. **`processAlert` 라인 범위 불일치.**
-   - What we know: 이전 세션에 BleService.kt:2530-2574 를 Read 로 직접 확인한 결과 함수 종료가 대략 2544 부근으로 보였음(요약 인용).
-   - What's unclear: STATE.md/`.claude/CLAUDE.md` 는 모두 "`BleService.kt:1406-2554`"(약 1,000줄)로 기재, 02-CONTEXT.md 는 "1406-2543" 언급(요약 인용) — 세 문서가 각기 다른 종료 라인(2543/2544/2554)을 제시.
-   - Recommendation: 계획 단계에서 `processAlert` 함수의 정확한 시작/종료 라인을 재확인(Read)하고 계획 문서에 단일 값으로 통일할 것. 골든 테스트 설계에는 영향 없음(함수 경계가 몇 줄 다르다고 판정 로직 자체가 달라지지 않음) — 문서 정합성 문제로 낮은 리스크.
+2. **[RESOLVED]** **`processAlert` 라인 범위 불일치.**
+   - What we know: 세 문서가 각기 다른 종료 라인(2543/2544/2554)을 제시했다.
+   - **Resolution:** 소스 재확인 결과 **`03_service/BleService.kt` :1406-2543 이 정답**이다 — :1406 시그니처, :2543 닫는 중괄호, 본문 1,138줄(파일 총 3,899줄). :2554 는 다음 함수 `uwbJudgeModeExclusive` 의 시작 라인을 종료 라인으로 오기한 것이고, 2544 는 요약 인용 오차다. 02-CONTEXT.md · 02-01-PLAN.md 가 이미 1406-2543 을 사용 중이라 계획 수정 불필요. 함께 검증한 인접 참조도 전부 정확: :1422 `val now`, :1512 `lastApproachAtMs`, :1115 호출부, :2554-2560 `uwbJudgeModeExclusive`, :2566-2570 `freshUwbDistM`, :3610 `sendAlertBroadcast`, `KalmanFilter.kt` :29 `nowMs` · :63-68 게터 · :139-148 `injectWarmup`.
 
-3. **02-CONTEXT.md `canonical_refs` 의 경로 접두어 불일치.**
-   - What we know: `.claude/CLAUDE.md` Component Responsibility 테이블이 실제 패키지 위치를 `KalmanFilter/MedianFilter → 02_ble/`, `UwbRanger/DevSettings/OverlayManager → 06_utils/` 로 명시(이전 세션 Read 로 확인).
-   - What's unclear: 02-CONTEXT.md 의 `canonical_refs` 가 이 세 파일에 대해 다른 경로 접두어를 사용하고 있었음(요약에 "internally-wrong path prefixes for 3 files"로 기록, 구체적 오기 내용은 이번 세션에 재확인하지 못함).
-   - Recommendation: 계획 단계에서 세 파일의 실제 경로(`02_ble/KalmanFilter.kt`, `02_ble/MedianFilter.kt`, `06_utils/UwbRanger.kt`, `06_utils/DevSettings.kt`, `06_utils/OverlayManager.kt`)를 `.claude/CLAUDE.md` Component Responsibility 테이블 기준으로 통일해서 사용할 것.
+3. **[RESOLVED]** **02-CONTEXT.md `canonical_refs` 의 경로 접두어 불일치.**
+   - What we know: `.claude/CLAUDE.md` Component Responsibility 테이블이 실제 패키지 위치를 명시.
+   - **Resolution:** 실제 디스크 경로 기준으로 phase 문서 전체를 통일했다. 02-CONTEXT.md 정정 3건 — `02_ble/BleService.kt` → **`03_service/BleService.kt`**, `06_utils/KalmanFilter.kt` → **`02_ble/KalmanFilter.kt`**, `05_uwb/UwbRanger.kt` → **`06_utils/UwbRanger.kt`**. 계획 쪽 잔여 오기도 함께 정정 — 02-04-PLAN.md 의 `06_utils/KalmanFilter.kt`, 02-03/02-04-PLAN.md 의 `ble/support/BleServiceTestHarness.kt`(산출 경로는 02-01 이 선언한 `support/BleServiceTestHarness.kt`), 그리고 `UwbSessionGoldenTest.kt` 경로를 소유 계획(02-03)이 선언한 `ble/` 로 통일(본 문서 트리·Wave 0 Gaps, 02-VALIDATION.md, 02-PATTERNS.md). `06_utils/DevSettings.kt` · `06_utils/OverlayManager.kt` 는 원래부터 정확했다. 패키지명도 검증함: `com.wf11.safealert.service` / `.ble` / `.utils`. 현재 phase 문서가 참조하는 모든 `app/src/main` 경로가 디스크에 실재한다(일괄 자동 확인).
 
-4. **`androidx.test.ext:junit` 버전을 Maven Central 레지스트리로 재확인하지 못함.**
+4. **[RESOLVED]** **`androidx.test.ext:junit` 버전을 Maven Central 레지스트리로 재확인하지 못함.**
    - What we know: `app/build.gradle:80` 에 1.1.5 로 이미 pin.
-   - What's unclear: Maven Central Solr 검색 API 가 이 그룹/아티팩트 조합에 대해 2회 모두 빈 결과 반환(원인 미상).
-   - Recommendation: 기존 pin(1.1.5)을 그대로 재사용(Ponytail 원칙 — 이미 있는 걸 새로 조사하지 않는다) — 계획 단계에서 신규 버전 조사가 필요하지 않음.
+   - **Resolution:** 신규 조사 불필요로 확정. 계획은 이 아티팩트를 **추가하지 않는다** — 02-01-PLAN.md Task 1 (a) 가 `@RunWith(RobolectricTestRunner::class)` 만 쓰므로 불필요하다고 명시했고, 기존 `androidTestImplementation 'androidx.test.ext:junit:1.1.5'` pin 은 손대지 않은 채 그대로 남는다. 신규 버전 도입 0건.
 
 ## Environment Availability
 
@@ -394,7 +392,7 @@ class AlertCascadeGoldenTest {
 ### Wave 0 Gaps
 
 - [ ] `app/src/test/java/com/wf11/safealert/ble/AlertCascadeGoldenTest.kt` — TEST-01 커버
-- [ ] `app/src/test/java/com/wf11/safealert/uwb/UwbSessionGoldenTest.kt` — TEST-02 커버
+- [ ] `app/src/test/java/com/wf11/safealert/ble/UwbSessionGoldenTest.kt` — TEST-02 커버
 - [ ] `app/src/test/java/com/wf11/safealert/ble/LowSpeedApproachRegressionTest.kt` — BUG-02 커버
 - [ ] `app/src/test/java/com/wf11/safealert/support/BleServiceTestHarness.kt` — ServiceController 생성·리플렉션 래퍼·Phase 1 스타일 shared-helper(runCascade/assertCascade 확장)
 - [ ] Framework install: `app/build.gradle` 에 `testImplementation 'org.robolectric:robolectric:4.15.1'` 추가 — 현재 없음
