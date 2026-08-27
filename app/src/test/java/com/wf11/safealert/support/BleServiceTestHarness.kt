@@ -1,5 +1,6 @@
 package com.wf11.safealert.support
 
+import android.content.Intent
 import com.wf11.safealert.ble.BleConstants
 import com.wf11.safealert.service.BleService
 import com.wf11.safealert.utils.DevSettings
@@ -30,18 +31,20 @@ object BleServiceTestHarness {
     }
 
     /**
-     * private fun processAlert(...) 리플렉션 호출. nowMs 는 (02-01 D-2C) seam — 골든 테스트는
-     * 프레임 간격을 고정값으로 주입해 System.currentTimeMillis() 의존을 제거한다.
+     * private fun processAlert(...) 리플렉션 호출 — production 시그니처 순서 그대로
+     * (deviceId, rssi, remoteState, remoteTurn, payloadPresent, peerEchoRssi, nowMs).
+     * nowMs 는 (02-01 D-2C) seam — 골든 테스트는 프레임 간격을 고정값으로 주입해
+     * System.currentTimeMillis() 의존을 제거한다. 항상 명시 요구(기본값 없음).
      */
     fun callProcessAlert(
         service: BleService,
         deviceId: String,
         rssi: Int,
-        nowMs: Long,
         remoteState: Int = 0x00,
         remoteTurn: Int = BleConstants.TURN_STRAIGHT,
         payloadPresent: Boolean = false,
-        peerEchoRssi: Int = BleConstants.NO_ECHO_RSSI
+        peerEchoRssi: Int = BleConstants.NO_ECHO_RSSI,
+        nowMs: Long
     ) {
         ReflectionHelpers.callInstanceMethod<Any?>(
             service,
@@ -58,15 +61,27 @@ object BleServiceTestHarness {
 
     /** private val alertState = mutableMapOf<String, Pair<Int, Long>>() (BleService.kt:384) 판독. */
     @Suppress("UNCHECKED_CAST")
-    fun alertStateOf(service: BleService): Map<String, Pair<Int, Long>> =
-        ReflectionHelpers.getField(service, "alertState") as Map<String, Pair<Int, Long>>
+    private fun alertStateFieldOf(service: BleService): MutableMap<String, Pair<Int, Long>> =
+        ReflectionHelpers.getField(service, "alertState") as MutableMap<String, Pair<Int, Long>>
+
+    fun alertStateOf(service: BleService): Map<String, Pair<Int, Long>> = alertStateFieldOf(service)
 
     fun alertLevelOf(service: BleService, deviceId: String): Int? =
-        alertStateOf(service)[deviceId]?.first
+        alertStateFieldOf(service)[deviceId]?.first
 
-    /** shadowOf(Application).broadcastIntents 중 BROADCAST_ALERT 만 필터링(발령 여부 관측). */
-    fun alertBroadcastCount(deviceId: String): Int =
-        shadowOf(RuntimeEnvironment.getApplication()).broadcastIntents.count {
-            it.action == BleService.BROADCAST_ALERT && it.getStringExtra(BleService.EXTRA_ID) == deviceId
+    /** alertState 등록시각(second) 판독 — Smoke 4: nowMs seam 주입값이 그대로 반영되는지 증명용. */
+    fun alertEntryMsOf(service: BleService, deviceId: String): Long? =
+        alertStateFieldOf(service)[deviceId]?.second
+
+    /** shadowOf(Application).broadcastIntents 중 BROADCAST_ALERT 만 순서 보존 필터링. */
+    fun alertBroadcasts(): List<Intent> =
+        shadowOf(RuntimeEnvironment.getApplication()).broadcastIntents.filter {
+            it.action == BleService.BROADCAST_ALERT
         }
+
+    /** 테스트 간 격리용 리셋 — 브로드캐스트 기록 + alertState 를 비운다. */
+    fun resetBetweenTests(service: BleService) {
+        shadowOf(RuntimeEnvironment.getApplication()).clearBroadcastIntents()
+        alertStateFieldOf(service).clear()
+    }
 }

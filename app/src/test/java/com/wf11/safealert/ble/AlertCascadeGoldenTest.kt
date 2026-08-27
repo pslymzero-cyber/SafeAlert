@@ -1,15 +1,20 @@
 package com.wf11.safealert.ble
 
+import android.app.NotificationManager
+import androidx.lifecycle.Lifecycle
 import com.wf11.safealert.service.BleService
 import com.wf11.safealert.support.BleServiceTestHarness
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows.shadowOf
 
 /**
  * 02-01 골든 캐스케이드 회귀 테스트 — record-then-freeze(D-09/D-12/P-02).
@@ -35,12 +40,41 @@ class AlertCascadeGoldenTest {
 
     @Test
     fun assumptionA1_getWithoutCreate_staysInitialized() {
+        // 스모크 1: buildService(...).get() 은 attach 만 하고 onCreate() 는 실행하지 않아야 한다.
         val controller = Robolectric.buildService(BleService::class.java)
         val service = controller.get()
         assertNotNull(service)
-        // onCreate() 가 실행됐다면 companion isRunning=true 로 바뀐다(BleService.kt:850).
-        // get() 만으로는 attach 만 되고 onCreate() 는 미실행이어야 A1 이 성립한다.
-        assertFalse("Robolectric.buildService(...).get() 이 onCreate() 를 실행했다 — Assumption A1 위반", BleService.isRunning)
+        assertEquals(
+            "Robolectric.buildService(...).get() 이 onCreate() 를 실행했다 — Assumption A1 위반",
+            Lifecycle.State.INITIALIZED,
+            service.lifecycle.currentState
+        )
+        // onCreate() 가 실행됐다면 companion isRunning=true 로 바뀐다(BleService.kt:850) — 이중 확인.
+        assertFalse("companion isRunning=true — onCreate() 부작용 감지", BleService.isRunning)
+
+        // 스모크 1-b: onCreate() 부작용 3종 부재 확인(리시버 미등록·알림채널 미생성·브로드캐스트 없음).
+        // 매니페스트 정적 리시버(Firebase AppMeasurementReceiver, androidx profileinstaller 등)는
+        // Application 기동 시점에 이미 등록되어 baseline noise 로 존재 — BleService.onCreate() 와
+        // 무관하다. 검증 대상은 "우리 앱 컴포넌트가 동적으로 새로 등록한 리시버"뿐이므로
+        // com.wf11.safealert 패키지 소속 리시버만 필터링한다(실측: DEBUG 로 baseline 확인 완료).
+        val appShadow = shadowOf(RuntimeEnvironment.getApplication())
+        val ownReceivers = appShadow.registeredReceivers.filter {
+            it.broadcastReceiver::class.java.name.startsWith("com.wf11.safealert")
+        }
+        assertTrue(
+            "onCreate() 미실행인데 앱 자체 BroadcastReceiver 가 등록됐다: $ownReceivers",
+            ownReceivers.isEmpty()
+        )
+        val nm = RuntimeEnvironment.getApplication()
+            .getSystemService(NotificationManager::class.java)
+        assertTrue(
+            "onCreate() 미실행인데 알림채널이 생성됐다",
+            shadowOf(nm).notificationChannels.isEmpty()
+        )
+        assertTrue(
+            "onCreate() 미실행인데 브로드캐스트가 발생했다",
+            appShadow.broadcastIntents.isEmpty()
+        )
     }
 
     @Test
@@ -52,20 +86,23 @@ class AlertCascadeGoldenTest {
 
         // 1콜: median/streak 워밍업 미충족 → shouldAlert=false → 아직 미등록(D-2B 의 "1프레임"은
         // 아래 2콜째 관측 프레임을 가리킨다 — 클래스 헤더 해석 노트 참조).
-        BleServiceTestHarness.callProcessAlert(service, deviceId, dangerRssi, clockMs)
+        BleServiceTestHarness.callProcessAlert(service, deviceId, dangerRssi, nowMs = clockMs)
         assertNull(
             "워밍업 1콜만으로 alertState 가 등록됐다 — shouldAlert 게이트가 조기 통과함",
             BleServiceTestHarness.alertLevelOf(service, deviceId)
         )
-        assertEquals(0, BleServiceTestHarness.alertBroadcastCount(deviceId))
+        assertEquals(0, BleServiceTestHarness.alertBroadcasts().size)
 
         // 2콜: dangerStreak=2 → fastContact 로 shouldAlert 통과 → alertState 등록 + BROADCAST_ALERT.
         clockMs += 120L
-        BleServiceTestHarness.callProcessAlert(service, deviceId, dangerRssi, clockMs)
+        BleServiceTestHarness.callProcessAlert(service, deviceId, dangerRssi, nowMs = clockMs)
         assertEquals(
             BleConstants.LEVEL_DANGER,
             BleServiceTestHarness.alertLevelOf(service, deviceId)
         )
-        assertEquals(1, BleServiceTestHarness.alertBroadcastCount(deviceId))
+        // 스모크 4: nowMs seam 주입값(clockMs)이 alertState 등록시각에 그대로 반영됐는지 증명.
+        assertEquals(clockMs, BleServiceTestHarness.alertEntryMsOf(service, deviceId))
+        assertEquals(1, BleServiceTestHarness.alertBroadcasts().size)
+        assertEquals(deviceId, BleServiceTestHarness.alertBroadcasts().first().getStringExtra(BleService.EXTRA_ID))
     }
 }
