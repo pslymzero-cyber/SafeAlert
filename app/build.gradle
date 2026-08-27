@@ -49,6 +49,8 @@ android {
         buildConfig true
     }
     testOptions {
+        // Robolectric merged 리소스 읽기 (02-01 Task 2) — 기존 testLogging 블록 보존, 병기만.
+        unitTests.includeAndroidResources = true
         unitTests.all {
             testLogging {
                 events 'failed'
@@ -77,6 +79,8 @@ dependencies {
     implementation 'com.google.firebase:firebase-analytics-ktx'
 
     testImplementation 'junit:junit:4.13.2'
+    // Robolectric 4.15.1 — 02-01 Task 1 체크포인트 승인 좌표(testImplementation 한정, T-02-SC 완화)
+    testImplementation 'org.robolectric:robolectric:4.15.1'
     androidTestImplementation 'androidx.test.ext:junit:1.1.5'
     androidTestImplementation 'androidx.test.espresso:espresso-core:3.5.1'
 }
