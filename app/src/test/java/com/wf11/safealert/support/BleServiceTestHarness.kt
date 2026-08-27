@@ -24,10 +24,26 @@ object BleServiceTestHarness {
      * onCreate() 를 실행하지 않는 서비스 인스턴스 생성(Assumption A1, get() 만 호출).
      * DevSettings.prefs 는 lateinit 이라 init() 없이 아무 property 나 건드리면 즉시 예외 —
      * processAlert 가 DevSettings 를 참조하므로 여기서 반드시 먼저 초기화한다.
+     * 이어서 applyGoldenDevSettings() 로 골든 프로파일을 못박아 모든 골든 테스트가 동일 구성을
+     * 상속한다(Task 3, D-2D).
      */
     fun newService(): BleService {
         DevSettings.init(RuntimeEnvironment.getApplication())
+        applyGoldenDevSettings()
         return Robolectric.buildService(BleService::class.java).get()
+    }
+
+    /**
+     * 02-01 골든 DevSettings 프로파일(Task 3, D-2D) — processAlert(BleService.kt:1406-2543)가
+     * 참조하는 DevSettings 심볼 31개 중 대입 가능한 29개 var 전부 + beaconGainPercent(간접) 를
+     * 알파벳순으로 명시 대입한다. 상수 참조가 아니라 리터럴 값으로 고정 — 출하 기본값이 나중에
+     * 바뀌어도 이 골든 프로파일은 그대로여서(D-2D "기본값 변경에 면역") 동작이 흔들리지 않는다.
+     * 제외 2개: KALMAN_PRESET_FAST(세팅 아닌 상수), beaconGainDbm(val — beaconGainPercent 로 간접
+     * 세팅). 부작용 3종(vibrationEnabled·soundEnabled·autoSaveAlerts)만 false 로 못박아 진동/
+     * 소리/Firebase 저장을 차단한다(오버레이는 canDrawOverlays() 기본 false 로 이미 무해화).
+     */
+    fun applyGoldenDevSettings() {
+        // RED stub(TDD) — GREEN 커밋에서 29개 var + beaconGainPercent 30줄 명시 대입으로 채워진다.
     }
 
     /**

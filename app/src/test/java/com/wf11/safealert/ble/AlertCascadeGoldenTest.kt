@@ -4,6 +4,8 @@ import android.app.NotificationManager
 import androidx.lifecycle.Lifecycle
 import com.wf11.safealert.service.BleService
 import com.wf11.safealert.support.BleServiceTestHarness
+import com.wf11.safealert.utils.DevSettings
+import com.wf11.safealert.utils.OverlayManager
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -105,4 +107,90 @@ class AlertCascadeGoldenTest {
         assertEquals(1, BleServiceTestHarness.alertBroadcasts().size)
         assertEquals(deviceId, BleServiceTestHarness.alertBroadcasts().first().getStringExtra(BleService.EXTRA_ID))
     }
+
+    @Test
+    fun goldenProfile_neutralizesSideEffects() {
+        // Task 3 부작용 무해화 단언(D-2D) — newService() 가 적용한 골든 프로파일이 진동·소리·
+        // Firebase 자동저장·오버레이 4종을 모두 차단하는 구성인지 확인한다. 완전성(31개 심볼 중
+        // 30줄 대입 커버)은 plan Task 3 <verify> 의 grep-count 비교 커맨드가 담당(테스트 코드 중복 방지).
+        BleServiceTestHarness.newService()
+        val context = RuntimeEnvironment.getApplication()
+
+        assertFalse("골든 프로파일인데 vibrationEnabled=true — 진동 무해화 실패", DevSettings.vibrationEnabled)
+        assertFalse("골든 프로파일인데 soundEnabled=true — 소리 무해화 실패", DevSettings.soundEnabled)
+        assertFalse("골든 프로파일인데 autoSaveAlerts=true — Firebase 저장 무해화 실패", DevSettings.autoSaveAlerts)
+        assertFalse(
+            "골든 프로파일인데 canDrawOverlays=true — OverlayManager.showSidebar 게이트가 무력화된다",
+            OverlayManager.canDrawOverlays(context)
+        )
+    }
+
+    @Test
+    fun goldenProfile_isDeterministic() {
+        // Task 3 결정성 단언 — applyGoldenDevSettings() 재호출이 구성을 바꾸지 않고, 동일 스모크
+        // 시나리오가 두 개의 독립 서비스 인스턴스에서 동일 결과(레벨·등록시각·브로드캐스트 수)를
+        // 낸다는 것을 확인한다.
+        BleServiceTestHarness.newService() // 골든 기준선 확립(DevSettings.init 포함) — 이전 테스트 잔존 상태에 의존하지 않는다.
+        val configBefore = goldenConfigSnapshot()
+        BleServiceTestHarness.applyGoldenDevSettings()
+        val configAfter = goldenConfigSnapshot()
+        assertEquals("applyGoldenDevSettings() 재호출이 구성을 바꿨다 — 비결정적", configBefore, configAfter)
+
+        val deviceId = "AA:BB:CC:DD:EE:77"
+        val dangerRssi = -30
+
+        val serviceA = BleServiceTestHarness.newService()
+        var clockA = 1_000L
+        BleServiceTestHarness.callProcessAlert(serviceA, deviceId, dangerRssi, nowMs = clockA)
+        clockA += 120L
+        BleServiceTestHarness.callProcessAlert(serviceA, deviceId, dangerRssi, nowMs = clockA)
+        val resultA = BleServiceTestHarness.alertLevelOf(serviceA, deviceId) to BleServiceTestHarness.alertEntryMsOf(serviceA, deviceId)
+        val broadcastsA = BleServiceTestHarness.alertBroadcasts().size
+        BleServiceTestHarness.resetBetweenTests(serviceA)
+
+        val serviceB = BleServiceTestHarness.newService()
+        var clockB = 1_000L
+        BleServiceTestHarness.callProcessAlert(serviceB, deviceId, dangerRssi, nowMs = clockB)
+        clockB += 120L
+        BleServiceTestHarness.callProcessAlert(serviceB, deviceId, dangerRssi, nowMs = clockB)
+        val resultB = BleServiceTestHarness.alertLevelOf(serviceB, deviceId) to BleServiceTestHarness.alertEntryMsOf(serviceB, deviceId)
+        val broadcastsB = BleServiceTestHarness.alertBroadcasts().size
+
+        assertEquals("동일 골든 구성인데 스모크 결과(레벨/등록시각)가 다르다", resultA, resultB)
+        assertEquals("동일 골든 구성인데 브로드캐스트 수가 다르다", broadcastsA, broadcastsB)
+    }
+
+    /** 골든 프로파일 30줄 대입 전체를 순서 무관 비교용 목록으로 스냅샷(결정성 단언 전용). */
+    private fun goldenConfigSnapshot(): List<Any> = listOf(
+        DevSettings.autoSaveAlerts,
+        DevSettings.beaconGainPercent,
+        DevSettings.coopSlackDb,
+        DevSettings.debugMode,
+        DevSettings.echoAutoCalibEnabled,
+        DevSettings.fastApproachBypassVelDbm,
+        DevSettings.idleIdleSuppressEnabled,
+        DevSettings.idleIdleSuppressEpjPairsEnabled,
+        DevSettings.imuShadowFusionEnabled,
+        DevSettings.kalmanPreset,
+        DevSettings.logVerbose,
+        DevSettings.reciprocalMaxDisagreeDb,
+        DevSettings.reciprocalRssiEnabled,
+        DevSettings.reversePrepEnabled,
+        DevSettings.reversePrepHoldMs,
+        DevSettings.reverseRiseDbm,
+        DevSettings.reverseStableTolDb,
+        DevSettings.reverseWindowMs,
+        DevSettings.rssiWarning,
+        DevSettings.soundEnabled,
+        DevSettings.uwbApproachSpeedKmh,
+        DevSettings.uwbForkliftDangerMeters,
+        DevSettings.uwbForkliftWarnMeters,
+        DevSettings.uwbPairDangerMeters,
+        DevSettings.uwbPairWarnMeters,
+        DevSettings.uwbPrimaryAuthorityEnabled,
+        DevSettings.uwbPromoteEnabled,
+        DevSettings.uwbVelPromoteEnabled,
+        DevSettings.uwbVelReleaseEnabled,
+        DevSettings.vibrationEnabled
+    )
 }
