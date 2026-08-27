@@ -34,7 +34,7 @@
   - 프로덕션 영향 0줄. Known gap: Phase 3 분해에서 상태맵 재배치 시 리플렉션 접근도 같이 수정 — 판정 결과 2종은 외부 계약이라 면역.
 - **D-2F: 매 프레임 전체 기록** — Phase 2 의 목적이 격상·해제 타이밍을 못 박기다. 종단 상태만 보면 '결국 올라가긴 했지만 5초 늦었다'가 통과하고, 전이 프레임만 보면 전이 판정 자체가 망가진 회귀가 기록에서 사라진다. Phase 1 RssiCascadeTest 의 20프레임 전체 시계열 패턴과 형태 일관.
 - **D-2G: alertState 진입시각 = t0 기준 상대 오프셋** — 레벨 진입 시각은 dwell 뮤트 계산의 근거라 동결 가치가 있다(재진입 시 시각 리셋으로 dwell 뮤트가 영영 안 걸리는 류의 회귀). 절대 ms 는 시나리오 시작 시각 상수를 바꾸면 모든 골든이 깨진다. 기록 규칙: t0 = 시나리오 첫 프레임에 시임 시계가 반환한 값, 기록값 = (진입시각 - t0) ms, alertState 부재 프레임은 null.
-- **D-2H: BleService.kt:1512 의 두 번째 System.currentTimeMillis()(lastApproachAtMs 기록)도 nowMs 로 통일** — '시임 = processAlert 안의 벽시계 전부' 규칙이 예외 없이 성립해야 나중에 lastApproachAtMs 를 읽는 로직이 함수 안으로 들어와도 골든이 조용히 깨지지 않는다. 기본인자가 System.currentTimeMillis() 이므로 런타임 동작 변화 0. lastApproachAtMs 자체는 관측면에 넣지 않는다 — 읽기가 isDangerPresent 절전 게이트뿐이라 processAlert 판정에 되먹임되지 않는다.
+- **D-2H — BleService.kt:1512 의 두 번째 System.currentTimeMillis()(lastApproachAtMs 기록)도 nowMs 로 통일** — '시임 = processAlert 안의 벽시계 전부' 규칙이 예외 없이 성립해야 나중에 lastApproachAtMs 를 읽는 로직이 함수 안으로 들어와도 골든이 조용히 깨지지 않는다. 기본인자가 System.currentTimeMillis() 이므로 런타임 동작 변화 0. lastApproachAtMs 자체는 관측면에 넣지 않는다 — 읽기가 isDangerPresent 절전 게이트뿐이라 processAlert 판정에 되먹임되지 않는다.
 
 ### BUG-02 순서
 
