@@ -66,7 +66,7 @@ Plans:
   3. 약한 콜드스타트 RSSI 에서 저속으로 접근하는 시퀀스가 WARNING 등급에 도달하며, 이 시나리오가 골든 테스트에 회귀 케이스로 남는다 (BUG-02)
   4. 사용자가 현장에서 지게차가 천천히 다가올 때 경고가 뜨는 것을 확인한다 (BUG-02)
 
-**Plans:** 4 plans
+**Plans:** 4/4 plans executed
 
 Plans:
 **Wave 1**
@@ -80,7 +80,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 02-04-PLAN.md — 저속 접근 시퀀스를 버그가 살아 있는 상태로 골든 동결 → 원인 규명·수정·재동결 + CI 필수 테스트 목록 등록 + 현장 확인 (BUG-02)
+- [x] 02-04-PLAN.md — 저속 접근 시퀀스를 버그가 살아 있는 상태로 골든 동결 → 원인 규명·수정·재동결 + CI 필수 테스트 목록 등록 + 현장 확인 (BUG-02)
 
 **출하 상태**: 현장 관측 가능한 수정 1건(저속 접근 WARNING 도달)이 포함된 APK 를 배포한다. 나머지는 테스트 추가이므로 다른 동작은 불변. 현장 검증은 "천천히 접근하는 지게차에 경고가 뜨는가" 단일 항목
 **Note**: TEST-02 는 UWB 세션 6대 이하로 의도적으로 한정한다. 6대 초과 플립은 BUG-03 으로 v2 이월 — 수정 없이 그 경로를 기대값으로 고정하면 CI 가 상시 빨간색이 되거나 버그를 스펙으로 승격시키게 된다. BUG-02 를 이 Phase 에 둔 이유는 두 가지 — (a) 현장에 나가 있는 미탐지(missed alert) 이므로 분해를 기다릴 이유가 없고, (b) Phase 3 의 REFACTOR-04 "기대값 불변" 게이트가 버그가 아니라 올바른 동작을 보존하게 된다
@@ -145,7 +145,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. 테스트 하네스와 CI 회귀 게이트 | 2/2 | In Progress|  |
-| 2. 안전 크리티컬 경로 골든 테스트 | 0/TBD | Not started | - |
+| 2. 안전 크리티컬 경로 골든 테스트 | 4/4 | In Progress|  |
 | 3. BleService 분해 | 0/TBD | Not started | - |
 | 4. 기기 상태 단일화 | 0/TBD | Not started | - |
 | 5. 판정 워커 분리 | 0/TBD | Not started | - |

@@ -4,16 +4,16 @@ milestone: v1.1.70
 current_phase: 02
 current_phase_name: 안전 크리티컬 경로 골든 테스트
 status: executing
-stopped_at: Completed 02-golden-03-PLAN.md
-last_updated: "2026-08-28T04:17:30.885Z"
+stopped_at: Completed 02-golden-04-PLAN.md
+last_updated: "2026-08-28T06:15:46.660Z"
 last_activity: 2026-08-28
 last_activity_desc: Phase 02 execution started
-state_head: 41374d166b3dcfb7d8f6522cb5d9198664570779
+state_head: ffa560cb7a5ffdbffc8f26e0288f3b5b96013fb8
 progress:
   total_phases: 5
   completed_phases: 0
   total_plans: 6
-  completed_plans: 5
+  completed_plans: 6
 ---
 
 # Project State
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-08-23)
 ## Current Position
 
 Phase: 02 (안전 크리티컬 경로 골든 테스트) — EXECUTING
-Plan: 3 of 4
+Plan: 4 of 4
 Status: Ready to execute
 Last activity: 2026-08-28 — Phase 02 execution started
 
@@ -61,6 +61,7 @@ Progress: [██░░░░░░░░] 20%
 | Phase 01-ci P01 | 26min | 3 tasks | 4 files |
 | Phase 02-golden P01 | 61min | 3 tasks | 4 files |
 | Phase 02-golden P03 | 29min | 3 tasks | 1 files |
+| Phase 02-golden P04 | 50min | 3 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -86,6 +87,9 @@ Recent decisions affecting current work:
 - [Phase 02]: onDeviceLost 는 이 테스트 스위트 전체에서 '그 외'(else) 분기(dropServedLocked+reconcileLocked)만 타며, uwbManager==null 로 reconcileLocked 가 즉시 반환되어 coroutine 진입 없음을 확인(T-02-11)
 - [Phase 02]: BLE 타임아웃 UWB 정리 목록(peerUwbSeenMap/uwbSampleAtMsMap/uwbSafeStreakMap + onDeviceLost)을 BleService.kt 직독으로 확정 후 재현(replicateBleTimeoutBoundary)
 - [Phase 02]: 세션 상한 초과 경로는 golden 으로 얼리지 않고 require() 거부만 증명 — BUG-03 을 스펙으로 승격시키지 않음(v2 이월)
+- [Phase 02]: D-3B: PROJECT.md의 injectWarmup 프리셋 포화 가설은 코드와 불일치 — 실측 근본 원인은 WARNING 접촉 streak의 단발 미달 즉시 하드리셋
+- [Phase 02]: DANGER streak는 수정하지 않음 — effDanger ⊂ effWarning이라 WARNING 완화만으로 BUG-02 목표 달성
+- [Phase 02]: 현장 확인 4항목은 Phase 완료 차단 게이트가 아님 — REQUIREMENTS.md BUG-02 각주로 인계, 미수행 상태 명시
 
 ### Pending Todos
 
@@ -110,6 +114,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-08-28T04:17:30.748Z
-Stopped at: Completed 02-golden-03-PLAN.md
+Last session: 2026-08-28T06:15:46.521Z
+Stopped at: Completed 02-golden-04-PLAN.md
 Resume file: None
