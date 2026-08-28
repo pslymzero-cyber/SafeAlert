@@ -11,8 +11,8 @@ Requirements for initial release. Each maps to roadmap phases.
 
 리팩터링 **선행 조건**. 안전 크리티컬 로직을 분해하기 전에 현재 동작을 기대값으로 고정한다.
 
-- [ ] **TEST-01**: 유지보수자는 고정 RSSI 시퀀스를 재생해 SAFE→WARNING→DANGER 격상과 역방향 해제의 등급·전이 시점을 기대값과 비교할 수 있다 (경보 전체 경로 골든 테스트)
-- [ ] **TEST-02**: 유지보수자는 UWB 세션 **6대 이하** 범위에서 Case A/B 전환·좀비 워치독 발화·재연결 경로를 기대값과 비교할 수 있다 (6대 초과 플립 경로는 v1 대상 외 — BUG-03 참조)
+- [x] **TEST-01**: 유지보수자는 고정 RSSI 시퀀스를 재생해 SAFE→WARNING→DANGER 격상과 역방향 해제의 등급·전이 시점을 기대값과 비교할 수 있다 (경보 전체 경로 골든 테스트)
+- [x] **TEST-02**: 유지보수자는 UWB 세션 **6대 이하** 범위에서 Case A/B 전환·좀비 워치독 발화·재연결 경로를 기대값과 비교할 수 있다 (6대 초과 플립 경로는 v1 대상 외 — BUG-03 참조)
   - 각주(D-4A follow-up, 02-04): 요구사항 원문의 '좀비 워치독'이라는 심볼은 코드에 존재하지 않는다(v1.1.46 에서 세션 철거 수단이 폐지되고 신선도 게이트만 남음). 02-03 은 이를 현행 신선도 게이트 기준으로 (a) 표본 단절 시 판정 권위 강등 (b) 신선 실측 조회의 null 반환 (c) 낡은 근거리 실측의 좀비 경보 부재, 세 항으로 재해석해 골든화했다.
 - [x] **TEST-03**: 유지보수자는 MedianFilter(3샘플) → RssiPreFilter → KalmanFilter 3단 캐스케이드가 동일 입력 시퀀스에 동일 출력을 내는지 확인할 수 있다
 - [x] **TEST-04**: 위 테스트들은 Android 프레임워크·실기기 없이 JVM 유닛 테스트로 실행된다 (분해 대상 로직이 순수 함수로 격리 가능해야 성립)
@@ -48,7 +48,7 @@ Requirements for initial release. Each maps to roadmap phases.
 ### 알려진 버그 (BUG)
 
 - [ ] **BUG-01**: `onDeviceLost` ↔ `healthCheck` 비원자 정리로 인한 `filterPreserveMap` 누수가 제거되어, 2시간 이상 연속 구동에서 힙이 단조 증가하지 않는다
-- [ ] **BUG-02**: `injectWarmup` 프리셋 최소값 포화가 해소되어, 저속 접근 시에도 WARNING 등급에 도달한다
+- [x] **BUG-02**: `injectWarmup` 프리셋 최소값 포화가 해소되어, 저속 접근 시에도 WARNING 등급에 도달한다
   - 근본 원인 정정(02-04, D-3B): 이 항목 원문이 지목한 `injectWarmup` 프리셋 포화 가설은 02-CONTEXT.md 조사에서 코드와 불일치로 판정됐다(`injectWarmup` 은 상수 3개만 세팅, 프리셋 참조·클램프 없음). 실측 근본 원인은 WARNING 접촉 연속 카운터(streak)의 단발 미달 즉시 하드리셋 — threshold 근접 잡음이 2연속 프레임 조건을 반복적으로 끊어 격상이 지연됨. 수정은 `BleService.kt` 에 WARNING 전용 변화율(dBm/s) 게이트를 추가해 완만한 하강(잡음)은 streak 를 보존하고 급한 하강(실이탈)만 즉시 리셋하도록 함(`WARNING_DEPART_RATE_DBM_PER_SEC=3.0`). 저속 접근 골든의 최초 격상(WARNING) 도달 프레임이 85→82 로 개선(commit f5fe81f).
   - 현장 확인 4항목 (출하 후 관찰 — Phase 완료 차단 게이트 아님, 현재 상태: 코드 수정 완료·현장 관측 대기): 수정된 앱을 기기 2대(보행자 1 + 지게차 1)에 설치한 뒤 (1) 지게차가 걷는 속도보다 느리게 경고 반경 밖에서 안으로 접근 (2) 경고 반경 진입 전후로 보행자 기기에 경고가 표시됨 (3) 평소 속도 접근과 비교해 경고가 뜨는 거리가 크게 다르지 않음 (4) 지게차가 멀어지면 경보가 정상 해제됨. 2번 항목이 실패로 보고되면 BUG-02 를 재개봉한다.
 
@@ -82,8 +82,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| TEST-01 | Phase 2 | Gaps Found |
-| TEST-02 | Phase 2 | Gaps Found |
+| TEST-01 | Phase 2 | Complete |
+| TEST-02 | Phase 2 | Complete |
 | TEST-03 | Phase 1 | Complete |
 | TEST-04 | Phase 1 | Complete |
 | CI-01 | Phase 1 | Complete |
@@ -97,7 +97,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | STATE-03 | Phase 4 | Pending |
 | PERF-01 | Phase 5 | Pending |
 | BUG-01 | Phase 4 | Pending |
-| BUG-02 | Phase 2 | Gaps Found |
+| BUG-02 | Phase 2 | Complete |
 
 **Coverage:**
 
