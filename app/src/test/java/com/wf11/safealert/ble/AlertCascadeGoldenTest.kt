@@ -226,8 +226,19 @@ class AlertCascadeGoldenTest {
     }
 
     /**
-     * 02-02 Task 2 — 해제(DANGER→WARNING→SAFE) 골든, 격상 종단 상태에서 이어 재생(D-2E/D-2F/D-2G).
-     * record-then-freeze: [RELEASE_GOLDEN]/[RELEASE_KFVEL] 캡처 전까지는 CAPTURE PLACEHOLDER.
+     * 02-02 Task 2 — 해제(DANGER→SAFE) 골든, 격상 종단 상태에서 이어 재생(D-2E/D-2F/D-2G).
+     * record-then-freeze: [RELEASE_GOLDEN]/[RELEASE_KFVEL] 는 실제 1회 구동에서 캡처된 값이며
+     * 손으로 계산하지 않는다. 재동결은 이 배열의 수동 파일 편집만 허용(자동 갱신 경로 없음, T-02-05).
+     *
+     * 기록 시점: versionName=1.1.70 versionCode=126, commit=73f4145, 2026-08-28.
+     * 채택 파라미터: RELEASE_FRAMES=48(격상 종단 rssi=-54 에서 -1dBm/프레임 역방향, frame=042~089).
+     * 실측: DANGER(level=2) 로 시작해 frame=078(rssi=-90)에서 level=null(SAFE)로 전환, 이후
+     * 끝까지 SAFE 유지 — acceptance("DANGER 시작·SAFE 종료") 충족. **WARNING(level=1) 은 이 해제
+     * 구간에서 경유하지 않았다** — DANGER 히스테리시스가 SAFE 로 바로 떨어질 만큼 빠르게 풀렸다는
+     * 뜻이며, 시퀀스를 넓혀도 바뀌는 성질이 아니라(레벨 재진입 로직 자체의 특성) 그대로 동결한다.
+     * frame=056(rssi=-68)에서 level=2 유지 중 entry 가 4680→6720 로, bcast 가 2→3 로 변하는데
+     * 이는 DANGER 레벨을 유지한 채로 재진입(재브로드캐스트)이 발생한 실측 동작이며 버그 조사
+     * 대상이 아니다(record-then-freeze 원칙 — 관측된 그대로 동결).
      */
     @Test
     fun release_goldenTimeline() {
@@ -237,7 +248,7 @@ class AlertCascadeGoldenTest {
         assertScenario("escalation", escalation, ESCALATION_GOLDEN, ESCALATION_KFVEL)
         val actual = runScenario(service, CASCADE_DEVICE_ID, RELEASE_RSSI, startFrame = FRAMES)
         assertEquals("release 프레임 수 불일치", RELEASE_FRAMES, actual.first.size)
-        org.junit.Assert.fail(actual.first.joinToString("\n") + "\n---KFVEL---\n" + actual.second.joinToString(","))
+        assertScenario("release", actual, RELEASE_GOLDEN, RELEASE_KFVEL)
     }
 
     /**
@@ -278,6 +289,108 @@ private val ESCALATION_RSSI = IntArray(FRAMES) { START_DBM + it * STEP_DBM }
 /** 02-02 Task 2 — 해제 램프: 격상 종단값에서 -1dBm/프레임 역방향(동결 전 조정 허용, plan Task 2 action). */
 private const val RELEASE_FRAMES = 48
 private val RELEASE_RSSI = IntArray(RELEASE_FRAMES) { ESCALATION_RSSI.last() - it }
+
+private val RELEASE_GOLDEN: Array<String> = arrayOf(
+    "frame=042 rssi= -54 level=2 entry=4680 track=NONE        dangerStreak=2 warnStreak=22 fastStreak=1 bcast=2",
+    "frame=043 rssi= -55 level=2 entry=4680 track=NONE        dangerStreak=3 warnStreak=23 fastStreak=1 bcast=2",
+    "frame=044 rssi= -56 level=2 entry=4680 track=NONE        dangerStreak=4 warnStreak=24 fastStreak=1 bcast=2",
+    "frame=045 rssi= -57 level=2 entry=4680 track=NONE        dangerStreak=0 warnStreak=25 fastStreak=1 bcast=2",
+    "frame=046 rssi= -58 level=2 entry=4680 track=NONE        dangerStreak=0 warnStreak=26 fastStreak=1 bcast=2",
+    "frame=047 rssi= -59 level=2 entry=4680 track=NONE        dangerStreak=0 warnStreak=27 fastStreak=1 bcast=2",
+    "frame=048 rssi= -60 level=2 entry=4680 track=NONE        dangerStreak=0 warnStreak=28 fastStreak=1 bcast=2",
+    "frame=049 rssi= -61 level=2 entry=4680 track=NONE        dangerStreak=0 warnStreak=29 fastStreak=1 bcast=2",
+    "frame=050 rssi= -62 level=2 entry=4680 track=NONE        dangerStreak=0 warnStreak=30 fastStreak=1 bcast=2",
+    "frame=051 rssi= -63 level=2 entry=4680 track=NONE        dangerStreak=0 warnStreak=31 fastStreak=1 bcast=2",
+    "frame=052 rssi= -64 level=2 entry=4680 track=NONE        dangerStreak=0 warnStreak=32 fastStreak=1 bcast=2",
+    "frame=053 rssi= -65 level=2 entry=4680 track=NONE        dangerStreak=0 warnStreak=33 fastStreak=1 bcast=2",
+    "frame=054 rssi= -66 level=2 entry=4680 track=NONE        dangerStreak=0 warnStreak=34 fastStreak=1 bcast=2",
+    "frame=055 rssi= -67 level=2 entry=4680 track=NONE        dangerStreak=0 warnStreak=35 fastStreak=1 bcast=2",
+    "frame=056 rssi= -68 level=2 entry=6720 track=NONE        dangerStreak=0 warnStreak=36 fastStreak=2 bcast=3",
+    "frame=057 rssi= -69 level=2 entry=6720 track=NONE        dangerStreak=0 warnStreak=37 fastStreak=2 bcast=3",
+    "frame=058 rssi= -70 level=2 entry=6720 track=NONE        dangerStreak=0 warnStreak=38 fastStreak=2 bcast=3",
+    "frame=059 rssi= -71 level=2 entry=6720 track=NONE        dangerStreak=0 warnStreak=39 fastStreak=2 bcast=3",
+    "frame=060 rssi= -72 level=2 entry=6720 track=NONE        dangerStreak=0 warnStreak=40 fastStreak=2 bcast=3",
+    "frame=061 rssi= -73 level=2 entry=6720 track=NONE        dangerStreak=0 warnStreak=41 fastStreak=2 bcast=3",
+    "frame=062 rssi= -74 level=2 entry=6720 track=NONE        dangerStreak=0 warnStreak=42 fastStreak=2 bcast=3",
+    "frame=063 rssi= -75 level=2 entry=6720 track=NONE        dangerStreak=0 warnStreak=43 fastStreak=2 bcast=3",
+    "frame=064 rssi= -76 level=2 entry=6720 track=NONE        dangerStreak=0 warnStreak=44 fastStreak=2 bcast=3",
+    "frame=065 rssi= -77 level=2 entry=6720 track=CROSSING    dangerStreak=0 warnStreak=0 fastStreak=2 bcast=3",
+    "frame=066 rssi= -78 level=2 entry=6720 track=CROSSING    dangerStreak=0 warnStreak=0 fastStreak=2 bcast=3",
+    "frame=067 rssi= -79 level=2 entry=6720 track=CROSSING    dangerStreak=0 warnStreak=0 fastStreak=2 bcast=3",
+    "frame=068 rssi= -80 level=2 entry=6720 track=CROSSING    dangerStreak=0 warnStreak=0 fastStreak=2 bcast=3",
+    "frame=069 rssi= -81 level=2 entry=6720 track=CROSSING    dangerStreak=0 warnStreak=0 fastStreak=2 bcast=3",
+    "frame=070 rssi= -82 level=2 entry=6720 track=CROSSING    dangerStreak=0 warnStreak=0 fastStreak=2 bcast=3",
+    "frame=071 rssi= -83 level=2 entry=6720 track=CROSSING    dangerStreak=0 warnStreak=0 fastStreak=2 bcast=3",
+    "frame=072 rssi= -84 level=2 entry=6720 track=CROSSING    dangerStreak=0 warnStreak=0 fastStreak=2 bcast=3",
+    "frame=073 rssi= -85 level=2 entry=6720 track=CROSSING    dangerStreak=0 warnStreak=0 fastStreak=2 bcast=3",
+    "frame=074 rssi= -86 level=2 entry=6720 track=CROSSING    dangerStreak=0 warnStreak=0 fastStreak=2 bcast=3",
+    "frame=075 rssi= -87 level=2 entry=6720 track=CROSSING    dangerStreak=0 warnStreak=0 fastStreak=2 bcast=3",
+    "frame=076 rssi= -88 level=2 entry=6720 track=CROSSING    dangerStreak=0 warnStreak=0 fastStreak=2 bcast=3",
+    "frame=077 rssi= -89 level=2 entry=6720 track=CROSSING    dangerStreak=0 warnStreak=0 fastStreak=2 bcast=3",
+    "frame=078 rssi= -90 level=null entry=null track=DEPARTING   dangerStreak=0 warnStreak=0 fastStreak=0 bcast=4",
+    "frame=079 rssi= -91 level=null entry=null track=DEPARTING   dangerStreak=0 warnStreak=0 fastStreak=0 bcast=4",
+    "frame=080 rssi= -92 level=null entry=null track=DEPARTING   dangerStreak=0 warnStreak=0 fastStreak=0 bcast=4",
+    "frame=081 rssi= -93 level=null entry=null track=DEPARTING   dangerStreak=0 warnStreak=0 fastStreak=0 bcast=4",
+    "frame=082 rssi= -94 level=null entry=null track=DEPARTING   dangerStreak=0 warnStreak=0 fastStreak=0 bcast=4",
+    "frame=083 rssi= -95 level=null entry=null track=DEPARTING   dangerStreak=0 warnStreak=0 fastStreak=0 bcast=4",
+    "frame=084 rssi= -96 level=null entry=null track=DEPARTING   dangerStreak=0 warnStreak=0 fastStreak=0 bcast=4",
+    "frame=085 rssi= -97 level=null entry=null track=DEPARTING   dangerStreak=0 warnStreak=0 fastStreak=0 bcast=4",
+    "frame=086 rssi= -98 level=null entry=null track=DEPARTING   dangerStreak=0 warnStreak=0 fastStreak=0 bcast=4",
+    "frame=087 rssi= -99 level=null entry=null track=DEPARTING   dangerStreak=0 warnStreak=0 fastStreak=0 bcast=4",
+    "frame=088 rssi=-100 level=null entry=null track=DEPARTING   dangerStreak=0 warnStreak=0 fastStreak=0 bcast=4",
+    "frame=089 rssi=-101 level=null entry=null track=DEPARTING   dangerStreak=0 warnStreak=0 fastStreak=0 bcast=4",
+)
+
+private val RELEASE_KFVEL: DoubleArray = doubleArrayOf(
+    8.058751514661529,
+    8.090671269134937,
+    8.046375607362467,
+    7.939644629242456,
+    7.711480393372777,
+    7.3834060513187,
+    6.973511578129396,
+    6.4971214034248685,
+    5.967319696583539,
+    5.39536316956089,
+    4.7910049199743945,
+    4.162747955024065,
+    3.5180432524903456,
+    2.8634442569728837,
+    2.2047273741338973,
+    1.5469861611305957,
+    1.2938577177654136,
+    1.03514840932566,
+    0.7449012001289531,
+    0.45894235128688954,
+    0.14904297716491777,
+    -0.1467526086054729,
+    -0.458841722681477,
+    -0.7826618360375853,
+    -1.1138467924993884,
+    -1.41439588315446,
+    -1.7177344027638062,
+    -2.02082368232901,
+    -2.3210849460549805,
+    -2.6163974893672948,
+    -2.905074294295255,
+    -3.1542269119441224,
+    -3.397781124244453,
+    -3.6348845824768494,
+    -3.8649257132129473,
+    -4.08749516286249,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+)
 
 /** BleService.kt:384 private val alertState — Pair(level, entryMs) 판독은 하네스가 이미 제공. */
 /** BleService.kt:490-493 private enum TrackingState + trackingStateMap — 리플렉션 전용(private 타입이라 캐스트 없이 toString만 사용). */
