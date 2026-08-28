@@ -17,6 +17,7 @@ import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
+import org.robolectric.util.ReflectionHelpers
 
 /**
  * 02-01 골든 캐스케이드 회귀 테스트 — record-then-freeze(D-09/D-12/P-02).
@@ -193,4 +194,201 @@ class AlertCascadeGoldenTest {
         DevSettings.uwbVelReleaseEnabled,
         DevSettings.vibrationEnabled
     )
+
+    /**
+     * 02-02 Task 1 — 격상(SAFE→WARNING→DANGER) 골든, 프레임별 기록·동결(D-2E/D-2F/D-2G).
+     * record-then-freeze: [ESCALATION_GOLDEN]/[ESCALATION_KFVEL] 는 실제 1회 구동에서 캡처된 값이며
+     * 손으로 계산하지 않는다. 재동결은 이 배열의 수동 파일 편집만 허용(자동 갱신 경로 없음, T-02-05).
+     *
+     * 기록 시점: versionName=1.1.70 versionCode=126, commit=6760f60, 2026-08-28T00:19:42Z.
+     * 채택 파라미터: START_DBM=-95, STEP_DBM=+1, FRAMES=42 — 실측(사전 예측 아님): WARNING 최초
+     * 진입 frame=22(rssi=-73), DANGER 최초 진입 frame=39(rssi=-56). streak/hysteresis 게이트로
+     * 인해 raw 임계 교차(rssiWarning=-75 @ i=20, rssiDanger=-55 @ i=40)보다 1~2프레임 지연 — 별도
+     * 조정 불필요(SAFE/WARNING/DANGER 3단계 모두 관측, 단조 증가).
+     */
+    @Test
+    fun escalation_goldenTimeline() {
+        val service = BleServiceTestHarness.newService()
+        BleServiceTestHarness.resetBetweenTests(service)
+        val actual = runScenario(service, CASCADE_DEVICE_ID, ESCALATION_RSSI, startFrame = 0)
+        assertEquals("escalation 프레임 수 불일치", FRAMES, actual.first.size)
+        assertScenario("escalation", actual, ESCALATION_GOLDEN, ESCALATION_KFVEL)
+    }
 }
+
+// ── 프레임별 골든 캐스케이드 배선 (02-02 D-2E/D-2F/D-2G) ────────────────────────────────
+// 관측면: alertState(레벨+등록시각 t0상대)·트래킹상태·3종 streak맵·누적 브로드캐스트 수를 한 줄로
+// 렌더링(D-2F 풀프레임 기록) + kfVel(estimatedVel)은 D-2E 지시대로 문자열과 분리된 별도 DoubleArray.
+// medianValue/avgRssi 는 관측면에서 제외한다(Phase 1 커버 영역, 중복 금지 — must_haves.prohibitions).
+
+private const val T0_MS = 1_000_000L
+private const val FRAME_DT_MS = 120L
+private const val CASCADE_DEVICE_ID = "AA:BB:CC:DD:EE:CA"
+
+private const val START_DBM = -95
+private const val STEP_DBM = 1
+private const val FRAMES = 42
+private val ESCALATION_RSSI = IntArray(FRAMES) { START_DBM + it * STEP_DBM }
+
+/** BleService.kt:384 private val alertState — Pair(level, entryMs) 판독은 하네스가 이미 제공. */
+/** BleService.kt:490-493 private enum TrackingState + trackingStateMap — 리플렉션 전용(private 타입이라 캐스트 없이 toString만 사용). */
+@Suppress("UNCHECKED_CAST")
+private fun trackingStateOf(service: BleService, deviceId: String): String {
+    val map = ReflectionHelpers.getField(service, "trackingStateMap") as Map<String, *>
+    return map[deviceId]?.toString() ?: "NONE"
+}
+
+/** BleService.kt:477/480/658 — dangerContactStreakMap/warningContactStreakMap/fastApproachStreakMap 공용 판독. */
+@Suppress("UNCHECKED_CAST")
+private fun streakOf(service: BleService, fieldName: String, deviceId: String): Int {
+    val map = ReflectionHelpers.getField(service, fieldName) as Map<String, Int>
+    return map[deviceId] ?: 0
+}
+
+/** BleService.kt:423 private val kalmanFilters — KalmanFilter.estimatedVel(public)은 리플렉션 없이 직접 접근. */
+@Suppress("UNCHECKED_CAST")
+private fun kfVelOf(service: BleService, deviceId: String): Double {
+    val map = ReflectionHelpers.getField(service, "kalmanFilters") as Map<String, KalmanFilter>
+    return map[deviceId]?.estimatedVel ?: 0.0
+}
+
+/** 프레임 1개를 고정폭 한 줄로 직렬화(D-2F). entry 는 T0_MS 상대(D-2G), 부재시 "null". */
+private fun renderFrame(service: BleService, deviceId: String, frameIdx: Int, rssi: Int): String {
+    val level = BleServiceTestHarness.alertLevelOf(service, deviceId)
+    val entryRel = BleServiceTestHarness.alertEntryMsOf(service, deviceId)?.minus(T0_MS)
+    val track = trackingStateOf(service, deviceId)
+    val dangerStreak = streakOf(service, "dangerContactStreakMap", deviceId)
+    val warnStreak = streakOf(service, "warningContactStreakMap", deviceId)
+    val fastStreak = streakOf(service, "fastApproachStreakMap", deviceId)
+    val bcast = BleServiceTestHarness.alertBroadcasts().size
+    return "frame=%03d rssi=%4d level=%s entry=%s track=%-11s dangerStreak=%d warnStreak=%d fastStreak=%d bcast=%d"
+        .format(frameIdx, rssi, level?.toString() ?: "null", entryRel?.toString() ?: "null", track, dangerStreak, warnStreak, fastStreak, bcast)
+}
+
+/**
+ * Phase 1 RssiCascadeTest.kt 의 runCascade(:130-156) 개명·이식 — 매 프레임 nowMs 를
+ * FRAME_DT_MS 간격으로 전진시키며 callProcessAlert 를 호출하고, renderFrame 문자열 배열과
+ * kfVel DoubleArray 를 함께 반환한다. startFrame 은 전역 프레임 번호(release 구간은 이어서 번호를 매김).
+ */
+private fun runScenario(
+    service: BleService,
+    deviceId: String,
+    rssiSeq: IntArray,
+    startFrame: Int,
+): Pair<Array<String>, DoubleArray> {
+    val frames = Array(rssiSeq.size) { "" }
+    val kfVel = DoubleArray(rssiSeq.size)
+    for (i in rssiSeq.indices) {
+        val frameIdx = startFrame + i
+        val nowMs = T0_MS + frameIdx * FRAME_DT_MS
+        BleServiceTestHarness.callProcessAlert(service, deviceId, rssiSeq[i], nowMs = nowMs)
+        frames[i] = renderFrame(service, deviceId, frameIdx, rssiSeq[i])
+        kfVel[i] = kfVelOf(service, deviceId)
+    }
+    return frames to kfVel
+}
+
+/** Phase 1 assertCascade(:158-173) 개명·이식 — 프레임별 2단언(render 문자열 / kfVel delta 1e-9). */
+private fun assertScenario(
+    scenario: String,
+    actual: Pair<Array<String>, DoubleArray>,
+    expectedFrames: Array<String>,
+    expectedKfVel: DoubleArray,
+) {
+    val (frames, kfVel) = actual
+    for (i in expectedFrames.indices) {
+        assertEquals("$scenario frame=$i stage=render", expectedFrames[i], frames[i])
+        assertEquals("$scenario frame=$i stage=kfVel", expectedKfVel[i], kfVel[i], 1e-9)
+    }
+}
+
+// 아래 두 배열은 1회 실제 구동 캡처값 — 손 계산 금지, 재동결은 수동 파일 편집만 허용(T-02-05).
+private val ESCALATION_GOLDEN: Array<String> = arrayOf(
+    "frame=000 rssi= -95 level=null entry=null track=NONE        dangerStreak=0 warnStreak=0 fastStreak=0 bcast=0",
+    "frame=001 rssi= -94 level=null entry=null track=NONE        dangerStreak=0 warnStreak=0 fastStreak=0 bcast=0",
+    "frame=002 rssi= -93 level=null entry=null track=NONE        dangerStreak=0 warnStreak=0 fastStreak=0 bcast=0",
+    "frame=003 rssi= -92 level=null entry=null track=NONE        dangerStreak=0 warnStreak=0 fastStreak=0 bcast=0",
+    "frame=004 rssi= -91 level=null entry=null track=NONE        dangerStreak=0 warnStreak=0 fastStreak=0 bcast=0",
+    "frame=005 rssi= -90 level=null entry=null track=NONE        dangerStreak=0 warnStreak=0 fastStreak=0 bcast=0",
+    "frame=006 rssi= -89 level=null entry=null track=NONE        dangerStreak=0 warnStreak=0 fastStreak=0 bcast=0",
+    "frame=007 rssi= -88 level=null entry=null track=NONE        dangerStreak=0 warnStreak=0 fastStreak=0 bcast=0",
+    "frame=008 rssi= -87 level=null entry=null track=NONE        dangerStreak=0 warnStreak=0 fastStreak=0 bcast=0",
+    "frame=009 rssi= -86 level=null entry=null track=NONE        dangerStreak=0 warnStreak=0 fastStreak=0 bcast=0",
+    "frame=010 rssi= -85 level=null entry=null track=NONE        dangerStreak=0 warnStreak=0 fastStreak=0 bcast=0",
+    "frame=011 rssi= -84 level=null entry=null track=NONE        dangerStreak=0 warnStreak=0 fastStreak=0 bcast=0",
+    "frame=012 rssi= -83 level=null entry=null track=NONE        dangerStreak=0 warnStreak=0 fastStreak=0 bcast=0",
+    "frame=013 rssi= -82 level=null entry=null track=NONE        dangerStreak=0 warnStreak=0 fastStreak=0 bcast=0",
+    "frame=014 rssi= -81 level=null entry=null track=NONE        dangerStreak=0 warnStreak=0 fastStreak=0 bcast=0",
+    "frame=015 rssi= -80 level=null entry=null track=NONE        dangerStreak=0 warnStreak=0 fastStreak=0 bcast=0",
+    "frame=016 rssi= -79 level=null entry=null track=NONE        dangerStreak=0 warnStreak=0 fastStreak=0 bcast=0",
+    "frame=017 rssi= -78 level=null entry=null track=NONE        dangerStreak=0 warnStreak=0 fastStreak=0 bcast=0",
+    "frame=018 rssi= -77 level=null entry=null track=NONE        dangerStreak=0 warnStreak=0 fastStreak=0 bcast=0",
+    "frame=019 rssi= -76 level=null entry=null track=NONE        dangerStreak=0 warnStreak=0 fastStreak=0 bcast=0",
+    "frame=020 rssi= -75 level=null entry=null track=NONE        dangerStreak=0 warnStreak=0 fastStreak=0 bcast=0",
+    "frame=021 rssi= -74 level=null entry=null track=NONE        dangerStreak=0 warnStreak=1 fastStreak=0 bcast=0",
+    "frame=022 rssi= -73 level=1 entry=2640 track=NONE        dangerStreak=0 warnStreak=2 fastStreak=1 bcast=1",
+    "frame=023 rssi= -72 level=1 entry=2640 track=NONE        dangerStreak=0 warnStreak=3 fastStreak=1 bcast=1",
+    "frame=024 rssi= -71 level=1 entry=2640 track=NONE        dangerStreak=0 warnStreak=4 fastStreak=1 bcast=1",
+    "frame=025 rssi= -70 level=1 entry=2640 track=NONE        dangerStreak=0 warnStreak=5 fastStreak=1 bcast=1",
+    "frame=026 rssi= -69 level=1 entry=2640 track=NONE        dangerStreak=0 warnStreak=6 fastStreak=1 bcast=1",
+    "frame=027 rssi= -68 level=1 entry=2640 track=NONE        dangerStreak=0 warnStreak=7 fastStreak=1 bcast=1",
+    "frame=028 rssi= -67 level=1 entry=2640 track=NONE        dangerStreak=0 warnStreak=8 fastStreak=1 bcast=1",
+    "frame=029 rssi= -66 level=1 entry=2640 track=NONE        dangerStreak=0 warnStreak=9 fastStreak=1 bcast=1",
+    "frame=030 rssi= -65 level=1 entry=2640 track=NONE        dangerStreak=0 warnStreak=10 fastStreak=1 bcast=1",
+    "frame=031 rssi= -64 level=1 entry=2640 track=NONE        dangerStreak=0 warnStreak=11 fastStreak=1 bcast=1",
+    "frame=032 rssi= -63 level=1 entry=2640 track=NONE        dangerStreak=0 warnStreak=12 fastStreak=1 bcast=1",
+    "frame=033 rssi= -62 level=1 entry=2640 track=NONE        dangerStreak=0 warnStreak=13 fastStreak=1 bcast=1",
+    "frame=034 rssi= -61 level=1 entry=2640 track=NONE        dangerStreak=0 warnStreak=14 fastStreak=1 bcast=1",
+    "frame=035 rssi= -60 level=1 entry=2640 track=NONE        dangerStreak=0 warnStreak=15 fastStreak=1 bcast=1",
+    "frame=036 rssi= -59 level=1 entry=2640 track=NONE        dangerStreak=0 warnStreak=16 fastStreak=1 bcast=1",
+    "frame=037 rssi= -58 level=1 entry=2640 track=NONE        dangerStreak=0 warnStreak=17 fastStreak=1 bcast=1",
+    "frame=038 rssi= -57 level=1 entry=2640 track=NONE        dangerStreak=0 warnStreak=18 fastStreak=1 bcast=1",
+    "frame=039 rssi= -56 level=2 entry=4680 track=NONE        dangerStreak=0 warnStreak=19 fastStreak=1 bcast=2",
+    "frame=040 rssi= -55 level=2 entry=4800 track=NONE        dangerStreak=0 warnStreak=20 fastStreak=1 bcast=3",
+    "frame=041 rssi= -54 level=2 entry=4800 track=NONE        dangerStreak=1 warnStreak=21 fastStreak=1 bcast=3",
+)
+
+private val ESCALATION_KFVEL: DoubleArray = doubleArrayOf(
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.05587687358475123,
+    0.11022427520582992,
+    0.2653711245994943,
+    0.4134671140622066,
+    0.6961268610827964,
+    1.1183686685416458,
+    1.6766805158493008,
+    2.35920297351811,
+    3.1470275524759734,
+    4.945395885597652,
+    6.383725662083261,
+    7.622429745733774,
+    8.72991205744785,
+    9.737908013538185,
+    10.661910578645733,
+    11.510023680925396,
+    12.287161347475358,
+    12.99708958864605,
+    13.643374143205346,
+    14.229753456465565,
+    14.760216155761118,
+    15.238939999780293,
+    15.670180052543998,
+    16.058152568544713,
+    16.406936431116794,
+    16.72039980312967,
+    17.00215207268498,
+    17.255517640959045,
+    17.483526898589425,
+    17.688919774699848,
+)
