@@ -278,14 +278,18 @@ class AlertCascadeGoldenTest {
      * (frame=039 dangerStreak=0 로 확인됨) :1885 즉시격상 오버레이가 관여할 기회가 없었다(1차
      * red-trial: dangerStreak>=2→3 변경에도 BUILD SUCCESSFUL — 오버레이 미관여 증명).
      *
+     * 2차 시도(-30dBm, 65dB 낙차)도 red-trial 미검출 — 진단(dangerStreak>=100)으로 pEma 단독이
+     * 이미 frame=006 에서 DANGER 도달함을 확인(오버레이 미관여, 진폭 과다가 원인). 코디네이터가
+     * alphaRise=0.4 기반 계산으로 발화 창을 x1 ∈ (-55, -32.5) 로 산출, -54dBm(41dB 낙차)로 교정
+     * (Option A' 재시도).
+     *
      * 이 시나리오는 median 필터(window=3, MedianFilter.kt) 완전 충전 정지(-95dBm 5프레임) 후
-     * 강한 근접(-30dBm, 스모크 테스트 processAlert_strongDangerContact... 와 동일 강도)으로 계단형
-     * 점프시킨다 — medianValue(무평활 median-of-3)는 window 가 강한 표본으로 채워지는 1~2 프레임
-     * 만에 effDanger 를 넘지만, pEma(다단 비대칭 평활)는 -95→-30 65dB 낙차를 그만큼 빨리 못
-     * 쫓아간다. 그 간극에서 dangerStreak>=2 가 stableLevel 을 raw 로 강제 격상하는 :1885 분기가
-     * 실제로 발화한다 — 골든의 level 전이 프레임과 dangerStreak 값이 같은 프레임에서 함께
-     * 확인되면 pEma 단독 경로가 아니라 오버레이가 원인임을 시각적으로 증명한다(최종 확증은
-     * red-trial 재시도: :1885 dangerStreak>=2→3).
+     * -54dBm 으로 계단형 점프시킨다 — medianValue(무평활 median-of-3)는 1~2 프레임 만에 effDanger
+     * (-55dBm)를 넘지만, pEma(다단 비대칭 평활, alphaRise=0.4)는 x0+0.64*(x1-x0) ≈ -68.8 로
+     * frame=006 에서 아직 WARNING권에도 못 미친다. 그 간극에서 dangerStreak>=2 가 stableLevel 을
+     * raw 로 강제 격상하는 :1885 분기가 실제로 발화한다 — 골든의 level 전이 프레임과 dangerStreak
+     * 값이 같은 프레임에서 함께 확인되면 pEma 단독 경로가 아니라 오버레이가 원인임을 시각적으로
+     * 증명한다(최종 확증은 red-trial 재시도: :1885 dangerStreak>=2→3).
      */
     @Test
     fun suddenContact_dangerOverride_bypassesPEmaLag() {
@@ -581,33 +585,35 @@ private val ESCALATION_KFVEL: DoubleArray = doubleArrayOf(
 )
 
 /**
- * 02-02 Task 3(checkpoint Option A) — 급접촉 서브 시나리오 입력. 5프레임 -95dBm(median 필터
- * 완전 충전 + pEma 정지수렴) 후 5프레임 -30dBm 계단 점프(processAlert_strongDangerContact...
- * 스모크 테스트와 동일 강도 — BleService.kt:1878-1891 오버라이드가 확실히 사거리 안에 들도록).
+ * 02-02 Task 3(checkpoint Option A') — 급접촉 서브 시나리오 입력. 5프레임 -95dBm(median 필터
+ * 완전 충전 + pEma 정지수렴) 후 5프레임 -54dBm 계단 점프(41dB 낙차 — :1885 raw 즉시격상 발화
+ * 창 안에 들도록 코디네이터가 진폭 재교정: pEma 단독으로는 2프레임 내 DANGER 미도달, median
+ * dangerStreak만 즉시 충족되는 구간).
  * CASCADE_DEVICE_ID 와 별도 기기 ID/서비스 인스턴스로 격리(escalation/release 상태 오염 없음).
  */
 private const val CONTACT_DEVICE_ID = "AA:BB:CC:DD:EE:FC"
 private const val CONTACT_WARMUP_FRAMES = 5
 private const val CONTACT_STRONG_FRAMES = 5
 private const val CONTACT_FRAMES = CONTACT_WARMUP_FRAMES + CONTACT_STRONG_FRAMES
-private val CONTACT_RSSI = IntArray(CONTACT_FRAMES) { if (it < CONTACT_WARMUP_FRAMES) -95 else -30 }
+private val CONTACT_RSSI = IntArray(CONTACT_FRAMES) { if (it < CONTACT_WARMUP_FRAMES) -95 else -54 }
 
-// 아래 두 배열은 1회 실제 구동 캡처값(2026-08-28, commit=f31edf0 베이스) — 손 계산 금지,
-// 재동결은 수동 파일 편집만 허용(T-02-05). frame=005 dangerStreak=1(raw 진입 1프레임째, 오버라이드
-// 미발화 — stableLevel 그대로 null) → frame=006 dangerStreak=2 '동일 프레임'에서 level=null→2
-// (DANGER) 로 직행(WARNING 경유 없음) — :1885 raw 즉시격상이 pEma 를 기다리지 않고 stableLevel 을
-// 강제한 증거(65dB 낙차 직후 pEma 는 아직 -95 인근이라 calcLevelWithHysteresis 단독으론 DANGER 불가).
+// 아래 두 배열은 1회 실제 구동 캡처값(2026-08-28, commit=5e0c68c 베이스 재동결) — 손 계산 금지,
+// 재동결은 수동 파일 편집만 허용(T-02-05). -30dBm(65dB 낙차)은 pEma(alphaRise=0.4) 단독으로도
+// 2프레임 내 DANGER(-55dBm) 도달이 가능해 오버라이드 발화 창이 없었다(진폭 과다, 코디네이터 검증).
+// -54dBm(41dB 낙차)로 교정: median(raw)은 즉시 -54(effDanger=-55 이상)로 dangerStreak 충족,
+// pEma는 x0+0.64*(x1-x0) = -95+0.64*41 ≈ -68.8 (WARNING권 이하)로 :1885 오버라이드 없이는
+// 아직 DANGER 미도달 — frame=006의 DANGER 전이가 :1885 raw 즉시격상 단독 산물임을 증명.
 private val CONTACT_GOLDEN: Array<String> = arrayOf(
     "frame=000 rssi= -95 level=null entry=null track=NONE        dangerStreak=0 warnStreak=0 fastStreak=0 bcast=0",
     "frame=001 rssi= -95 level=null entry=null track=NONE        dangerStreak=0 warnStreak=0 fastStreak=0 bcast=0",
     "frame=002 rssi= -95 level=null entry=null track=NONE        dangerStreak=0 warnStreak=0 fastStreak=0 bcast=0",
     "frame=003 rssi= -95 level=null entry=null track=NONE        dangerStreak=0 warnStreak=0 fastStreak=0 bcast=0",
     "frame=004 rssi= -95 level=null entry=null track=NONE        dangerStreak=0 warnStreak=0 fastStreak=0 bcast=0",
-    "frame=005 rssi= -30 level=null entry=null track=NONE        dangerStreak=1 warnStreak=1 fastStreak=0 bcast=0",
-    "frame=006 rssi= -30 level=2 entry=720 track=NONE        dangerStreak=2 warnStreak=2 fastStreak=0 bcast=1",
-    "frame=007 rssi= -30 level=2 entry=720 track=NONE        dangerStreak=3 warnStreak=3 fastStreak=0 bcast=1",
-    "frame=008 rssi= -30 level=2 entry=720 track=NONE        dangerStreak=4 warnStreak=4 fastStreak=0 bcast=1",
-    "frame=009 rssi= -30 level=2 entry=720 track=NONE        dangerStreak=5 warnStreak=5 fastStreak=0 bcast=1",
+    "frame=005 rssi= -54 level=null entry=null track=NONE        dangerStreak=1 warnStreak=1 fastStreak=0 bcast=0",
+    "frame=006 rssi= -54 level=2 entry=720 track=NONE        dangerStreak=2 warnStreak=2 fastStreak=0 bcast=1",
+    "frame=007 rssi= -54 level=2 entry=720 track=NONE        dangerStreak=3 warnStreak=3 fastStreak=0 bcast=1",
+    "frame=008 rssi= -54 level=2 entry=720 track=NONE        dangerStreak=4 warnStreak=4 fastStreak=0 bcast=1",
+    "frame=009 rssi= -54 level=2 entry=720 track=NONE        dangerStreak=5 warnStreak=5 fastStreak=0 bcast=1",
 )
 
 private val CONTACT_KFVEL: DoubleArray = doubleArrayOf(
