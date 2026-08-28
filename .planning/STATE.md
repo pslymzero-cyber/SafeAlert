@@ -4,16 +4,16 @@ milestone: v1.1.70
 current_phase: 02
 current_phase_name: 안전 크리티컬 경로 골든 테스트
 status: executing
-stopped_at: Completed 02-01-PLAN.md
-last_updated: "2026-08-27T23:56:23.580Z"
+stopped_at: Completed 02-golden-03-PLAN.md
+last_updated: "2026-08-28T04:17:30.885Z"
 last_activity: 2026-08-28
 last_activity_desc: Phase 02 execution started
-state_head: b7f4b551618967e7f740174a9d2f88ea1b92525a
+state_head: 41374d166b3dcfb7d8f6522cb5d9198664570779
 progress:
   total_phases: 5
   completed_phases: 0
   total_plans: 6
-  completed_plans: 3
+  completed_plans: 5
 ---
 
 # Project State
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-08-23)
 ## Current Position
 
 Phase: 02 (안전 크리티컬 경로 골든 테스트) — EXECUTING
-Plan: 2 of 4
+Plan: 3 of 4
 Status: Ready to execute
 Last activity: 2026-08-28 — Phase 02 execution started
 
@@ -60,6 +60,7 @@ Progress: [██░░░░░░░░] 20%
 |------|----------|-------|-------|
 | Phase 01-ci P01 | 26min | 3 tasks | 4 files |
 | Phase 02-golden P01 | 61min | 3 tasks | 4 files |
+| Phase 02-golden P03 | 29min | 3 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -82,6 +83,9 @@ Recent decisions affecting current work:
 - [Phase 02]: Robolectric 4.15.1(testImplementation) 사람 승인 채택 — 좌표/저장소/스코프 확인
 - [Phase 02]: 골든 스모크 '1프레임'을 '2프레임 연속(마지막 콜 관측)'으로 재해석 — production 게이트(streak/warmingUp) 수학적 제약
 - [Phase 02]: 골든 DevSettings 프로파일 30줄 명시 대입, kalmanPreset=KALMAN_PRESET_NORMAL 명시 고정(출하 기본과 동일)
+- [Phase 02]: onDeviceLost 는 이 테스트 스위트 전체에서 '그 외'(else) 분기(dropServedLocked+reconcileLocked)만 타며, uwbManager==null 로 reconcileLocked 가 즉시 반환되어 coroutine 진입 없음을 확인(T-02-11)
+- [Phase 02]: BLE 타임아웃 UWB 정리 목록(peerUwbSeenMap/uwbSampleAtMsMap/uwbSafeStreakMap + onDeviceLost)을 BleService.kt 직독으로 확정 후 재현(replicateBleTimeoutBoundary)
+- [Phase 02]: 세션 상한 초과 경로는 golden 으로 얼리지 않고 require() 거부만 증명 — BUG-03 을 스펙으로 승격시키지 않음(v2 이월)
 
 ### Pending Todos
 
@@ -106,6 +110,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-08-27T23:56:23.445Z
-Stopped at: Completed 02-01-PLAN.md
+Last session: 2026-08-28T04:17:30.748Z
+Stopped at: Completed 02-golden-03-PLAN.md
 Resume file: None

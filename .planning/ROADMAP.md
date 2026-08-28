@@ -75,8 +75,8 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion; 02-02 ∥ 02-03 병렬)*
 
-- [ ] 02-02-PLAN.md — 격상 SAFE→WARNING→DANGER · 역방향 해제 캐스케이드 record-then-freeze 골든 + 판정 상수 레드 트라이얼 (TEST-01)
-- [ ] 02-03-PLAN.md — UWB Case A/B 전환 · 실측 신선도 경계 · 좀비 DANGER 부재 · 6대 이하 다기기 비오염 골든 (TEST-02)
+- [x] 02-02-PLAN.md — 격상 SAFE→WARNING→DANGER · 역방향 해제 캐스케이드 record-then-freeze 골든 + 판정 상수 레드 트라이얼 (TEST-01)
+- [x] 02-03-PLAN.md — UWB Case A/B 전환 · 실측 신선도 경계 · 좀비 DANGER 부재 · 6대 이하 다기기 비오염 골든 (TEST-02)
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
