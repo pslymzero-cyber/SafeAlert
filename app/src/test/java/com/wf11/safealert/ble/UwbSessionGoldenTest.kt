@@ -48,6 +48,13 @@ import org.robolectric.util.ReflectionHelpers.ClassParameter
  * computeDesiredLocked()(UwbRanger.kt:320-321)가 즉시 Desired(Role.NONE)을 반환해
  * scope.launch 경로(scheduleRestartLocked)에 진입하지 않는다 — 코루틴 스코프는 주입되지만
  * 이 파일의 어떤 헬퍼도 실제로 코루틴을 기동시키지 않는다.
+ *
+ * 기록 시점: versionName=1.1.70 versionCode=126, commit=f9a6417, 2026-08-28.
+ * 채택 값: T0_MS=2_000_000L(임의 기준시), FRESH_OFFSET_MS=+500L(느린 CI 마진),
+ * FRAME_DT_MS=400L(캐스케이드 프레임 간격과 무관 — kinematics 미사용이라 임의값),
+ * DEVICE_ID 접두사=BleConstants.DEVICE_PREFIX(WALKER_PREFIX 아님 — walker 게이트 자연 우회),
+ * 역할쌍=일반쌍(지게차 아님, deviceCategoryMap 미설정) → warnM=5.0f/dangM=3.0f
+ * (DevSettings.uwbPairWarnMeters/uwbPairDangerMeters, 골든 프로파일 고정값).
  */
 @RunWith(RobolectricTestRunner::class)
 class UwbSessionGoldenTest {
