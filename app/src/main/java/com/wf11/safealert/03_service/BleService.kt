@@ -478,6 +478,11 @@ class BleService : LifecycleService() {
     // [v1.1.18] WARNING 거리도 동일한 raw 2프레임 확증 카운터 — 정지 근접도 Time-Gate·워밍업 우회하고 즉시 발령.
     //   effDanger ⊂ effWarning 이라 DANGER 거리도 자동 포함(fastDangerContact 상위호환). 단발 임펄스는 streak 1 에서 끊김.
     private val warningContactStreakMap = mutableMapOf<String, Int>()
+    // [v1.1.71 D-3B BUG-02] WARNING streak 미달 시 '단발 잡음 vs 진짜 이탈' 판단용 직전 medianValue/시각.
+    //   변화율(dBm/s)로 판단 — release_goldenTimeline(120ms·-1dBm/프레임≈-8.3dBm/s)은 임계보다
+    //   훨씬 가팔라 원래대로 즉시 리셋, 저속 잡음 접근(1000ms 간격 최대 ±1dBm/s)은 임계 미만이라
+    //   streak 를 보존한다(실측 근거는 WARNING_DEPART_RATE_DBM_PER_SEC 선언부 참고).
+    private val warningMissRefMap = mutableMapOf<String, Pair<Int, Long>>()
 
     // ── TTC 파라미터 ──────────────────────────────────────────────────
     // [v1.0.25 Req2] 현장 초민감 오발령 해결 — 8.0초 → 3.0초로 대폭 강화 (충돌 임박 시에만 선발령)
@@ -494,6 +499,12 @@ class BleService : LifecycleService() {
 
     // 상태 전환 파라미터 (RSSI 공간 기준)
     private val CPA_VEL_THRESHOLD             = 0.5   // CPA 판정 속도 임계 (dBm/s)
+    // [v1.1.71 D-3B BUG-02] WARNING streak 미달 시 '단발 잡음 vs 진짜 이탈' 판단 임계(dBm/s, 하강).
+    //   release_goldenTimeline 실측 하강률(120ms 간격 -1dBm/프레임 ≈ -8.3dBm/s)과 LowSpeedApproach
+    //   RegressionTest 실측 잡음 최대 하강률(1000ms 간격 median-of-3 통과 후 최대 -1dBm/프레임 =
+    //   -1.0dBm/s) 사이, 여유 3배 이상 지점인 3.0 채택 — release 는 임계 초과라 원래대로 즉시 리셋
+    //   (골든 무변화), 저속 잡음은 임계 미만이라 streak 보존.
+    private val WARNING_DEPART_RATE_DBM_PER_SEC = 3.0
     private val CROSSING_CONFIRM_MS           = 1500L // CROSSING → DEPARTING 확정 대기
     private val DEPARTING_REENTRY_COOLDOWN_MS = 5000L // DEPARTING 후 재진입 최소 대기
     // [판정 파라미터] DevSettings 라이브 읽기(기본 8 = 기존값)
@@ -1143,6 +1154,7 @@ class BleService : LifecycleService() {
                             rushFrameMap.remove(deviceId)     // [v1.0.45] 돌진 프레임 카운터 정리
                             dangerContactStreakMap.remove(deviceId)   // [v1.1.16 D] 첫접촉 DANGER 카운터 정리
                             warningContactStreakMap.remove(deviceId)  // [v1.1.18] 첫접촉 WARNING 카운터 정리
+                            warningMissRefMap.remove(deviceId)     // [v1.1.71] WARNING 미달 카운터 정리
                             lastKfVelMap.remove(deviceId)             // (v1.1.56 U3) 진짜 소실 — 재시드 스냅샷 폐기(웜 칼만 보존이 대체)
                             timeGateWaiveSet.remove(deviceId)         // [v1.1.58 fix4] 소실 시 미소비 면제권 회수
                             shadowFusionMap.remove(deviceId)          // (v1.1.40) 섀도우 융합 상태 정리
@@ -1615,6 +1627,7 @@ class BleService : LifecycleService() {
         if (uwbJudgeModeExclusive(deviceId, now)) {
             dangerContactStreakMap[deviceId] = 0
             warningContactStreakMap[deviceId] = 0
+            warningMissRefMap.remove(deviceId)
             return
         }
 
@@ -1628,9 +1641,26 @@ class BleService : LifecycleService() {
         dangerContactStreakMap[deviceId] = dangerStreak
         // [v1.1.18 → v1.1.22] WARNING 거리(effWarning)도 동일하게 medianValue 선행 기준 2프레임 확증(정지 근접 즉시 발령).
         //   effDanger ⊂ effWarning 이라 DANGER 거리도 자동 포함. median-of-3 가 단발 임펄스를 막아 streak 오발을 방지한다.
+        // [v1.1.71 D-3B BUG-02] WARNING streak 만 미달 시 변화율(dBm/s) 기준 즉시 리셋 여부를 가른다.
+        //   저속·잡음 섞인 접근은 medianValue 가 근접 문턱 언저리를 오르내리며 매 미달 프레임 즉시
+        //   0 으로 끊겨(원래 로직) 2프레임 연속 확증이 계속 지연된다(현장 미탐지 근본원인, must_haves
+        //   truth#3 "경고 등급 도달"이 대상) — 실측 잡음 하강률은 WARNING_DEPART_RATE_DBM_PER_SEC 미만이라
+        //   완만한 미달은 streak 를 보존(잡음 흡수)한다. release_goldenTimeline(D-3D)의 연속 하강은
+        //   실측 하강률이 임계를 훨씬 초과해 원래처럼 매 미달 프레임 즉시 0 — 골든 무변화.
+        //   DANGER streak(위)는 원래대로 유지 — effDanger ⊂ effWarning 상위호환 구조상 WARNING 만
+        //   완화해도 저속 접근의 최초 확증(경고 등급) 목표는 달성되며 DANGER 이탈측 즉시 억제 의미는 보존된다.
         val inWarningRaw = medianValue >= effWarning
-        val warningStreak = if (inWarningRaw) (warningContactStreakMap[deviceId] ?: 0) + 1 else 0
+        val (prevMedianForWarning, prevAtMsForWarning) = warningMissRefMap[deviceId] ?: (medianValue to now)
+        val warningStreak = when {
+            inWarningRaw -> (warningContactStreakMap[deviceId] ?: 0) + 1
+            else -> {
+                val dtSec = (now - prevAtMsForWarning).coerceAtLeast(1L) / 1000.0
+                val rateDbmPerSec = (medianValue - prevMedianForWarning) / dtSec
+                if (rateDbmPerSec <= -WARNING_DEPART_RATE_DBM_PER_SEC) 0 else (warningContactStreakMap[deviceId] ?: 0)
+            }
+        }
         warningContactStreakMap[deviceId] = warningStreak
+        warningMissRefMap[deviceId] = medianValue to now
         // (v1.1.40) 섀도우 이탈 추적 + effWarning 1프레임 캐시 — 부스트는 '직전 프레임' tracking 을
         //   읽으므로(위 median 직후 블록) 당 프레임 갱신은 다음 프레임부터 반영된다(설계 정합).
         if (sh != null) {
@@ -1709,6 +1739,7 @@ class BleService : LifecycleService() {
             rushFrameMap.remove(deviceId)     // [v1.0.45] 돌진 프레임 카운터 정리
             dangerContactStreakMap.remove(deviceId)   // [v1.1.16 D] 첫접촉 DANGER 카운터 정리
             warningContactStreakMap.remove(deviceId)  // [v1.1.18] 첫접촉 WARNING 카운터 정리
+            warningMissRefMap.remove(deviceId)     // [v1.1.71] WARNING 미달 카운터 정리
             kalmanFilters[deviceId]?.let { lastKfVelMap[deviceId] = LastKfVelState(it.estimatedVel, android.os.SystemClock.elapsedRealtime()) }   // (v1.1.56 U3) 재시드 캡처 (v1.1.57 시각 동봉)
             kalmanFilters.remove(deviceId)    // [v1.0.38 클린업] 미추적 기기 칼만 인스턴스 정리(stale 재등장 방지)
             shadowFusionMap.remove(deviceId)  // (v1.1.40) 섀도우 융합 상태 정리(미추적 기기)
@@ -2057,6 +2088,7 @@ class BleService : LifecycleService() {
                 rushFrameMap.remove(deviceId)     // [v1.0.45]
                 dangerContactStreakMap.remove(deviceId)   // [v1.1.16 D]
                 warningContactStreakMap.remove(deviceId)  // [v1.1.18]
+                warningMissRefMap.remove(deviceId)     // [v1.1.71]
                 lastKfVelMap[deviceId] = LastKfVelState(kf.estimatedVel, android.os.SystemClock.elapsedRealtime())   // (v1.1.56 U3) reset 전 이탈속도 캡처(재시드용, v1.1.57 시각 동봉)
                 kf.reset()
                 kalmanFilters.remove(deviceId)
@@ -2204,6 +2236,7 @@ class BleService : LifecycleService() {
                 rushFrameMap.remove(deviceId)     // [v1.0.45]
                 dangerContactStreakMap.remove(deviceId)   // [v1.1.16 D]
                 warningContactStreakMap.remove(deviceId)  // [v1.1.18]
+                warningMissRefMap.remove(deviceId)     // [v1.1.71]
                 kalmanFilters[deviceId]?.let { lastKfVelMap[deviceId] = LastKfVelState(it.estimatedVel, android.os.SystemClock.elapsedRealtime()) }   // (v1.1.56 U3) 재시드 캡처 (v1.1.57 시각 동봉)
                 kalmanFilters[deviceId]?.reset()
                 kalmanFilters.remove(deviceId)
@@ -2684,6 +2717,7 @@ class BleService : LifecycleService() {
                 rushFrameMap.remove(deviceId)
                 dangerContactStreakMap.remove(deviceId)
                 warningContactStreakMap.remove(deviceId)
+                warningMissRefMap.remove(deviceId)
                 kalmanFilters.remove(deviceId)
                 lastKfVelMap.remove(deviceId)   // (v1.1.56 U3) UWB 확증 SAFE — 재시드 불필요, 스냅샷 폐기
                 shadowFusionMap.remove(deviceId)
@@ -3648,6 +3682,7 @@ class BleService : LifecycleService() {
         rushFrameMap.clear()       // [v1.0.45]
         dangerContactStreakMap.clear()   // [v1.1.16 D]
         warningContactStreakMap.clear()  // [v1.1.18]
+        warningMissRefMap.clear()     // [v1.1.71]
         kalmanFilters.clear()
         lastKfVelMap.clear()             // (v1.1.56 U3) 재시드 스냅샷 일괄 정리
         filterPreserveMap.clear()        // [v1.1.58 fix4] 필터 보존 스냅샷 일괄 정리
