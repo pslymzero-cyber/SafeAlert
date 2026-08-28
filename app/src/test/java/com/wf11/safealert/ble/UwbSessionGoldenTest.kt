@@ -76,6 +76,11 @@ class UwbSessionGoldenTest {
         private const val STALE_OFFSET_MS = FRESH_WINDOW_MS + 500L
 
         private const val DEVICE_ID = BleConstants.DEVICE_PREFIX + "UWBTEST01"
+
+        // Task 3 다기기 시나리오용 — DEVICE_ID 와 같은 접두사, 알파벳순=정렬순=주입순이 되도록
+        // 번호만 늘린다(맵 순회 순서에 기대지 않기 위한 명시 정렬 대비).
+        private const val OTHER_DEVICE_ID = BleConstants.DEVICE_PREFIX + "UWBTEST02"
+        private const val THIRD_DEVICE_ID = BleConstants.DEVICE_PREFIX + "UWBTEST03"
     }
 
     // ── 헬퍼 ──────────────────────────────────────────────────────────────
@@ -176,6 +181,34 @@ class UwbSessionGoldenTest {
     ): String = "F%02d dist=%5.2f age=%5d case=%s level=%-6s demote=%d dS=%d wS=%d".format(
         frame, distM, sampleAgeMs, if (caseA) "A" else "B", levelName(level), demoteStreak, dangerStreak, warningStreak
     )
+
+    // ── Task 3 헬퍼 ──────────────────────────────────────────────────────
+
+    @Suppress("UNCHECKED_CAST")
+    private fun peerUwbSeenMapOf(service: BleService): MutableMap<String, Long> =
+        ReflectionHelpers.getField(service, "peerUwbSeenMap") as MutableMap<String, Long>
+
+    /**
+     * BLE 스캔 타임아웃 정리 블록(BleService.kt:1171-1174, 스캔 콜백 클로저 내부라 이름으로 직접
+     * 호출 불가)의 UWB 관련 부분만 그대로 재현한다. 그 4줄 그대로:
+     *   uwbRanger?.onDeviceLost(deviceId)
+     *   peerUwbSeenMap.remove(deviceId)
+     *   uwbSampleAtMsMap.remove(deviceId)
+     *   uwbSafeStreakMap.remove(deviceId)
+     * deviceCategoryMap/deviceStateMap(1166-1167행)은 UWB 전용 맵이 아니라 이 재현 대상에서
+     * 제외한다(action 지시 — 기억·추정 금지, BleService.kt 직독으로 확정한 목록).
+     * 나중에 프로덕션 정리 블록이 바뀌면 이 목록도 함께 맞춘다.
+     */
+    private fun replicateBleTimeoutBoundary(service: BleService, ranger: UwbRanger, id: String) {
+        ranger.onDeviceLost(id)
+        peerUwbSeenMapOf(service).remove(id)
+        uwbSampleAtMsMapOf(service).remove(id)
+        uwbSafeStreakMapOf(service).remove(id)
+    }
+
+    /** 다기기 프레임 시계열용 경량 행 — 이 축은 Case A/B 전환만 관측하면 충분하다(레벨은 Task 2 담당). */
+    private fun renderCaseLine(frame: Int, deviceId: String, caseA: Boolean): String =
+        "F%02d %s case=%s".format(frame, deviceId, if (caseA) "A" else "B")
 
     // ── Behavior 1: newRanger() 는 예외 없이 생성되고 세션 상태맵이 비어 있다 ──────────────
     @Test
@@ -378,5 +411,144 @@ class UwbSessionGoldenTest {
                 assertEquals(BleConstants.LEVEL_SAFE, level)
             }
         }
+    }
+
+    // ── Task 3 / Behavior 1: BLE 타임아웃 경계 재현 → Case B 강등. onDeviceLost 는 candidates 가
+    //    비어 있고(activeControllerId==null, rangingJob==null) 라이브 컨트롤러 분기 조건을 만족하지
+    //    않아 "그 외" 분기(dropServedLocked+reconcileLocked)를 타며 예외·행 없이 동기 반환한다
+    //    (UwbRanger.kt:226-245 직독 확인, D-4D 범위 밖인 코루틴 재시작 스케줄링은 건드리지 않는다).
+    @Test
+    fun behavior12_replicateBleTimeoutBoundary_demotesToCaseB() {
+        val service = newUwbGoldenService()
+        val ranger = newRanger()
+        injectRanger(service, ranger)
+        injectUwbSample(service, ranger, DEVICE_ID, 4.0f, T0_MS)
+        assertTrue(judgeMode(service, DEVICE_ID, T0_MS))
+
+        replicateBleTimeoutBoundary(service, ranger, DEVICE_ID)
+
+        assertFalse(judgeMode(service, DEVICE_ID, T0_MS))
+        // dropServedLocked(UwbRanger.kt:443-450)가 uwbDistances 엔트리도 걷어낸다 — 재현 대상이 맞다.
+        assertFalse(ranger.uwbDistances.containsKey(DEVICE_ID))
+    }
+
+    // ── Task 3 / Behavior 2: 강등 직후 같은 프레임에 신선 표본을 재주입하면 판정 공백 없이 즉시
+    //    Case A 로 복귀한다(프레임 간격을 하나도 소모하지 않는다).
+    @Test
+    fun behavior13_reinjectFreshSample_returnsToCaseAOnSameFrame() {
+        val service = newUwbGoldenService()
+        val ranger = newRanger()
+        injectRanger(service, ranger)
+        injectUwbSample(service, ranger, DEVICE_ID, 4.0f, T0_MS)
+        replicateBleTimeoutBoundary(service, ranger, DEVICE_ID)
+        assertFalse(judgeMode(service, DEVICE_ID, T0_MS))
+
+        val resumeAt = T0_MS + FRAME_DT_MS
+        injectUwbSample(service, ranger, DEVICE_ID, 4.0f, resumeAt)
+
+        assertTrue(judgeMode(service, DEVICE_ID, resumeAt))
+    }
+
+    // ── Task 3 / Behavior 3: 경계 재현은 대상 기기 하나만 건드리고 다른 기기의 판정/표본은
+    //    그대로 남긴다(맵을 통째로 비우는 실수가 없는지 증명).
+    @Test
+    fun behavior14_replicateBoundary_doesNotAffectOtherDevice() {
+        val service = newUwbGoldenService()
+        val ranger = newRanger()
+        injectRanger(service, ranger)
+        injectUwbSample(service, ranger, DEVICE_ID, 4.0f, T0_MS)
+        injectUwbSample(service, ranger, OTHER_DEVICE_ID, 4.0f, T0_MS)
+
+        replicateBleTimeoutBoundary(service, ranger, DEVICE_ID)
+
+        assertFalse(judgeMode(service, DEVICE_ID, T0_MS))
+        assertTrue(judgeMode(service, OTHER_DEVICE_ID, T0_MS))
+        assertEquals(4.0f, ranger.uwbDistances[OTHER_DEVICE_ID])
+        assertEquals(T0_MS, uwbSampleAtMsMapOf(service)[OTHER_DEVICE_ID])
+    }
+
+    // ── Task 3 / Behavior 4: 기기 3대 인터리브 — A 는 항상 신선, B 는 도중에 경계 재현으로 낡았다가
+    //    같은 프레임 재주입으로 복귀, C 는 표본을 한 번도 받지 않는다. 행 순서는 기기ID 정렬로
+    //    고정한다(맵 순회 순서에 기대지 않는다).
+    @Test
+    fun behavior15_threeDeviceInterleavedTimeline() {
+        val service = newUwbGoldenService()
+        val ranger = newRanger()
+        injectRanger(service, ranger)
+        val deviceIds = listOf(DEVICE_ID, OTHER_DEVICE_ID, THIRD_DEVICE_ID).sorted()
+
+        val timeline = StringBuilder()
+        fun recordFrame(frame: Int, now: Long) {
+            for (id in deviceIds) {
+                timeline.appendLine(renderCaseLine(frame, id, judgeMode(service, id, now)))
+            }
+        }
+
+        var now = T0_MS
+        injectUwbSample(service, ranger, DEVICE_ID, 4.0f, now)
+        injectUwbSample(service, ranger, OTHER_DEVICE_ID, 4.0f, now)
+        recordFrame(0, now)   // A: 신선 / B: 신선 / C: 표본없음
+
+        now = T0_MS + FRAME_DT_MS
+        injectUwbSample(service, ranger, DEVICE_ID, 4.0f, now)
+        replicateBleTimeoutBoundary(service, ranger, OTHER_DEVICE_ID)
+        recordFrame(1, now)   // A: 신선(재주입) / B: 경계 재현으로 강등 / C: 표본없음
+
+        now = T0_MS + FRAME_DT_MS * 2
+        injectUwbSample(service, ranger, DEVICE_ID, 4.0f, now)
+        injectUwbSample(service, ranger, OTHER_DEVICE_ID, 4.0f, now)
+        recordFrame(2, now)   // A: 신선(재주입) / B: 같은 프레임 즉시 복귀 / C: 표본없음
+
+        val expected = """
+            F00 $DEVICE_ID case=A
+            F00 $OTHER_DEVICE_ID case=A
+            F00 $THIRD_DEVICE_ID case=B
+            F01 $DEVICE_ID case=A
+            F01 $OTHER_DEVICE_ID case=B
+            F01 $THIRD_DEVICE_ID case=B
+            F02 $DEVICE_ID case=A
+            F02 $OTHER_DEVICE_ID case=A
+            F02 $THIRD_DEVICE_ID case=B
+        """.trimIndent()
+        assertEquals(expected, timeline.toString().trim())
+    }
+
+    // ── Task 3 / Behavior 5: 세션 상한(MAX_SESSION_DEVICES, UwbRanger.MULTICAST_MAX 와 손 동기화)
+    //    까지는 기기별 독립 판정만 증명한다. 상한 초과 시나리오 자체는 골든 대상이 아니다
+    //    (BUG-03 은 v2 로 이월 — 여기서는 런타임 거부 경로만 증명하고 초과 입력의 판정 결과는
+    //    쓰지 않는다).
+    @Test
+    fun behavior16_upToSessionCap_independentJudgment() {
+        val service = newUwbGoldenService()
+        val ranger = newRanger()
+        injectRanger(service, ranger)
+        val ids = (1..MAX_SESSION_DEVICES).map { BleConstants.DEVICE_PREFIX + "UWBCAP%02d".format(it) }
+
+        // 짝수 인덱스는 신선, 홀수 인덱스는 낡힌다 — 기기별 판정이 서로 무관함을 확인한다.
+        ids.forEachIndexed { idx, id ->
+            val sampleAt = if (idx % 2 == 0) T0_MS else T0_MS - STALE_OFFSET_MS
+            injectUwbSample(service, ranger, id, 4.0f, sampleAt)
+        }
+
+        ids.forEachIndexed { idx, id ->
+            val expectedCaseA = idx % 2 == 0
+            assertEquals(expectedCaseA, judgeMode(service, id, T0_MS))
+        }
+    }
+
+    // ── Task 3 / Behavior 5b: 상한 초과 기기 수는 런타임에 거부된다(BUG-03 v2 이월 — 초과 경로
+    //    자체를 골든으로 얼리지 않는다).
+    @Test
+    fun behavior16b_overSessionCap_rejectedAtRuntime() {
+        val overCapCount = MAX_SESSION_DEVICES + 1
+
+        val result = runCatching {
+            require(overCapCount <= MAX_SESSION_DEVICES) {
+                "상한($MAX_SESSION_DEVICES) 초과 기기 수($overCapCount) 는 골든 대상이 아니다 — BUG-03 v2 이월."
+            }
+        }
+
+        assertTrue(result.isFailure)
+        assertTrue(result.exceptionOrNull() is IllegalArgumentException)
     }
 }
