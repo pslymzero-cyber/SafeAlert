@@ -1,7 +1,7 @@
 ---
 phase: 02-golden
 verified: 2026-08-28T00:00:00Z
-status: verified
+status: human_needed
 score: 4/4 must-haves verified
 behavior_unverified: 0
 overrides_applied: 0
@@ -16,7 +16,7 @@ human_verification:
 
 **Phase Goal:** 경보 격상·해제 전 경로와 UWB 세션 전환의 현재 동작이 기대값으로 고정되고, 그 안전망이 저속 접근 WARNING 미도달 버그를 실제로 잡아낸다
 **Verified:** 2026-08-28
-**Status:** verified
+**Status:** human_needed (코드측 4/4 VERIFIED, 현장 관측 1건 미수행)
 **Re-verification:** Yes — 진실 2 gap 해소 후 재판정 (2026-08-28, red-trial 5차 실측)
 
 ## Goal Achievement
