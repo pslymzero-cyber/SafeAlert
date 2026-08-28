@@ -72,6 +72,9 @@ class UwbSessionGoldenTest {
         // 반드시 손수 동기화.
         private const val MAX_SESSION_DEVICES = 6
 
+        // 과거 오프셋(Task 2) — 신선 창(FRESH_WINDOW_MS)을 확실히 벗어나는 스테일 표본 시각을 만든다.
+        private const val STALE_OFFSET_MS = FRESH_WINDOW_MS + 500L
+
         private const val DEVICE_ID = BleConstants.DEVICE_PREFIX + "UWBTEST01"
     }
 
@@ -141,6 +144,39 @@ class UwbSessionGoldenTest {
         return service
     }
 
+    // ── Task 2 헬퍼 ──────────────────────────────────────────────────────
+
+    @Suppress("UNCHECKED_CAST")
+    private fun uwbSafeStreakMapOf(service: BleService): MutableMap<String, Int> =
+        ReflectionHelpers.getField(service, "uwbSafeStreakMap") as MutableMap<String, Int>
+
+    private fun levelName(level: Int?): String = when (level) {
+        null -> "NONE"
+        BleConstants.LEVEL_SAFE -> "SAFE"
+        BleConstants.LEVEL_WARNING -> "WARN"
+        BleConstants.LEVEL_DANGER -> "DANGER"
+        else -> "?"
+    }
+
+    /**
+     * 02-02 와 같은 형식 규율의 고정폭 1행 프레임 직렬화 — 값 하나가 틀리면 어느 프레임의 어느 열인지
+     * 눈으로 짚인다. frame=프레임 번호, distM=주입 거리, sampleAgeMs=표본 경과시간(now-sampleAt),
+     * caseA=Case A/B 판정, level=판정 후 등급, demoteStreak=격하 확증 카운터,
+     * dangerStreak/warningStreak=RSSI 경로 접촉 streak.
+     */
+    private fun renderUwbFrame(
+        frame: Int,
+        distM: Float,
+        sampleAgeMs: Long,
+        caseA: Boolean,
+        level: Int?,
+        demoteStreak: Int,
+        dangerStreak: Int,
+        warningStreak: Int
+    ): String = "F%02d dist=%5.2f age=%5d case=%s level=%-6s demote=%d dS=%d wS=%d".format(
+        frame, distM, sampleAgeMs, if (caseA) "A" else "B", levelName(level), demoteStreak, dangerStreak, warningStreak
+    )
+
     // ── Behavior 1: newRanger() 는 예외 없이 생성되고 세션 상태맵이 비어 있다 ──────────────
     @Test
     fun behavior1_rangerConstructsCleanly() {
@@ -199,5 +235,148 @@ class UwbSessionGoldenTest {
 
         val l4 = callJudgeUwbOnly(service, DEVICE_ID, 6.0f, T0_MS + FRAME_DT_MS * 3)
         assertEquals(BleConstants.LEVEL_SAFE, l4)
+    }
+
+    // ── Task 2 / Behavior 1: 신선 창 경계 3점 — 창-1/창/창+1 (BleService.kt:2560, `<=` 포함 비교) ──
+    // FRESH_WINDOW_MS 는 프로덕션 UWB_MEAS_FRESH_MS(BleService.kt:682, 1_000L)와 반드시 손수 동기화한다 —
+    // 반사로 따라가지 않고 두 값이 같아야 한다는 사실만 주석으로 못박는다(action 지시).
+    @Test
+    fun behavior6_freshnessBoundary_threePoints() {
+        val service = newUwbGoldenService()
+        val ranger = newRanger()
+        injectRanger(service, ranger)
+        val sampleAt = T0_MS
+        injectUwbSample(service, ranger, DEVICE_ID, 4.0f, sampleAt)
+
+        assertTrue(judgeMode(service, DEVICE_ID, sampleAt + FRESH_WINDOW_MS - 1))
+        assertTrue(judgeMode(service, DEVICE_ID, sampleAt + FRESH_WINDOW_MS))
+        assertFalse(judgeMode(service, DEVICE_ID, sampleAt + FRESH_WINDOW_MS + 1))
+    }
+
+    // ── Task 2 / Behavior 2: uwbSampleAtMsMap 항목 없음 → uwbDistances 만 있어도 Case B ──────
+    @Test
+    fun behavior7_missingSampleTimestamp_fallsBackToCaseB() {
+        val service = newUwbGoldenService()
+        val ranger = newRanger()
+        injectRanger(service, ranger)
+        ranger.uwbDistances[DEVICE_ID] = 4.0f  // uwbSampleAtMsMap 은 의도적으로 채우지 않는다.
+
+        assertFalse(judgeMode(service, DEVICE_ID, T0_MS))
+    }
+
+    // ── Task 2 / Behavior 3: uwbDistances 엔트리 제거 → 표본 시각이 신선해도 즉시 Case B ──────
+    // (BleService.kt:2545-2553 설계 사유: 종료 이벤트로 엔트리가 걷힌 페어의 스테일 timestamp 단독
+    //  잔존으로 인한 오판을 막는다 — uwbJudgeModeExclusive 는 containsKey 를 시각 비교보다 먼저 본다.)
+    @Test
+    fun behavior8_missingDistanceEntry_fallsBackToCaseBEvenWithFreshTimestamp() {
+        val service = newUwbGoldenService()
+        val ranger = newRanger()
+        injectRanger(service, ranger)
+        injectUwbSample(service, ranger, DEVICE_ID, 4.0f, T0_MS)
+        ranger.uwbDistances.remove(DEVICE_ID)  // uwbSampleAtMsMap 의 신선 timestamp 는 그대로 남긴다.
+
+        assertFalse(judgeMode(service, DEVICE_ID, T0_MS))
+    }
+
+    // ── Task 2 / Behavior 4: 낡은 표본 → processAlert 가 Case A 조기분기를 타지 않고 RSSI 경로가
+    //    실제로 등급을 결정한다(D-4A(a)(b)). Case A 라면 두 streak 는 영원히 0 으로 강제되고
+    //    alertLevelOf 는 영원히 null 이다(behavior3and4 대조). 낡은 표본은 그 강제를 우회한다.
+    @Test
+    fun behavior9_staleSample_rssiPathDecidesLevel() {
+        val service = newUwbGoldenService()
+        val ranger = newRanger()
+        injectRanger(service, ranger)
+        val staleSampleAt = T0_MS - STALE_OFFSET_MS
+        injectUwbSample(service, ranger, DEVICE_ID, 2.0f, staleSampleAt)
+
+        assertFalse(judgeMode(service, DEVICE_ID, T0_MS))  // Case A 미발동 확인 — 표본이 낡았다.
+
+        // 강한 RSSI(danger 임계 -55 보다 강한 -50) 프레임을 재생 — RSSI 경로가 실제로 등급을 기록한다.
+        BleServiceTestHarness.callProcessAlert(service, DEVICE_ID, rssi = -50, nowMs = T0_MS)
+        BleServiceTestHarness.callProcessAlert(service, DEVICE_ID, rssi = -50, nowMs = T0_MS + FRAME_DT_MS)
+        BleServiceTestHarness.callProcessAlert(service, DEVICE_ID, rssi = -50, nowMs = T0_MS + FRAME_DT_MS * 2)
+        BleServiceTestHarness.callProcessAlert(service, DEVICE_ID, rssi = -50, nowMs = T0_MS + FRAME_DT_MS * 3)
+
+        assertTrue(BleServiceTestHarness.alertLevelOf(service, DEVICE_ID) != null)
+    }
+
+    // ── Task 2 / Behavior 5 (계획에서 가장 중요한 항목): 위험 반경 안쪽 거리가 uwbDistances 에
+    //    남아 있고 표본 시각만 낡은 상태에서, 약한 RSSI 를 여러 프레임 재생해도 위험 등급이 나오지
+    //    않는다(D-4A(c) 좀비 DANGER 부재, 위협모델 T-02-13). 프레임 시계열을 기록·동결한다.
+    @Test
+    fun behavior10_staleNearDangerDistance_neverProducesZombieDanger() {
+        val service = newUwbGoldenService()
+        val ranger = newRanger()
+        injectRanger(service, ranger)
+        val staleSampleAt = T0_MS - STALE_OFFSET_MS
+        // uwbPairDangerMeters=3.0f(골든) 보다 확실히 안쪽인 1.5m — 낡지 않았다면 즉시 DANGER 감이다.
+        injectUwbSample(service, ranger, DEVICE_ID, 1.5f, staleSampleAt)
+        assertFalse(judgeMode(service, DEVICE_ID, T0_MS))  // Case A 미발동 확인.
+
+        val timeline = StringBuilder()
+        for (frame in 0..5) {
+            val now = T0_MS + FRAME_DT_MS * frame
+            // rssiWarning=-75(골든) 보다 뚜렷이 약한 -90 — 경고 임계에도 못 미치는 약한 신호.
+            BleServiceTestHarness.callProcessAlert(service, DEVICE_ID, rssi = -90, nowMs = now)
+            val level = BleServiceTestHarness.alertLevelOf(service, DEVICE_ID)
+            assertTrue(level == null || level < BleConstants.LEVEL_DANGER)
+            timeline.appendLine(
+                renderUwbFrame(
+                    frame = frame,
+                    distM = 1.5f,
+                    sampleAgeMs = now - staleSampleAt,
+                    caseA = false,
+                    level = level,
+                    demoteStreak = uwbSafeStreakMapOf(service)[DEVICE_ID] ?: 0,
+                    dangerStreak = dangerContactStreakMapOf(service)[DEVICE_ID] ?: 0,
+                    warningStreak = warningContactStreakMapOf(service)[DEVICE_ID] ?: 0
+                )
+            )
+        }
+
+        // record-then-freeze: 최초 실행 결과를 그대로 동결한다. 동결 후 값이 움직이면 고치지 말고 보고한다.
+        val expected = """
+            F00 dist= 1.50 age= 1500 case=B level=NONE   demote=0 dS=0 wS=0
+            F01 dist= 1.50 age= 1900 case=B level=NONE   demote=0 dS=0 wS=0
+            F02 dist= 1.50 age= 2300 case=B level=NONE   demote=0 dS=0 wS=0
+            F03 dist= 1.50 age= 2700 case=B level=NONE   demote=0 dS=0 wS=0
+            F04 dist= 1.50 age= 3100 case=B level=NONE   demote=0 dS=0 wS=0
+            F05 dist= 1.50 age= 3500 case=B level=NONE   demote=0 dS=0 wS=0
+
+        """.trimIndent()
+        assertEquals(expected.trim(), timeline.toString().trim())
+    }
+
+    // ── Task 2 / Behavior 6: Case A 상태에서 반경 밖 거리를 연속 주입 — 확증 임계(UWB_DEMOTE_STREAK=3,
+    //    BleService.kt:684) 미만 프레임에서는 이전 등급 유지, 임계 프레임에서 정확히 한 번 하강.
+    //    이탈 운동학 우회(uwbKinematics)를 주입하지 않아 확증 경로만 격리한다.
+    @Test
+    fun behavior11_confirmStreakDemotion_isolatedFromKinematicsBypass() {
+        val service = newUwbGoldenService()
+        val demoteStreak = 3 // UWB_DEMOTE_STREAK(BleService.kt:684) 손 동기화 — 반사로 읽지 않는다.
+
+        val timeline = StringBuilder()
+        val distances = listOf(2.0f, 6.0f, 6.0f, 6.0f)
+        for (frame in distances.indices) {
+            val now = T0_MS + FRAME_DT_MS * frame
+            val level = callJudgeUwbOnly(service, DEVICE_ID, distances[frame], now)
+            timeline.appendLine(
+                renderUwbFrame(
+                    frame = frame,
+                    distM = distances[frame],
+                    sampleAgeMs = 0,
+                    caseA = true,
+                    level = level,
+                    demoteStreak = uwbSafeStreakMapOf(service)[DEVICE_ID] ?: 0,
+                    dangerStreak = dangerContactStreakMapOf(service)[DEVICE_ID] ?: 0,
+                    warningStreak = warningContactStreakMapOf(service)[DEVICE_ID] ?: 0
+                )
+            )
+            if (frame < demoteStreak) {
+                assertEquals(BleConstants.LEVEL_DANGER, level)
+            } else {
+                assertEquals(BleConstants.LEVEL_SAFE, level)
+            }
+        }
     }
 }
