@@ -2,6 +2,7 @@ package com.wf11.safealert.support
 
 import android.content.Intent
 import com.wf11.safealert.ble.BleConstants
+import com.wf11.safealert.ble.KalmanFilter
 import com.wf11.safealert.service.BleService
 import com.wf11.safealert.utils.DevSettings
 import org.robolectric.Robolectric
@@ -76,6 +77,23 @@ object BleServiceTestHarness {
     }
 
     /**
+     * 02-02 시임(D-2E 발견) — KalmanFilter(app/.../02_ble/KalmanFilter.kt:29)는 생성 시
+     * nowMs 기본값(real System.currentTimeMillis())을 그대로 쓴다. BleService 의 두 생성 지점
+     * (getOrPut 콜드스타트 포함) 모두 nowMs 를 넘기지 않으므로, processAlert 자체에 주입하는
+     * 프레임 시각 seam 과 무관하게 실제 벽시계로 dt 를 계산해 kfVel 골든이 실행마다 흔들린다.
+     * production 코드는 그대로 두고, 테스트 하네스에서 매 콜 직후 "이번 콜에서 새로 생성된"
+     * KalmanFilter 인스턴스만 리플렉션으로 nowMs/lastTsMs 를 주입 시각에 정렬한다 — 최소한의
+     * 기계적 시임(STATE.md Blockers 경계) 이며 골든 자체가 나타내는 프레임 간격 산술과 정확히
+     * 일치시킬 뿐, 판정 로직/초기화 경로(injectWarmup 포함)는 손대지 않는다.
+     */
+    private var liveNowMs: Long = 0L
+    private val liveNowMsFn: () -> Long = { liveNowMs }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun kalmanFiltersFieldOf(service: BleService): MutableMap<String, KalmanFilter> =
+        ReflectionHelpers.getField(service, "kalmanFilters") as MutableMap<String, KalmanFilter>
+
+    /**
      * private fun processAlert(...) 리플렉션 호출 — production 시그니처 순서 그대로
      * (deviceId, rssi, remoteState, remoteTurn, payloadPresent, peerEchoRssi, nowMs).
      * nowMs 는 (02-01 D-2C) seam — 골든 테스트는 프레임 간격을 고정값으로 주입해
@@ -91,6 +109,10 @@ object BleServiceTestHarness {
         peerEchoRssi: Int = BleConstants.NO_ECHO_RSSI,
         nowMs: Long
     ) {
+        liveNowMs = nowMs
+        val kalmanFilters = kalmanFiltersFieldOf(service)
+        val alreadyPresent = kalmanFilters.containsKey(deviceId)
+
         ReflectionHelpers.callInstanceMethod<Any?>(
             service,
             "processAlert",
@@ -102,6 +124,13 @@ object BleServiceTestHarness {
             ClassParameter.from(Int::class.javaPrimitiveType, peerEchoRssi),
             ClassParameter.from(kotlin.jvm.functions.Function0::class.java) { nowMs }
         )
+
+        if (!alreadyPresent) {
+            kalmanFilters[deviceId]?.let { kf ->
+                ReflectionHelpers.setField(kf, "nowMs", liveNowMsFn)
+                ReflectionHelpers.setField(kf, "lastTsMs", liveNowMs)
+            }
+        }
     }
 
     /** private val alertState = mutableMapOf<String, Pair<Int, Long>>() (BleService.kt:384) 판독. */

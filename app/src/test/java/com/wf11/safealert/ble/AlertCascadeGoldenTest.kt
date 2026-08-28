@@ -205,6 +205,16 @@ class AlertCascadeGoldenTest {
      * 진입 frame=22(rssi=-73), DANGER 최초 진입 frame=39(rssi=-56). streak/hysteresis 게이트로
      * 인해 raw 임계 교차(rssiWarning=-75 @ i=20, rssiDanger=-55 @ i=40)보다 1~2프레임 지연 — 별도
      * 조정 불필요(SAFE/WARNING/DANGER 3단계 모두 관측, 단조 증가).
+     *
+     * 재동결(D-2E 근본원인 수정, 2026-08-28): KalmanFilter.update() 가 생성자 기본 nowMs
+     * (real System.currentTimeMillis())를 그대로 써서 dt 를 실제 벽시계로 계산 — processAlert 에
+     * 주입한 프레임 시각 seam 과 무관했다(BleServiceTestHarness.kt 참고). 실행마다 tight in-memory
+     * 루프의 real elapsed time 이 대개 50ms 미만이라 dt 가 coerceIn 하한 0.05s 로 대부분 바닥
+     * 고정되던 값이 최초 동결본(kfVel, 그리고 frame=40 entry 재진입 흔들림)에 섞여 있었다 —
+     * FRAME_DT_MS=120L(0.12s) 을 의도한 golden 이 아니었다. 하네스에 리플렉션 시임을 추가해
+     * 콜드스타트로 새로 생성된 KalmanFilter 인스턴스의 nowMs/lastTsMs 를 주입 시각에 정렬한 뒤
+     * (production 코드 무수정) 재구동·재동결 — kfVel 전 구간 값 변경 + frame=40/41 entry 가
+     * 4800→4680 로 안정화(재진입 흔들림 제거, 더 이상 관측 노이즈가 아님).
      */
     @Test
     fun escalation_goldenTimeline() {
@@ -213,6 +223,41 @@ class AlertCascadeGoldenTest {
         val actual = runScenario(service, CASCADE_DEVICE_ID, ESCALATION_RSSI, startFrame = 0)
         assertEquals("escalation 프레임 수 불일치", FRAMES, actual.first.size)
         assertScenario("escalation", actual, ESCALATION_GOLDEN, ESCALATION_KFVEL)
+    }
+
+    /**
+     * 02-02 Task 2 — 해제(DANGER→WARNING→SAFE) 골든, 격상 종단 상태에서 이어 재생(D-2E/D-2F/D-2G).
+     * record-then-freeze: [RELEASE_GOLDEN]/[RELEASE_KFVEL] 캡처 전까지는 CAPTURE PLACEHOLDER.
+     */
+    @Test
+    fun release_goldenTimeline() {
+        val service = BleServiceTestHarness.newService()
+        BleServiceTestHarness.resetBetweenTests(service)
+        val escalation = runScenario(service, CASCADE_DEVICE_ID, ESCALATION_RSSI, startFrame = 0)
+        assertScenario("escalation", escalation, ESCALATION_GOLDEN, ESCALATION_KFVEL)
+        val actual = runScenario(service, CASCADE_DEVICE_ID, RELEASE_RSSI, startFrame = FRAMES)
+        assertEquals("release 프레임 수 불일치", RELEASE_FRAMES, actual.first.size)
+        org.junit.Assert.fail(actual.first.joinToString("\n") + "\n---KFVEL---\n" + actual.second.joinToString(","))
+    }
+
+    /**
+     * 02-02 Task 2 — 동일 입력 재생 결정성 확인(acceptance: 격상+해제 전체를 두 번 재생해 완전 동일).
+     */
+    @Test
+    fun sameSequence_replaysIdentically() {
+        fun playFull(): Pair<Array<String>, DoubleArray> {
+            val service = BleServiceTestHarness.newService()
+            BleServiceTestHarness.resetBetweenTests(service)
+            val esc = runScenario(service, CASCADE_DEVICE_ID, ESCALATION_RSSI, startFrame = 0)
+            val rel = runScenario(service, CASCADE_DEVICE_ID, RELEASE_RSSI, startFrame = FRAMES)
+            return (esc.first + rel.first) to (esc.second + rel.second)
+        }
+        val run1 = playFull()
+        val run2 = playFull()
+        assertEquals("재생1·재생2 프레임 배열 불일치", run1.first.toList(), run2.first.toList())
+        for (i in run1.second.indices) {
+            assertEquals("재생1·재생2 kfVel[$i] 불일치", run1.second[i], run2.second[i], 1e-9)
+        }
     }
 }
 
@@ -229,6 +274,10 @@ private const val START_DBM = -95
 private const val STEP_DBM = 1
 private const val FRAMES = 42
 private val ESCALATION_RSSI = IntArray(FRAMES) { START_DBM + it * STEP_DBM }
+
+/** 02-02 Task 2 — 해제 램프: 격상 종단값에서 -1dBm/프레임 역방향(동결 전 조정 허용, plan Task 2 action). */
+private const val RELEASE_FRAMES = 48
+private val RELEASE_RSSI = IntArray(RELEASE_FRAMES) { ESCALATION_RSSI.last() - it }
 
 /** BleService.kt:384 private val alertState — Pair(level, entryMs) 판독은 하네스가 이미 제공. */
 /** BleService.kt:490-493 private enum TrackingState + trackingStateMap — 리플렉션 전용(private 타입이라 캐스트 없이 toString만 사용). */
@@ -344,8 +393,8 @@ private val ESCALATION_GOLDEN: Array<String> = arrayOf(
     "frame=037 rssi= -58 level=1 entry=2640 track=NONE        dangerStreak=0 warnStreak=17 fastStreak=1 bcast=1",
     "frame=038 rssi= -57 level=1 entry=2640 track=NONE        dangerStreak=0 warnStreak=18 fastStreak=1 bcast=1",
     "frame=039 rssi= -56 level=2 entry=4680 track=NONE        dangerStreak=0 warnStreak=19 fastStreak=1 bcast=2",
-    "frame=040 rssi= -55 level=2 entry=4800 track=NONE        dangerStreak=0 warnStreak=20 fastStreak=1 bcast=3",
-    "frame=041 rssi= -54 level=2 entry=4800 track=NONE        dangerStreak=1 warnStreak=21 fastStreak=1 bcast=3",
+    "frame=040 rssi= -55 level=2 entry=4680 track=NONE        dangerStreak=0 warnStreak=20 fastStreak=1 bcast=2",
+    "frame=041 rssi= -54 level=2 entry=4680 track=NONE        dangerStreak=1 warnStreak=21 fastStreak=1 bcast=2",
 )
 
 private val ESCALATION_KFVEL: DoubleArray = doubleArrayOf(
@@ -361,34 +410,34 @@ private val ESCALATION_KFVEL: DoubleArray = doubleArrayOf(
     0.0,
     0.0,
     0.0,
-    0.05587687358475123,
-    0.11022427520582992,
-    0.2653711245994943,
-    0.4134671140622066,
-    0.6961268610827964,
-    1.1183686685416458,
-    1.6766805158493008,
-    2.35920297351811,
-    3.1470275524759734,
-    4.945395885597652,
-    6.383725662083261,
-    7.622429745733774,
-    8.72991205744785,
-    9.737908013538185,
-    10.661910578645733,
-    11.510023680925396,
-    12.287161347475358,
-    12.99708958864605,
-    13.643374143205346,
-    14.229753456465565,
-    14.760216155761118,
-    15.238939999780293,
-    15.670180052543998,
-    16.058152568544713,
-    16.406936431116794,
-    16.72039980312967,
-    17.00215207268498,
-    17.255517640959045,
-    17.483526898589425,
-    17.688919774699848,
+    0.12639157844764148,
+    0.24224475207899904,
+    0.5562398915174208,
+    0.8066096526487592,
+    1.2431282992051726,
+    1.8044854006461972,
+    2.4258482204254355,
+    3.0535781272663263,
+    4.16475007211213,
+    4.8406269992439315,
+    5.332957473565471,
+    5.723714481429383,
+    6.047799729391954,
+    6.322992108418827,
+    6.559748101029502,
+    6.765007436263532,
+    6.943837298134349,
+    7.100196573329795,
+    7.237313846632162,
+    7.357887878267561,
+    7.464203916114533,
+    7.558208847965029,
+    7.641565242572638,
+    7.7156936519290005,
+    7.781807575476359,
+    7.840943201891307,
+    7.893985019290374,
+    7.941687939337548,
+    7.9846963918009815,
+    8.023560763714093,
 )
