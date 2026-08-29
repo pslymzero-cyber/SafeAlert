@@ -16,3 +16,6 @@ docs/presentation/assets/
 
 # skills CLI 설치 원본 (스킬 본문은 커밋하지 않는다 — skills-lock.json 으로 복원)
 .agents/
+
+# 웹 브리프 빌드 산출물 (build_page.js 로 재생성)
+docs/presentation/web/node_modules

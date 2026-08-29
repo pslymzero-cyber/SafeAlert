@@ -106,3 +106,26 @@ node docs/presentation/build_deck.js docs/presentation/SafeAlert_Executive_Brief
 - **Phase 3 종료 후** — 13·14장 코드 시각화(`BleService` 분해로 파일 구성·줄 수가 바뀐다).
   Phase 3 의 수용 게이트가 "동작 보존"이므로 기능·목적·확산 이점 장은 바뀌지 않는다
 - **Phase 5 종료 후** — 18장 하단 주석(다수 기기 밀집 성능 한계), 20장 해당 행
+
+## 웹페이지 버전
+
+`web/safealert-brief.html` — 같은 내용을 스크롤형 랜딩페이지로 낸 것. 아티팩트로 게시되어 링크로 공유할 수 있다.
+
+| 파일 | 역할 |
+|------|------|
+| `web/index.template.html` | 페이지 본문. 이미지 자리는 `__ASSET_*__` 자리표시자 |
+| `web/build_page.js` | 앱 리소스에서 자산을 만들어 data URI 로 인라인 (외부 요청 0건) |
+| `web/safealert-brief.html` | 빌드 결과 (약 0.43MB, 단일 파일) |
+
+```bash
+npm install sharp
+node docs/presentation/web/build_page.js docs/presentation/web/safealert-brief.html
+```
+
+### 설계 메모
+
+- **팔레트**: `.pptx` 와 동일하게 앱 `values/colors.xml` 토큰. 앱에 `values-night/` 가 없는 것과 같은 이유로 페이지도 단일 다크로 확정하고 배경·전경색을 명시적으로 칠한다
+- **서체**: 웹폰트를 쓰지 않는다. 한글 웹폰트는 서브셋이 어긋나면 글리프가 통째로 깨지고(실제로 빌드 중 재현됨), 사내 열람 환경에서는 시스템 고딕이 가장 안정적이다. 개성은 크기·굵기·자간으로 만든다
+- **줄바꿈**: `word-break: keep-all` — 한글을 음절이 아니라 어절 단위로 끊는다
+- **판정 반경 도식**: 15m / 8m / 5m / 3m 를 실제 비례 축척으로 그린 SVG. 장식이 아니라 계측 도면이다
+- **모션**: IntersectionObserver 진입 효과와 링·막대 드로잉만. `prefers-reduced-motion` 을 존중한다
