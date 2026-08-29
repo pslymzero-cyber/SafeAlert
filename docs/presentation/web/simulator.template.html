@@ -1,0 +1,96 @@
+<title>SafeAlert 근접 판정 시연</title>
+<style>
+  /* 팔레트는 앱 고정 다크(values/colors.xml, v1.1.65)를 그대로 쓴다. */
+  :root {
+    --ground: #0B1220; --surface: #141C2B; --surface-2: #1A2233; --veil: #141B2B;
+    --hairline: #24304A; --stroke: #56627A;
+    --ink: #F1F5F9; --ink-2: #C3CDDC; --ink-3: #8B98AC; --ink-4: #5D6B82;
+    --accent: #7DD3FC; --safe: #4ADE80; --warn: #FCD34D; --danger: #FB7185; --on-accent: #0B1220;
+    --sans: "Pretendard", "Malgun Gothic", "맑은 고딕", "Apple SD Gothic Neo", "Noto Sans KR",
+            system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, "D2Coding", monospace;
+    --r: 14px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--ground); color: var(--ink-2);
+    font-family: var(--sans); font-size: 16px; line-height: 1.7;
+    -webkit-font-smoothing: antialiased; word-break: keep-all; overflow-wrap: break-word;
+  }
+  h1, h2, h3 { color: var(--ink); font-weight: 600; margin: 0; line-height: 1.25; text-wrap: balance; }
+  p { margin: 0; }
+  img { display: block; max-width: 100%; height: auto; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
+  .shell { width: 100%; max-width: 1180px; margin-inline: auto; padding-inline: clamp(20px, 5vw, 48px); }
+  .label { font-family: var(--mono); font-size: 11px; font-weight: 500; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-4); }
+  .card { background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--r); padding: 22px; }
+
+  .top { padding: clamp(36px, 6vw, 64px) 0 clamp(24px, 3vw, 36px); }
+  .top h1 { font-size: clamp(26px, 3.6vw, 40px); letter-spacing: -0.03em; }
+  .top p { margin-top: 14px; color: var(--ink-3); max-width: 70ch; font-size: clamp(14px, 1.5vw, 16px); }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 600; color: var(--ink); margin-bottom: 18px; }
+  .brand i { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 4px rgba(125,211,252,.14); }
+
+  /* 폰 목업 */
+  .phone { position: relative; border-radius: 26px; overflow: hidden; border: 1px solid #000; background: #000; box-shadow: 0 30px 70px rgba(0,0,0,.5); }
+  .phone > img { width: 100%; height: auto; display: block; }
+  .phone-ui { position: absolute; inset: 0; padding: 14px 14px 22px; display: flex; flex-direction: column; gap: 9px; font-size: 11px; }
+  .ui-card { background: rgba(20,27,43,.9); border: 1px solid var(--hairline); border-radius: 12px; padding: 12px; backdrop-filter: blur(4px); }
+  .ui-row { display: flex; align-items: center; gap: 8px; }
+  .ui-row + .ui-row { margin-top: 8px; }
+  .ui-name { color: var(--ink); font-weight: 600; font-size: 11.5px; }
+  .ui-meta { font-family: var(--mono); font-size: 10px; color: var(--ink-3); }
+  .pill { font-family: var(--mono); font-size: 10px; font-weight: 600; padding: 3px 9px; border-radius: 999px; margin-left: auto; }
+  .ui-btn { text-align: center; padding: 9px 0; border-radius: 999px; font-size: 11.5px; font-weight: 600; }
+
+__SIM_CSS__
+
+  /* 규칙 설명 */
+  .rules { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin: clamp(32px, 5vw, 56px) 0 clamp(40px, 6vw, 72px); }
+  .rules h3 { font-size: 16px; }
+  .rules p { margin-top: 8px; font-size: 13.5px; color: var(--ink-3); }
+  .rules code { display: block; margin-top: 12px; font-family: var(--mono); font-size: 11px; color: var(--ink-4); }
+  .rules .sq { width: 12px; height: 12px; border-radius: 2px; display: inline-block; margin-right: 8px; vertical-align: 1px; }
+  @media (max-width: 860px) { .rules { grid-template-columns: 1fr; } }
+  .foot { padding-bottom: 48px; font-family: var(--mono); font-size: 11.5px; color: var(--ink-4); }
+</style>
+
+<div class="top">
+  <div class="shell">
+    <div class="brand"><i></i>SafeAlert</div>
+    <h1>지게차와 사람이 얼마나 가까워지면<br>무슨 일이 벌어지는가</h1>
+    <p>도면에서 상대를 끌거나 <b style="color:var(--ink-2)">접근 시작</b>을 누르면, 작업자가 보는 화면이 그대로 반응합니다.
+       판정 규칙은 앱 코드에 들어 있는 것을 그대로 씁니다.</p>
+  </div>
+</div>
+
+<div class="shell">
+__SIM_MARKUP__
+
+  <div class="rules">
+    <article class="card">
+      <h3><span class="sq" style="background:var(--danger)"></span>후진 · 하역 특수경보</h3>
+      <p>상대가 후진이나 고소작업 중이면 접근 속도와 방향을 따지지 않고 위험 거리에서 즉시 최고 등급으로 올립니다.
+         상대 상태를 <b style="color:var(--ink-2)">후진</b>으로 바꿔 보십시오.</p>
+      <code>BleService · 특수경보 분기</code>
+    </article>
+    <article class="card">
+      <h3><span class="sq" style="background:var(--danger)"></span>TTC 선발령</h3>
+      <p>경고 등급에서 빠르게 접근하면 위험 거리에 닿기 전에 먼저 울립니다. 충돌 예상 3초가 임계값입니다.
+         <b style="color:var(--ink-2)">접근 시작</b>으로 확인할 수 있습니다.</p>
+      <code>ttcThresholdSec = 3.0s · 뮤트 관통</code>
+    </article>
+    <article class="card">
+      <h3><span class="sq" style="background:var(--accent)"></span>양방향 협력 알림</h3>
+      <p>폰마다 송수신 감도가 달라 한쪽만 먼저 감지하는 일이 생깁니다. 상대가 보낸 위험도를 받아 내 등급을 끌어올립니다.
+         <b style="color:var(--ink-2)">내 단말 신호 약함</b>을 켜고 접근시켜 보십시오.</p>
+      <code>v1.1.14 협력 격상 · 격상 전용</code>
+    </article>
+  </div>
+
+  <p class="foot">SafeAlert v1.1.70 · 2026.08 · 전파 감쇠와 3단 필터는 시연을 위해 단순화했고, 신호 세기 값은 참고용 환산치입니다.</p>
+</div>
+
+<script>
+__SIM_JS__
+</script>

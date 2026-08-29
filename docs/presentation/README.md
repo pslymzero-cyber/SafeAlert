@@ -114,13 +114,17 @@ node docs/presentation/build_deck.js docs/presentation/SafeAlert_Executive_Brief
 
 | 파일 | 역할 |
 |------|------|
-| `web/index.template.html` | 페이지 본문. 이미지 자리는 `__ASSET_*__` 자리표시자 |
-| `web/build_page.js` | 앱 리소스에서 자산을 만들어 data URI 로 인라인 (외부 요청 0건) |
-| `web/safealert-brief.html` | 빌드 결과 (약 0.43MB, 단일 파일) |
+| `web/index.template.html` | 브리프 본문. 이미지 자리는 `__ASSET_*__`, 시뮬레이터 자리는 `__SIM_*__` |
+| `web/simulator.template.html` | 시뮬레이터만 담은 단독 페이지 |
+| `web/sim/sim.css` · `sim.html` · `sim.js` | 시뮬레이터 공용 파셜. 두 페이지가 같은 한 벌을 쓴다 |
+| `web/build_page.js` | 파셜을 끼우고 앱 리소스 자산을 data URI 로 인라인 (외부 요청 0건) |
+| `web/safealert-brief.html` | 브리프 빌드 결과 (약 0.47MB) |
+| `web/safealert-simulator.html` | 시뮬레이터 단독 빌드 결과 (약 0.13MB) |
 
 ```bash
 npm install sharp
-node docs/presentation/web/build_page.js docs/presentation/web/safealert-brief.html
+node docs/presentation/web/build_page.js
+# → safealert-brief.html + safealert-simulator.html 두 벌을 한 번에 생성
 ```
 
 ### 설계 메모
@@ -147,6 +151,16 @@ node docs/presentation/web/build_page.js docs/presentation/web/safealert-brief.h
 
 - 도면에서 상대를 끌거나 슬라이더를 움직이면 거리·신호세기·등급이 실시간으로 바뀐다
 - 역할 전환 / 중지 / 세이프존 진입 / 경보음 버튼이 실제로 동작한다
-- 판정 규칙은 앱 코드 그대로: 역할쌍 반경, 후진·하역 특수경보(`BleService`),
-  5초 체류 자동 뮤트(`DWELL_MUTE_MS`), 세이프존 3중 억제
+- 판정 규칙은 앱 코드 그대로다.
+
+| 규칙 | 출처 |
+|------|------|
+| 역할쌍 반경 (지게차 포함 15/8m, 그 외 5/3m) | `06_utils/DevSettings.kt:626-648` |
+| 후진 · 하역 특수경보 → 즉시 최고 등급 | `BleService.kt:1735-1745` |
+| TTC 선발령 (경고 등급 + 접근 중 + 충돌 예상 3초 이내 → 위험거리 전 발령, 뮤트 관통) | `BleService.kt:2264-2290`, `DevSettings.DEFAULT_TTC_THRESHOLD_SEC = 3.0` |
+| 양방향 협력 알림 (상대 RISK 송출 > 내 등급 + 내 신호도 경고권이면 격상, 격하 없음) | `BleService.kt:1836-1874` (v1.1.14, `coopSlackDb` 완화 포함) |
+| 5초 체류 자동 뮤트 (소리 · 진동만, 표시 · 기록 유지) | `BleService.kt:222` `DWELL_MUTE_MS` |
+| 세이프존 3중 억제 + 상대에게 안전 선언 | `BleService.kt:243-245, 574-581`, `BleAdvertiser.kt:426-435` |
+
+- 단독 페이지는 브리프와 팔레트 토큰을 각자 들고 있다. 두 벌 모두 `values/colors.xml` 에서 왔고, 앱 팔레트가 바뀌면 두 곳을 함께 고친다
 - 전파 감쇠와 3단 필터는 시연을 위해 단순화했고, 페이지에 그 사실을 명시한다

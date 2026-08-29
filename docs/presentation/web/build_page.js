@@ -76,12 +76,22 @@ async function photo(src, w, h, o = {}) {
     A[key] = await icon(file);
   }
 
-  let html = fs.readFileSync(path.join(__dirname, "index.template.html"), "utf8");
-  const missing = [];
-  html = html.replace(/__ASSET_([A-Z_]+)__/g, (_, k) => { if (!A[k]) { missing.push(k); return ""; } return A[k]; });
-  if (missing.length) throw new Error("자리표시자에 대응하는 자산 없음: " + [...new Set(missing)].join(", "));
+  // 시뮬레이터는 브리프와 단독 페이지가 함께 쓴다. 한 벌만 두고 빌드 때 끼워 넣는다.
+  const partial = (f) => fs.readFileSync(path.join(__dirname, "sim", f), "utf8").replace(/\s+$/, "");
+  const SIM = { CSS: partial("sim.css"), MARKUP: partial("sim.html"), JS: partial("sim.js") };
 
-  const out = process.argv[2] || path.join(__dirname, "safealert-brief.html");
-  fs.writeFileSync(out, html);
-  console.log(`wrote ${out}  (${(Buffer.byteLength(html) / 1024 / 1024).toFixed(2)} MB, 자산 ${Object.keys(A).length}종)`);
+  function build(templateFile, outFile) {
+    let html = fs.readFileSync(path.join(__dirname, templateFile), "utf8");
+    html = html.replace(/__SIM_(CSS|MARKUP|JS)__/g, (_, k) => SIM[k]);
+    const missing = [];
+    html = html.replace(/__ASSET_([A-Z_]+)__/g, (_, k) => { if (!A[k]) { missing.push(k); return ""; } return A[k]; });
+    if (missing.length) throw new Error(`${templateFile}: 자리표시자에 대응하는 자산 없음 — ` + [...new Set(missing)].join(", "));
+    if (/__(SIM|ASSET)_/.test(html)) throw new Error(`${templateFile}: 치환되지 않은 자리표시자가 남았다`);
+    fs.writeFileSync(outFile, html);
+    console.log(`wrote ${outFile}  (${(Buffer.byteLength(html) / 1024 / 1024).toFixed(2)} MB)`);
+  }
+
+  build("index.template.html", process.argv[2] || path.join(__dirname, "safealert-brief.html"));
+  build("simulator.template.html", process.argv[3] || path.join(__dirname, "safealert-simulator.html"));
+  console.log(`자산 ${Object.keys(A).length}종 인라인`);
 })();
