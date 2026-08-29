@@ -46,7 +46,7 @@
   h1, h2, h3, h4 { color: var(--ink); font-weight: 600; text-wrap: balance; margin: 0; line-height: 1.25; }
   p { margin: 0; }
   a { color: inherit; }
-  img { display: block; max-width: 100%; }
+  img { display: block; max-width: 100%; height: auto; }
   ul { margin: 0; padding: 0; list-style: none; }
   :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
 
@@ -153,13 +153,14 @@
   /* ── 제품 화면 ───────────────────────────────────────────── */
   .product { display: grid; grid-template-columns: minmax(0, 300px) minmax(0, 1fr); gap: clamp(28px, 5vw, 64px); align-items: start; }
   .phone { position: relative; border-radius: 26px; overflow: hidden; border: 1px solid #000; background: #000; box-shadow: 0 30px 70px rgba(0,0,0,.5); }
-  .phone > img { width: 100%; display: block; }
-  .phone-ui { position: absolute; inset: 0; padding: 14px; display: flex; flex-direction: column; gap: 9px; font-size: 11px; }
+  .phone > img { width: 100%; height: auto; display: block; }
+  .phone-ui { position: absolute; inset: 0; padding: 14px 14px 22px; display: flex; flex-direction: column; gap: 9px; font-size: 11px; }
   .ui-card { background: rgba(20,27,43,.9); border: 1px solid var(--hairline); border-radius: 12px; padding: 12px; backdrop-filter: blur(4px); }
   .ui-row { display: flex; align-items: center; gap: 8px; }
   .ui-row + .ui-row { margin-top: 8px; }
   .ui-name { color: var(--ink); font-weight: 600; font-size: 11.5px; }
   .ui-meta { font-family: var(--mono); font-size: 10px; color: var(--ink-3); }
+  .ui-btn { text-align: center; padding: 9px 0; border-radius: 999px; font-size: 11.5px; font-weight: 600; }
   .pill { font-family: var(--mono); font-size: 10px; font-weight: 600; padding: 3px 9px; border-radius: 999px; margin-left: auto; }
   .steps-note { display: grid; gap: 18px; }
   .steps-note li { display: grid; grid-template-columns: 30px 1fr; gap: 16px; align-items: start; }
@@ -452,7 +453,7 @@
             </div>
             <div class="ui-meta" style="margin-top:10px">전진 주행, 6 km/h</div>
           </div>
-          <div class="ui-card" style="flex:1">
+          <div class="ui-card">
             <div class="ui-meta" style="color:var(--danger)">수신 타겟</div>
             <div class="ui-row" style="margin-top:10px">
               <span style="width:7px;height:7px;border-radius:2px;background:var(--danger);display:inline-block"></span>
@@ -469,6 +470,10 @@
               <div><div class="ui-name">보행자 C</div><div class="ui-meta">-84 dBm, 18 m</div></div>
               <span class="pill" style="background:var(--safe);color:var(--on-accent)">안전</span>
             </div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:auto">
+            <span class="ui-btn" style="border:1px solid var(--stroke);color:var(--ink);background:rgba(20,27,43,.86)">역할 전환</span>
+            <span class="ui-btn" style="background:var(--danger);color:var(--on-accent)">중지</span>
           </div>
         </div>
       </div>
