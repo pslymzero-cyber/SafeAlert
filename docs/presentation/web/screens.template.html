@@ -1,0 +1,47 @@
+<title>SafeAlert 앱 화면</title>
+<style>
+  :root {
+    --ground: #0B1220; --surface: #141C2B; --surface-2: #1A2233; --veil: #141B2B;
+    --hairline: #24304A; --stroke: #56627A;
+    --ink: #F1F5F9; --ink-2: #C3CDDC; --ink-3: #8B98AC; --ink-4: #5D6B82;
+    --accent: #7DD3FC; --safe: #4ADE80; --warn: #FCD34D; --danger: #FB7185; --on-accent: #0B1220;
+    --sans: "Pretendard", "Malgun Gothic", "맑은 고딕", "Apple SD Gothic Neo", "Noto Sans KR",
+            system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, "D2Coding", monospace;
+    --r: 14px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--ground); color: var(--ink-2); font-family: var(--sans);
+    font-size: 16px; line-height: 1.7; -webkit-font-smoothing: antialiased; word-break: keep-all;
+    display: grid; place-items: center; min-height: 100vh; padding: clamp(28px, 5vw, 64px) 20px;
+  }
+  img { display: block; max-width: 100%; height: auto; }
+  .phone { position: relative; border-radius: 26px; overflow: hidden; border: 1px solid #000; background: #000; box-shadow: 0 30px 70px rgba(0,0,0,.5); }
+  .phone > img { width: 100%; height: auto; display: block; }
+  .phone-ui { position: absolute; inset: 0; padding: 14px 14px 22px; display: flex; flex-direction: column; gap: 9px; font-size: 11px; }
+  .ui-card { background: rgba(20,27,43,.9); border: 1px solid var(--hairline); border-radius: 12px; padding: 12px; backdrop-filter: blur(4px); }
+  .ui-row { display: flex; align-items: center; gap: 8px; }
+  .ui-row + .ui-row { margin-top: 8px; }
+  .ui-name { color: var(--ink); font-weight: 600; font-size: 11.5px; }
+  .ui-meta { font-family: var(--mono); font-size: 10px; color: var(--ink-3); }
+  .pill { font-family: var(--mono); font-size: 10px; font-weight: 600; padding: 3px 9px; border-radius: 999px; margin-left: auto; }
+  .ui-btn { text-align: center; padding: 9px 0; border-radius: 999px; font-size: 11.5px; font-weight: 600; }
+  .inds { display: flex; gap: 8px; margin-top: 12px; }
+  .ind { flex: 1; text-align: center; font-size: 11.5px; padding: 8px 0; border-radius: 8px; background: var(--surface-2); color: var(--ink-4); }
+  .sidebar-ov { position: absolute; right: 0; top: 30%; width: 58%; padding: 10px; border-radius: 10px 0 0 10px;
+    background: rgba(20,27,43,.95); border: 1px solid var(--hairline); border-right: 0; font-size: 10.5px; }
+
+__SIM_CSS__
+</style>
+
+<div class="screens">
+  <figure>
+__RUNNING__
+    <figcaption>동작 화면</figcaption>
+  </figure>
+  <figure>
+__SETTINGS__
+    <figcaption>설정 화면</figcaption>
+  </figure>
+</div>

@@ -3,6 +3,9 @@
 const P = require("pptxgenjs");
 const path = require("path");
 const A = (n) => path.join(__dirname, "assets", n + ".png");
+const fs = require("fs");
+// 동영상 표지(첫 화면). addMedia 의 cover 는 base64 데이터 URI 만 받는다.
+const POSTER = "data:image/jpeg;base64," + fs.readFileSync(path.join(__dirname, "web", "sim-poster.jpg")).toString("base64");
 
 const C = {
   bg: "0B1220", surface: "1A2233", alt: "161D2B", veil: "141B2B", tintA: "12202E", tintS: "0F1E1A",
@@ -366,6 +369,37 @@ function strip(s, y, text, color, h) {
   strip(s, 5.66, "오경보가 잦으면 작업자가 시스템을 끈다. 끄지 않게 만드는 것이 안전의 전제다.", C.safe, 0.82);
   footer(s);
   s.addNotes("세이프존은 v1.1.62 에 들어가 v1.1.65~66 에서 '전면 억제'로 강화됐고, 체류 자동 뮤트는 v1.1.61 이다. 두 기능 모두 알람 피로(alarm fatigue) 대책이며, 확산 국면에서 가장 중요한 수용성 요소다.");
+}
+
+/* ══════ 9.5 앱 화면 2종 ══════ */
+{
+  const s = slide();
+  head(s, "화면", "동작 화면과 설정 화면", null);
+  const cw = 4.3, gap = 0.55, cx0 = (W - cw * 2 - gap) / 2, cy0 = 1.8, ch = 5.1;
+  const ph = 4.25, pw = ph * (300 / 624);   // render_screens.js 가 굽는 목업의 실제 종횡비
+  [["동작 화면", "screen_running"], ["설정 화면", "screen_settings"]].forEach(([label, img], i) => {
+    const x = cx0 + i * (cw + gap);
+    card(s, x, cy0, cw, ch, { fill: C.alt, shadow: { opacity: 0.24 } });
+    const ix = x + (cw - pw) / 2;
+    s.addShape(pres.ShapeType.roundRect, { x: ix - 0.05, y: 2.0, w: pw + 0.1, h: ph + 0.1, fill: { color: "000000" }, rectRadius: 0.15, shadow: sh({ blur: 26, opacity: 0.6 }) });
+    s.addImage({ path: A(img), x: ix, y: 2.05, w: pw, h: ph });
+    txt(s, label, { x, y: cy0 + ch - 0.62, w: cw, h: 0.32, fontSize: 14, bold: true, color: C.t2, align: "center", valign: "middle" });
+  });
+  footer(s);
+  s.addNotes("설명 없이 화면만 보여주는 슬라이드다. 왼쪽은 위험 판정이 뜬 순간의 메인 화면, 오른쪽은 현장별 조건을 맞추는 BLE 설정 화면이다. 두 이미지는 web/render_screens.js 로 앱 화면 목업에서 굽는다.");
+}
+
+/* ══════ 9.6 시뮬레이터 데모 ══════ */
+{
+  const s = slide();
+  head(s, "시연", "판정 시뮬레이터", "재생하면 TTC 선발령 · 협력 격상 · 후진 특수경보 · 세이프존 억제가 차례로 재현된다");
+  const vw = 8.8, vh = vw * (948 / 1686), vx = (W - vw) / 2, vy = 1.95;   // record_demo.js 산출물의 16:9
+  s.addShape(pres.ShapeType.roundRect, { x: vx - 0.06, y: vy - 0.06, w: vw + 0.12, h: vh + 0.12, fill: { color: "000000" }, rectRadius: 0.14, shadow: sh({ blur: 26, opacity: 0.55 }) });
+  // 슬라이드쇼에서 재생되는 실제 동영상이다. 표지는 TTC 선제경보가 뜬 프레임(5초 지점).
+  s.addMedia({ type: "video", path: path.join(__dirname, "web", "safealert-sim.mp4"), cover: POSTER, x: vx, y: vy, w: vw, h: vh });
+  footer(s);
+  txt(s, "직접 조작:  web/safealert-simulator.html", { x: W - M - 5.5, y: H - 0.44, w: 4.5, h: 0.26, fontSize: 9, color: C.t3, align: "right", valign: "middle" });
+  s.addNotes("영상은 웹 시뮬레이터를 그대로 녹화한 것이다(26초, 무음). 파워포인트 슬라이드쇼에서 재생 버튼을 누르면 재생된다 — 인터넷 연결이 없어도 파일 안에 들어 있다. 실시간 조작이 필요하면 옆의 웹 시뮬레이터를 브라우저로 연다.");
 }
 
 /* ══════ 10. 챕터 02 ══════ */

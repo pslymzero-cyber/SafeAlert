@@ -45,6 +45,8 @@
 | 8 | 역할 조합별 판정 반경 (실제 비례 축척) |
 | 8.5 | 설정 — 사업장별로 조정하는 것 |
 | 9 | 세이프존 · 자동 뮤트 (오경보 대책) |
+| 9.5 | 동작 화면 · 설정 화면 (설명 없이 화면만) |
+| 9.6 | 판정 시뮬레이터 — 슬라이드 안에서 재생되는 시연 영상 |
 | **10** | **챕터 02 — 어떻게 동작하는가** |
 | 11 | 동작 원리 5단계 (코드 시각화) |
 | 12 | 1바이트 프로토콜 비트 레이아웃 (코드 시각화) |
@@ -95,10 +97,17 @@
 ## 재생성
 
 ```bash
-npm install pptxgenjs sharp
-node docs/presentation/build_assets.js     # 앱 리소스 → docs/presentation/assets/ (gitignore)
+npm install pptxgenjs sharp playwright        # 화면 PNG · 시연 영상 굽기에 playwright 와 ffmpeg 이 필요하다
+node docs/presentation/build_assets.js        # 앱 리소스 → docs/presentation/assets/ (gitignore)
+node docs/presentation/web/build_page.js      # 화면 목업 페이지를 먼저 만든다
+node docs/presentation/web/render_screens.js  # → assets/screen_running.png · screen_settings.png · web/screens.png
+node docs/presentation/web/record_demo.js     # → web/safealert-sim.mp4 · web/sim-poster.jpg (이미 있으면 건너뛰어도 된다)
 node docs/presentation/build_deck.js docs/presentation/SafeAlert_Executive_Brief_v1.1.70.pptx
 ```
+
+9.5 · 9.6 장은 위 두 스크립트의 산출물을 쓴다. `screen_*.png` 는 `assets/`(gitignore) 로,
+`safealert-sim.mp4` 와 `sim-poster.jpg` 는 커밋되는 `web/` 로 들어간다 — 영상은 굽는 데 30초쯤 걸리고
+결과가 결정적이지 않아서(브라우저 렌더 타이밍) 산출물을 저장소에 남긴다.
 
 ## 갱신이 필요한 시점
 
@@ -120,11 +129,15 @@ node docs/presentation/build_deck.js docs/presentation/SafeAlert_Executive_Brief
 | `web/build_page.js` | 파셜을 끼우고 앱 리소스 자산을 data URI 로 인라인 (외부 요청 0건) |
 | `web/safealert-brief.html` | 브리프 빌드 결과 (약 0.47MB) |
 | `web/safealert-simulator.html` | 시뮬레이터 단독 빌드 결과 (약 0.13MB) |
+| `web/screens.template.html` · `sim/running.html` · `sim/settings.html` | 동작 · 설정 화면 목업. 설명 없이 두 화면만 가로로 놓는다 |
+| `web/safealert-screens.html` | 화면 두 벌 빌드 결과 (약 0.17MB) |
+| `web/render_screens.js` | 화면 목업 → PNG (`web/screens.png`, `assets/screen_*.png`) |
+| `web/record_demo.js` | 시뮬레이터 시연 녹화 → `web/safealert-sim.mp4` · `web/sim-poster.jpg` |
 
 ```bash
 npm install sharp
 node docs/presentation/web/build_page.js
-# → safealert-brief.html + safealert-simulator.html 두 벌을 한 번에 생성
+# → safealert-brief.html + safealert-simulator.html + safealert-screens.html 세 벌을 한 번에 생성
 ```
 
 ### 설계 메모
@@ -144,6 +157,22 @@ node docs/presentation/web/build_page.js
   판정 반경(15/8/5/3m) · 필터 강도 · 신호세기 임계 · 경보 볼륨 · 사업장 코드(보정 프로파일) ·
   에코편차 자동보정 · 비콘 수신 강도 · 조기경보 오프셋 · UWB 사용 · 거리 표시 방식.
   세부 항목은 개발자 설정(7탭 게이트)에 잠겨 있다
+
+## 화면 목업과 시연 영상
+
+`.pptx` 9.5 · 9.6 장의 재료다. 둘 다 웹에서 굽는다 — 덱과 웹페이지가 같은 마크업 한 벌을 쓴다.
+
+- **동작 화면**은 앱과 같이 역할별 배경 사진 위에 반투명 카드를 얹는다
+  (`activity_main.xml` 의 `iv_role_background` + `shape_bg_scrim`).
+  소리 · 진동 · 화면 표시등 줄은 시뮬레이터의 계측 장치라서 정적 화면에서는 뺀다 — 앱에 없는 UI 다
+- **설정 화면**은 배경 사진 없이 단색이다 (`activity_ble_settings.xml` 은 `@color/sa_bg`)
+- **시연 영상**은 시뮬레이터를 그대로 녹화한 26초 무음 H.264 (1686×948, 16:9).
+  좌우 여백을 앱 배경색 `#0B1220` 으로 채워 슬라이드 배경과 이음매가 보이지 않게 한다.
+  `addMedia({ type: "video", cover })` 로 파일 안에 넣으므로 인터넷 없이 슬라이드쇼에서 재생된다
+
+파워포인트에 **살아 있는 웹페이지**를 넣는 방법(Web Viewer 추가 기능)은 인터넷 연결 · https 주소 ·
+추가 기능 설치 권한을 모두 요구하고 사내 정책에서 막히는 경우가 많다. 그래서 덱에는 영상을 심고,
+실시간 조작이 필요하면 `web/safealert-simulator.html` 을 브라우저로 여는 것을 기본 경로로 둔다.
 
 ## 웹 시뮬레이터
 
