@@ -10,3 +10,6 @@
 local.properties
 app/build/
 app/google-services.json
+
+# 덱 이미지 자산 — build_assets.js 로 앱 리소스에서 재생성한다
+docs/presentation/assets/
