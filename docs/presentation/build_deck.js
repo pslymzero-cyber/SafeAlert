@@ -69,7 +69,7 @@ function strip(s, y, text, color, h) {
   txt(s, "물류 현장 근접 경보 시스템", { x: M, y: 2.1, w: 5.6, h: 0.32, fontSize: 13, bold: true, color: C.accent, charSpacing: 3 });
   txt(s, "SafeAlert", { x: M, y: 2.46, w: 6.0, h: 1.2, fontSize: 64, bold: true, color: C.t1, fontFace: HEAD });
   s.addShape(pres.ShapeType.line, { x: M, y: 3.86, w: 1.6, h: 0, line: { color: C.accent, width: 3 } });
-  txt(s, "지게차 · EPJ · 보행자가\n서로를 감지한다.", { x: M, y: 4.12, w: 5.6, h: 1.0, fontSize: 23, bold: true, color: C.t2, lineSpacing: 34 });
+  txt(s, "지게차와 보행자가\n서로를 감지한다.", { x: M, y: 4.12, w: 5.6, h: 1.0, fontSize: 23, bold: true, color: C.t2, lineSpacing: 34 });
   txt(s, "v1.1.70   ·   3개월간 70회 이상 릴리스   ·   현장 운영 중", { x: M, y: 5.6, w: 5.7, h: 0.3, fontSize: 12, color: C.t3 });
   txt(s, "2026. 08.", { x: M, y: 5.94, w: 5.7, h: 0.3, fontSize: 12, color: "56637C" });
   s.addNotes("보고 목적: 현장에서 운영 중인 SafeAlert 의 기능과 목적, 확산 시 이점을 공유하고 파일럿 확대 여부에 대한 결정을 요청한다. 표지는 앱 스플래시 화면 원본이다.");
@@ -82,18 +82,20 @@ function strip(s, y, text, color, h) {
   const stats = [["70+", "릴리스", "3개월간 현장 운영", C.accent], ["0", "추가 인프라", "앵커 · 배선 · 서버 없음", C.safe],
                  ["3", "경보 등급", "안전 · 경고 · 위험", C.warn], ["1 / 5", "구조 개선", "신뢰성 로드맵 진행", C.danger]];
   const cw = (W - M * 2) / 4;
+  s.addShape(pres.ShapeType.line, { x: M, y: 1.68, w: W - M * 2, h: 0, line: { color: C.hair, width: 1 } });
   stats.forEach(([big, lbl, sub, col], i) => {
-    const x = M + i * cw;
-    if (i > 0) s.addShape(pres.ShapeType.line, { x, y: 1.86, w: 0, h: 1.5, line: { color: C.hair, width: 1 } });
-    txt(s, big, { x: x + (i ? 0.4 : 0), y: 1.78, w: cw - 0.4, h: 1.0, fontSize: 62, bold: true, color: col, fontFace: HEAD });
-    txt(s, lbl, { x: x + (i ? 0.4 : 0), y: 2.82, w: cw - 0.4, h: 0.3, fontSize: 15, bold: true, color: C.t1 });
-    txt(s, sub, { x: x + (i ? 0.4 : 0), y: 3.12, w: cw - 0.4, h: 0.3, fontSize: 11.5, color: C.t3 });
+    const x = M + i * cw, pad = i ? 0.44 : 0;
+    if (i > 0) s.addShape(pres.ShapeType.line, { x, y: 1.88, w: 0, h: 1.46, line: { color: C.hair, width: 1 } });
+    txt(s, big, { x: x + pad, y: 1.86, w: cw - pad - 0.2, h: 1.0, fontSize: 58, bold: true, color: col, fontFace: HEAD });
+    txt(s, lbl, { x: x + pad, y: 2.86, w: cw - pad - 0.2, h: 0.3, fontSize: 15, bold: true, color: C.t1 });
+    txt(s, sub, { x: x + pad, y: 3.16, w: cw - pad - 0.2, h: 0.3, fontSize: 11.5, color: C.t3 });
   });
+  s.addShape(pres.ShapeType.line, { x: M, y: 3.54, w: W - M * 2, h: 0, line: { color: C.hair, width: 1 } });
   const rows = [["무엇을 하는가", "앱이 설치된 기기끼리 신호를 직접 주고받아, 위험 거리에 들어오면 소리 · 진동 · 화면으로 알린다", C.accent],
                 ["왜 하는가", "3m 렉 사이 통로와 단독 작업 구간에서 서로를 육안으로 확인할 수 없다. 사각지대를 시스템이 메운다", C.accent],
                 ["지금 하는 일", "신규 기능이 아니라 '같은 상황에서 같은 판정'을 보장하는 구조 개선. 5단계 중 1단계 완료", C.warn],
                 ["확산하면", "단말이 늘수록 감지 범위가 인프라 비용 없이 넓어진다. n대 → 상호 감지쌍 n(n-1)/2", C.safe]];
-  let y = 3.74;
+  let y = 3.78;
   rows.forEach(([k, v, col]) => {
     card(s, M, y, W - M * 2, 0.72, { fill: C.alt, shadow: { opacity: 0.22 } });
     sq(s, M + 0.34, y + 0.3, col);
@@ -191,7 +193,7 @@ function strip(s, y, text, color, h) {
   txt(s, "상태: 전진 · 주행  ·  6 km/h", { x: px + 0.24, y: cy + 1.18, w: cw2 - 0.24, h: 0.22, fontSize: 8, color: C.t2, valign: "middle" });
   sq(s, px + 0.24, cy + 1.55, C.danger, 0.09);
   txt(s, "수신 타겟 (Target)", { x: px + 0.4, y: cy + 1.5, w: 1.7, h: 0.22, fontSize: 8, bold: true, color: C.danger, valign: "middle" });
-  [["보행자 A", "-56 dBm  ·  3.4 m", "위험", C.danger], ["EPJ B", "-71 dBm  ·  9.8 m", "경고", C.warn], ["보행자 C", "-84 dBm  ·  18 m", "안전", C.safe]].forEach(([n, d, lv, col], i) => {
+  [["보행자 A", "-56 dBm  ·  3.4 m", "위험", C.danger], ["보행자 B", "-71 dBm  ·  9.8 m", "경고", C.warn], ["보행자 C", "-84 dBm  ·  18 m", "안전", C.safe]].forEach(([n, d, lv, col], i) => {
     const ry = cy + 1.82 + i * 0.44;
     s.addShape(pres.ShapeType.roundRect, { x: px + 0.2, y: ry, w: cw2 - 0.16, h: 0.38, fill: { color: C.surface }, rectRadius: 0.05 });
     sq(s, px + 0.28, ry + 0.14, col, 0.09);
@@ -203,7 +205,7 @@ function strip(s, y, text, color, h) {
   chip(s, px + 0.2 + cw2 / 2, py + 3.74, cw2 / 2 - 0.04, 0.36, "중지", C.danger, C.onAcc, 8.5);
   txt(s, "메인 화면 (v1.1.70)", { x: px - 0.07, y: py + ph + 0.14, w: pw + 0.14, h: 0.26, fontSize: 10, color: C.t3, align: "center" });
 
-  const notes = [["역할 선택이 전부", "역할을 고르면 그 조합의 경고 · 위험 거리가 자동 적용된다. 작업자가 설정할 것이 없다.", C.accent],
+  const notes = [["역할 선택이 전부", "지게차와 보행자 중 하나만 고르면 그 조합의 경고 · 위험 거리가 자동 적용된다.", C.accent],
                  ["감지 목록 실시간", "주변 기기의 신호 세기 · 추정 거리 · 등급을 보여준다. 등급 색은 앱 전체에서 같은 의미다.", C.warn],
                  ["화면을 꺼도 동작", "상시 스캔한다. 감지가 멈추면 그 사실 자체를 알림으로 띄운다 — 조용한 실패가 없다.", C.safe],
                  ["경보는 3중 출력", "소리 · 진동 · 화면 가장자리 사이드바가 동시에 뜬다. 소리 하나에 의존하지 않는다.", C.danger]];
@@ -224,52 +226,110 @@ function strip(s, y, text, color, h) {
 {
   const s = slide();
   head(s, "기능", "핵심 기능", "v1.1.70 에서 실제로 동작하는 기능");
-  const feats = [["ic_forklift", "역할 기반 차등 반경", "지게차 · EPJ · 보행자 조합별로 경고 · 위험 거리를 다르게 적용", C.warn],
-                 ["ic_bell", "3단계 경보", "안전 / 경고 / 위험. 등급에 따라 소리 · 진동 · 화면 표시가 달라진다", C.danger],
-                 ["ic_share_out", "양방향 협력 알림", "한쪽이 먼저 감지하면 상대도 함께 울린다. 한쪽 신호가 약해도 놓치지 않는다", C.safe],
-                 ["ic_receive_in", "후진 · 하역 특수 경보", "상대가 후진 · 고소작업 중이면 근접 시 즉시 최고 등급으로 격상", C.danger],
-                 ["ic_signal_bars", "모션 · 회전 인식", "단말 센서로 정지 · 주행 · 급정거와 좌우 회전을 판별해 판정에 반영", C.accent],
-                 ["ic_mute", "세이프존 · 자동 뮤트", "무음구역과 체류 자동 뮤트로 울릴 필요 없는 경보를 걷어낸다", C.safe]];
-  const cw = 3.94, ch = 1.94, gx = 0.17, gy = 0.18;
-  feats.forEach(([ic, k, v, col], i) => {
-    const x = M + (i % 3) * (cw + gx), y = 2.1 + Math.floor(i / 3) * (ch + gy);
-    card(s, x, y, cw, ch);
-    iconTile(s, x + 0.32, y + 0.24, 0.62, ic);
-    sq(s, x + 1.1, y + 0.44, col, 0.16);
-    txt(s, k, { x: x + 0.32, y: y + 0.98, w: cw - 0.64, h: 0.32, fontSize: 17, bold: true, color: C.t1, fontFace: HEAD });
-    txt(s, v, { x: x + 0.32, y: y + 1.34, w: cw - 0.64, h: 0.5, fontSize: 12.5, color: C.t2, lineSpacing: 17 });
-  });
-  strip(s, 6.24, "클라우드가 죽어도, UWB 가 없어도 블루투스 근접 경보는 그대로 동작한다.", C.accent, 0.68);
+  const GW = (W - M * 2 - 0.17) / 3;            // 6열 그리드의 2열 폭
+  const cell = (x, y, w, h, ic, k, v, col, wide) => {
+    card(s, x, y, w, h);
+    iconTile(s, x + 0.3, y + 0.26, 0.62, ic);
+    sq(s, x + 1.08, y + 0.46, col, 0.16);
+    txt(s, k, { x: x + 0.3, y: y + 1.0, w: w - 0.6, h: 0.32, fontSize: 17, bold: true, color: C.t1, fontFace: HEAD });
+    txt(s, v, { x: x + 0.3, y: y + 1.36, w: w - 0.6, h: wide ? 0.4 : 0.62, fontSize: 12.5, color: C.t2, lineSpacing: 17 });
+  };
+  const w2 = GW, w4 = GW * 2 + 0.17, ch = 1.9, g = 0.17;
+  cell(M, 2.1, w4, ch, "ic_forklift", "역할 기반 차등 반경",
+    "지게차와 보행자 조합별로 경고와 위험 거리를 다르게 적용한다. 무거운 장비일수록 넓게 잡는다.", C.warn, true);
+  cell(M + w4 + g, 2.1, w2, ch, "ic_bell", "3단계 경보",
+    "안전 / 경고 / 위험. 등급에 따라 출력이 달라진다.", C.danger);
+  cell(M, 2.1 + ch + g, w2, ch, "ic_receive_in", "후진 · 하역 특수경보",
+    "상대가 후진 · 고소작업 중이면 즉시 최고 등급.", C.danger);
+  cell(M + w2 + g, 2.1 + ch + g, w4, ch, "ic_share_out", "양방향 협력 알림",
+    "한쪽이 먼저 감지하면 상대 기기도 함께 울린다. 한쪽 신호가 약해서 놓칠 상황을 상대가 메운다.", C.safe, true);
+  const yy = 2.1 + (ch + g) * 2;
+  card(s, M, yy, W - M * 2, 1.24);
+  iconTile(s, M + 0.3, yy + 0.31, 0.62, "ic_signal_bars");
+  sq(s, M + 1.08, yy + 0.5, C.accent, 0.16);
+  txt(s, "모션 · 회전 인식", { x: M + 1.34, y: yy + 0.24, w: 4.0, h: 0.34, fontSize: 17, bold: true, color: C.t1, fontFace: HEAD });
+  txt(s, "단말 센서로 정지 · 주행 · 급정거와 좌우 회전을 판별해 판정에 반영한다. 상대가 회전해 들어오는 상황을 거리만으로 판단하지 않는다.",
+    { x: M + 1.34, y: yy + 0.62, w: W - M * 2 - 1.7, h: 0.44, fontSize: 12.5, color: C.t2 });
+  strip(s, 6.32, "클라우드가 죽어도, UWB 가 없어도 블루투스 근접 경보는 그대로 동작한다.", C.accent, 0.62);
   footer(s);
-  s.addNotes("여섯 중 넷(양방향 협력 알림, 후진·하역 특수 경보, 모션·회전 인식, 세이프존)은 시판 제품에서 잘 보이지 않는 항목이다. 전부 현장 요구에서 나왔다.");
+  s.addNotes("여섯 중 넷(양방향 협력 알림, 후진·하역 특수경보, 모션·회전 인식, 세이프존)은 시판 제품에서 잘 보이지 않는 항목이다. 전부 현장 요구에서 나왔다.");
 }
 
 /* ══════ 8. 판정 반경 ══════ */
 {
   const s = slide();
-  head(s, "판정 기준", "역할 조합별 판정 반경", "같은 거리라도 상대가 지게차인지 보행자인지에 따라 다르게 판정한다");
-  function combo(x, headline, sub, imgs, outer, ratio, wm, dm) {
-    card(s, x, 2.12, 5.86, 2.98, { fill: C.alt });
-    txt(s, headline, { x: x + 0.36, y: 2.34, w: 5.14, h: 0.34, fontSize: 19, bold: true, color: C.t1, fontFace: HEAD });
-    txt(s, sub, { x: x + 0.36, y: 2.7, w: 5.14, h: 0.28, fontSize: 12, color: C.t3 });
-    imgs.forEach((im, i) => iconTile(s, x + 0.36 + i * 0.74, 3.1, 0.62, im, C.surface));
-    const cx = x + 4.2, cy = 3.86;
-    s.addShape(pres.ShapeType.ellipse, { x: cx - outer / 2, y: cy - outer / 2, w: outer, h: outer, fill: { color: "141C2A" }, line: { color: C.warn, width: 1.5 } });
-    const inner = outer * ratio;
-    s.addShape(pres.ShapeType.ellipse, { x: cx - inner / 2, y: cy - inner / 2, w: inner, h: inner, fill: { color: "1F2637" }, line: { color: C.danger, width: 1.5 } });
-    s.addShape(pres.ShapeType.ellipse, { x: cx - 0.15, y: cy - 0.15, w: 0.3, h: 0.3, fill: { color: C.accent } });
-    txt(s, wm, { x: x + 0.36, y: 4.0, w: 2.3, h: 0.5, fontSize: 30, bold: true, color: C.warn, fontFace: HEAD });
-    txt(s, "경고", { x: x + 0.36, y: 4.5, w: 2.3, h: 0.26, fontSize: 12, color: C.t3 });
-    txt(s, dm, { x: x + 2.0, y: 4.0, w: 2.3, h: 0.5, fontSize: 30, bold: true, color: C.danger, fontFace: HEAD });
-    txt(s, "위험", { x: x + 2.0, y: 4.5, w: 2.3, h: 0.26, fontSize: 12, color: C.t3 });
-  }
-  combo(M, "지게차가 포함된 조합", "지게차 ↔ 보행자 · EPJ · 지게차", ["ic_forklift", "ic_walker", "ic_epj"], 1.72, 8 / 15, "15m", "8m");
-  combo(M + 6.06, "그 외 조합", "보행자 ↔ 보행자 · EPJ ↔ 보행자 · EPJ ↔ EPJ", ["ic_walker", "ic_epj"], 1.2, 3 / 5, "5m", "3m");
-  card(s, M, 5.3, W - M * 2, 0.9, { fill: C.surface });
-  txt(s, "현장에서 확정된 값이며 사업장별로 조정할 수 있다. 무거운 장비일수록 제동거리가 길어 지게차 조합의 반경이 크다.  (도식은 비례 축척이 아니다)",
-    { x: M + 0.36, y: 5.3, w: W - M * 2 - 0.72, h: 0.9, fontSize: 13, color: C.t2, valign: "middle" });
+  head(s, "판정 기준", "역할 조합별 판정 반경", "아래 도식은 실제 비례 축척이다. 지게차 조합의 경고 반경이 보행자끼리의 세 배다");
+  // 축척 1m = 0.115in. 15m=1.725 / 8m=0.92 / 5m=0.575 / 3m=0.345 (반지름)
+  const K = 0.115, cx = M + 2.5, cy = 3.9;
+  const ring = (m, color, dash, w) => s.addShape(pres.ShapeType.ellipse, {
+    x: cx - m * K, y: cy - m * K, w: m * K * 2, h: m * K * 2,
+    fill: { color: C.bg }, line: Object.assign({ color, width: w || 1.5 }, dash ? { dashType: "dash" } : {}),
+  });
+  ring(15, C.warn, true);
+  ring(8, C.danger, false, 1.75);
+  ring(5, C.warn, true, 1.1);
+  ring(3, C.danger, false, 1.25);
+  s.addShape(pres.ShapeType.ellipse, { x: cx - 0.08, y: cy - 0.08, w: 0.16, h: 0.16, fill: { color: C.accent } });
+  s.addShape(pres.ShapeType.line, { x: cx, y: cy, w: 15 * K + 0.24, h: 0, line: { color: C.hair, width: 1 } });
+  // 눈금은 위아래로 엇갈려 배치한다. 3m·5m 이 축 위에서 겹치기 때문이다.
+  [[3, "3m", 1], [5, "5m", -1], [8, "8m", 1], [15, "15m", -1]].forEach(([m, t, dir]) => {
+    s.addShape(pres.ShapeType.line, { x: cx + m * K, y: cy - 0.05, w: 0, h: 0.1, line: { color: C.stroke, width: 1 } });
+    txt(s, t, { x: cx + m * K - 0.3, y: dir > 0 ? cy + 0.1 : cy - 0.36, w: 0.6, h: 0.26,
+      fontSize: 10, color: C.t3, align: "center", fontFace: HEAD });
+  });
+  iconTile(s, cx - 0.3, cy + 0.52, 0.6, "ic_walker", C.surface);
+  iconTile(s, cx + 15 * K - 0.3, cy - 1.24, 0.6, "ic_forklift", C.surface);
+
+  const bx = M + 5.6, bw = W - M - bx;
+  const pair = (y, kicker, sub2, wm, dm) => {
+    txt(s, kicker, { x: bx, y, w: bw, h: 0.28, fontSize: 11, bold: true, color: C.t3, charSpacing: 2 });
+    txt(s, sub2, { x: bx, y: y + 0.3, w: bw, h: 0.28, fontSize: 12, color: C.t3 });
+    txt(s, wm, { x: bx, y: y + 0.64, w: 1.9, h: 0.62, fontSize: 38, bold: true, color: C.warn, fontFace: HEAD });
+    txt(s, "경고", { x: bx, y: y + 1.24, w: 1.9, h: 0.26, fontSize: 12, color: C.t3 });
+    txt(s, dm, { x: bx + 2.0, y: y + 0.64, w: 1.9, h: 0.62, fontSize: 38, bold: true, color: C.danger, fontFace: HEAD });
+    txt(s, "위험", { x: bx + 2.0, y: y + 1.24, w: 1.9, h: 0.26, fontSize: 12, color: C.t3 });
+  };
+  pair(2.18, "지게차가 포함된 조합", "지게차 ↔ 보행자 · 지게차", "15m", "8m");
+  s.addShape(pres.ShapeType.line, { x: bx, y: 3.78, w: bw, h: 0, line: { color: C.hair, width: 1 } });
+  pair(3.96, "보행자끼리", "보행자 ↔ 보행자", "5m", "3m");
+  card(s, M, 5.72, W - M * 2, 0.86, { fill: C.surface });
+  txt(s, "현장에서 확정된 값이며 사업장별로 조정할 수 있다. 지금 개선하는 것은 값이 아니라, 값대로 정확히 동작하게 만드는 일이다.",
+    { x: M + 0.36, y: 5.72, w: W - M * 2 - 0.72, h: 0.86, fontSize: 13, color: C.t2, valign: "middle" });
   footer(s);
-  s.addNotes("이 값은 임의로 정한 것이 아니라 현장에서 확인된 값이다. 개선 작업의 목표도 값을 바꾸는 것이 아니라 값대로 정확히 동작하게 하는 것이다.");
+  s.addNotes("도식은 실제 비례 축척이다. 지게차 조합의 경고 반경(15m)이 보행자끼리의 경고 반경(5m)보다 세 배 넓다는 것이 한눈에 보인다. 값 자체는 현장에서 확인된 것이고, 개선 목표는 값대로 동작하게 만드는 것이다.");
+}
+
+/* ══════ 8.5 설정 ══════ */
+{
+  const s = slide();
+  head(s, "운영", "현장마다 다른 조건을 설정으로 맞춘다", "앱 설정 화면에 실제로 들어 있는 항목이다. 센터마다 렉 높이도 적재물도 다르다");
+  const groups = [
+    ["판정 반경", "역할쌍별 경고와 위험 거리", [["지게차 쌍 경고", "15 m"], ["지게차 쌍 위험", "8 m"], ["그 외 쌍 경고", "5 m"], ["그 외 쌍 위험", "3 m"]],
+     "현재 값이며 사업장별로 조정한다", C.warn],
+    ["경보 기본", "감도와 출력", [["필터 강도", "3단"], ["경고 신호세기", "조정 가능"], ["위험 신호세기", "조정 가능"], ["경보 볼륨", "0~100%"]],
+     "소음 라인은 볼륨을, 반사 구간은 필터를 올린다", C.danger],
+    ["사업장 프로파일", "한 번 맞추면 공유된다", [["사업장 코드", "보정 프로파일"], ["에코편차 자동보정", "상호 대칭화"], ["비콘 수신 강도", "0~100%"], ["조기경보 오프셋", "역할쌍별 dB"]],
+     "같은 코드의 단말이 보정값을 함께 쓴다", C.accent],
+    ["보조 수단", "켜고 끌 수 있다", [["UWB 정밀 거리", "선택"], ["거리 표시 방식", "3종"], ["스캔 · 광고", "1000 / 200ms"], ["진동 · 경보음", "개별 설정"]],
+     "전부 꺼도 블루투스 경보는 동작한다", C.safe],
+  ];
+  const cw = (W - M * 2 - 0.17 * 3) / 4;
+  groups.forEach(([kicker, title, rows, note, col], i) => {
+    const x = M + i * (cw + 0.17);
+    card(s, x, 2.12, cw, 3.72);
+    txt(s, kicker, { x: x + 0.28, y: 2.32, w: cw - 0.56, h: 0.26, fontSize: 10.5, bold: true, color: col, charSpacing: 2 });
+    txt(s, title, { x: x + 0.28, y: 2.62, w: cw - 0.56, h: 0.56, fontSize: 15, bold: true, color: C.t1, fontFace: HEAD, lineSpacing: 20 });
+    rows.forEach(([k, v], j) => {
+      const ry = 3.3 + j * 0.5;
+      if (j) s.addShape(pres.ShapeType.line, { x: x + 0.28, y: ry - 0.06, w: cw - 0.56, h: 0, line: { color: C.hair, width: 1 } });
+      txt(s, k, { x: x + 0.28, y: ry, w: cw - 0.56, h: 0.36, fontSize: 11.5, color: C.t3, valign: "middle" });
+      txt(s, v, { x: x + 0.28, y: ry, w: cw - 0.56, h: 0.36, fontSize: 11.5, bold: true, color: C.t1, valign: "middle", align: "right" });
+    });
+    txt(s, note, { x: x + 0.28, y: 5.36, w: cw - 0.56, h: 0.4, fontSize: 11, color: C.t3, lineSpacing: 15 });
+  });
+  strip(s, 6.04, "코드를 고치지 않고 현장에서 맞춘다. 세부 항목은 개발자 설정에 잠겨 있어 실수로 바뀌지 않는다.", C.accent, 0.66);
+  footer(s);
+  s.addNotes("확산 관점에서 중요한 장이다. 센터마다 조건이 다른데 코드를 고쳐야 한다면 확산이 곧 개발 부하가 된다. 사업장 코드로 보정 프로파일을 공유하는 구조라 한 곳에서 맞춘 값을 같은 코드의 단말이 함께 쓴다.");
 }
 
 /* ══════ 9. 세이프존 · 오경보 억제 ══════ */
@@ -355,7 +415,7 @@ function strip(s, y, text, color, h) {
 {
   const s = slide();
   head(s, "프로토콜", "1바이트에 모든 것을 담는다", "블루투스 광고 패킷 단 1바이트에 역할 · 상태 · 회전 · 위험도를 싣는다");
-  const fields = [["CAT", "역할", ["00  보행자", "01  EPJ", "10  지게차 · 리치", "11  예약"], C.accent],
+  const fields = [["CAT", "역할", ["00  보행자", "01  EPJ (UI 비노출)", "10  지게차 · 리치", "11  예약"], C.accent],
                   ["STATE", "동적 상태", ["00  정지 · 일반", "01  전진 · 주행", "10  후진  ▲", "11  하역 · 작업  ▲"], C.danger],
                   ["TURN", "회전 방향", ["00  직진", "01  좌회전", "10  우회전", "11  예약"], C.dim],
                   ["RISK", "자기 위험도", ["00  안전", "01  경고 감지", "10  위험 감지", "11  예약"], C.safe]];
