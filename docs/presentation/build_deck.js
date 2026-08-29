@@ -393,7 +393,7 @@ function strip(s, y, text, color, h) {
 {
   const s = slide();
   head(s, "시연", "판정 시뮬레이터", "재생하면 TTC 선발령 · 협력 격상 · 후진 특수경보 · 세이프존 억제가 차례로 재현된다");
-  const vw = 8.8, vh = vw * (948 / 1686), vx = (W - vw) / 2, vy = 1.95;   // record_demo.js 산출물의 16:9
+  const vw = 8.8, vh = vw * (868 / 1544), vx = (W - vw) / 2, vy = 1.95;   // record_demo.js 산출물의 16:9
   s.addShape(pres.ShapeType.roundRect, { x: vx - 0.06, y: vy - 0.06, w: vw + 0.12, h: vh + 0.12, fill: { color: "000000" }, rectRadius: 0.14, shadow: sh({ blur: 26, opacity: 0.55 }) });
   // 슬라이드쇼에서 재생되는 실제 동영상이다. 표지는 TTC 선제경보가 뜬 프레임(5초 지점).
   s.addMedia({ type: "video", path: path.join(__dirname, "web", "safealert-sim.mp4"), cover: POSTER, x: vx, y: vy, w: vw, h: vh });

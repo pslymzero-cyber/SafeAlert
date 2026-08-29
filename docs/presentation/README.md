@@ -124,11 +124,12 @@ node docs/presentation/build_deck.js docs/presentation/SafeAlert_Executive_Brief
 | 파일 | 역할 |
 |------|------|
 | `web/index.template.html` | 브리프 본문. 이미지 자리는 `__ASSET_*__`, 시뮬레이터 자리는 `__SIM_*__` |
-| `web/simulator.template.html` | 시뮬레이터만 담은 단독 페이지 |
+| `web/simulator.template.html` | 시뮬레이터 단독 페이지. 머리말 · 규칙 카드 없이 시뮬레이터만 가로로 편다 |
 | `web/sim/sim.css` · `sim.html` · `sim.js` | 시뮬레이터 공용 파셜. 두 페이지가 같은 한 벌을 쓴다 |
 | `web/build_page.js` | 파셜을 끼우고 앱 리소스 자산을 data URI 로 인라인 (외부 요청 0건) |
 | `web/safealert-brief.html` | 브리프 빌드 결과 (약 0.47MB) |
 | `web/safealert-simulator.html` | 시뮬레이터 단독 빌드 결과 (약 0.13MB) |
+| `web/record_demo.js` 의 잘라내기 | 녹화 뒤 `.sim` 위치를 재서 그만큼만 남긴다 — 레이아웃이 바뀌어도 상수를 고칠 일이 없다 |
 | `web/screens.template.html` · `sim/running.html` · `sim/settings.html` | 동작 · 설정 화면 목업. 설명 없이 두 화면만 가로로 놓는다 |
 | `web/safealert-screens.html` | 화면 두 벌 빌드 결과 (약 0.17MB) |
 | `web/render_screens.js` | 화면 목업 → PNG (`web/screens.png`, `assets/screen_*.png`) |
@@ -166,7 +167,7 @@ node docs/presentation/web/build_page.js
   (`activity_main.xml` 의 `iv_role_background` + `shape_bg_scrim`).
   소리 · 진동 · 화면 표시등 줄은 시뮬레이터의 계측 장치라서 정적 화면에서는 뺀다 — 앱에 없는 UI 다
 - **설정 화면**은 배경 사진 없이 단색이다 (`activity_ble_settings.xml` 은 `@color/sa_bg`)
-- **시연 영상**은 시뮬레이터를 그대로 녹화한 26초 무음 H.264 (1686×948, 16:9).
+- **시연 영상**은 시뮬레이터를 그대로 녹화한 27초 무음 H.264 (1544×868, 16:9).
   좌우 여백을 앱 배경색 `#0B1220` 으로 채워 슬라이드 배경과 이음매가 보이지 않게 한다.
   `addMedia({ type: "video", cover })` 로 파일 안에 넣으므로 인터넷 없이 슬라이드쇼에서 재생된다
 
@@ -177,6 +178,11 @@ node docs/presentation/web/build_page.js
 ## 웹 시뮬레이터
 
 `web/` 페이지의 제품 섹션은 정적 이미지가 아니라 동작하는 시연이다.
+
+단독 페이지(`safealert-simulator.html`)는 설명을 싣지 않고 시뮬레이터만 한 화면에 가로로 편다 —
+1080px 이상에서 `도면 · 계기 | 내 단말 | 상대 단말` 3단 위에 조작 콘솔을 전체 너비로 깐다.
+폰과 상대 단말이 한 묶음 `div` 로 세로로 쌓여 있어서, 그 묶음을 `display: contents` 로 풀어
+각각을 그리드 칸에 직접 앉힌다. 좁은 화면에서는 기존 2단 → 1단으로 되돌아간다.
 
 - 도면에서 상대를 끌거나 슬라이더를 움직이면 거리·신호세기·등급이 실시간으로 바뀐다
 - 역할 전환 / 중지 / 세이프존 진입 / 경보음 버튼이 실제로 동작한다

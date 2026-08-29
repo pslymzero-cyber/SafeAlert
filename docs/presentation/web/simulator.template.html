@@ -17,19 +17,14 @@
     font-family: var(--sans); font-size: 16px; line-height: 1.7;
     -webkit-font-smoothing: antialiased; word-break: keep-all; overflow-wrap: break-word;
   }
-  h1, h2, h3 { color: var(--ink); font-weight: 600; margin: 0; line-height: 1.25; text-wrap: balance; }
+  h1, h2, h3 { color: var(--ink); font-weight: 600; margin: 0; line-height: 1.25; }
   p { margin: 0; }
   img { display: block; max-width: 100%; height: auto; }
   :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
-  .shell { width: 100%; max-width: 1180px; margin-inline: auto; padding-inline: clamp(20px, 5vw, 48px); }
-  .label { font-family: var(--mono); font-size: 11px; font-weight: 500; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-4); }
-  .card { background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--r); padding: 22px; }
 
-  .top { padding: clamp(36px, 6vw, 64px) 0 clamp(24px, 3vw, 36px); }
-  .top h1 { font-size: clamp(26px, 3.6vw, 40px); letter-spacing: -0.03em; }
-  .top p { margin-top: 14px; color: var(--ink-3); max-width: 70ch; font-size: clamp(14px, 1.5vw, 16px); }
-  .brand { display: flex; align-items: center; gap: 10px; font-weight: 600; color: var(--ink); margin-bottom: 18px; }
-  .brand i { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 4px rgba(125,211,252,.14); }
+  /* 화면 한 장에 시뮬레이터만 담는다. 머리말도 규칙 설명도 두지 않는다. */
+  .wrap { min-height: 100vh; display: grid; place-items: center; padding: clamp(14px, 2.2vw, 30px); }
+  .sim { width: 100%; max-width: 1400px; }
 
   /* 폰 목업 */
   .phone { position: relative; border-radius: 26px; overflow: hidden; border: 1px solid #000; background: #000; box-shadow: 0 30px 70px rgba(0,0,0,.5); }
@@ -45,50 +40,49 @@
 
 __SIM_CSS__
 
-  /* 규칙 설명 */
-  .rules { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin: clamp(32px, 5vw, 56px) 0 clamp(40px, 6vw, 72px); }
-  .rules h3 { font-size: 16px; }
-  .rules p { margin-top: 8px; font-size: 13.5px; color: var(--ink-3); }
-  .rules code { display: block; margin-top: 12px; font-family: var(--mono); font-size: 11px; color: var(--ink-4); }
-  .rules .sq { width: 12px; height: 12px; border-radius: 2px; display: inline-block; margin-right: 8px; vertical-align: 1px; }
-  @media (max-width: 860px) { .rules { grid-template-columns: 1fr; } }
-  .foot { padding-bottom: 48px; font-family: var(--mono); font-size: 11.5px; color: var(--ink-4); }
+  /* ── 가로 배치 ────────────────────────────────────────────
+     넓은 화면에서는 한 화면에 가로로 편다.
+       윗줄 — 도면·계기 | 내 단말 | 상대 단말
+       아랫줄 — 조작부를 전체 너비에 걸친 콘솔로 깐다 (두 칸으로 접어 높이를 줄인다)
+     폰과 상대 단말이 한 묶음 div 로 세로로 쌓여 있어 세로로 길어지던 것을,
+     묶음 div 를 display:contents 로 풀어 각각을 그리드 칸에 직접 앉힌다. */
+  @media (min-width: 1080px) {
+    .sim {
+      max-width: 1200px; margin-inline: auto;
+      grid-template-columns: minmax(0, 520px) 300px minmax(220px, 280px);
+      grid-template-areas: "stage phone peer" "ctl ctl ctl";
+      gap: clamp(18px, 2vw, 30px) clamp(20px, 2.2vw, 34px);
+      align-items: start;
+    }
+    .sim > div:first-child, .sim > div:last-child { display: contents; }
+    .sim-stage { grid-area: stage; }
+    .sim > div:last-child > .phone { grid-area: phone; }
+    .sim > div:last-child > .peer-panel { grid-area: peer; }
+    /* '내 단말' 캡션은 폰 바로 아래 붙어 있을 때만 뜻이 있다. 콘솔이 그 자리를 쓰므로 뺀다. */
+    .sim > div:last-child > p { display: none; }
+    .sim-ctl {
+      grid-area: ctl; margin-top: 0;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      column-gap: clamp(28px, 3vw, 52px);
+    }
+  }
+
+  /* 규칙 설명 문단은 시뮬레이터 안에도 하나 있다. 이 페이지에서는 아래 한 줄로 대신한다. */
+  .sim-note { display: none; }
+
+  /* 시연을 위한 단순화는 숨기지 않는다. 설명이 아니라 단서라서 한 줄만 남긴다. */
+  .caveat {
+    margin-top: 18px; text-align: center;
+    font-family: var(--mono); font-size: 11px; color: var(--ink-4);
+  }
 </style>
 
-<div class="top">
-  <div class="shell">
-    <div class="brand"><i></i>SafeAlert</div>
-    <h1>지게차와 사람이 얼마나 가까워지면<br>무슨 일이 벌어지는가</h1>
-    <p>도면에서 상대를 끌거나 <b style="color:var(--ink-2)">접근 시작</b>을 누르면, 작업자가 보는 화면이 그대로 반응합니다.
-       판정 규칙은 앱 코드에 들어 있는 것을 그대로 씁니다.</p>
-  </div>
-</div>
-
-<div class="shell">
+<div class="wrap">
+  <div>
 __SIM_MARKUP__
 
-  <div class="rules">
-    <article class="card">
-      <h3><span class="sq" style="background:var(--danger)"></span>후진 · 하역 특수경보</h3>
-      <p>상대가 후진이나 고소작업 중이면 접근 속도와 방향을 따지지 않고 위험 거리에서 즉시 최고 등급으로 올립니다.
-         상대 상태를 <b style="color:var(--ink-2)">후진</b>으로 바꿔 보십시오.</p>
-      <code>BleService · 특수경보 분기</code>
-    </article>
-    <article class="card">
-      <h3><span class="sq" style="background:var(--danger)"></span>TTC 선발령</h3>
-      <p>경고 등급에서 빠르게 접근하면 위험 거리에 닿기 전에 먼저 울립니다. 충돌 예상 3초가 임계값입니다.
-         <b style="color:var(--ink-2)">접근 시작</b>으로 확인할 수 있습니다.</p>
-      <code>ttcThresholdSec = 3.0s · 뮤트 관통</code>
-    </article>
-    <article class="card">
-      <h3><span class="sq" style="background:var(--accent)"></span>양방향 협력 알림</h3>
-      <p>폰마다 송수신 감도가 달라 한쪽만 먼저 감지하는 일이 생깁니다. 상대가 보낸 위험도를 받아 내 등급을 끌어올립니다.
-         <b style="color:var(--ink-2)">내 단말 신호 약함</b>을 켜고 접근시켜 보십시오.</p>
-      <code>v1.1.14 협력 격상 · 격상 전용</code>
-    </article>
+    <p class="caveat">SafeAlert v1.1.70 · 판정 규칙은 앱 코드 그대로 · 전파 감쇠와 3단 필터는 시연용으로 단순화</p>
   </div>
-
-  <p class="foot">SafeAlert v1.1.70 · 2026.08 · 전파 감쇠와 3단 필터는 시연을 위해 단순화했고, 신호 세기 값은 참고용 환산치입니다.</p>
 </div>
 
 <script>

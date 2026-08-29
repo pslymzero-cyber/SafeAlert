@@ -15,12 +15,10 @@ const PAGE = path.join(WEB, "safealert-simulator.html");
 const MP4 = path.join(WEB, "safealert-sim.mp4");
 const POSTER = path.join(WEB, "sim-poster.jpg");
 
-// 시뮬레이터 패널의 자연 크기는 1084x892 다. 이보다 넓히면 폰 목업이 잘리므로
-// 폭은 고정하고 사방에 여백만 둔다.
-const PANEL_W = 1084, PANEL_H = 892, PAD_X = 32, PAD_Y = 28;
-const W = PANEL_W + PAD_X * 2, H = PANEL_H + PAD_Y * 2;
-// 16:9 로 좌우를 앱 배경색으로 채운다 — 슬라이드 배경과 같은 색이라 이음매가 보이지 않는다.
-const PAD_W = 2 * Math.round(H * 16 / 9 / 2), BG = "0x0B1220";
+// 뷰포트는 넉넉히 잡고, 녹화 뒤 시뮬레이터 패널 위치를 재서 그만큼 잘라낸다.
+// 레이아웃이 바뀌어도 상수를 고칠 일이 없다.
+const W = 1440, H = 900, MARGIN = 28;
+const BG = "0x0B1220";   // 잘라낸 뒤 16:9 로 채우는 색 — 슬라이드 배경과 같다
 const POSTER_AT = "5";   // TTC 선발령이 떠 있는 지점(초)
 
 (async () => {
@@ -34,15 +32,13 @@ const POSTER_AT = "5";   // TTC 선발령이 떠 있는 지점(초)
   });
   const p = await ctx.newPage();
   await p.goto("file://" + PAGE, { waitUntil: "load" });
-  // 영상에는 시뮬레이터 패널만 담는다. 머리말 · 규칙 카드 · 주석은 감춘다.
-  await p.evaluate(({ PAD_X, PAD_Y }) => {
-    [".top", ".rules", ".foot", ".sim-note"].forEach((s) => {
-      const e = document.querySelector(s);
-      if (e) e.style.display = "none";
-    });
-    document.body.style.padding = PAD_Y + "px " + PAD_X + "px";
-    document.querySelectorAll(".shell").forEach((e) => { e.style.maxWidth = "none"; e.style.padding = "0"; });
-  }, { PAD_X, PAD_Y });
+  // 이 페이지에는 시뮬레이터 말고 아무것도 없다. 여백만 지우고 패널 위치를 잰다.
+  await p.evaluate(() => { document.body.style.padding = "0"; });
+  await p.waitForTimeout(400);
+  const box = await p.evaluate(() => {
+    const b = document.querySelector(".sim").getBoundingClientRect();
+    return { x: b.x, y: b.y, w: b.width, h: b.height };
+  });
 
   const wait = (ms) => p.waitForTimeout(ms);
   const setD = (v) => p.evaluate((v) => {
@@ -76,14 +72,22 @@ const POSTER_AT = "5";   // TTC 선발령이 떠 있는 지점(초)
   await browser.close();
   const webm = await video.path();
 
+  // 짝수 픽셀만 받는 코덱이라 자르는 폭·높이·좌표를 모두 짝수로 맞춘다.
+  const ev = (n) => 2 * Math.round(n / 2);
+  const cw = Math.min(ev(box.w + MARGIN * 2), W);
+  const ch = Math.min(ev(box.h + MARGIN * 2), H);
+  const cx = ev(Math.max(0, Math.min(box.x - MARGIN, W - cw)));
+  const cy = ev(Math.max(0, Math.min(box.y - MARGIN, H - ch)));
+  const padW = ev(ch * 16 / 9);   // 16:9 로 좌우를 앱 배경색으로 채운다
+
   execFileSync("ffmpeg", ["-v", "error", "-y", "-i", webm,
-    "-vf", `pad=${PAD_W}:${H}:(ow-iw)/2:0:${BG}`,
+    "-vf", `crop=${cw}:${ch}:${cx}:${cy},pad=${padW}:${ch}:(ow-iw)/2:0:${BG}`,
     "-c:v", "libx264", "-profile:v", "high", "-pix_fmt", "yuv420p", "-crf", "23", "-r", "30",
     "-movflags", "+faststart", "-an", MP4]);
   execFileSync("ffmpeg", ["-v", "error", "-y", "-ss", POSTER_AT, "-i", MP4, "-frames:v", "1", "-q:v", "3", POSTER]);
   fs.rmSync(dir, { recursive: true, force: true });
 
   const mb = (f) => (fs.statSync(f).size / 1048576).toFixed(2) + " MB";
-  console.log("safealert-sim.mp4", mb(MP4), `${PAD_W}x${H}`);
+  console.log("safealert-sim.mp4", mb(MP4), `${padW}x${ch}`);
   console.log("sim-poster.jpg", mb(POSTER));
 })();
