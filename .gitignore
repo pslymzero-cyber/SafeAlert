@@ -13,3 +13,6 @@ app/google-services.json
 
 # 덱 이미지 자산 — build_assets.js 로 앱 리소스에서 재생성한다
 docs/presentation/assets/
+
+# skills CLI 설치 원본 (스킬 본문은 커밋하지 않는다 — skills-lock.json 으로 복원)
+.agents/
