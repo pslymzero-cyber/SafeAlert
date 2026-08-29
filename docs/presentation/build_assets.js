@@ -120,6 +120,16 @@ async function logo() {
   await photo(path.join(D, "bg_main.png"), "phone_bg", 420, 880, { radius: 0, darken: 0.35 });
   await photo(path.join(D, "bg_main.png"), "closing", 1500, 850, { radius: 0, darken: 0.72, position: "top", fadeBottom: 0.45 });
   await photo(path.join(N, "bg_walker.jpg"), "band_walker", 1500, 420, { radius: 0, darken: 0.55, position: "centre" });
+  // 챕터 구분용 와이드 배너 (저해상 원본 → 업스케일 + 강한 스크림 + 하단 페이드)
+  for (const [src, name, dark] of [[path.join(N, "bg_forklift.jpg"), "wide_problem", 0.68],
+                                   [path.join(N, "bg_walker.jpg"),  "wide_scale",   0.7]]) {
+    const base = await sharp(src).resize(1700, 960, { fit: "cover", position: "centre", kernel: "lanczos3" }).blur(1.2).png().toBuffer();
+    await sharp(base).composite([{ input: Buffer.from(`<svg width="1700" height="960">
+        <defs><linearGradient id="g" x1="0" x2="1"><stop offset="0" stop-color="${BG}" stop-opacity="0.96"/>
+        <stop offset="0.55" stop-color="${BG}" stop-opacity="${dark}"/><stop offset="1" stop-color="${BG}" stop-opacity="0.45"/></linearGradient></defs>
+        <rect width="1700" height="960" fill="url(#g)"/></svg>`), blend: "over" }])
+      .png().toFile(path.join(OUT, name + ".png"));
+  }
   await logo();
 
   const list = fs.readdirSync(OUT).sort();
