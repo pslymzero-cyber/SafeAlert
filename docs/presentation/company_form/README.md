@@ -56,3 +56,38 @@ python3 build_company_deck.py            # base.pptx → SafeAlert_보고_2026.0
   보고 주체가 다르면 표지 두 번째 줄만 고치면 된다.
 - 사내 폼이라 모든 장에 `Coupang Fulfillment Services Confidential and Proprietary`
   표기가 들어간다. 저장소 공개 범위를 확인하고 보관할 것.
+
+## 삽화
+
+각 본문 장 오른쪽에 이해를 돕는 그림을 하나씩 둔다. `render_figures.js` 가 굽는다.
+
+| 장 | 그림 | 내용 |
+|----|------|------|
+| 1. 개발 배경 | `fig_aisle.jpg` | 렉 사이 통로 사진. 앱 배경 사진 원본(`bg_epj.jpg`)을 어둡게 하지 않고 가로로 자른 것 |
+| 2. 기대효과 | `fig_pairs.png` | 단말 3 · 5 · 10대의 상호 감지쌍 (3 · 10 · 45) |
+| 3. 장단점 | `fig_radius.png` | 역할 조합별 판정 반경 — 실제 비례 축척 (9px = 1m) |
+| 4. 사용자 피드백 | `fig_zone.png` | 세이프존 억제 개념도 |
+
+도식 원본은 `figures.html` 이다. 흰 배경 사내 폼에 맞춰 밝은 색으로 그렸다 —
+어두운 덱(`../assets/`)의 자산은 페이드가 들어가 있어 흰 배경에서 탁하다.
+
+```bash
+node render_figures.js      # → company_form/assets/fig_*.png|jpg
+```
+
+## 시연 영상의 경보음
+
+헤드리스 크로미움은 화면만 녹화하고 소리는 담지 못한다. 그래서 `record_demo.js` 는
+시뮬레이터가 경보음을 낸 **시각**을 받아 적어 두고(`AudioContext.createOscillator` 후킹),
+녹화가 끝난 뒤 같은 음을 그 자리에 얹는다.
+
+- 음은 `sim/sim.js` 의 `beep()` 을 그대로 옮겼다 — square 파형, 위험 1180Hz · 경고 760Hz,
+  10ms 상승 후 150ms 지수 감쇠, 180ms 정지. 발령 간격도 위험 320ms · 경고 900ms 로 같다
+- 녹화 시작 지연은 `(닫은 시각 − 기준 시각) − 영상 길이` 로 재서 보정한다
+- 소리 크기만 슬라이드쇼에서 들리도록 정규화했다 (원래 gain 0.08)
+
+**이 소리는 시뮬레이터의 경보음이지 실제 단말 녹음이 아니다.** 앱은 안드로이드
+`ToneGenerator` 의 CDMA 톤(경고 `TONE_CDMA_ALERT_CALL_GUARD`, 위험
+`TONE_CDMA_EMERGENCY_RINGBACK`)을 쓰므로 음색이 다르다. 실제 소리를 넣으려면
+단말 화면 녹화본이 필요하다. (`res/raw/alert_warning.wav` · `alert_danger.wav` 는
+서로 바이트까지 같은 미사용 파일이라 쓰지 않았다.)
