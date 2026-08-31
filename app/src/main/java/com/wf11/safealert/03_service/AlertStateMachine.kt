@@ -414,6 +414,59 @@ class AlertStateMachine(
 
     internal val wasStationaryMap  = mutableMapOf<String, Boolean>()
 
+    // ── [Phase 4 T1] 기기 상태 제거 단일 경로 ─────────────────────────────
+    /** 상태 슬롯 레지스트리 — BleService 가 `asm.registry` 로 자기 맵·필터를 추가 등록한다. */
+    val registry = DeviceStateRegistry()
+
+    init {
+        // immediate — 신호 소실 즉시 제거(ASM 자체 29맵)
+        registry.addImmediate("alertState", alertState)
+        registry.addImmediate("rushFrameMap", rushFrameMap)
+        registry.addImmediate("dangerContactStreakMap", dangerContactStreakMap)
+        registry.addImmediate("warningContactStreakMap", warningContactStreakMap)
+        registry.addImmediate("warningMissRefMap", warningMissRefMap)
+        registry.addImmediate("lastKfVelMap", lastKfVelMap)
+        registry.addImmediate("timeGateWaiveSet", timeGateWaiveSet)
+        registry.addImmediate("shadowFusionMap", shadowFusionMap)
+        registry.addImmediate("trackingStateMap", trackingStateMap)
+        registry.addImmediate("crossingStartMap", crossingStartMap)
+        registry.addImmediate("departingStartMap", departingStartMap)
+        registry.addImmediate("wasStationaryMap", wasStationaryMap)
+        registry.addImmediate("recedingStartMap", recedingStartMap)
+        registry.addImmediate("recedeRefMap", recedeRefMap)
+        registry.addImmediate("recedePeakMap", recedePeakMap)
+        registry.addImmediate("deviceRssiMap", deviceRssiMap)
+        registry.addImmediate("approachStreakStartMap", approachStreakStartMap)
+        registry.addImmediate("fastApproachStreakMap", fastApproachStreakMap)
+        registry.addImmediate("forwardBiasLatchMap", forwardBiasLatchMap)
+        registry.addImmediate("mutedDevices", mutedDevices)
+        registry.addImmediate("peerInZoneMap", peerInZoneMap)
+        registry.addImmediate("suddenLabelMap", suddenLabelMap)
+        registry.addImmediate("deviceCategoryMap", deviceCategoryMap)
+        registry.addImmediate("deviceStateMap", deviceStateMap)
+        registry.addImmediate("deviceTurnMap", deviceTurnMap)
+        registry.addImmediate("reverseRssiHist", reverseRssiHist)
+        registry.addImmediate("reversePrepUntil", reversePrepUntil)
+        registry.addImmediate("firebaseLastSaveMap", firebaseLastSaveMap)
+        registry.addImmediate("pendingDisplayMap", pendingDisplayMap)
+
+        // immediate — UwbDistanceManager 소유 3맵(제거 시점이 ASM 상태와 동일)
+        registry.addImmediate("peerUwbSeenMap", uwbDist.peerUwbSeenMap)
+        registry.addImmediate("uwbSampleAtMsMap", uwbDist.uwbSampleAtMsMap)
+        registry.addImmediate("uwbSafeStreakMap", uwbDist.uwbSafeStreakMap)
+
+        // deferred — 콜드 클리어·TTL 만료 때만. 칼만은 reset 후 제거(원본 순서 그대로).
+        registry.addDeferred(
+            "kalmanFilters",
+            { id -> kalmanFilters[id]?.reset(); kalmanFilters.remove(id) },
+            { kalmanFilters.clear() },
+            { kalmanFilters.size }
+        )
+
+        // teardown — clearAll 전용. 기기별 purge 제외(웜 필터 보존 파괴 방지).
+        registry.addTeardown("filterPreserveMap", filterPreserveMap)
+    }
+
     /**
      * TTC 추정 — RSSI 공간 2D 칼만 vel 직접 사용 (v1.0.20)
      *

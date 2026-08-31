@@ -15,6 +15,7 @@ import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 import com.wf11.safealert.BuildConfig
 import com.wf11.safealert.service.BleService
+import com.wf11.safealert.service.DeviceStateRegistry
 import com.wf11.safealert.utils.BeaconRegistry
 import com.wf11.safealert.utils.DevSettings
 import com.wf11.safealert.utils.UwbRanger
@@ -318,8 +319,20 @@ class DevSettingsActivity : AppCompatActivity() {
     private val uwbDiagPoller = object : Runnable {
         override fun run() {
             refreshUwbDiag()
+            refreshStateDiag()   // [Phase 4 T2] STATE-03 기기 상태 계기
             // [v1.1.54→v1.1.63] 에코편차 집계 패널 폴링은 BLE 감지 설정으로 이관(같은 1.2s 주기).
             uwbDiagHandler.postDelayed(this, 1200L)
+        }
+    }
+
+    // ── [Phase 4 T2] STATE-03 기기 상태 계기 — 읽기 전용. 판정에 일절 관여하지 않는다.
+    private fun refreshStateDiag() {
+        val reg = DeviceStateRegistry.live
+        binding.tvStateDiag.text = if (reg == null) {
+            "서비스 정지 — 계기 없음"
+        } else {
+            val tracked = reg.sizeOf("alertState")?.toString() ?: "?"
+            "추적 ${tracked}대 · 엔트리 ${reg.entryCount()}개 / 슬롯 ${reg.slotCount()}개 · 정리 ${reg.purgeCount}회"
         }
     }
 
@@ -376,6 +389,7 @@ class DevSettingsActivity : AppCompatActivity() {
         bindSection(binding.secParamHeader,   binding.secParamBody,   binding.secParamChevron)
         bindSection(binding.secCoopHeader,    binding.secCoopBody,    binding.secCoopChevron)
         bindSection(binding.secUwbadvHeader,  binding.secUwbadvBody,  binding.secUwbadvChevron)
+        bindSection(binding.secStateHeader,   binding.secStateBody,   binding.secStateChevron)
         bindSection(binding.secAppinfoHeader, binding.secAppinfoBody, binding.secAppinfoChevron)
     }
 

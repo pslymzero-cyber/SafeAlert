@@ -525,6 +525,24 @@ class BleService : LifecycleService() {
 
     override fun onCreate() {
         super.onCreate()
+        // [Phase 4 T1] BleService 소유 상태를 제거 레지스트리에 등록 — 제거는 asm.registry 단일 경로.
+        asm.registry.addImmediate("oneSecBuffer", oneSecBuffer)
+        asm.registry.addImmediate("wakeRssiMap", wakeRssiMap)
+        asm.registry.addImmediate("dwellLevelMap", dwellLevelMap)
+        asm.registry.addImmediate("dwellSinceMap", dwellSinceMap)
+        asm.registry.addImmediate("dwellMutedLevelsMap", dwellMutedLevelsMap)
+        asm.registry.addImmediate(
+            "echoDiffLive",
+            { id -> CalibrationEngine.echoDiffLive.remove(id)?.let { CalibrationEngine.persistEchoEntry(id, it) } },
+            { CalibrationEngine.echoDiffLive.clear() },
+            { CalibrationEngine.echoDiffLive.size }
+        )
+        // deferred — [v1.1.58 fix4] 웜 필터 보존 대상. 콜드 클리어·TTL 만료 때만 비운다.
+        asm.registry.addDeferred("rssiPreFilter", { id -> rssiPreFilter.clear(id) }, { rssiPreFilter.clearAll() })
+        asm.registry.addDeferred("medianFilter",  { id -> medianFilter.clear(id) },  { medianFilter.clearAll() })
+        asm.registry.addDeferred("pEmaFilter",    { id -> pEmaFilter.clear(id) },    { pEmaFilter.clearAll() })
+        // [Phase 4 T2] 개발자 설정 계기(STATE-03) 노출 — onDestroy 에서 해제한다.
+        DeviceStateRegistry.live = asm.registry
         isRunning = true
         createNotificationChannel()
         registerReceiver(btStateReceiver, IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED))
@@ -804,54 +822,19 @@ class BleService : LifecycleService() {
                         }
                         override fun onDeviceLost(deviceId: String) {
                             Log.d(TAG, "신호 소실: $deviceId")
-                            alertState.remove(deviceId)
                             // [v1.1.58 fix4] 필터 defer-clear — 마지막 RSSI 스냅샷이 있으면 즉시 지우지 않고 보존.
                             //   30s 내 ±10dB 밴드로 재발견되면 processAlert 가 웜 필터 복원+TimeGate 1회 면제,
                             //   불충족 재발견은 processAlert 가·TTL 만료는 healthCheck prune 이 콜드 클리어 확정.
+                            // [Phase 4 T1] 스냅샷 읽기는 purge 보다 반드시 먼저(deviceRssiMap 도 immediate 슬롯).
                             val lastRssi = deviceRssiMap[deviceId]
                             if (lastRssi != null) {
                                 filterPreserveMap[deviceId] = AlertStateMachine.FilterPreserveState(lastRssi, android.os.SystemClock.elapsedRealtime())
-                            } else {
-                                rssiPreFilter.clear(deviceId)
-                                medianFilter.clear(deviceId)      // [v1.0.45] Median 윈도우 정리
-                                pEmaFilter.clear(deviceId)        // [v1.0.45] 후처리 P-EMA 상태 정리
-                                kalmanFilters[deviceId]?.reset()
-                                kalmanFilters.remove(deviceId)
                             }
-                            rushFrameMap.remove(deviceId)     // [v1.0.45] 돌진 프레임 카운터 정리
-                            dangerContactStreakMap.remove(deviceId)   // [v1.1.16 D] 첫접촉 DANGER 카운터 정리
-                            warningContactStreakMap.remove(deviceId)  // [v1.1.18] 첫접촉 WARNING 카운터 정리
-                            warningMissRefMap.remove(deviceId)     // [v1.1.71] WARNING 미달 카운터 정리
-                            lastKfVelMap.remove(deviceId)             // (v1.1.56 U3) 진짜 소실 — 재시드 스냅샷 폐기(웜 칼만 보존이 대체)
-                            timeGateWaiveSet.remove(deviceId)         // [v1.1.58 fix4] 소실 시 미소비 면제권 회수
-                            shadowFusionMap.remove(deviceId)          // (v1.1.40) 섀도우 융합 상태 정리
-                            trackingStateMap.remove(deviceId)
-                            crossingStartMap.remove(deviceId)
-                            departingStartMap.remove(deviceId)
-                            wasStationaryMap.remove(deviceId)
-                            recedingStartMap.remove(deviceId)
-                            recedeRefMap.remove(deviceId)
-                            recedePeakMap.remove(deviceId)
-                            deviceRssiMap.remove(deviceId)
-                            wakeRssiMap.remove(deviceId)              // [v1.0.42 Req3] 슬립/웨이크 표본 정리
-                            approachStreakStartMap.remove(deviceId)   // [v1.0.35] Time-Gate 접근 추적 정리
-                            fastApproachStreakMap.remove(deviceId)    // [v1.1.21] 빠른접근 연속카운터 정리
-                            forwardBiasLatchMap.remove(deviceId)      // [v1.1.11 C1] 전진가산 래치 정리(소실 → 누수 방지)
-                            oneSecBuffer.remove(deviceId)   // [v1.0.31] 게이트가 raw도 push → 신호소실 시 함께 정리
-                            mutedDevices.remove(deviceId)
-                            clearDwellMute(deviceId)          // (v1.1.61) 소실 = 존 이탈 — dwell 뮤트 리셋
-                            peerInZoneMap.remove(deviceId)    // (v1.1.62) 상대 IN_ZONE 캐시 정리(재등장 시 광고가 재선언)
-                            suddenLabelMap.remove(deviceId)
-                            deviceCategoryMap.remove(deviceId)
-                            deviceStateMap.remove(deviceId)
-                            deviceTurnMap.remove(deviceId); reverseRssiHist.remove(deviceId); reversePrepUntil.remove(deviceId)   // [v1.1.7 #1/#2]
-                            firebaseLastSaveMap.remove(deviceId)
-                            pendingDisplayMap.remove(deviceId)   // [v1.0.49 #3] 소실 기기 보류 표시 정리
-                            uwbRanger?.onDeviceLost(deviceId)    // (v1.1.30) UWB 후보·세션 정리
-                            peerUwbSeenMap.remove(deviceId)      // [v1.1.41] UWB 배타판정 신선도·격하 카운터 정리
-                            uwbSampleAtMsMap.remove(deviceId)
-                            uwbSafeStreakMap.remove(deviceId)
-                            CalibrationEngine.echoDiffLive.remove(deviceId)?.let { CalibrationEngine.persistEchoEntry(deviceId, it) }   // [v1.1.54] 에코편차 누적 저장 후 라이브 정리(재등장 시 저장분 재시드)
+                            uwbRanger?.onDeviceLost(deviceId)    // (v1.1.30) UWB 후보·세션 정리 — 맵 제거 앞(원본 순서 보존)
+                            // [Phase 4 T1] 기기 상태 제거 단일 경로. cold=스냅샷 없음 → 필터(deferred)까지 즉시 콜드 클리어.
+                            //   흡수 항목: alertState·ASM 상태맵 전체·BleService 5맵(dwell 3맵 = clearDwellMute 동치)·
+                            //   uwb 3맵·echoDiffLive(누적 저장 후 정리). 등록은 ASM init 과 onCreate 참조.
+                            asm.registry.purge(deviceId, cold = lastRssi == null)
                             sendAlertBroadcast(deviceId, BleConstants.LEVEL_SAFE)
                             if (alertState.isEmpty()) {
                                 AlertSoundPlayer.stopSound()
@@ -1269,12 +1252,8 @@ class BleService : LifecycleService() {
                     val nowEl = android.os.SystemClock.elapsedRealtime()
                     filterPreserveMap.filterValues { nowEl - it.atMs > KF_VEL_SEED_TTL_MS }.keys.toList().forEach { id ->
                         filterPreserveMap.remove(id)
-                        rssiPreFilter.clear(id)
-                        medianFilter.clear(id)
-                        pEmaFilter.clear(id)
-                        kalmanFilters[id]?.reset()
-                        kalmanFilters.remove(id)
-                        timeGateWaiveSet.remove(id)
+                        asm.registry.purgeDeferred(id)   // [Phase 4 T1] 필터 3종+칼만 콜드 클리어(deferred 슬롯)
+                        timeGateWaiveSet.remove(id)   // [Phase 4 T1] immediate 소속 — deferred purge 에 없으므로 명시 유지
                     }
                 }
                 val elapsed = System.currentTimeMillis() - lastScanResultMs
@@ -1762,41 +1741,13 @@ class BleService : LifecycleService() {
         deviceTurnMap.clear(); reverseRssiHist.clear(); reversePrepUntil.clear()   // [v1.1.7 #1/#2]
         broadcastDeviceList(force = true)   // [v1.0.26 Req2] 서비스 중지 → 빈 목록 송출('감지 없음' 반영)
         localSnapshot = ""; lastLocalSnapshot = ""   // [v1.0.42 Req2] 내 장비(Local) 스냅샷 초기화
-        rssiPreFilter.clearAll()
-        medianFilter.clearAll()    // [v1.0.45]
-        pEmaFilter.clearAll()      // [v1.0.45]
-        rushFrameMap.clear()       // [v1.0.45]
-        dangerContactStreakMap.clear()   // [v1.1.16 D]
-        warningContactStreakMap.clear()  // [v1.1.18]
-        warningMissRefMap.clear()     // [v1.1.71]
-        kalmanFilters.clear()
-        lastKfVelMap.clear()             // (v1.1.56 U3) 재시드 스냅샷 일괄 정리
-        filterPreserveMap.clear()        // [v1.1.58 fix4] 필터 보존 스냅샷 일괄 정리
-        timeGateWaiveSet.clear()         // [v1.1.58 fix4] TimeGate 면제권 일괄 정리
-        shadowFusionMap.clear()          // (v1.1.40) 섀도우 융합 상태 일괄 정리
-        trackingStateMap.clear()
-        crossingStartMap.clear()
-        departingStartMap.clear()
-        wasStationaryMap.clear()
-        oneSecBuffer.clear()
-        recedingStartMap.clear()
-        recedeRefMap.clear()
-        recedePeakMap.clear()
-        deviceRssiMap.clear()
-        approachStreakStartMap.clear()   // [v1.0.35] Time-Gate 접근 추적 정리
-        fastApproachStreakMap.clear()    // [v1.1.21] 빠른접근 연속카운터 정리
-        pendingDisplayMap.clear()        // [v1.0.49 #3] 보류 표시 정리
-        mutedDevices.clear()
-        dwellLevelMap.clear(); dwellSinceMap.clear(); dwellMutedLevelsMap.clear()   // (v1.1.61) dwell 뮤트 일괄 정리
-        zoneSampleMap.clear(); zoneEnterRssiMap.clear(); zoneLastSeenMap.clear()    // (v1.1.62) 존 상태 일괄 정리
-        zoneInsideMap.clear(); myZoneInside = false; peerInZoneMap.clear()
-        forwardBiasLatchMap.clear()      // [v1.1.11 C1] 전진가산 래치 일괄 정리(다른 26개 맵과 정합)
-        firebaseLastSaveMap.clear()
-        peerUwbSeenMap.clear()           // [v1.1.41] UWB 배타판정 신선도·격하 카운터 일괄 정리
-        uwbSampleAtMsMap.clear()
-        uwbSafeStreakMap.clear()
+        // [Phase 4 T1] 등록 슬롯(immediate+deferred+teardown) 일괄 정리 단일 경로.
+        //   broadcastDeviceList(force=true) 가 pendingDisplayMap 을 읽어 보류 기기를 SAFE 행으로 병합하므로
+        //   clearAll 은 반드시 broadcast 뒤에 온다. 위 7개 clear 는 원본 순서 그대로 유지(멱등).
         CalibrationEngine.persistEchoAll(myId)                 // [v1.1.54] 에코편차 누적 저장(중지 시 유실 방지) — clear 보다 먼저
-        CalibrationEngine.echoDiffLive.clear()             // [v1.1.54] 라이브 정리 — 다음 세션 첫 틱에 저장분 재시드
+        asm.registry.clearAll()
+        zoneSampleMap.clear(); zoneEnterRssiMap.clear(); zoneLastSeenMap.clear()    // (v1.1.62) 존 상태 일괄 정리 — 미등록
+        zoneInsideMap.clear(); myZoneInside = false                                 // peerInZoneMap 은 레지스트리가 정리
         testRunnable?.let { testHandler.removeCallbacks(it) }
         testRunnable = null
         muteHandler.removeCallbacksAndMessages(null)
@@ -1806,7 +1757,6 @@ class BleService : LifecycleService() {
         isMutedPublic = false
         healthCheckHandler.removeCallbacksAndMessages(null)
         advPowerHandler.removeCallbacksAndMessages(null)   // [v1.0.42 Req3] 송출 전력 평가 루프 중지
-        wakeRssiMap.clear()
         try { unregisterReceiver(btStateReceiver) } catch (_: Exception) {}
         try { unregisterReceiver(volumeReceiver)  } catch (_: Exception) {}
         try { unregisterReceiver(screenReceiver)  } catch (_: Exception) {}
@@ -1832,6 +1782,7 @@ class BleService : LifecycleService() {
     }
 
     override fun onDestroy() {
+        DeviceStateRegistry.live = null   // [Phase 4 T2] 계기 라이브 참조 해제(서비스 누수 방지)
         DevSettings.unregisterOnChange(devPrefsListener)   // [v1.0.42 Req5] 설정 라이브 전파 해제
         if (isRunning) stopAll()
         releaseAlertWakeLock()   // [v1.1.9] !isRunning 경로 등 stopAll 미경유 시에도 확실히 해제

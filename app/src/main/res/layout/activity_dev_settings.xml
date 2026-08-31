@@ -462,6 +462,28 @@
                 </LinearLayout>
             </androidx.cardview.widget.CardView>
 
+            <!-- ═══════════ [기기 상태 계기] — (Phase 4 T2 / STATE-03) DeviceStateRegistry 실시간 진단. 잔존(좌비) 상태 조기 발견용 ═══════════ -->
+            <androidx.cardview.widget.CardView style="@style/SA.Card">
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical">
+
+                    <LinearLayout android:id="@+id/sec_state_header" style="@style/SA.SectionHeader">
+                        <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
+                            <TextView style="@style/SA.SectionTitle" android:text="기기 상태 계기" />
+                            <TextView android:id="@+id/sec_state_summary" style="@style/SA.SectionSummary" android:text="추적 기기 · 상태 엔트리 · 정리 횟수" />
+                        </LinearLayout>
+                        <ImageView android:id="@+id/sec_state_chevron" style="@style/SA.Chevron" android:contentDescription="펌침/접힘" />
+                    </LinearLayout>
+
+                    <LinearLayout android:id="@+id/sec_state_body" style="@style/SA.SectionBody">
+
+                        <!-- 실시간 상태 라인 — 개발자설정 화면 표시 중 약 1.2초 주기 폴링 갱신 -->
+                        <TextView android:id="@+id/tv_state_diag" style="@style/SA.Mono" android:text="상태 확인 중…" />
+                        <TextView style="@style/SA.Hint"
+                            android:text="추적=경보 판정 중인 상대 기기 수 · 엔트리=제거 레지스트리가 보유한 상태 항목 합계 · 정리=기기 상태 제거 누적 횟수. 추적 0대가 오래 이어지는데 엔트리가 줄지 않으면 잔존 상태를 의심한다." />
+
+                    </LinearLayout>
+                </LinearLayout>
+            </androidx.cardview.widget.CardView>
             <!-- ═══════════ [앱 정보] — 버전 7회 빠른 터치 = 숨김 고급 옵션 노출(v1.1.26 D 게이트 유지) ═══════════ -->
             <androidx.cardview.widget.CardView style="@style/SA.Card">
                 <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical">
