@@ -20,8 +20,8 @@
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: 테스트 하네스와 CI 회귀 게이트** - 필터 캐스케이드를 기대값으로 고정하고, 회귀를 실기가 아니라 CI 가 먼저 잡게 한다
-- [ ] **Phase 2: 안전 크리티컬 경로 골든 테스트** - 경보 격상·해제 전 경로와 UWB 세션 전환을 기대값에 못 박고, 안전망으로 저속 접근 미도달 버그를 잡는다
-- [ ] **Phase 3: BleService 분해** - 경보 판정·UWB 거리·캘리브레이션을 세 컴포넌트로 분리하고 동작 보존을 증명한다
+- [x] **Phase 2: 안전 크리티컬 경로 골든 테스트** - 경보 격상·해제 전 경로와 UWB 세션 전환을 기대값에 못 박고, 안전망으로 저속 접근 미도달 버그를 잡는다
+- [x] **Phase 3: BleService 분해** - 경보 판정·UWB 거리·캘리브레이션을 세 컴포넌트로 분리하고 동작 보존을 증명한다
 - [ ] **Phase 4: 기기 상태 단일화** - 40여 개 분산 Map 을 `DeviceTrackingState` 로 통합해 좀비 엔트리를 구조적으로 차단한다
 - [ ] **Phase 5: 판정 워커 분리** - `processAlert` 를 BLE 스캔 콜백에서 떼어내 다수 기기 현장에서 UI 가 끊기지 않게 한다
 
