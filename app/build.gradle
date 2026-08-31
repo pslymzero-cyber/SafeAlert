@@ -51,6 +51,9 @@ android {
     testOptions {
         // Robolectric merged 리소스 읽기 (02-01 Task 2) — 기존 testLogging 블록 보존, 병기만.
         unitTests.includeAndroidResources = true
+        // [Phase 3 T3] android.util.Log 등 stub 호출 시 예외 대신 기본값 반환 (순수 JVM 테스트용).
+        //   Robolectric 테스트는 자체 sandbox classloader 로 실제 구현을 쓰므로 영향 없음.
+        unitTests.returnDefaultValues = true
         unitTests.all {
             testLogging {
                 events 'failed'

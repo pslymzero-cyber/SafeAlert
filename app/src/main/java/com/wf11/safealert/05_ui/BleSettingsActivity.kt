@@ -18,6 +18,7 @@ import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 import com.wf11.safealert.databinding.ActivityBleSettingsBinding
 import com.wf11.safealert.service.BleService
+import com.wf11.safealert.service.CalibrationEngine
 import com.wf11.safealert.utils.DevSettings
 import com.wf11.safealert.utils.UwbCalibrator
 import com.wf11.safealert.utils.UwbRanger
@@ -201,8 +202,8 @@ class BleSettingsActivity : AppCompatActivity() {
         bindIntField(binding.etEchoMaxIqr,   { DevSettings.echoCalMaxIqrDb }, { DevSettings.echoCalMaxIqrDb = it })
         bindIntField(binding.etEchoClamp,    { DevSettings.echoCalClampDb },  { DevSettings.echoCalClampDb = it })
         binding.btnEchoReset.setOnClickListener {
-            BleService.echoDiffLive.clear()
-            getSharedPreferences(BleService.ECHO_PREFS, MODE_PRIVATE).edit().clear().apply()
+            CalibrationEngine.echoDiffLive.clear()
+            getSharedPreferences(CalibrationEngine.ECHO_PREFS, MODE_PRIVATE).edit().clear().apply()
             refreshEchoDiag()
             Toast.makeText(this, "에코편차 통계 초기화 완료", Toast.LENGTH_SHORT).show()
         }
@@ -373,16 +374,16 @@ class BleSettingsActivity : AppCompatActivity() {
         } catch (e: Exception) { /* 서비스 미기동 등 — 다음 스캔 주기에 자연 반영 */ }
     }
 
-    // ── [v1.1.54→55] 에코편차 집계(상호 RSSI) 진단 — 분위수는 BleService.echoQuantileDb(보간) 공용 ──
+    // ── [v1.1.54→55] 에코편차 집계(상호 RSSI) 진단 — 분위수는 CalibrationEngine.echoQuantileDb(보간) 공용 ──
     //    (v1.1.63) DevSettingsActivity 에서 이관(단일 위치). 폴러 echoDiagPoller 가 1.2s 마다 호출.
     private fun fmtDb(v: Double) = "${if (v >= 0) "+" else ""}${"%.1f".format(v)}dB"
 
     // 저장분 위에 라이브를 덮어써 병합(라이브 항목 = 첫 틱에 저장분을 시드한 총 누적치) 후 기기별 두 줄 요약.
     //   1줄=통계(중앙값·산포·에코%·n), 2줄=Level 2 보정 상태(후보/적용중/게이트 사유). 말미에 FB 프라이어 요약.
     private fun refreshEchoDiag() {
-        val saved = BleService.parseEchoBlob(
-            getSharedPreferences(BleService.ECHO_PREFS, MODE_PRIVATE).getString(BleService.ECHO_KEY, "") ?: "")
-        saved.putAll(BleService.echoDiffLive)
+        val saved = CalibrationEngine.parseEchoBlob(
+            getSharedPreferences(CalibrationEngine.ECHO_PREFS, MODE_PRIVATE).getString(CalibrationEngine.ECHO_KEY, "") ?: "")
+        saved.putAll(CalibrationEngine.echoDiffLive)
         val on = DevSettings.echoAutoCalibEnabled
         val minT = DevSettings.echoCalMinTicks
         val sb = StringBuilder()
@@ -390,15 +391,15 @@ class BleSettingsActivity : AppCompatActivity() {
             if (s.totalTicks <= 0) continue
             if (sb.isNotEmpty()) sb.append('\n')
             if (s.echoTicks > 0) {
-                val med = BleService.echoQuantileDb(s.buckets, s.echoTicks, 0.50)
-                val iqrHalf = (BleService.echoQuantileDb(s.buckets, s.echoTicks, 0.75) -
-                               BleService.echoQuantileDb(s.buckets, s.echoTicks, 0.25)) / 2.0
+                val med = CalibrationEngine.echoQuantileDb(s.buckets, s.echoTicks, 0.50)
+                val iqrHalf = (CalibrationEngine.echoQuantileDb(s.buckets, s.echoTicks, 0.75) -
+                               CalibrationEngine.echoQuantileDb(s.buckets, s.echoTicks, 0.25)) / 2.0
                 val pct = s.echoTicks * 100 / s.totalTicks
                 sb.append("${id}  중앙값 ${fmtDb(med)} · 산포 ±${"%.1f".format(iqrHalf)} · 에코 ${pct}% · n=${s.echoTicks}")
-                val local = BleService.echoCalLocalDb(s)
+                val local = CalibrationEngine.echoCalLocalDb(s)
                 val state = when {
                     local == null -> {
-                        val prior = BleService.echoCalPriorDb(id)
+                        val prior = CalibrationEngine.echoCalPriorDb(id)
                         if (prior != null) "n부족 ${s.echoTicks}/${minT} · FB프라이어 ${fmtDb(prior)}${if (on) " 적용중" else ""}"
                         else "n부족 ${s.echoTicks}/${minT}"
                     }
@@ -411,9 +412,9 @@ class BleSettingsActivity : AppCompatActivity() {
             }
         }
         // [v1.1.55] Firebase 모델쌍 프라이어 요약(내 모델 기준 fold 결과·서비스 기동 시 로드)
-        if (BleService.echoFbPriorByModel.isNotEmpty()) {
+        if (CalibrationEngine.echoFbPriorByModel.isNotEmpty()) {
             if (sb.isNotEmpty()) sb.append('\n')
-            sb.append("FB프라이어: " + BleService.echoFbPriorByModel.entries.joinToString(" · ") {
+            sb.append("FB프라이어: " + CalibrationEngine.echoFbPriorByModel.entries.joinToString(" · ") {
                 "${it.key} ${fmtDb(it.value.first)}(n=${it.value.second})"
             })
         }
