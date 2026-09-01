@@ -189,3 +189,74 @@ def clear_body(shape):
         txBody.remove(p)
     for r in list(tf.paragraphs[0].runs):
         r._r.getparent().remove(r._r)
+
+
+def chart(slide, x, y, w, h, cats, vals, kind="col", num_fmt="#,##0",
+          label_size=11.5, cat_size=11, color=RED, gap=110, headroom=1.18):
+    """단일 계열 막대 차트. 값 축·눈금선은 지우고 데이터 레이블로 직접 읽힌다.
+
+    단위(만원)는 레이블에 붙이지 않고 제목·캡션에 적는다 — 막대 폭에 눌려 줄바꿈된다.
+    kind: "col" 세로 막대(크기 비교) / "bar" 가로 막대(구성 내역).
+    "bar" 는 첫 항목이 위에 오도록 뒤집어 넣는다.
+    headroom: 레이블이 잘리지 않게 값 축 최대치를 최댓값의 몇 배로 둘지.
+    """
+    from pptx.chart.data import CategoryChartData
+    from pptx.enum.chart import XL_CHART_TYPE, XL_LABEL_POSITION, XL_TICK_MARK
+
+    if kind == "bar":
+        cats, vals = list(cats)[::-1], list(vals)[::-1]
+    cd = CategoryChartData()
+    cd.categories = list(cats)
+    cd.add_series("금액", tuple(vals), number_format=num_fmt)
+
+    ctype = XL_CHART_TYPE.COLUMN_CLUSTERED if kind == "col" else XL_CHART_TYPE.BAR_CLUSTERED
+    gf = slide.shapes.add_chart(ctype, Inches(x), Inches(y), Inches(w), Inches(h), cd)
+    ch = gf.chart
+    ch.has_title = False
+    ch.has_legend = False          # 계열이 하나면 범례는 군더더기다
+    ch.font.name = FONT
+    ch.font.size = Pt(cat_size)
+    ch.font.color.rgb = INK2
+
+    plot = ch.plots[0]
+    plot.gap_width = gap
+    plot.has_data_labels = True
+    dl = plot.data_labels
+    dl.number_format = num_fmt
+    dl.number_format_is_linked = False
+    dl.position = XL_LABEL_POSITION.OUTSIDE_END
+    dl.font.name = FONT
+    dl.font.size = Pt(label_size)
+    dl.font.bold = True
+    dl.font.color.rgb = INK
+
+    ser = plot.series[0]
+    ser.format.fill.solid()
+    ser.format.fill.fore_color.rgb = color
+    ser.format.line.fill.background()
+
+    va = ch.value_axis
+    va.visible = False
+    va.has_major_gridlines = False
+    va.has_minor_gridlines = False
+    va.maximum_scale = max(vals) * headroom
+    va.minimum_scale = 0
+
+    ca = ch.category_axis
+    ca.has_major_gridlines = False
+    ca.major_tick_mark = XL_TICK_MARK.NONE
+    ca.minor_tick_mark = XL_TICK_MARK.NONE
+    ca.format.line.color.rgb = LINE
+    ca.tick_labels.font.name = FONT
+    ca.tick_labels.font.size = Pt(cat_size)
+    ca.tick_labels.font.color.rgb = INK2
+
+    # 차트 영역 배경·테두리 제거 (사내 폼의 흰 배경 위에 그대로 얹는다)
+    cs = ch._chartSpace
+    C = "{http://schemas.openxmlformats.org/drawingml/2006/chart}"
+    sp = parse_xml(
+        '<c:spPr xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" '
+        'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'
+        '<a:noFill/><a:ln><a:noFill/></a:ln></c:spPr>')
+    cs.insert(list(cs).index(cs.find(C + "chart")) + 1, sp)
+    return gf
