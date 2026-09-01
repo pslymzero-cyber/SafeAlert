@@ -161,7 +161,26 @@ Firebase CLI 도 `firebase login` 이 브라우저 OAuth 라 같은 이유로 �
 | Firebase 콘솔 (웹) | ○ | 소유자 로그인. 모바일 브라우저에서도 열리지만 트리 조작이 불편하다 |
 | REST / curl | ✕ | 규칙에 막힌다 |
 | 앱 안에서 조회 | ✕ | 읽는 코드가 없고(`FirebaseManager` 는 `saveAlert` 만), 규칙에도 막힌다 |
-| GitHub Actions | ○ | `FIREBASE_DB_SECRET` 은 admin 권한이라 규칙을 우회한다 (`release.yml` 이 이미 사용 중) |
+| GitHub Actions | ○ | `FIREBASE_DB_SECRET` 은 admin 권한이라 규칙을 우회한다 |
+
+### 폰으로 보려면 — `alert-digest.yml`
+
+`.github/workflows/alert-digest.yml` 이 **매주 월요일 06:00 KST** 에 돌면서
+사업장별 경보 이력을 집계해 `docs/alerts/DIGEST.md` 로 커밋한다.
+폰의 GitHub 앱에서 그 파일 하나만 열면 된다 — 설치도 로그인도 따로 없다.
+
+```
+사업장 목록(shallow) → 사업장별 최근 N일 alerts → analyze_alerts.py → DIGEST.md 커밋
+```
+
+- 최근 구간만 받는다 — `orderBy="$key"` + `startAt` 으로 전체를 끌어오지 않는다
+- `--no-ids` 로 **기기 ID 를 결과에서 뺀다.** 이 저장소는 공개다
+- 원본 JSON 은 커밋하지 않는다. 집계값만 남는다
+- 기본 28일. `workflow_dispatch` 로 수동 실행하며 일수를 바꿀 수 있다
+- 스케줄 워크플로는 **기본 브랜치에서만** 돈다 — 머지 전에는 실행되지 않는다
+
+`analyze_alerts.py` 는 로컬과 CI 양쪽에서 같은 코드를 쓴다.
+로컬은 `--out` 으로 JSON, CI 는 `--md` 로 마크다운을 뽑는다.
 
 ```bash
 cd docs/presentation/cousolve

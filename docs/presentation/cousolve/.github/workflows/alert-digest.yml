@@ -1,0 +1,99 @@
+name: Alert digest
+
+# 경보 이력을 주기적으로 집계해 저장소에 커밋한다.
+#   v1.1.71 의 database.rules.json 이 alerts 읽기를 막아(루트 .read:false 상속)
+#   REST 로는 읽히지 않는다. FIREBASE_DB_SECRET 은 규칙을 우회하는 admin 권한이라
+#   여기서만 읽을 수 있다 — release.yml 의 version PATCH 와 같은 자격이다.
+#
+#   결과는 docs/alerts/DIGEST.md 한 장이다. 폰의 GitHub 앱에서 그대로 읽힌다.
+#   원본 JSON 은 커밋하지 않는다 — 이 저장소는 공개다.
+
+on:
+  schedule:
+    - cron: '0 21 * * 0'   # 매주 월요일 06:00 KST (일요일 21:00 UTC)
+  workflow_dispatch:
+    inputs:
+      days:
+        description: '집계할 최근 일수'
+        required: false
+        default: '28'
+
+concurrency:
+  group: alert-digest
+  cancel-in-progress: false
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # DIGEST.md 커밋
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # 사업장 노드를 훑는다. shallow 라 값은 안 받고 키만 받는다.
+      #   /version 은 사업장이 아니라 공용 업데이트 채널이므로 뺀다.
+      - name: 사업장 목록
+        id: sites
+        env:
+          DB: ${{ secrets.FIREBASE_DB_URL }}
+          KEY: ${{ secrets.FIREBASE_DB_SECRET }}
+        run: |
+          curl -fsS "$DB/.json?shallow=true&auth=$KEY" -o root.json
+          SITES=$(python3 -c "
+          import json
+          d = json.load(open('root.json')) or {}
+          print(' '.join(k for k in sorted(d) if k != 'version'))")
+          echo "사업장: ${SITES:-(없음)}"
+          echo "list=$SITES" >> "$GITHUB_OUTPUT"
+
+      - name: 경보 이력 집계
+        env:
+          DB: ${{ secrets.FIREBASE_DB_URL }}
+          KEY: ${{ secrets.FIREBASE_DB_SECRET }}
+          DAYS: ${{ github.event.inputs.days || '28' }}
+        run: |
+          set -euo pipefail
+          mkdir -p docs/alerts
+          FROM=$(date -u -d "-${DAYS} days" +%Y%m%d)
+          NOW=$(TZ=Asia/Seoul date '+%Y-%m-%d %H:%M KST')
+          {
+            echo "# 경보 이력 집계"
+            echo
+            echo "> 자동 생성 — $NOW · 최근 ${DAYS}일 (${FROM} 이후)"
+            echo ">"
+            echo "> \`.github/workflows/alert-digest.yml\` 이 매주 갱신한다."
+            echo "> 원본 기록은 공개 저장소에 올리지 않는다 — 집계값만 남긴다."
+            echo
+          } > docs/alerts/DIGEST.md
+
+          for SITE in ${{ steps.sites.outputs.list }}; do
+            # orderBy="$key" + startAt 으로 최근 구간만 받는다 (전체를 끌어오지 않는다)
+            if curl -fsS --get "$DB/$SITE/alerts.json" \
+                 --data-urlencode "auth=$KEY" \
+                 --data-urlencode 'orderBy="$key"' \
+                 --data-urlencode "startAt=\"$FROM\"" \
+                 -o "alerts-$SITE.json"; then
+              python3 docs/presentation/cousolve/analyze_alerts.py "alerts-$SITE.json" \
+                --label "${SITE^^}" --md docs/alerts/DIGEST.md --append --no-ids
+            else
+              echo "::warning::$SITE 읽기 실패 — 건너뜀"
+              printf '## %s\n\n> 읽기 실패.\n\n' "${SITE^^}" >> docs/alerts/DIGEST.md
+            fi
+            rm -f "alerts-$SITE.json"
+          done
+
+      - name: 변경분 커밋
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/alerts/DIGEST.md
+          git diff --staged --quiet && { echo "변경 없음"; exit 0; }
+          git commit -m "chore(alerts): 경보 이력 집계 갱신"
+          git push

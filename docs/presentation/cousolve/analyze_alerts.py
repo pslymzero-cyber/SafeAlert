@@ -1,102 +1,147 @@
 #!/usr/bin/env python3
-"""Firebase 경보 이력을 집계해 자료에 넣을 수치를 뽑는다.
+"""Firebase 경보 이력을 집계한다.
 
-이 저장소의 세션에서는 Firebase 로 나가는 요청이 차단돼 직접 내려받지 못한다.
-콘솔에서 내보낸 JSON 을 인자로 넘기면 된다.
+두 곳에서 쓴다.
+  · 로컬  — `fetch_alerts.sh` 가 Firebase CLI 로 받은 JSON 을 넘긴다
+  · CI    — `.github/workflows/alert-digest.yml` 이 사업장별로 받아 넘기고,
+            `--md` 로 마크다운 요약을 만들어 저장소에 커밋한다 (폰에서 GitHub 앱으로 본다)
 
-    Firebase 콘솔 → Realtime Database → wf11/alerts → ⋮ → JSON 내보내기
-    python3 analyze_alerts.py alerts.json [--days 28] [--out alerts_summary.json]
+    python3 analyze_alerts.py alerts.json [--days 28] [--out summary.json]
+    python3 analyze_alerts.py alerts.json --label WF11 --md DIGEST.md [--append] [--no-ids]
 
-받는 모양 (FirebaseManager.kt:15-29 가 쓰는 그대로):
+받는 모양 (FirebaseManager.kt 의 saveAlert 이 쓰는 그대로):
     { "20260901": { "<uuid>": {timestamp, deviceId, walkerId, rssi, alertLevel}, ... }, ... }
-    루트가 wf11 전체여도 되고 (alerts 를 알아서 찾는다), alerts 노드만이어도 된다.
+    루트가 사업장 노드 전체여도 되고(alerts 를 알아서 찾는다), alerts 노드만이어도 된다.
 
-주의 — 건수의 의미:
-    같은 기기에 대해 1분 1회로 스로틀돼 있다 (BleService.kt:2529).
-    따라서 1건 = 경보 1회가 아니라 '해당 분(分)에 그 기기와 조우' 다.
-    중복이 걷힌 값이라 '접근 조우 횟수' 에 가깝고, 그래서 아차사고 대리지표로 쓸 수 있다.
-    사고 건수가 아니다. 자료에 옮길 때 이 문장을 같이 옮긴다.
+건수의 의미 — 같은 기기에 대해 1분 1회로 스로틀돼 있다 (BleService.kt).
+따라서 1건 = 경보 1회가 아니라 '해당 분(分)에 그 기기와 가까워졌다' 다.
+중복이 걷힌 값이라 위험했던 순간의 대용 지표로 쓸 수 있다. 사고 건수가 아니다.
 """
 import argparse, json, sys
 from collections import Counter, defaultdict
 from datetime import datetime
 
+CAVEAT = ("1건 = 경보 1회가 아니라 가까워진 1분이다 (같은 상대는 1분에 한 번만 기록된다). "
+          "사고 건수가 아니라 위험했던 순간의 대용 지표다.")
 
-def find_alerts(doc):
-    if isinstance(doc, dict) and "alerts" in doc and isinstance(doc["alerts"], dict):
+
+def load(path):
+    doc = json.load(open(path, encoding="utf-8"))
+    if isinstance(doc, dict) and isinstance(doc.get("alerts"), dict):
         return doc["alerts"]
-    return doc
+    return doc or {}
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("path")
-    ap.add_argument("--days", type=int, default=0, help="최근 N일만 (0=전체)")
-    ap.add_argument("--out", default="alerts_summary.json")
-    a = ap.parse_args()
-
-    alerts = find_alerts(json.load(open(a.path, encoding="utf-8")))
-    days = sorted(k for k in alerts if k.isdigit() and len(k) == 8)
-    if not days:
-        sys.exit("일자 노드(yyyyMMdd)를 찾지 못했다. 내보낸 범위를 확인할 것.")
-    if a.days:
-        days = days[-a.days:]
-
-    per_day = defaultdict(Counter)      # 날짜 → 등급별 건수
-    per_hour = defaultdict(Counter)     # 시각 → 등급별 건수
-    per_dow = defaultdict(Counter)      # 요일 → 등급별 건수
-    pairs = Counter()                   # (walker, device) 조우 쌍
-    devices, walkers = set(), set()
-    rssi_by_level = defaultdict(list)
+def aggregate(alerts, days=0):
+    dates = sorted(k for k in alerts if k.isdigit() and len(k) == 8)
+    if days:
+        dates = dates[-days:]
+    per_day, per_hour, per_dow = defaultdict(Counter), defaultdict(Counter), defaultdict(Counter)
+    pairs, devices, rssi = Counter(), set(), defaultdict(list)
     total = Counter()
-
-    for d in days:
-        for rec in (alerts[d] or {}).values():
+    for d in dates:
+        for rec in (alerts.get(d) or {}).values():
             if not isinstance(rec, dict):
                 continue
             lv = rec.get("alertLevel", "?")
             total[lv] += 1
             per_day[d][lv] += 1
-            dev, wlk = rec.get("deviceId", "?"), rec.get("walkerId", "?")
-            devices.add(dev); walkers.add(wlk)
-            pairs[tuple(sorted((str(wlk), str(dev))))] += 1
+            a, b = str(rec.get("deviceId", "?")), str(rec.get("walkerId", "?"))
+            devices.update((a, b))
+            pairs[tuple(sorted((a, b)))] += 1
             if isinstance(rec.get("rssi"), int):
-                rssi_by_level[lv].append(rec["rssi"])
+                rssi[lv].append(rec["rssi"])
             ts = rec.get("timestamp")
             if isinstance(ts, (int, float)):
                 t = datetime.fromtimestamp(ts / 1000)
                 per_hour[t.hour][lv] += 1
                 per_dow["월화수목금토일"[t.weekday()]][lv] += 1
-
-    n_days = len(days)
-    danger, warning = total.get("DANGER", 0), total.get("WARNING", 0)
-    out = {
-        "기간": f"{days[0]} ~ {days[-1]}  ({n_days}일)",
-        "총 조우": danger + warning,
-        "위험(DANGER)": danger,
-        "경고(WARNING)": warning,
-        "일평균 위험": round(danger / n_days, 1) if n_days else 0,
-        "일평균 경고": round(warning / n_days, 1) if n_days else 0,
-        "관측 단말 수": len(devices | walkers),
-        "조우한 기기쌍 수": len(pairs),
-        "상위 조우쌍": [{"쌍": " ↔ ".join(k), "건수": v} for k, v in pairs.most_common(5)],
-        "시간대별": {str(h): dict(c) for h, c in sorted(per_hour.items())},
-        "요일별": {k: dict(v) for k, v in per_dow.items()},
-        "일자별": {d: dict(c) for d, c in sorted(per_day.items())},
-        "RSSI 중앙값": {lv: sorted(v)[len(v) // 2] for lv, v in rssi_by_level.items() if v},
-        "주의": "1건 = 경보 1회가 아니라 해당 분(分)의 조우. 기기당 1분 1회 스로틀(BleService.kt:2529). "
-                "사고 건수가 아니다.",
+    n = len(dates) or 1
+    return {
+        "dates": dates, "n_days": len(dates),
+        "danger": total.get("DANGER", 0), "warning": total.get("WARNING", 0),
+        "danger_avg": round(total.get("DANGER", 0) / n, 1),
+        "warning_avg": round(total.get("WARNING", 0) / n, 1),
+        "devices": len(devices), "pairs": len(pairs),
+        "top_pairs": pairs.most_common(5),
+        "per_day": {d: dict(c) for d, c in sorted(per_day.items())},
+        "per_hour": {h: dict(c) for h, c in sorted(per_hour.items())},
+        "per_dow": {k: dict(v) for k, v in per_dow.items()},
+        "rssi_median": {lv: sorted(v)[len(v) // 2] for lv, v in rssi.items() if v},
     }
-    json.dump(out, open(a.out, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
 
-    print(f"기간            {out['기간']}")
-    print(f"위험 / 경고     {danger:,} / {warning:,}   (일평균 {out['일평균 위험']} / {out['일평균 경고']})")
-    print(f"관측 단말       {out['관측 단말 수']}대   ·   조우 기기쌍 {out['조우한 기기쌍 수']}쌍")
-    if per_hour:
-        peak = max(per_hour.items(), key=lambda kv: sum(kv[1].values()))
-        print(f"최다 시간대     {peak[0]:02d}시  {sum(peak[1].values()):,}건")
-    print(f"\n→ {a.out}")
-    print("   1건 = 해당 분(分)의 조우. 사고 건수가 아니다.")
+
+def _bar(v, top, width=18):
+    return "█" * max(1, round(v / top * width)) if v else ""
+
+
+def markdown(a, label):
+    L = [f"## {label}", ""]
+    if not a["n_days"]:
+        L += ["> 집계할 데이터가 없다. 기기 개발자 설정의 `firebaseRoot` 와 "
+              "`autoSaveAlerts` 를 확인할 것.", ""]
+        return "\n".join(L)
+    L += [
+        "| 항목 | 값 |",
+        "|------|----|",
+        f"| 기간 | {a['dates'][0]} ~ {a['dates'][-1]} ({a['n_days']}일) |",
+        f"| 위험 경보 | **{a['danger']:,}건**  (일평균 {a['danger_avg']}) |",
+        f"| 경고 경보 | **{a['warning']:,}건**  (일평균 {a['warning_avg']}) |",
+        f"| 관측 단말 | {a['devices']}대 |",
+        f"| 서로 가까워진 기기쌍 | {a['pairs']}쌍 |",
+        "",
+    ]
+    if a["per_hour"]:
+        tot = {h: sum(c.values()) for h, c in a["per_hour"].items()}
+        top = max(tot.values())
+        L += ["### 시간대별", "", "```"]
+        for h in sorted(tot):
+            L.append(f"{h:02d}시  {_bar(tot[h], top):<18} {tot[h]:>5,}")
+        L += ["```", ""]
+    if a["per_dow"]:
+        tot = {k: sum(v.values()) for k, v in a["per_dow"].items()}
+        top = max(tot.values())
+        L += ["### 요일별", "", "```"]
+        for k in "월화수목금토일":
+            if k in tot:
+                L.append(f"{k}   {_bar(tot[k], top):<18} {tot[k]:>5,}")
+        L += ["```", ""]
+    L += ["### 일자별", "", "| 날짜 | 경고 | 위험 |", "|------|-----:|-----:|"]
+    for d, c in list(a["per_day"].items())[-14:]:
+        L.append(f"| {d} | {c.get('WARNING', 0):,} | {c.get('DANGER', 0):,} |")
+    L += ["", f"> {CAVEAT}", ""]
+    return "\n".join(L)
+
+
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument("path")
+    p.add_argument("--days", type=int, default=0, help="최근 N일만 (0=전체)")
+    p.add_argument("--out", help="집계 결과 JSON 경로")
+    p.add_argument("--md", help="마크다운 요약 경로")
+    p.add_argument("--label", default="집계", help="마크다운 제목에 쓸 사업장 이름")
+    p.add_argument("--append", action="store_true", help="--md 파일에 이어 쓴다")
+    p.add_argument("--no-ids", action="store_true",
+                   help="기기 ID 를 결과에 넣지 않는다 (공개 저장소용)")
+    args = p.parse_args()
+
+    a = aggregate(load(args.path), args.days)
+    if args.no_ids:
+        a.pop("top_pairs", None)
+
+    if args.md:
+        with open(args.md, "a" if args.append else "w", encoding="utf-8") as f:
+            f.write(markdown(a, args.label) + "\n")
+    if args.out:
+        json.dump({**a, "주의": CAVEAT}, open(args.out, "w", encoding="utf-8"),
+                  ensure_ascii=False, indent=2)
+
+    if not a["n_days"]:
+        print(f"{args.label}: 집계할 데이터 없음", file=sys.stderr)
+        return
+    print(f"{args.label}  {a['dates'][0]}~{a['dates'][-1]} ({a['n_days']}일)  "
+          f"위험 {a['danger']:,} / 경고 {a['warning']:,}  "
+          f"단말 {a['devices']}대 · 기기쌍 {a['pairs']}쌍")
 
 
 if __name__ == "__main__":
