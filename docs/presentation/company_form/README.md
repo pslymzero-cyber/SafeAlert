@@ -13,6 +13,8 @@
 | 5 | 3. 장단점 |
 | 6 | 4. 사용자 피드백 — 오더십 리뷰 3차 반영 / 현장 요구 |
 | 7 | 5. 시연 — 동작·설정 화면 + 재생되는 시연 영상 |
+| 8 | 6. 진행 단계 — Phase 1~5 표 + 이 순서인 이유 |
+| 9 | 7. Andon — 중단 · 롤백 기준과 조치 방법 |
 
 ## 재생성
 
@@ -70,11 +72,32 @@ python3 build_company_deck.py            # base.pptx → SafeAlert_보고_2026.0
 | 3. 장단점 | 장점 5 · 단점 4 나열 → `A vs. B → 택한 것` + 화살표 + 판단 근거 3행, 그 아래 `남는 한계` | Tradeoffs |
 | 4. 사용자 피드백 | 나열 → `차수 / 반영 내용 / 결과` 표 + `항목 / Before / After` 표 | Feedback Loop |
 | 5. 시연 | 목록 → `신호 수신 → 거리 추정 → 등급 판정 → 3중 경보` 흐름 한 줄 (아래에 기술 요소) | Solution |
+| 6. 진행 단계 | 신설 — `단계 / 무엇을 / 확인할 것 / 상태` 표 | Feedback Loop 의 확산 계획 |
+| 7. Andon | 신설 — `Andon 기준` · `조치 방법` 좌우 배치 | Andon |
 | 1장 하단 | — | 번호 매긴 한 줄 요약 + 이탤릭 결론 문장 |
 
 장단점을 트레이드오프로 바꾼 것이 가장 큰 변화다. 단점을 결함 목록으로 늘어놓는 대신
 **무엇을 얻으려고 무엇을 내줬는지**로 적으면, 같은 사실이 변명이 아니라 설계 판단으로 읽힌다.
 반대로 트레이드오프가 아닌 것(미설치 기기 비감지 · 밀집 시 지연)은 `남는 한계`로 따로 뺐다.
+
+## 진행 단계와 Andon
+
+6 · 7장은 `.planning/ROADMAP.md` 와 `STATE.md` 에서 그대로 가져온다.
+
+| 항목 | 출처 |
+|------|------|
+| Phase 1~5 이름 · 목표 | `ROADMAP.md` Phases |
+| 각 단계의 '현장에서 확인할 것' | 각 Phase 의 **출하 상태** 항목 (현장 검증 문구 그대로) |
+| 완료 1/5 | `ROADMAP.md` Progress 표, `STATE.md` current_phase 01 COMPLETE |
+| 이 순서인 이유 ① 측정 수단이 먼저 | `ROADMAP.md` Overview |
+| 이 순서인 이유 ② 단계별 단독 배포 | Phase 5 **출하 상태** 주석 (원인 귀속) |
+| Andon — 동작 보존 실패 | Phase 3 REFACTOR-04 수용 게이트 |
+| Andon — CI 게이트 적색 | `.github/workflows/release.yml` 테스트 게이트 (Phase 1 완료분) |
+| Andon — UWB 의존 파손 | `.claude/CLAUDE.md` Dependencies (alpha09 파괴 변경 리스크) |
+| 조치 — 즉시 롤백 | `06_utils/UpdateManager.kt` Firebase 권위 자동 업데이트 |
+
+Andon 은 CouSolve 프레임워크의 6번 항목(Solution 진행의 중단 여부를 결정할 기준)이다.
+로드맵을 넣는 이상 **어느 조건에서 멈추는지**가 같이 있어야 계획이 계획으로 읽힌다.
 
 ## 삽화
 
