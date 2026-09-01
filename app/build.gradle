@@ -12,8 +12,8 @@ android {
         applicationId "com.wf11.safealert"
         minSdk 26
         targetSdk 34
-        versionCode 126
-        versionName "1.1.70"
+        versionCode 127
+        versionName "1.1.71"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -49,6 +49,11 @@ android {
         buildConfig true
     }
     testOptions {
+        // Robolectric merged 리소스 읽기 (02-01 Task 2) — 기존 testLogging 블록 보존, 병기만.
+        unitTests.includeAndroidResources = true
+        // [Phase 3 T3] android.util.Log 등 stub 호출 시 예외 대신 기본값 반환 (순수 JVM 테스트용).
+        //   Robolectric 테스트는 자체 sandbox classloader 로 실제 구현을 쓰므로 영향 없음.
+        unitTests.returnDefaultValues = true
         unitTests.all {
             testLogging {
                 events 'failed'
@@ -77,6 +82,8 @@ dependencies {
     implementation 'com.google.firebase:firebase-analytics-ktx'
 
     testImplementation 'junit:junit:4.13.2'
+    // Robolectric 4.15.1 — 02-01 Task 1 체크포인트 승인 좌표(testImplementation 한정, T-02-SC 완화)
+    testImplementation 'org.robolectric:robolectric:4.15.1'
     androidTestImplementation 'androidx.test.ext:junit:1.1.5'
     androidTestImplementation 'androidx.test.espresso:espresso-core:3.5.1'
 }

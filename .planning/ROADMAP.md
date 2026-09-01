@@ -20,8 +20,8 @@
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: 테스트 하네스와 CI 회귀 게이트** - 필터 캐스케이드를 기대값으로 고정하고, 회귀를 실기가 아니라 CI 가 먼저 잡게 한다
-- [ ] **Phase 2: 안전 크리티컬 경로 골든 테스트** - 경보 격상·해제 전 경로와 UWB 세션 전환을 기대값에 못 박고, 안전망으로 저속 접근 미도달 버그를 잡는다
-- [ ] **Phase 3: BleService 분해** - 경보 판정·UWB 거리·캘리브레이션을 세 컴포넌트로 분리하고 동작 보존을 증명한다
+- [x] **Phase 2: 안전 크리티컬 경로 골든 테스트** - 경보 격상·해제 전 경로와 UWB 세션 전환을 기대값에 못 박고, 안전망으로 저속 접근 미도달 버그를 잡는다
+- [x] **Phase 3: BleService 분해** - 경보 판정·UWB 거리·캘리브레이션을 세 컴포넌트로 분리하고 동작 보존을 증명한다
 - [ ] **Phase 4: 기기 상태 단일화** - 40여 개 분산 Map 을 `DeviceTrackingState` 로 통합해 좀비 엔트리를 구조적으로 차단한다
 - [ ] **Phase 5: 판정 워커 분리** - `processAlert` 를 BLE 스캔 콜백에서 떼어내 다수 기기 현장에서 UI 가 끊기지 않게 한다
 
@@ -66,7 +66,22 @@ Plans:
   3. 약한 콜드스타트 RSSI 에서 저속으로 접근하는 시퀀스가 WARNING 등급에 도달하며, 이 시나리오가 골든 테스트에 회귀 케이스로 남는다 (BUG-02)
   4. 사용자가 현장에서 지게차가 천천히 다가올 때 경고가 뜨는 것을 확인한다 (BUG-02)
 
-**Plans**: TBD
+**Plans:** 4/4 plans executed
+
+Plans:
+**Wave 1**
+
+- [x] 02-01-PLAN.md — Robolectric 공급망 차단 체크포인트 + `ServiceController.get()` 무-`onCreate()` 하네스와 `processAlert` 시간 시임(트레이서) + 골든용 `DevSettings` 고정
+
+**Wave 2** *(blocked on Wave 1 completion; 02-02 ∥ 02-03 병렬)*
+
+- [x] 02-02-PLAN.md — 격상 SAFE→WARNING→DANGER · 역방향 해제 캐스케이드 record-then-freeze 골든 + 판정 상수 레드 트라이얼 (TEST-01)
+- [x] 02-03-PLAN.md — UWB Case A/B 전환 · 실측 신선도 경계 · 좀비 DANGER 부재 · 6대 이하 다기기 비오염 골든 (TEST-02)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [x] 02-04-PLAN.md — 저속 접근 시퀀스를 버그가 살아 있는 상태로 골든 동결 → 원인 규명·수정·재동결 + CI 필수 테스트 목록 등록 + 현장 확인 (BUG-02)
+
 **출하 상태**: 현장 관측 가능한 수정 1건(저속 접근 WARNING 도달)이 포함된 APK 를 배포한다. 나머지는 테스트 추가이므로 다른 동작은 불변. 현장 검증은 "천천히 접근하는 지게차에 경고가 뜨는가" 단일 항목
 **Note**: TEST-02 는 UWB 세션 6대 이하로 의도적으로 한정한다. 6대 초과 플립은 BUG-03 으로 v2 이월 — 수정 없이 그 경로를 기대값으로 고정하면 CI 가 상시 빨간색이 되거나 버그를 스펙으로 승격시키게 된다. BUG-02 를 이 Phase 에 둔 이유는 두 가지 — (a) 현장에 나가 있는 미탐지(missed alert) 이므로 분해를 기다릴 이유가 없고, (b) Phase 3 의 REFACTOR-04 "기대값 불변" 게이트가 버그가 아니라 올바른 동작을 보존하게 된다
 
@@ -102,6 +117,7 @@ Plans:
   4. 기기가 수 시간 드나든 뒤에도 상태 엔트리 수가 추적 기기 수를 따라가고 단조 증가하지 않는다 (BUG-01)
   5. 사용자가 2시간 이상 연속 구동 후에도 앱이 느려지지 않고 경보음이 끊기지 않는 것을 확인한다 (BUG-01)
 
+**진행**: T1(제거 경로 일원화 — `DeviceStateRegistry`)·T2(STATE-03 계기)·T3(테스트·문서) 완료. Success Criteria 2·3·4 충족(단위 테스트 51건 통과, 골든 24건 포함 = 판정 불변). 미충족 = 1(STATE-01 `DeviceTrackingState` 통합 — 착수 여부 사용자 판단 대기)·5(2시간 연속 구동 실기 검증 — 사용자 지시로 보류). 상세 = PROGRESS.md
 **Plans**: TBD
 **출하 상태**: `DeviceTrackingState` 통합 + `filterPreserveMap` 누수 제거 + 개발자 설정 상태 계기가 포함된 APK 를 배포한다. STATE-03 계기가 이 Phase 의 현장 검증 수단이다 — 2시간 이상 구동 후 엔트리 수를 눈으로 읽어 STATE-02 성립 여부를 확인한다
 **Note**: BUG-01(`onDeviceLost` ↔ `healthCheck` 비원자 정리)을 이 Phase 에 둔 것은 STATE-02 의 단일 경로화가 그 버그의 구조적 원인을 제거하기 때문이다. 별도 증상 대응으로 처리하면 v1.1.28 / v1.1.43 / v1.1.50 과 같은 계열의 반복이 된다
@@ -130,7 +146,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. 테스트 하네스와 CI 회귀 게이트 | 2/2 | In Progress|  |
-| 2. 안전 크리티컬 경로 골든 테스트 | 0/TBD | Not started | - |
+| 2. 안전 크리티컬 경로 골든 테스트 | 4/4 | In Progress|  |
 | 3. BleService 분해 | 0/TBD | Not started | - |
 | 4. 기기 상태 단일화 | 0/TBD | Not started | - |
 | 5. 판정 워커 분리 | 0/TBD | Not started | - |

@@ -1,19 +1,19 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.1.70
-current_phase: 01
-current_phase_name: 테스트 하네스와 CI 회귀 게이트
-status: completed
-stopped_at: "Phase 01 완료 — 사용자 승인 수령 후 code_review_gate·verify_phase_goal 통과, Critical 3건 전건 수정 반영"
-last_updated: "2026-08-24T08:46:47.125Z"
-last_activity: 2026-08-24
-last_activity_desc: Phase 01 marked complete
-state_head: dff88b82d83f7071ee28d7ccead3a7e1dd471816
+current_phase: 03
+current_phase_name: BleService 분해
+status: complete
+stopped_at: Completed 03-refactor-01-PLAN.md
+last_updated: "2026-08-31T00:00:00.000Z"
+last_activity: 2026-08-31
+last_activity_desc: Phase 03 완료 - 커밋 849eb05
+state_head: 849eb05dd72da6d40551d15d11b5d1b0861b77fe
 progress:
   total_phases: 5
-  completed_phases: 1
-  total_plans: 2
-  completed_plans: 2
+  completed_phases: 3
+  total_plans: 7
+  completed_plans: 7
 ---
 
 # Project State
@@ -23,22 +23,22 @@ progress:
 See: .planning/PROJECT.md (updated 2026-08-23)
 
 **Core value:** BLE RSSI 근접 판정이 같은 상황에서 같은 결과를 낸다. 경보가 떠야 할 때 뜨고, 꺼져야 할 때 꺼지며, 한 번 고친 증상이 다시 돌아오지 않는다.
-**Current focus:** Phase 01 — 테스트 하네스와 CI 회귀 게이트
+**Current focus:** Phase 03 완료 — 다음은 Phase 04 (기기 상태 단일화)
 
 ## Current Position
 
-Phase: 01 — COMPLETE
-Plan: 2 of 2
-Status: Phase 01 complete
-Last activity: 2026-08-24 — Phase 01 marked complete
+Phase: 03 (BleService 분해) — COMPLETE
+Plan: 1 of 1
+Status: Phase 04 계획 대기
+Last activity: 2026-08-31 — Phase 03 커밋 849eb05 완료
 
-Progress: [██░░░░░░░░] 20%
+Progress: [██████░░░░] 60%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 0
+- Total plans completed: 7
 - Average duration: —
 - Total execution time: —
 
@@ -59,6 +59,9 @@ Progress: [██░░░░░░░░] 20%
 | Plan | Duration | Tasks | Files |
 |------|----------|-------|-------|
 | Phase 01-ci P01 | 26min | 3 tasks | 4 files |
+| Phase 02-golden P01 | 61min | 3 tasks | 4 files |
+| Phase 02-golden P03 | 29min | 3 tasks | 1 files |
+| Phase 02-golden P04 | 50min | 3 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -78,6 +81,15 @@ Recent decisions affecting current work:
 - [Phase 01]: Task 1 precondition('작업 트리가 깨끗해야 한다')을 baseline-porcelain-equivalence로 해석 — 범위 밖 14건 기존 미커밋 항목 존재로 문자 그대로의 공백 불가능, git status --porcelain 베이스라인 일치로 판정
 - [Phase 01]: 01-02 Task 1 레드 트라이얼 2건(Kalman 1e-6/Median +1) non-zero exit + D-19 4요소 메시지 확인, D-21 문서 재확인 결과 REQUIREMENTS.md/ROADMAP.md 편집 불필요
 - [Phase 01]: 01-ci-02 Task 3 착수 전 release.yml Firebase 갱신 스텝에 citest 태그 가드(1줄) 선추가 — Rule 2 편차, 검증 태그가 프로덕션 자동업데이트 포인터를 오염시키지 않도록 함
+- [Phase 02]: Robolectric 4.15.1(testImplementation) 사람 승인 채택 — 좌표/저장소/스코프 확인
+- [Phase 02]: 골든 스모크 '1프레임'을 '2프레임 연속(마지막 콜 관측)'으로 재해석 — production 게이트(streak/warmingUp) 수학적 제약
+- [Phase 02]: 골든 DevSettings 프로파일 30줄 명시 대입, kalmanPreset=KALMAN_PRESET_NORMAL 명시 고정(출하 기본과 동일)
+- [Phase 02]: onDeviceLost 는 이 테스트 스위트 전체에서 '그 외'(else) 분기(dropServedLocked+reconcileLocked)만 타며, uwbManager==null 로 reconcileLocked 가 즉시 반환되어 coroutine 진입 없음을 확인(T-02-11)
+- [Phase 02]: BLE 타임아웃 UWB 정리 목록(peerUwbSeenMap/uwbSampleAtMsMap/uwbSafeStreakMap + onDeviceLost)을 BleService.kt 직독으로 확정 후 재현(replicateBleTimeoutBoundary)
+- [Phase 02]: 세션 상한 초과 경로는 golden 으로 얼리지 않고 require() 거부만 증명 — BUG-03 을 스펙으로 승격시키지 않음(v2 이월)
+- [Phase 02]: D-3B: PROJECT.md의 injectWarmup 프리셋 포화 가설은 코드와 불일치 — 실측 근본 원인은 WARNING 접촉 streak의 단발 미달 즉시 하드리셋
+- [Phase 02]: DANGER streak는 수정하지 않음 — effDanger ⊂ effWarning이라 WARNING 완화만으로 BUG-02 목표 달성
+- [Phase 02]: 현장 확인 4항목은 Phase 완료 차단 게이트가 아님 — REQUIREMENTS.md BUG-02 각주로 인계, 미수행 상태 명시
 
 ### Pending Todos
 
@@ -102,6 +114,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-08-24T07:33:11.226Z
-Stopped at: 01-ci-02 Task 3: CI 종단 실증(그린/레드) 증거 수집 완료, 최종 blocking-human 체크포인트에서 정지 — 사람 승인 대기
-Resume file: .planning/phases/01-ci/01-02-SUMMARY.md
+Last session: 2026-08-28T06:15:46.521Z
+Stopped at: Completed 02-golden-04-PLAN.md
+Resume file: None
