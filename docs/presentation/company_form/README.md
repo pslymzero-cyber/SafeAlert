@@ -57,6 +57,25 @@ python3 build_company_deck.py            # base.pptx → SafeAlert_보고_2026.0
 - 사내 폼이라 모든 장에 `Coupang Fulfillment Services Confidential and Proprietary`
   표기가 들어간다. 저장소 공개 범위를 확인하고 보관할 것.
 
+## 표현 장치 — CouSolve Idea Contest 에서 가져온 것
+
+폼은 사내 표준(LFP)을 그대로 쓰되, 슬라이드 안쪽 표현은 `2026 CouSolve Idea Contest` 자료의
+장치로 바꿨다. 그 자료의 7단계 프레임워크(Problem Statement → Tradeoffs → … → Feedback Loop)를
+그대로 따르지는 않는다 — 지금 목차에 맞는 장치만 골라 옮겼다. 코드는 `_devices.py`.
+
+| 장 | 바꾼 것 | 가져온 장치 |
+|----|---------|-------------|
+| 1. 개발 배경 | ①②③ 나열 → 회색 라벨 + `AS-IS / Pain Point` · `Data / Issue` | Problem Statement |
+| 2. 기대효과 | ①~⑥ 나열 → `구분 / As-is / To-be` 3열 표 | GOAL 의 As-is·To-be |
+| 3. 장단점 | 장점 5 · 단점 4 나열 → `A vs. B → 택한 것` + 화살표 + 판단 근거 3행, 그 아래 `남는 한계` | Tradeoffs |
+| 4. 사용자 피드백 | 나열 → `차수 / 반영 내용 / 결과` 표 + `항목 / Before / After` 표 | Feedback Loop |
+| 5. 시연 | 목록 → `신호 수신 → 거리 추정 → 등급 판정 → 3중 경보` 흐름 한 줄 (아래에 기술 요소) | Solution |
+| 1장 하단 | — | 번호 매긴 한 줄 요약 + 이탤릭 결론 문장 |
+
+장단점을 트레이드오프로 바꾼 것이 가장 큰 변화다. 단점을 결함 목록으로 늘어놓는 대신
+**무엇을 얻으려고 무엇을 내줬는지**로 적으면, 같은 사실이 변명이 아니라 설계 판단으로 읽힌다.
+반대로 트레이드오프가 아닌 것(미설치 기기 비감지 · 밀집 시 지연)은 `남는 한계`로 따로 뺐다.
+
 ## 삽화
 
 각 본문 장 오른쪽에 이해를 돕는 그림을 하나씩 둔다. `render_figures.js` 가 굽는다.

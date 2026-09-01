@@ -19,3 +19,6 @@ docs/presentation/assets/
 
 # 웹 브리프 빌드 산출물 (build_page.js 로 재생성)
 docs/presentation/web/node_modules
+
+# 파이썬 캐시
+__pycache__/
