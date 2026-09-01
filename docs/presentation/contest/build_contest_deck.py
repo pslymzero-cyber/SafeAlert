@@ -8,8 +8,10 @@
 #   10 Solution 표 / 11 Solution 자유 / 12 06.Metrics / 13 07.Andon / 14 08.Feedback
 #
 # 숫자 원칙 — 실측이 없는 칸은 비우지 않고 추정치를 넣되 **밑줄**로 표시한다.
-# 자료 전체에서 밑줄은 '실측 아님' 한 가지 뜻만 갖는다. 가정값은 하나뿐이고
-# 나머지는 거기서 계산된다 (12장 산출 근거표).
+# 자료 전체에서 밑줄은 '실측 아님' 한 가지 뜻만 갖는다.
+# 경보 건수는 2026-09-02 부터 실측값이다 (ALERTS.md · 주간 자동 집계). 12장에
+# 처음 추정과 나란히 두어, 하나뿐이던 가정이 얼마나 빗나갔는지 그대로 보인다.
+# 아직 밑줄이 남은 칸: 쓸데없이 울린 횟수 · 작업자 만족도 (설문 회수 전).
 import os, shutil, sys
 from pptx import Presentation
 from pptx.util import Inches, Pt
@@ -31,6 +33,18 @@ LATEST, LATEST_DATE = "v1.1.71", "2026.09.01"   # github 릴리스 기준
 RELEASES = 97          # git tag 실측 (v1.0.20 2026-06-07 ~ v1.1.71 2026-09-01)
 EST = {"u": True}
 ESTB = {"u": True, "bold": True}
+
+# ── 실측치 ──────────────────────────────────────────────────
+# .github/workflows/alert-digest.yml 이 매주 갱신하는 저장소 맨 위 ALERTS.md 에서 옮겼다.
+# WF11 사업장 노드, 2026-08-04 ~ 09-01 중 경보 기록이 남은 12일.
+# 1건 = 경보 1회가 아니라 '가까워진 1분'이다 (같은 상대는 1분에 한 번만 기록된다).
+M_FROM, M_TO, M_DAYS = "2026.08.04", "2026.09.01", 12
+M_WARN_T, M_DANGER_T = 487, 291                    # 기간 합계
+M_WARN   = round(M_WARN_T / M_DAYS, 1)             # 40.6 회/일
+M_DANGER = round(M_DANGER_T / M_DAYS, 1)           # 24.2 회/일
+M_DEVICES, M_PAIRS = 41, 41
+M_RATE  = round(M_WARN / (M_PAIRS * SHIFT_H), 2)   # 0.11 회/시간/짝  (추정 0.5)
+M_RATIO = round(M_DANGER / M_WARN, 2)              # 0.60             (추정 0.28)
 
 if len(sys.argv) < 2:
     raise SystemExit("사용법: python3 build_contest_deck.py <CouSolve_Contest_양식.pptx>")
@@ -134,15 +148,14 @@ C.text(s, RX + 0.24, RY + 2.80, RW - 0.48, 0.22,
        [[("지게차 4대 기준. 장비 방식은 태그를 산 사람만 감지되지만, 앱은 폰을 가진 모두가 "
           "서로 감지된다.", {"size": 8.5, "color": C.INK2})]])
 C.text(s, RX + 0.24, RY + 3.10, RW - 0.48, 0.24,
-       [[("1교대(9시간) 동안 경보가 몇 번 울리는가",
-          {"bold": True, "size": 10.5, "color": C.NAVY}),
-         ("   밑줄 = 추정치", {"size": 8.5, "color": C.INK3, "u": True})]])
-for i, (lab, val, col) in enumerate([("경고 등급 경보", f"{WARN}회", C.AMBER),
-                                     ("위험 등급 경보", f"{DANGER}회", C.RED)]):
+       [[("하루에 경보가 몇 번 울리는가", {"bold": True, "size": 10.5, "color": C.NAVY}),
+         ("   앱이 남긴 기록으로 실측했다", {"size": 8.5, "color": C.INK3})]])
+for i, (lab, val, col) in enumerate([("경고 등급 경보", f"{M_WARN}회", C.AMBER),
+                                     ("위험 등급 경보", f"{M_DANGER}회", C.RED)]):
     C.kpi(s, RX + 0.20 + i * 2.98, RY + 3.34, 2.82, 0.88,
-          "", lab, "앱 경보 기록으로 실측 예정", val, col)
+          "", lab, f"WF11 · 기록 {M_DAYS}일 평균", val, col, est=False)
 C.text(s, RX + 0.24, RY + 4.30, RW - 0.48, 0.22,
-       [[("산출 근거는 12장. 가정한 값은 ‘한 짝이 한 시간에 0.5번 가까워진다’ 하나뿐이다.",
+       [[(f"{M_FROM}~{M_TO} 실측. 미리 추정했던 값과 얼마나 달랐는지는 12장.",
           {"size": 8, "color": C.INK3})]])
 
 # ── 4. Summary 자유 양식 — 화면과 판정 반경 ─────────────────
@@ -179,8 +192,8 @@ C.fill(C.body_of(s, "문제의 배경"),
         [("Pain Point", {"bold": True, "color": C.NAVY}), (" :  ", {"color": C.INK3}),
          ("존과 로케이션 사이 교차 구간에서 적재 파렛트가 시야를 가리고, "
           "장비 소음에 경적이 묻혀 서로를 알아채는 것이 늦다.", {})],
-        [("접근을 알려주는 수단이 없으니, 위험했던 순간이 몇 번이었는지조차 기록되지 않는다.",
-          {"color": C.INK2})]],
+        [("접근을 알려주는 수단이 없어, 앱을 깔기 전까지는 위험했던 순간이 "
+          "몇 번이었는지조차 기록되지 않았다.", {"color": C.INK2})]],
        size=10.5, margin=0.20, space=1.35, gap=5, top=C.TOPCHIP)
 C.fill(C.body_of(s, "표준/목표"),
        [[("Target", {"bold": True, "color": C.NAVY}), (" :  ", {"color": C.INK3}),
@@ -193,7 +206,7 @@ C.fill(C.body_of(s, "현재 상황"),
          ("현재 서로를 감지하는 장비는 ", {}), ("0대", {"bold": True, "color": C.RED}),
          (". 지게차 4대와 상시 인원 3명 모두 감지 대상이 아니다.", {})],
         [("Issue", {"bold": True, "color": C.NAVY}), (" :  ", {"color": C.INK3}),
-         ("감지 수단이 없으니 사고도 아차사고도 집계된 적이 없다.", {})]],
+         ("사고도 아차사고도 회사 데이터에 집계된 적이 없다.", {})]],
        size=10, margin=0.18, space=1.3, top=C.TOPCHIP)
 
 why = C.body_of(s, "문제를 해결해야 하는 이유")
@@ -206,13 +219,15 @@ C.text(s, WX + 0.28, WY + 0.44, WW - 0.56, 0.30,
          ("      4. 꺼져도 바로 안다", {"bold": True, "size": 12.5, "color": C.NAVY})]],
        align=PP_ALIGN.CENTER)
 C.text(s, WX + 0.28, WY + 0.88, WW - 0.56, 0.28,
-       [[("1교대(9시간) 동안 경고 등급 경보 ", {"size": 11.5}),
-         (f"약 {WARN}회", {"bold": True, "size": 11.5, "color": C.RED, "u": True}),
-         (",  그중 위험 등급 ", {"size": 11.5}),
-         (f"약 {DANGER}회", {"bold": True, "size": 11.5, "color": C.RED, "u": True})]],
+       [[("앱을 깔고 4주, 하루 평균 경고 등급 경보 ", {"size": 11.5}),
+         (f"{M_WARN}회", {"bold": True, "size": 11.5, "color": C.RED}),
+         (",  위험 등급 ", {"size": 11.5}),
+         (f"{M_DANGER}회", {"bold": True, "size": 11.5, "color": C.RED}),
+         ("가 실제로 찍혔다", {"size": 11.5})]],
        align=PP_ALIGN.CENTER)
 C.text(s, WX + 0.28, WY + 1.18, WW - 0.56, 0.26,
-       [[("밑줄은 추정치다 (산출 근거 12장). 감지 수단이 없어 실제로 세어 본 적이 없다.",
+       [[(f"WF11 앱 경보 기록 실측 ({M_FROM}~{M_TO} 중 기록 {M_DAYS}일). "
+          "앱이 깔리기 전에는 이 숫자를 셀 수단 자체가 없었다.",
           {"size": 9.5, "color": C.INK2})]], align=PP_ALIGN.CENTER)
 C.text(s, WX + 0.28, WY + 1.50, WW - 0.56, 0.28,
        [[("“지금 이 구간을 지키는 것은 설비가 아니라 ", {"italic": True, "size": 10.5, "color": C.INK2}),
@@ -368,7 +383,7 @@ PLAN = [
     ("4단계  기기 상태 관리 경로 일원화", "제안자", "완료", "완료"),
     ("DB 보안 규칙 잠금 · 업데이트 채널 정비", "제안자", f"완료 ({LATEST})", "완료"),
     (f"v1.0.1 ~ {LATEST} 현장 배포 · 3개 센터 실사용", "제안자 · 현장", "진행 중", "진행"),
-    ("앱 경보 기록 4주 집계 · 작업자 설문 회수", "제안자 · 현장", "9월 중", "진행"),
+    ("작업자 설문 회수  (경보 기록 집계는 주간 자동화 완료)", "제안자 · 현장", "9월 중", "진행"),
     ("5단계  경보 계산을 화면과 분리", "제안자", "10월", "예정"),
     ("업무용 PDA 로 이전 — 개인 폰 임시 설치 종료", "제안자 · IT", "10월", "예정"),
     ("현장 사용 승인 절차 정리 · 확대 승인", "안전 · 운영", "확산 전", "협조"),
@@ -426,17 +441,18 @@ s = S[11]
 C.fill(C.body_of(s, "성공 지표"), [[("", {})]], margin=0.02, top=C.TOPCHIP)
 MX, MY, MW = 0.77, 2.37, 5.84
 C.text(s, MX + 0.24, MY + 0.44, MW - 0.48, 0.24,
-       [[("네 가지 모두 숫자로 재기로 했다", {"bold": True, "size": 10.5, "color": C.NAVY}),
-         ("   밑줄 = 추정치", {"size": 8.5, "color": C.INK3, "u": True})]])
+       [[("네 가지 중 둘은 이미 쟀다", {"bold": True, "size": 10.5, "color": C.NAVY}),
+         ("   밑줄 = 아직 추정", {"size": 8.5, "color": C.INK3, "u": True})]])
 KPI = [
-    ("지표 1", "경고 등급 경보", "서로 접근 — 경고권 진입", f"1교대 {WARN}회", C.AMBER),
-    ("지표 2", "위험 등급 경보", "더 가까워짐 — 위험권 진입", f"1교대 {DANGER}회", C.RED),
+    ("지표 1", "경고 등급 경보", "서로 접근 — 경고권 진입", f"하루 {M_WARN}회", C.AMBER, False),
+    ("지표 2", "위험 등급 경보", "더 가까워짐 — 위험권 진입", f"하루 {M_DANGER}회", C.RED, False),
     ("지표 3", "쓸데없이 울린 횟수", "서 있는데 계속 울림 · 멀어졌는데 다시 울림",
-     "1교대 3회 미만", C.INK2),
-    ("지표 4", "작업자 만족도", "울리는 시점과 거리가 맞는가", "10점 중 7.0점", C.TEAL),
+     "하루 3회 미만", C.INK2, True),
+    ("지표 4", "작업자 만족도", "울리는 시점과 거리가 맞는가", "10점 중 7.0점", C.TEAL, True),
 ]
-for i, (tag, name, desc, val, col) in enumerate(KPI):
-    C.kpi(s, MX + 0.20, MY + 0.72 + i * 0.86, MW - 0.40, 0.80, tag, name, desc, val, col)
+for i, (tag, name, desc, val, col, est) in enumerate(KPI):
+    C.kpi(s, MX + 0.20, MY + 0.72 + i * 0.86, MW - 0.40, 0.80, tag, name, desc, val, col,
+          est=est)
 C.text(s, MX + 0.24, MY + 4.14, MW - 0.48, 0.44,
        [[("‘울렸어야 하는데 안 울린 횟수’ 는 지표에서 뺐다", {"bold": True, "size": 9, "color": C.RED}),
          ("  —  아무 일도 일어나지 않은 것이라 셀 방법이 없다. "
@@ -446,26 +462,29 @@ C.text(s, MX + 0.24, MY + 4.14, MW - 0.48, 0.44,
 C.fill(C.body_of(s, "지표 확보 방법"), [[("", {})]], margin=0.02, top=C.TOPCHIP)
 NX = 6.74
 C.text(s, NX + 0.24, MY + 0.44, MW - 0.48, 0.24,
-       [[("이 숫자는 이렇게 나왔다 — 가정한 값은 하나뿐",
-          {"bold": True, "size": 10.5, "color": C.NAVY})]])
+       [[("먼저 추정했고, 4주 뒤 실제로 쟀다",
+          {"bold": True, "size": 10.5, "color": C.NAVY}),
+         (f"   WF11 · {M_FROM}~{M_TO}", {"size": 8.5, "color": C.INK3})]])
 C.table(s, NX + 0.20, MY + 0.78, MW - 0.40,
-        ["항목", "값", "근거"],
-        [["서로 감지되는 짝", "21가지", "지게차 4 + 사람 3 = 7대의 짝 수"],
-         ["짝당 시간당 접근", [[("0.5회", EST)]],
-          [[("보수적으로 잡은 값 — ", {}), ("유일한 가정", {"bold": True, "color": C.RED})]]],
-         ["1교대 경고 경보", [[(f"{WARN}회", ESTB)]], f"21가지 × {SHIFT_H}시간 × 0.5 = 94.5"],
-         ["위험까지 갈 비율", [[(f"{RATIO}", EST)]], "UWB 판정 반경 비의 제곱 (8m ÷ 15m)²"],
-         ["1교대 위험 경보", [[(f"{DANGER}회", ESTB)]], f"{WARN} × {RATIO} = 26.6"],
-         ["쓸데없이 울린 횟수", [[("1교대 3회 미만", EST)]], "자동 소리 끄기 · 재발령 억제 후"],
-         ["작업자 만족도", [[("10점 중 7.0점", EST)]], "요구 4건 반영 · 3개 센터 사용 중"]],
-        col_w=[1.32, 1.10, 3.02], row_h=0.27, head_h=0.27, size=8.5, head_size=8.5,
-        aligns=[PP_ALIGN.LEFT, PP_ALIGN.CENTER, PP_ALIGN.LEFT])
+        ["항목", "추정", "실측"],
+        [["서로 감지되는 짝", [[("21가지", EST)]], f"{M_PAIRS}쌍  (단말 {M_DEVICES}대)"],
+         ["짝당 시간당 접근", [[("0.5회", EST)]], f"{M_RATE}회"],
+         ["하루 경고 경보", [[(f"{WARN}회", ESTB)]],
+          [[(f"{M_WARN}회", {"bold": True})]]],
+         ["위험까지 갈 비율", [[(f"{RATIO}", EST)]], f"{M_RATIO:.2f}"],
+         ["하루 위험 경보", [[(f"{DANGER}회", ESTB)]],
+          [[(f"{M_DANGER}회", {"bold": True, "color": C.TEAL})]]],
+         ["쓸데없이 울린 횟수", [[("하루 3회 미만", EST)]], "아직 못 쟀다"],
+         ["작업자 만족도", [[("10점 중 7.0점", EST)]], "설문 예정"]],
+        col_w=[1.34, 1.20, 2.90], row_h=0.27, head_h=0.27, size=8.5, head_size=8.5,
+        aligns=[PP_ALIGN.LEFT, PP_ALIGN.CENTER, PP_ALIGN.CENTER])
 C.lines(s, NX + 0.24, MY + 3.04, MW - 0.48, [
-    [("·  ", {}), ("앱이 경보를 울릴 때마다 시각 · 상대 · 신호 세기 · 등급이 서버에 기록되고 있다",
-      {"bold": True}), (" — 따로 만들 것이 없다.", {})],
+    [("·  경보가 울릴 때마다 시각 · 상대 · 신호 세기 · 등급이 서버에 남고, ", {}),
+     ("GitHub Actions 가 매주 자동 집계한다", {"bold": True}), (" — 손으로 만든 숫자가 아니다.", {})],
     [("·  같은 상대는 1분에 한 번만 기록되므로 1건 = 가까워진 1분이다. "
       "사고 건수가 아니라 위험했던 순간의 대용 지표로 쓴다.", {})],
-    [("·  4주만 모으면 가정한 값이 실제 숫자로 바뀌고, 위 표의 나머지가 전부 따라 바뀐다.", {})],
+    [("·  가정은 ‘한 짝이 한 시간에 0.5번’ 하나뿐이었다. 짝은 두 배, 빈도는 1/5 — 오차가 상쇄돼 ", {}),
+     ("위험 경보는 추정 27회 → 실측 24.2회", {"bold": True, "color": C.TEAL}), (".", {})],
     [("·  사고 건수는 회사 데이터로 존재하지 않아 지표에 넣지 않았다.", {"color": C.RED})],
 ], size=9, gap=0.34)
 
@@ -551,7 +570,7 @@ C.text(s, FX + 0.28, FY + 2.06, FW - 0.56, 0.24,
           "알림 눌러 끄기 v1.1.68,  화면 가장자리 경보 v1.1.69 · v1.1.70", {"size": 9})]])
 C.fill(C.body_of(s, "확산 계획"),
        [[("① 실제 숫자 확보", {"bold": True, "color": C.NAVY}),
-         ("  앱 경보 기록 4주 집계 · WF11 · WF21 · WF25 작업자 설문 회수 — 추정치를 실제 숫자로 바꾼다.",
+         ("  경보 기록은 주간 자동 집계로 확보했다. 남은 것은 WF11 · WF21 · WF25 작업자 설문 회수.",
           {})],
         [("② 업무용 PDA 로 이전", {"bold": True, "color": C.NAVY}),
          ("  2단계에서 개인 폰에 임시로 깔아 둔 상태를 끝낸다.", {})],
