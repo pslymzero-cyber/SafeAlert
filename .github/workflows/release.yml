@@ -118,7 +118,21 @@ jobs:
         run: |
           VER="${{ steps.ver.outputs.name }}"
           APK_URL="https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/safealert-${VER}.apk"
+          # 공용 /version - v1.1.71+ 앱이 읽는 자리. 사업장 코드와 무관하게 전 기기가 여기를 본다.
+          curl -fsSX PATCH \
+            "${{ secrets.FIREBASE_DB_URL }}/version.json?auth=${{ secrets.FIREBASE_DB_SECRET }}" \
+            -H "Content-Type: application/json" \
+            -d "{\"latest\":\"${VER}\",\"apk_url\":\"${APK_URL}\",\"force_update\":false,\"changelog\":\"\"}"
+          # 옛 자리 /wf11/version - v1.1.70 이하 현장 기기 호환용. 전 기기 갱신 확인 후 삭제한다.
           curl -fsSX PATCH \
             "${{ secrets.FIREBASE_DB_URL }}/wf11/version.json?auth=${{ secrets.FIREBASE_DB_SECRET }}" \
             -H "Content-Type: application/json" \
             -d "{\"latest\":\"${VER}\",\"apk_url\":\"${APK_URL}\",\"force_update\":false,\"changelog\":\"\"}"
+
+      # DB 보안 규칙을 레포의 database.rules.json 으로 덮어쓴다. 콘솔 수작업 불필요.
+      #   legacy secret 은 규칙을 우회하는 admin 권한이라, 규칙을 잠근 뒤에도 위 PATCH 는 계속 통과한다.
+      - name: Deploy DB security rules
+        if: ${{ steps.ver.outputs.is_release == 'true' }}
+        run: |
+          curl -fsSX PUT --data-binary @database.rules.json \
+            "${{ secrets.FIREBASE_DB_URL }}/.settings/rules.json?auth=${{ secrets.FIREBASE_DB_SECRET }}"

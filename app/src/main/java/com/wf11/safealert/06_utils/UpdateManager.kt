@@ -28,9 +28,11 @@ object UpdateManager {
     )
 
     fun checkForUpdate(context: Context, onResult: (UpdateInfo?) -> Unit) {
-        val root = DevSettings.firebaseRoot
+        // [v1.1.71] APK 는 전 사업장 공용 -> version 도 사업장 루트 밖 /version 단일 노드.
+        //   사업장별 루트에 두면 firebaseRoot 를 wf11 이외로 바꾼 기기가 CI 가 쓰는 자리를 못 읽어
+        //   자동 업데이트가 영구 정지한다. 알림/비콘공유/보정은 그대로 사업장별.
         FirebaseDatabase.getInstance().reference
-            .child(root).child("version")
+            .child("version")
             .get()
             .addOnSuccessListener { snap ->
                 val latest    = snap.child("latest").getValue(String::class.java)    ?: run { onResult(null); return@addOnSuccessListener }

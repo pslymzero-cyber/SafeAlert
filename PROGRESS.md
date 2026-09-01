@@ -7,9 +7,9 @@
 ## 현재 위치
 
 - 작업 디렉터리: `C:\Users\pslym\Downloads\SafeAlert`
-- 브랜치: `master`, HEAD = `0402989` (코드 `849eb05` + 문서 `0402989`)
-- 진행 단계: **Phase 4 T1+T2 구현 완료 (미커밋)** — T1 제거 경로 일원화 + T2 STATE-03 계기 노출. 테스트 43건 통과
-- 다음 행동: 사용자 확인 후 현장 검증(2시간 구동 후 엔트리 수 판독) → T3~T5 (커밋은 사용자 명시 요청 시에만)
+- 브랜치: `master`, HEAD = `39a74fb` (Phase 4 T1+T2 코드·문서 단일 커밋)
+- 진행 단계: **Phase 4 T1+T2+T3 완료** — T1 제거 경로 일원화 + T2 STATE-03 계기 + T3 테스트·문서 마감. 테스트 **51건 통과**(기존 43 + 신규 8). REQUIREMENTS STATE-02·STATE-03·BUG-01 = Complete, **STATE-01만 Pending**
+- 다음 행동: **STATE-01(`DeviceTrackingState` 통합) 착수 여부 사용자 판단 대기** — 아래 「STATE-01 판단 제기」 절 참조. 실기 검증(2시간 연속 구동)은 사용자 지시로 보류. 커밋은 사용자 명시 요청 시에만
 
 ---
 
@@ -44,7 +44,7 @@ git diff --stat -- app/
  4 files changed, 140 insertions(+), 2048 deletions(-)
 ```
 
-### Phase 4 T1: 기기 상태 제거 경로 일원화 (BUG-01) — 구현 완료, 미커밋
+### Phase 4 T1: 기기 상태 제거 경로 일원화 (BUG-01) — 완료 (커밋 39a74fb)
 
 - **신설** `03_service/DeviceStateRegistry.kt` (97줄) — immediate/deferred/teardown 3그룹 슬롯 + `purge(deviceId, cold)` / `purgeDeferred(deviceId)` / `clearAll()` / `slotCount()` / `entryCount()` / `purgeCount`. 중복 등록은 `require` 로 차단
 - **등록** ASM `init` 33건 (상태맵 29 + `uwbDist` 3 immediate + `kalmanFilters` deferred + `filterPreserveMap` teardown), `BleService.onCreate` 9건 (`oneSecBuffer`·`wakeRssiMap`·dwell 3맵·`echoDiffLive` immediate, 필터 3종 deferred)
@@ -57,7 +57,7 @@ git diff --stat -- app/
 - 판정 로직·반경 값·기대값 배열 무수정. `BleService.kt` 2,020 → 1,968줄
 - 검증: `./gradlew testDebugUnitTest --rerun-tasks` → BUILD SUCCESSFUL, **tests=43 failures=0 errors=0 skipped=0** (7개 XML 집계, 캐시 히트 아님)
 
-### Phase 4 T2: STATE-03 계기 (개발자 설정 실시간 진단) — 구현 완료, 미커밋
+### Phase 4 T2: STATE-03 계기 (개발자 설정 실시간 진단) — 완료 (커밋 39a74fb)
 
 - **목표** REQUIREMENTS.md STATE-03 — 추적 기기 수·상태 엔트리 수·정리 이벤트를 실시간으로 확인해 잔존(좌비) 상태를 조기 발견. Phase 4 현장 검증 수단
 - **`DeviceStateRegistry.kt`** (97 → 112줄) — `sizeOf(name): Int?` 1개 + `companion object { @Volatile @JvmStatic var live }` 추가. T1 이 이미 만든 `slotCount()`/`entryCount()`/`purgeCount` 재사용(집계 로직 신규 0줄)
@@ -68,6 +68,32 @@ git diff --stat -- app/
 - **판독법** 추적 0대가 오래 이어지는데 엔트리가 줄지 않으면 잔존 상태(BUG-01 재발) 의심
 - 읽기 전용 경로만 추가 — 판정 경로(`processAlert` 등) 0줄 수정. `UwbRanger.kt`/`UwbCalibrator.kt` 무수정
 - 검증: `./gradlew testDebugUnitTest --rerun-tasks` → BUILD SUCCESSFUL, **tests=43 failures=0 errors=0 skipped=0** (캐시 히트 아님, 32 tasks executed)
+
+### Phase 4 T3: 테스트·문서 마감 — 완료 (미커밋)
+
+- **목표** 사용자 지시 「미뤄둔 작업 진행. 단 실기 테스트만 보류」 — 실기 검증으로만 달성 가능하던 항목을 단위 검증으로 대체하고 문서에 확정 반영
+- **`DeviceStateRegistryTest.kt`** (신규 117줄, 안드로이드 의존 0) — 6건. 웸/콜드/TTL/`clearAll` 4분기와 잔여 0, 200사이클 누적 없음, 중복 슬롯명 거부
+- **`AlertStateMachineJvmTest.kt`** — 실배선 2건 추가. `registryPurge_leavesNoResidueForDevice`(실제 판정으로 상태를 채운 뒤 purge → 기저선 복귀), `repeatedDeviceChurn_doesNotGrowState`(100회 진입/소멸 → 단조 증가 없음). 등록 누락 슬롯이 있으면 잔여로 드러나는 구조
+- **검증** `./gradlew testDebugUnitTest --rerun-tasks` → BUILD SUCCESSFUL (32 tasks executed, 캐시 히트 아님), **8클래스 51건 / failures=0 errors=0 skipped=0**. 그중 골든 벡터 24건(AlertCascadeGolden 8 + UwbSessionGolden 16) 통과 = **판정 동작 1비트 불변 확인**
+- **`.planning/REQUIREMENTS.md`** — STATE-02·STATE-03·BUG-01 체크 + 근거 하위항목, 매핑 표 3행 Pending → Complete. **STATE-01 은 Pending 유지**. BUG-01 에는 「2시간 이상 연속 구동 실기 힙 관측은 보류. 단위 검증이 그 자리를 대신한다」를 명기
+- **`activity_dev_settings.xml:474`** — 오타 `펌침/접힘` → `펼침/접힘` 수정(접근성 문자열만, 기능 무영향)
+- 프로덕션 Kotlin 코드 0줄 수정. 변경 = 테스트 2파일 + XML 1줄 + 문서
+
+---
+
+---
+
+### 보안 A + 업데이트 채널 공용화 (v1.1.71) — 완료 (미커밋)
+
+- **목표** 사용자 지시 「1 2번으로 진행. 사업장 코드는 그냥 두자」 — Firebase RTDB 무인증 개방 차단 + 자동 업데이트 채널을 사업장 코드와 분리
+- **발견한 결함** 앱은 `{firebaseRoot}/version` 을 읽는데 CI 는 `/wf11/version` 에만 썼다 → `wf11` 이 아닌 사업장 코드를 넣은 기기는 자동 업데이트를 영구히 못 받는다. 보안 항목보다 우선 처리
+- **`UpdateManager.kt:30`** — `DevSettings.firebaseRoot` 경유 제거, 사업장 루트 밖 공용 `/version` 단독 참조. 이 파일의 `firebaseRoot` 참조는 이 1곳뿐이었고, 다른 5곳(FirebaseManager·DevSettingsActivity·DevSettings)은 사업장별 유지 = 무수정
+- **`database.rules.json`** (신규) — 루트 `.read/.write false` 기본 차단. `version` 을 `$site` 와 형제인 명명 노드로 두어 와일드카드 매칭에서 제외(명명 키는 `$wildcard` 에 안 잡힘). `version` 읽기만 허용·쓰기 차단 = `apk_url` 변조로 임의 APK 자동설치되는 급소 봉쇄. `alerts` 는 `!data.exists()` 로 신규 추가만, `beacon_share`·`echo_calib` 는 현행 유지(앱에 `FirebaseAuth` 0건). **사업장 코드 형식 제약은 사용자 지시로 넣지 않음** — `$site` 완전 개방
+- **`release.yml`** — (a) `Update Firebase Realtime DB` 에 공용 `/version.json` PATCH 추가, 옛 `/wf11/version.json` 은 v1.1.70 이하 현장 기기 호환용으로 존치(전 기기 갱신 확인 후 삭제) (b) `Deploy DB security rules` 스텝 신설 — `curl PUT --data-binary @database.rules.json` 로 `.settings/rules.json` 덮어쓰기. 둘 다 `is_release == 'true'` 게이트
+- **「코드 0줄로 잠긴다」 근거** legacy database secret(`?auth=`)은 규칙을 우회하는 admin 권한이라, 규칙을 잠근 뒤에도 CI PATCH 는 계속 통과한다
+- **버전** `versionCode 126 → 127`, `versionName 1.1.70 → 1.1.71`. 결함 수정이지만 배포되어야 효과가 있고 배포 = 릴리스 태그 = 버전 증가 (사용자 확인 완료)
+- **검증** `./gradlew testDebugUnitTest --rerun-tasks` → BUILD SUCCESSFUL (32 tasks executed), **51건 / failures=0**. YAML·JSON 파싱 각각 통과
+- **미검증** DB **쓰기** 개방 여부는 실측하지 않았다(부작용 우려로 write 프로브 생략). 읽기 개방은 무인증 GET 200 으로 실측 완료
 
 ---
 
@@ -192,8 +218,26 @@ BleScanner.kt   280 개별 타임아웃 onDeviceLost   295 일괄 forEach onDevi
 ## 남은 순서
 
 1. **[완료]** Phase 3 커밋 마감 — 단일 커밋 `849eb05`. T1/T2/T3 3분할은 불가로 판정 (아래 미해결 이슈 참조)
-2. **[진행 중]** Phase 4 (기기 상태 단일화) — **T1·T2 구현 완료·미커밋** (테스트 43건 통과). 다음은 사용자 확인 후 현장 검증 → T3~T5
-3. PERF-01(스캔 콜백 = 메인 스레드에서 `processAlert` 실행 -> 20대 이상 프레임 드랍)은 **Phase 5** 예정
+2. **[진행 중]** Phase 4 (기기 상태 단일화) — **T1·T2·T3 완료** (테스트 51건 통과). REQUIREMENTS 기준 STATE-02·STATE-03·BUG-01 = Complete
+   - 남은 것 ① **STATE-01**(`DeviceTrackingState` 통합) — 착수 여부 사용자 판단 대기. 아래 「STATE-01 판단 제기」
+   - 남은 것 ② 실기 검증(2시간 연속 구동 후 엔트리 수 판독) — **사용자 지시로 보류**
+   - 미커밋 잔여: `.planning/REQUIREMENTS.md`, `PROGRESS.md`, `activity_dev_settings.xml`, `AlertStateMachineJvmTest.kt`, 신규 `DeviceStateRegistryTest.kt`. 커밋 시 `.gitignore`·`01-UAT.md`·`01-VALIDATION.md` 는 **제외**(사용자 지정 무수정 파일)
+3. **[대기]** 보안 A 커밋 + 태그 `v1.1.71` + push — 사용자 명시 요청 시에만. `database.rules.json` 은 신규 미추적이라 `git add` 필요. 태그를 밀어야 CI 가 자물쇠(`Deploy DB security rules`)와 공용 `/version` 을 실제로 배포한다
+4. PERF-01(스캔 콜백 = 메인 스레드에서 `processAlert` 실행 -> 20대 이상 프레임 드랍)은 **Phase 5** 예정
+
+---
+
+## STATE-01 판단 제기 (사용자 결정 필요)
+
+- **목표는 이미 달성됐다.** STATE-01 과 T1 레지스트리는 같은 결과(좀비 엔트리 구조적 불가)에 대한 두 가지 해법이고, T1 이 그 결과를 이미 냈다(제거 경로 1곳 + 등록 누락을 드러내는 테스트)
+- `DeviceTrackingState` 데이터 클래스가 **추가로 주는 것**은 「새 맵이 몰래 생기지 않는다」는 컴파일 타임 강제 하나다
+- **대가**: 경보 판정 핫패스 약 **250 사이트** 재작성. 실기 검증이 보류된 상태에서 안전 앱 판정부를 그 규모로 손대는 것은 실질 위험
+- **완화 요인**: 골든 회귀 테스트 1,883줄(AlertCascadeGolden 621 + LowSpeedApproachRegression 708 + UwbSessionGolden 554)이 판정 1비트 변화를 잡는다
+- **착수 시 설계 방향(미착수)**: 맵 값 타입을 nullable 필드로 1:1 보존하면 기계적 치환 가능 — `rushFrameMap[id]` → `t.rushFrame`, `.remove(id)` → `t.rushFrame = null`, `.containsKey(id)` → `t.rushFrame != null`
+  - 함정 ① 반복 패턴(`.keys`/`.filterValues{}`/`.entries`)은 통합 맵에서 null 필터 필요
+  - 함정 ② Set 2종(`mutedDevices`, `timeGateWaiveSet`)은 Boolean 필드로
+  - 함정 ③ **별칭 체인 보존 요구와 백킹 맵 소멸이 정면 충돌** — `BleService.kt` 438~475 의 `private val rushFrameMap = asm.rushFrameMap` 이 컴파일 불가해진다. 맵 삭제 전에 리플렉션 테스트 경로부터 재설계해야 함
+- **결론**: 사용자가 전량 수행을 재확인하면 그대로 진행한다. 재확인 없이는 착수하지 않는다
 
 ---
 
@@ -210,6 +254,7 @@ BleScanner.kt   280 개별 타임아웃 onDeviceLost   295 일괄 forEach onDevi
 - GateGuard(Fact-Forcing Gate)가 Write 신규 파일 생성을 차단 -> 4가지 사실(호출 지점 / 중복 없음 / 데이터 형식 / 사용자 지시 원문) 제시 후 동일 호출 재시도로 통과. 우회 환경변수 사용 금지.
 - Windows Python 은 `/tmp` 를 `C:\tmp` 로 해석. Python 힙독에서 비-ASCII print 금지 (cp949 `UnicodeEncodeError`).
 - `sed` 치환 후 반드시 `grep` 으로 확인.
+- **Bash heredoc 안 Python 에서 역슬래시 리터럴이 변형된다.** `\\n` 이라 써도 실제로는 진짜 개행이 되어 치환 대조가 어긋난다 -> `chr(92)`(역슬래시)·`chr(10)`(개행) 로 문자열을 조립할 것. 실제로 v1.1.71 작업 중 `release.yml` 137행에 글자 그대로의 `\n` 이 박혀 자물쇠 배포 스텝이 무조건 실패할 상태였고, `cat -A` 로 잡아 이 방식으로 수정했다.
 
 ---
 
@@ -219,13 +264,14 @@ BleScanner.kt   280 개별 타임아웃 onDeviceLost   295 일괄 forEach onDevi
 
 ```
 SafeAlert 프로젝트 이어서 작업한다. 먼저 C:\Users\pslym\Downloads\SafeAlert\PROGRESS.md 를 읽어라.
-특히 "Phase 4 T1 설계 (확정)" 절이 이번에 구현할 내용 전부다. 설계는 이미 확정됐으니 재설계·재조사 금지.
+특히 "현재 위치"·"남은 순서"·"STATE-01 판단 제기" 세 절이 핵심이다.
 
-상태: Phase 3 마감 완료(커밋 849eb05, 테스트 43건 통과). Phase 4 는 C안 승인 완료 + T1 설계 확정 + 애플리케이션 코드 0줄.
+상태: Phase 4 T1(제거 경로 일원화)·T2(STATE-03 계기) 커밋 39a74fb, T3(테스트·문서 마감) 완료하였으나 미커밋.
+테스트 51건 전수 통과(골든 24건 포함 = 판정 불변). REQUIREMENTS 기준 STATE-02·STATE-03·BUG-01 = Complete, STATE-01 만 Pending.
 
-지금 할 일 = Phase 4 T1: PROGRESS.md 의 "Phase 4 T1 설계 (확정)" 절에 적힌 구현 순서 1~8 을 그대로 수행.
-DeviceStateRegistry.kt 신설 -> AlertStateMachine init 등록 -> BleService.onCreate 등록 ->
-onDeviceLost / healthCheck prune / stopAll 을 레지스트리 호출로 치환 -> 테스트 -> 보고 후 정지.
+지금 할 일 = 사용자 결정 대기. ① STATE-01(`DeviceTrackingState` 통합, 판정 핫패스 ~250 사이트) 착수 여부,
+② 미커밋 잔여 커밋 여부(커밋 시 .gitignore·01-UAT.md·01-VALIDATION.md 제외), ③ Phase 5 진입 여부.
+실기 검증(2시간 연속 구동)은 사용자 지시로 보류 상태.
 
 지켜야 할 제약:
 - 커밋은 내가 명시 요청할 때만. 브랜치 생성·전환 금지, --no-verify 금지

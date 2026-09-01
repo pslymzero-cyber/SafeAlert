@@ -1,0 +1,40 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+
+    "version": {
+      ".read": true,
+      ".write": false
+    },
+
+    "$site": {
+      "version": {
+        ".read": true,
+        ".write": false
+      },
+
+      "alerts": {
+        "$day": {
+          "$alertId": {
+            ".write": "!data.exists()"
+          }
+        }
+      },
+
+      "beacon_share": {
+        ".read": true,
+        "$key": {
+          ".write": true
+        }
+      },
+
+      "echo_calib": {
+        ".read": true,
+        "$id": {
+          ".write": true
+        }
+      }
+    }
+  }
+}
