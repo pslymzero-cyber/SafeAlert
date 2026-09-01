@@ -306,3 +306,82 @@ def kpi_card(slide, x, y, w, h, tag, name, body, color):
 def quote(slide, y, t, size=9.5, x=0.85, w=11.70):
     return text(slide, x, y, w, 0.28, [("“" + t + "”", {"italic": True, "color": INK2})],
                 size=size, align=PP_ALIGN.CENTER)
+
+
+# 2계열 비교용 — dataviz 검증 통과 조합 (validate_palette.js, light, 6/6 PASS)
+#   #1B8A6B ↔ #B9770B : CVD ΔE 8.9(protan) · 정상시 19.1 · 대비 3:1 이상
+TEAL = RGBColor(0x1B, 0x8A, 0x6B)
+AMBER = RGBColor(0xB9, 0x77, 0x0B)
+
+
+def chart2(slide, x, y, w, h, cats, series, num_fmt="#,##0",
+           label_size=9, cat_size=9, colors=(AMBER, TEAL), gap=80, headroom=1.20):
+    """계열 두 개짜리 세로 막대. 계열이 둘이므로 범례를 반드시 둔다.
+
+    series: [(이름, [값…]), (이름, [값…])]
+    """
+    from pptx.chart.data import CategoryChartData
+    from pptx.enum.chart import (XL_CHART_TYPE, XL_LABEL_POSITION, XL_TICK_MARK,
+                                 XL_LEGEND_POSITION)
+
+    cd = CategoryChartData()
+    cd.categories = list(cats)
+    for name, vals in series:
+        cd.add_series(name, tuple(vals), number_format=num_fmt)
+
+    gf = slide.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED,
+                                Inches(x), Inches(y), Inches(w), Inches(h), cd)
+    ch = gf.chart
+    ch.has_title = False
+    ch.has_legend = True
+    ch.legend.position = XL_LEGEND_POSITION.TOP
+    ch.legend.include_in_layout = False
+    ch.legend.font.name = FONT
+    ch.legend.font.size = Pt(cat_size)
+    ch.legend.font.color.rgb = INK2
+    ch.font.name = FONT
+    ch.font.size = Pt(cat_size)
+    ch.font.color.rgb = INK2
+
+    plot = ch.plots[0]
+    plot.gap_width = gap
+    plot.overlap = -12
+    plot.has_data_labels = True
+    dl = plot.data_labels
+    dl.number_format = num_fmt
+    dl.number_format_is_linked = False
+    dl.position = XL_LABEL_POSITION.OUTSIDE_END
+    dl.font.name = FONT_M
+    dl.font.size = Pt(label_size)
+    dl.font.bold = True
+    dl.font.color.rgb = INK
+
+    for ser, col in zip(plot.series, colors):
+        ser.format.fill.solid()
+        ser.format.fill.fore_color.rgb = col
+        ser.format.line.fill.background()
+
+    va = ch.value_axis
+    va.visible = False
+    va.has_major_gridlines = False
+    va.has_minor_gridlines = False
+    va.maximum_scale = max(max(v) for _, v in series) * headroom
+    va.minimum_scale = 0
+
+    ca = ch.category_axis
+    ca.has_major_gridlines = False
+    ca.major_tick_mark = XL_TICK_MARK.NONE
+    ca.minor_tick_mark = XL_TICK_MARK.NONE
+    ca.format.line.color.rgb = LINE
+    ca.tick_labels.font.name = FONT
+    ca.tick_labels.font.size = Pt(cat_size)
+    ca.tick_labels.font.color.rgb = INK2
+
+    cs = ch._chartSpace
+    C = "{http://schemas.openxmlformats.org/drawingml/2006/chart}"
+    sp = parse_xml(
+        '<c:spPr xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" '
+        'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'
+        '<a:noFill/><a:ln><a:noFill/></a:ln></c:spPr>')
+    cs.insert(list(cs).index(cs.find(C + "chart")) + 1, sp)
+    return gf
