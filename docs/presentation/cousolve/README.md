@@ -149,6 +149,20 @@ Firebase CLI 도 `firebase login` 이 브라우저 OAuth 라 같은 이유로 �
 
 **그래서 `fetch_alerts.sh` 는 사내 PC 전용이다.**
 
+### v1.1.71 이후 — REST 로는 못 읽는다
+
+`database.rules.json` 이 루트를 `".read": false` 로 잠갔고 `alerts` 에는 `.read` 가 없다.
+상속되어 **읽기가 완전히 막힌다.** curl 로는 소유자여도 401/403 이 정상이다.
+규칙을 우회하는 경로는 둘뿐이다.
+
+| 경로 | 되는가 | 비고 |
+|------|--------|------|
+| Firebase CLI (`firebase login`) | ○ | 소유자 자격이 규칙을 우회한다. `fetch_alerts.sh` 가 이걸 쓴다 |
+| Firebase 콘솔 (웹) | ○ | 소유자 로그인. 모바일 브라우저에서도 열리지만 트리 조작이 불편하다 |
+| REST / curl | ✕ | 규칙에 막힌다 |
+| 앱 안에서 조회 | ✕ | 읽는 코드가 없고(`FirebaseManager` 는 `saveAlert` 만), 규칙에도 막힌다 |
+| GitHub Actions | ○ | `FIREBASE_DB_SECRET` 은 admin 권한이라 규칙을 우회한다 (`release.yml` 이 이미 사용 중) |
+
 ```bash
 cd docs/presentation/cousolve
 ./fetch_alerts.sh            # 기본 루트 wf11
