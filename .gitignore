@@ -10,3 +10,20 @@
 local.properties
 app/build/
 app/google-services.json
+
+# 덱 이미지 자산 — build_assets.js 로 앱 리소스에서 재생성한다
+docs/presentation/assets/
+
+# skills CLI 설치 원본 (스킬 본문은 커밋하지 않는다 — skills-lock.json 으로 복원)
+.agents/
+
+# 웹 브리프 빌드 산출물 (build_page.js 로 재생성)
+docs/presentation/web/node_modules
+
+# 파이썬 캐시
+__pycache__/
+
+# 사내 표준 폼 원본에서 만든 base — 폼 자체가 사외비라 커밋하지 않는다
+docs/presentation/company_form/base.pptx
+docs/presentation/cousolve/base_cousolve.pptx
+docs/presentation/contest/base_contest.pptx

@@ -1,0 +1,90 @@
+<title>SafeAlert 근접 판정 시연</title>
+<style>
+  /* 팔레트는 앱 고정 다크(values/colors.xml, v1.1.65)를 그대로 쓴다. */
+  :root {
+    --ground: #0B1220; --surface: #141C2B; --surface-2: #1A2233; --veil: #141B2B;
+    --hairline: #24304A; --stroke: #56627A;
+    --ink: #F1F5F9; --ink-2: #C3CDDC; --ink-3: #8B98AC; --ink-4: #5D6B82;
+    --accent: #7DD3FC; --safe: #4ADE80; --warn: #FCD34D; --danger: #FB7185; --on-accent: #0B1220;
+    --sans: "Pretendard", "Malgun Gothic", "맑은 고딕", "Apple SD Gothic Neo", "Noto Sans KR",
+            system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, "D2Coding", monospace;
+    --r: 14px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--ground); color: var(--ink-2);
+    font-family: var(--sans); font-size: 16px; line-height: 1.7;
+    -webkit-font-smoothing: antialiased; word-break: keep-all; overflow-wrap: break-word;
+  }
+  h1, h2, h3 { color: var(--ink); font-weight: 600; margin: 0; line-height: 1.25; }
+  p { margin: 0; }
+  img { display: block; max-width: 100%; height: auto; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
+
+  /* 화면 한 장에 시뮬레이터만 담는다. 머리말도 규칙 설명도 두지 않는다. */
+  .wrap { min-height: 100vh; display: grid; place-items: center; padding: clamp(14px, 2.2vw, 30px); }
+  .sim { width: 100%; max-width: 1400px; }
+
+  /* 폰 목업 */
+  .phone { position: relative; border-radius: 26px; overflow: hidden; border: 1px solid #000; background: #000; box-shadow: 0 30px 70px rgba(0,0,0,.5); }
+  .phone > img { width: 100%; height: auto; display: block; }
+  .phone-ui { position: absolute; inset: 0; padding: 14px 14px 22px; display: flex; flex-direction: column; gap: 9px; font-size: 11px; }
+  .ui-card { background: rgba(20,27,43,.9); border: 1px solid var(--hairline); border-radius: 12px; padding: 12px; backdrop-filter: blur(4px); }
+  .ui-row { display: flex; align-items: center; gap: 8px; }
+  .ui-row + .ui-row { margin-top: 8px; }
+  .ui-name { color: var(--ink); font-weight: 600; font-size: 11.5px; }
+  .ui-meta { font-family: var(--mono); font-size: 10px; color: var(--ink-3); }
+  .pill { font-family: var(--mono); font-size: 10px; font-weight: 600; padding: 3px 9px; border-radius: 999px; margin-left: auto; }
+  .ui-btn { text-align: center; padding: 9px 0; border-radius: 999px; font-size: 11.5px; font-weight: 600; }
+
+__SIM_CSS__
+
+  /* ── 가로 배치 ────────────────────────────────────────────
+     넓은 화면에서는 한 화면에 가로로 편다.
+       윗줄 — 도면·계기 | 내 단말 | 상대 단말
+       아랫줄 — 조작부를 전체 너비에 걸친 콘솔로 깐다 (두 칸으로 접어 높이를 줄인다)
+     폰과 상대 단말이 한 묶음 div 로 세로로 쌓여 있어 세로로 길어지던 것을,
+     묶음 div 를 display:contents 로 풀어 각각을 그리드 칸에 직접 앉힌다. */
+  @media (min-width: 1080px) {
+    .sim {
+      max-width: 1200px; margin-inline: auto;
+      grid-template-columns: minmax(0, 520px) 300px minmax(220px, 280px);
+      grid-template-areas: "stage phone peer" "ctl ctl ctl";
+      gap: clamp(18px, 2vw, 30px) clamp(20px, 2.2vw, 34px);
+      align-items: start;
+    }
+    .sim > div:first-child, .sim > div:last-child { display: contents; }
+    .sim-stage { grid-area: stage; }
+    .sim > div:last-child > .phone { grid-area: phone; }
+    .sim > div:last-child > .peer-panel { grid-area: peer; }
+    /* '내 단말' 캡션은 폰 바로 아래 붙어 있을 때만 뜻이 있다. 콘솔이 그 자리를 쓰므로 뺀다. */
+    .sim > div:last-child > p { display: none; }
+    .sim-ctl {
+      grid-area: ctl; margin-top: 0;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      column-gap: clamp(28px, 3vw, 52px);
+    }
+  }
+
+  /* 규칙 설명 문단은 시뮬레이터 안에도 하나 있다. 이 페이지에서는 아래 한 줄로 대신한다. */
+  .sim-note { display: none; }
+
+  /* 시연을 위한 단순화는 숨기지 않는다. 설명이 아니라 단서라서 한 줄만 남긴다. */
+  .caveat {
+    margin-top: 18px; text-align: center;
+    font-family: var(--mono); font-size: 11px; color: var(--ink-4);
+  }
+</style>
+
+<div class="wrap">
+  <div>
+__SIM_MARKUP__
+
+    <p class="caveat">SafeAlert v1.1.70 · 판정 규칙은 앱 코드 그대로 · 전파 감쇠와 3단 필터는 시연용으로 단순화</p>
+  </div>
+</div>
+
+<script>
+__SIM_JS__
+</script>

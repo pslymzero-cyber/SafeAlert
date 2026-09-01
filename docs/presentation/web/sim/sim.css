@@ -1,0 +1,87 @@
+  /* ── 시뮬레이터 ──────────────────────────────────────────── */
+  .sim { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 300px); gap: clamp(24px, 4vw, 44px); align-items: start; }
+  .sim-stage { border: 1px solid var(--hairline); border-radius: var(--r); background: var(--surface); padding: 20px; }
+  .sim-plan { width: 100%; max-width: 430px; height: auto; display: block; margin-inline: auto; touch-action: none; cursor: grab; }
+  .sim-plan:active { cursor: grabbing; }
+  .sim-plan .ring { fill: none; }
+  .peer-hit { cursor: grab; }
+  .peer-hit:focus-visible circle.halo { stroke: var(--accent); stroke-width: 2; }
+  .sim-read { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px 20px; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--hairline); }
+  .sim-read div { font-size: 12.5px; color: var(--ink-3); }
+  .sim-read b { display: block; font-family: var(--mono); font-size: 17px; color: var(--ink); margin-top: 2px; }
+  .sim-ctl { display: grid; gap: 14px; margin-top: 20px; }
+  .ctl-row { display: grid; grid-template-columns: 84px 1fr; gap: 12px; align-items: center; }
+  .ctl-row > span { font-size: 13px; color: var(--ink-3); }
+  .chip-row { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chipbtn {
+    font: inherit; font-size: 13px; padding: 7px 14px; border-radius: 999px; cursor: pointer;
+    background: var(--surface-2); border: 1px solid var(--hairline); color: var(--ink-3);
+    transition: background .15s, color .15s, border-color .15s;
+  }
+  .chipbtn:hover { color: var(--ink); border-color: var(--stroke); }
+  .chipbtn[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
+  .chipbtn.warnsel[aria-pressed="true"] { background: var(--warn); border-color: var(--warn); }
+  .chipbtn.safesel[aria-pressed="true"] { background: var(--safe); border-color: var(--safe); }
+  .chipbtn.dangersel[aria-pressed="true"] { background: var(--danger); border-color: var(--danger); }
+  .sim-slider { width: 100%; accent-color: var(--accent); }
+  .inds { display: flex; gap: 8px; margin-top: 12px; }
+  .ind {
+    flex: 1; text-align: center; font-size: 11.5px; padding: 8px 0; border-radius: 8px;
+    background: var(--surface-2); color: var(--ink-4); border: 1px solid transparent; transition: all .18s;
+  }
+  .ind.on { color: var(--on-accent); font-weight: 600; }
+  .sim-note { margin-top: 16px; font-size: 12.5px; color: var(--ink-4); line-height: 1.65; }
+  .why-tag {
+    display: inline-block; margin-top: 10px; padding: 5px 12px; border-radius: 999px;
+    font-size: 11.5px; font-weight: 600; opacity: 0; transition: opacity .2s;
+  }
+  .why-tag.show { opacity: 1; }
+  .sidebar-ov {
+    position: absolute; right: 0; top: 30%; width: 58%; padding: 10px; border-radius: 10px 0 0 10px;
+    background: rgba(20,27,43,.95); border: 1px solid var(--hairline); border-right: 0;
+    transform: translateX(105%); transition: transform .35s cubic-bezier(.16,1,.3,1); font-size: 10.5px;
+  }
+  .sidebar-ov.show { transform: none; }
+  .zone-badge {
+    position: absolute; left: 50%; top: 66%; transform: translate(-50%, -50%); white-space: nowrap;
+    background: rgba(74,222,128,.16); border: 1px solid var(--safe); color: var(--safe);
+    padding: 8px 14px; border-radius: 999px; font-size: 12px; font-weight: 600; opacity: 0; transition: opacity .25s;
+  }
+  .zone-badge.show { opacity: 1; }
+  .phone.off .phone-ui { opacity: .32; filter: grayscale(1); }
+  /* 상대 단말 — 양방향 협력 알림을 보여주는 축소 카드 */
+  .peer-panel { margin-top: 16px; border: 1px solid var(--hairline); border-radius: var(--r); background: var(--surface); padding: 16px; }
+  .peer-panel .head { display: flex; align-items: center; gap: 10px; }
+  .peer-panel img { width: 26px; height: 26px; }
+  .peer-panel .nm { font-size: 13.5px; font-weight: 600; color: var(--ink); }
+  .peer-panel .lvl { margin-left: auto; font-family: var(--mono); font-size: 11px; font-weight: 600; padding: 4px 11px; border-radius: 999px; }
+  .peer-panel .tx { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--hairline); font-family: var(--mono); font-size: 11.5px; color: var(--ink-3); }
+  .peer-panel .tx b { color: var(--ink); }
+  .peer-panel .msg { margin-top: 8px; font-size: 12px; color: var(--ink-3); }
+  @media (max-width: 900px) { .sim { grid-template-columns: 1fr; } .sim .phone { max-width: 300px; margin-inline: auto; } .sim-read { grid-template-columns: repeat(2, 1fr); } }
+
+  /* ── 설정 화면 목업 ──────────────────────────────────────── */
+  /* 설정 화면은 앱에서 배경 사진이 없다 (activity_ble_settings.xml 은 @color/sa_bg 단색). 목업의 사진을 덮는다. */
+  .set-ui { gap: 8px; padding: 12px 12px 16px; background: var(--ground); }
+  .set-bar { display: flex; align-items: center; gap: 8px; padding: 2px 2px 6px; }
+  .set-back { color: var(--ink-3); font-size: 17px; line-height: 1; }
+  .set-card { padding: 11px 12px; }
+  .set-sec { font-family: var(--mono); font-size: 9.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--accent); margin-bottom: 9px; }
+  .set-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 0; font-size: 11px; color: var(--ink-3); }
+  .set-row + .set-row { border-top: 1px solid rgba(36,48,74,.7); }
+  .set-row b { font-family: var(--mono); font-size: 11px; color: var(--ink); }
+  .set-seg { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-bottom: 8px; }
+  .set-seg span { text-align: center; font-size: 10px; padding: 6px 0; border-radius: 7px; background: var(--surface-2); color: var(--ink-4); }
+  .set-seg span.on { background: var(--accent); color: var(--on-accent); font-weight: 600; }
+  .set-track { height: 4px; border-radius: 2px; background: var(--surface-2); margin: 2px 0 4px; }
+  .set-track i { display: block; height: 100%; border-radius: 2px; background: var(--accent); }
+  .set-sw { width: 26px; height: 15px; border-radius: 999px; background: var(--surface-2); position: relative; display: inline-block; }
+  .set-sw::after { content: ""; position: absolute; top: 2px; left: 2px; width: 11px; height: 11px; border-radius: 50%; background: var(--ink-4); transition: all .2s; }
+  .set-sw.on { background: rgba(74,222,128,.35); }
+  .set-sw.on::after { left: 13px; background: var(--safe); }
+
+  /* ── 두 화면 가로 배치 ───────────────────────────────────── */
+  .screens { display: grid; grid-template-columns: repeat(2, minmax(0, 300px)); gap: clamp(28px, 5vw, 64px); justify-content: center; align-items: start; }
+  .screens figure { margin: 0; }
+  .screens figcaption { margin-top: 14px; text-align: center; font-size: 13px; color: var(--ink-3); }
+  @media (max-width: 720px) { .screens { grid-template-columns: minmax(0, 300px); } }
