@@ -86,6 +86,25 @@ p2 = tf.add_paragraph()
 p2.alignment = PP_ALIGN.CENTER
 F._run(p2, "지급된 단말끼리 BLE 로 서로를 감지해, I-PAS 가 덮지 못하는 접근 조합을 메운다",
        11, False, F.INK2)
+# 이 자료가 제안서와 갈리는 지점은 시제(時制)다. 표지에서 먼저 못박는다.
+F.text(s, 2.41, 2.24, 8.54, 0.30,
+       [("제안이 아니다  —  이미 현장에서 돌고 있다", {"bold": True, "color": F.GREEN})],
+       size=13, align=PP_ALIGN.CENTER)
+FACTS = [
+    ("3개월 · 70회+", "현장에 배포하며 다듬은 기간"),
+    ("3개 센터", "WF11 · WF21 · WF25 실사용 중"),
+    ("리뷰 3차", "현장 요구 4건도 코드에 반영"),
+    ("Phase 1 / 5", "신뢰성 로드맵 완료 단계"),
+]
+for i, (big, cap) in enumerate(FACTS):
+    x = 2.41 + i * 2.135
+    F.text(s, x, 2.82, 2.135, 0.36, [(big, {"bold": True, "color": F.RED})],
+           size=15, align=PP_ALIGN.CENTER)
+    F.text(s, x, 3.24, 2.135, 0.28, [(cap, {"color": F.INK2})], size=9, align=PP_ALIGN.CENTER)
+F.text(s, 2.41, 3.68, 8.54, 0.28,
+       [("추가 하드웨어 구매도, 외부 협조도 없이 지급된 단말만으로 동작한다",
+         {"italic": True, "color": F.INK3})], size=9.5, align=PP_ALIGN.CENTER)
+
 t = tables(s)[0]
 F.cell(t.cell(0, 1), [("WF11  Waterflex", {})], 10, PP_ALIGN.CENTER)
 F.cell(t.cell(0, 3), [("임효성 (Ian)", {})], 10, PP_ALIGN.CENTER)
@@ -374,13 +393,17 @@ for i, (tag, name, col, desc, goal) in enumerate(KPI):
                 ([(d2, {"color": F.INK2})], 8.5),
                 ([("목표  ", {"color": F.INK3}), (goal, {"bold": True, "color": col, "size": 13})], 9)],
                col)
-F.lines(s, 2.35, 3.98, 10.25, [
+F.lines(s, 2.35, 3.96, 10.25, [
+    [("네 지표는 아직 측정 전이다", {"bold": True, "color": F.RED}),
+     ("  —  지금 사실인 것은 ", {}),
+     ("3개월 70회+ 배포 · 3개 센터 실사용 · 리뷰 3차 반영 · Phase 1 완료", {"bold": True}),
+     ("  다.", {})],
     [("보조 지표  ", {"bold": True, "color": F.GREEN2}),
      ("1교대 연속 구동 시 배터리 · 발열이 작업 시간을 버티는가  ·  서베이 종합 만족도 "
       "(10점 척도, WF11 · WF21 · WF25 — 회수 전)", {})],
-], size=9.5, gap=0.28)
+], size=9.5, gap=0.285)
 
-F.lines(s, 2.35, 4.32, 10.25, [
+F.lines(s, 2.35, 4.56, 10.25, [
     [("·  경보 이력 — Firebase 에 등급 · 거리 · 시각이 기록된다. "
       "KPI 1 · 2 는 이 기록과 현장 진술을 맞춰 판정한다.", {})],
     [("·  현장 서베이 — 10점 척도(10 매우 만족 ~ 1 매우 미흡). 센터별 응답자 수와 테스트 기간을 "
@@ -391,7 +414,7 @@ F.lines(s, 2.35, 4.32, 10.25, [
     [("·  지표는 앱 동작 기준으로만 정의했다. ", {}),
      ("사고 건수 · 셧다운 건수는 데이터가 없어 지표로 쓰지 않는다.", {"color": F.RED})],
 ], size=9.5, gap=0.315)
-F.quote(s, 6.22, "고쳤다는 말 대신 0건을 세기로 했다. 세는 방법이 없으면 지표로 쓰지 않는다.",
+F.quote(s, 6.42, "고쳤다는 말 대신 0건을 세기로 했다. 세는 방법이 없으면 지표로 쓰지 않는다.",
         x=2.25, w=10.35)
 
 # ── 11. 6. Andon ────────────────────────────────────────────
