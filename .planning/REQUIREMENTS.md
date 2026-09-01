@@ -38,8 +38,12 @@ Requirements for initial release. Each maps to roadmap phases.
 기기 상태가 40개 이상 mutable Map(`BleService.kt:384-655`)에 흩어져 정리 시점이 제각각. 좀비 상태가 경보 오작동으로 직결. 기술부채 2순위.
 
 - [ ] **STATE-01**: 기기별 추적 상태가 `DeviceTrackingState` 단일 데이터 클래스로 통합되어 분산 Map 접근이 제거된다
-- [ ] **STATE-02**: 기기 상태의 진입(최초 관측)·갱신·소멸(소실/헬스체크) 이 단일 경로를 거치며, 부분 정리로 잔여 엔트리가 남지 않는다
-- [ ] **STATE-03**: 유지보수자는 개발자 설정에서 추적 기기 수·상태 엔트리 수·정리 이벤트를 실시간으로 확인할 수 있다 (좀비 상태 조기 발견 수단)
+- [x] **STATE-02**: 기기 상태의 진입(최초 관측)·갱신·소멸(소실/헬스체크) 이 단일 경로를 거치며, 부분 정리로 잔여 엔트리가 남지 않는다
+  - 구현(04-T1): `DeviceStateRegistry` 신설. 슬롯을 immediate/deferred/teardown 3그룹으로 등록하고 소멸 경로를 `purge(id, cold)`·`purgeDeferred(id)`·`clearAll()` 셋으로 일원화. 실배선은 `BleService.kt:837`(onDeviceLost)·`:1255`(TTL prune)·`:1748`(stopAll).
+  - 3그룹을 유지하는 이유: 웜 소실(cold=false)이 deferred 를 지우면 필터 워밍 상태가 날아가 재발견 직후 오판정하고, 기기별 purge 가 teardown 을 지우면 2차 소실이 콜드 분기로 떨어져 1차가 세팅한 보존 스냅샷이 파괴된다. 합치면 판정이 바뀐다.
+  - 검증: `DeviceStateRegistryTest`(6건)가 웜/콜드/TTL/clearAll 4분기와 잔여 엔트리 0 을 고정. `AlertStateMachineJvmTest.registryPurge_leavesNoResidueForDevice` 가 실제 판정으로 상태를 채운 뒤 purge 후 기저선 복귀를 확인(등록 누락 슬롯이 있으면 잔여로 드러난다).
+- [x] **STATE-03**: 유지보수자는 개발자 설정에서 추적 기기 수·상태 엔트리 수·정리 이벤트를 실시간으로 확인할 수 있다 (좀비 상태 조기 발견 수단)
+  - 구현(04-T2): 개발자 설정에 「기기 상태 계기」 접힘 카드 추가. `DeviceStateRegistry.live` 를 통해 슬롯 수·총 엔트리 수·`purgeCount`·슬롯별 크기를 실시간 표시.
 
 ### 성능 (PERF)
 
@@ -47,7 +51,10 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### 알려진 버그 (BUG)
 
-- [ ] **BUG-01**: `onDeviceLost` ↔ `healthCheck` 비원자 정리로 인한 `filterPreserveMap` 누수가 제거되어, 2시간 이상 연속 구동에서 힙이 단조 증가하지 않는다
+- [x] **BUG-01**: `onDeviceLost` ↔ `healthCheck` 비원자 정리로 인한 `filterPreserveMap` 누수가 제거되어, 2시간 이상 연속 구동에서 힙이 단조 증가하지 않는다
+  - 구조적 해소: `filterPreserveMap` 은 teardown 슬롯으로 등록됐고, 기입은 `BleService.kt:831`(onDeviceLost) 한 곳뿐이다. 소비는 웜 필터 재사용(`AlertStateMachine.kt:593`)·TTL 30s 초과 prune(`BleService.kt:1253-1255`)·`clearAll()` 세 경로이며, TTL 상한이 걸려 무한 증가 경로가 없다.
+  - 검증: `DeviceStateRegistryTest.repeatedJoinAndLeave_doesNotAccumulate`(200 사이클)·`AlertStateMachineJvmTest.repeatedDeviceChurn_doesNotGrowState`(100 사이클, 매 사이클 새 기기 id) 가 엔트리 비단조증가를 고정.
+  - 미완: 2시간 이상 연속 구동 실기 힙 관측은 사용자 지시로 보류. 단위 검증이 그 자리를 대신하고 있으며, 실기 확인 시 이 항목을 재확인할 것.
 - [x] **BUG-02**: `injectWarmup` 프리셋 최소값 포화가 해소되어, 저속 접근 시에도 WARNING 등급에 도달한다
   - 근본 원인 정정(02-04, D-3B): 이 항목 원문이 지목한 `injectWarmup` 프리셋 포화 가설은 02-CONTEXT.md 조사에서 코드와 불일치로 판정됐다(`injectWarmup` 은 상수 3개만 세팅, 프리셋 참조·클램프 없음). 실측 근본 원인은 WARNING 접촉 연속 카운터(streak)의 단발 미달 즉시 하드리셋 — threshold 근접 잡음이 2연속 프레임 조건을 반복적으로 끊어 격상이 지연됨. 수정은 `BleService.kt` 에 WARNING 전용 변화율(dBm/s) 게이트를 추가해 완만한 하강(잡음)은 streak 를 보존하고 급한 하강(실이탈)만 즉시 리셋하도록 함(`WARNING_DEPART_RATE_DBM_PER_SEC=3.0`). 저속 접근 골든의 최초 격상(WARNING) 도달 프레임이 85→82 로 개선(commit f5fe81f).
   - 현장 확인 4항목 (출하 후 관찰 — Phase 완료 차단 게이트 아님, 현재 상태: 코드 수정 완료·현장 관측 대기): 수정된 앱을 기기 2대(보행자 1 + 지게차 1)에 설치한 뒤 (1) 지게차가 걷는 속도보다 느리게 경고 반경 밖에서 안으로 접근 (2) 경고 반경 진입 전후로 보행자 기기에 경고가 표시됨 (3) 평소 속도 접근과 비교해 경고가 뜨는 거리가 크게 다르지 않음 (4) 지게차가 멀어지면 경보가 정상 해제됨. 2번 항목이 실패로 보고되면 BUG-02 를 재개봉한다.
@@ -93,10 +100,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | REFACTOR-03 | Phase 3 | Pending |
 | REFACTOR-04 | Phase 3 | Pending |
 | STATE-01 | Phase 4 | Pending |
-| STATE-02 | Phase 4 | Pending |
-| STATE-03 | Phase 4 | Pending |
+| STATE-02 | Phase 4 | Complete |
+| STATE-03 | Phase 4 | Complete |
 | PERF-01 | Phase 5 | Pending |
-| BUG-01 | Phase 4 | Pending |
+| BUG-01 | Phase 4 | Complete |
 | BUG-02 | Phase 2 | Complete |
 
 **Coverage:**

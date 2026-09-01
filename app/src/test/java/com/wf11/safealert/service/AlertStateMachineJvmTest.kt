@@ -9,6 +9,7 @@ import com.wf11.safealert.utils.DevSettings
 import com.wf11.safealert.utils.UwbRanger
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
@@ -116,6 +117,57 @@ class AlertStateMachineJvmTest {
             "위험 반경 진입은 DANGER",
             BleConstants.LEVEL_DANGER.toLong(),
             (asm.alertState[id]?.first ?: -1).toLong(),
+        )
+    }
+
+    /**
+     * STATE-02 - 상태 제거 단일 경로. registry.purge 한 번이 그 기기의 모든 슬롯을 비운다.
+     * 판정으로 상태를 실제로 채운 뒤 지우므로, 등록이 누락된 슬롯이 있으면 잔여로 드러난다.
+     */
+    @Test
+    fun registryPurge_leavesNoResidueForDevice() {
+        val fx = FakeEffects(myCategory = BleConstants.CAT_FORKLIFT, myMode = "FORKLIFT")
+        val asm = AlertStateMachine(fx, UwbDistanceManager { null })
+        val baseline = asm.registry.entryCount()
+
+        val ids = listOf("SAFEALERT_DEVICE_A1", "SAFEALERT_DEVICE_A2", "SAFEALERT_DEVICE_A3")
+        ids.forEachIndexed { i, id -> asm.judgeUwbOnly(id, 5f, 1_000L + i * 100L) }
+        assertTrue(
+            "판정이 상태를 남겨야 이 테스트가 의미를 가진다",
+            asm.registry.entryCount() > baseline,
+        )
+
+        ids.forEach { asm.registry.purge(it, cold = true) }
+
+        assertEquals(
+            "purge 후 잔여 엔트리는 기저선으로 돌아와야 한다",
+            baseline.toLong(),
+            asm.registry.entryCount().toLong(),
+        )
+    }
+
+    /**
+     * BUG-01 - 기기 진입/소멸을 반복해도 상태 엔트리가 단조 증가하지 않는다.
+     * 매 사이클 새 id 를 쓰므로, 어느 슬롯이든 제거에서 빠지면 100배로 누적돼 실패한다.
+     */
+    @Test
+    fun repeatedDeviceChurn_doesNotGrowState() {
+        val fx = FakeEffects(myCategory = BleConstants.CAT_FORKLIFT, myMode = "FORKLIFT")
+        val asm = AlertStateMachine(fx, UwbDistanceManager { null })
+        val baseline = asm.registry.entryCount()
+
+        repeat(100) { cycle ->
+            val id = "SAFEALERT_DEVICE_CHURN_$cycle"
+            val t = 1_000L + cycle * 200L
+            asm.judgeUwbOnly(id, 12f, t)
+            asm.judgeUwbOnly(id, 5f, t + 100L)
+            asm.registry.purge(id, cold = true)
+        }
+
+        assertEquals(
+            "100회 진입/소멸 후에도 엔트리는 기저선이어야 한다",
+            baseline.toLong(),
+            asm.registry.entryCount().toLong(),
         )
     }
 }

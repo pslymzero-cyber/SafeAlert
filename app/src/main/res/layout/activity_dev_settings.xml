@@ -471,7 +471,7 @@
                             <TextView style="@style/SA.SectionTitle" android:text="기기 상태 계기" />
                             <TextView android:id="@+id/sec_state_summary" style="@style/SA.SectionSummary" android:text="추적 기기 · 상태 엔트리 · 정리 횟수" />
                         </LinearLayout>
-                        <ImageView android:id="@+id/sec_state_chevron" style="@style/SA.Chevron" android:contentDescription="펌침/접힘" />
+                        <ImageView android:id="@+id/sec_state_chevron" style="@style/SA.Chevron" android:contentDescription="펼침/접힘" />
                     </LinearLayout>
 
                     <LinearLayout android:id="@+id/sec_state_body" style="@style/SA.SectionBody">

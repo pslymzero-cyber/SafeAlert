@@ -117,6 +117,7 @@ Plans:
   4. 기기가 수 시간 드나든 뒤에도 상태 엔트리 수가 추적 기기 수를 따라가고 단조 증가하지 않는다 (BUG-01)
   5. 사용자가 2시간 이상 연속 구동 후에도 앱이 느려지지 않고 경보음이 끊기지 않는 것을 확인한다 (BUG-01)
 
+**진행**: T1(제거 경로 일원화 — `DeviceStateRegistry`)·T2(STATE-03 계기)·T3(테스트·문서) 완료. Success Criteria 2·3·4 충족(단위 테스트 51건 통과, 골든 24건 포함 = 판정 불변). 미충족 = 1(STATE-01 `DeviceTrackingState` 통합 — 착수 여부 사용자 판단 대기)·5(2시간 연속 구동 실기 검증 — 사용자 지시로 보류). 상세 = PROGRESS.md
 **Plans**: TBD
 **출하 상태**: `DeviceTrackingState` 통합 + `filterPreserveMap` 누수 제거 + 개발자 설정 상태 계기가 포함된 APK 를 배포한다. STATE-03 계기가 이 Phase 의 현장 검증 수단이다 — 2시간 이상 구동 후 엔트리 수를 눈으로 읽어 STATE-02 성립 여부를 확인한다
 **Note**: BUG-01(`onDeviceLost` ↔ `healthCheck` 비원자 정리)을 이 Phase 에 둔 것은 STATE-02 의 단일 경로화가 그 버그의 구조적 원인을 제거하기 때문이다. 별도 증상 대응으로 처리하면 v1.1.28 / v1.1.43 / v1.1.50 과 같은 계열의 반복이 된다
