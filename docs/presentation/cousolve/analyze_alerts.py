@@ -19,7 +19,16 @@
 """
 import argparse, json, sys
 from collections import Counter, defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+
+# 시각은 현장 시간(KST)으로 읽는다. datetime.fromtimestamp() 는 실행 환경의
+# 로컬 시간을 쓰는데, GitHub Actions 러너는 UTC 라 시간대별 그래프가 9시간
+# 어긋난다. tzdata 가 없는 환경을 대비해 고정 +9 로 물러선다.
+try:
+    from zoneinfo import ZoneInfo
+    KST = ZoneInfo("Asia/Seoul")
+except Exception:                                  # pragma: no cover
+    KST = timezone(timedelta(hours=9))
 
 CAVEAT = ("1건 = 경보 1회가 아니라 가까워진 1분이다 (같은 상대는 1분에 한 번만 기록된다). "
           "사고 건수가 아니라 위험했던 순간의 대용 지표다.")
@@ -53,7 +62,7 @@ def aggregate(alerts, days=0):
                 rssi[lv].append(rec["rssi"])
             ts = rec.get("timestamp")
             if isinstance(ts, (int, float)):
-                t = datetime.fromtimestamp(ts / 1000)
+                t = datetime.fromtimestamp(ts / 1000, KST)
                 per_hour[t.hour][lv] += 1
                 per_dow["월화수목금토일"[t.weekday()]][lv] += 1
     n = len(dates) or 1
@@ -94,14 +103,14 @@ def markdown(a, label):
     if a["per_hour"]:
         tot = {h: sum(c.values()) for h, c in a["per_hour"].items()}
         top = max(tot.values())
-        L += ["### 시간대별", "", "```"]
+        L += ["### 시간대별 (KST)", "", "```"]
         for h in sorted(tot):
             L.append(f"{h:02d}시  {_bar(tot[h], top):<18} {tot[h]:>5,}")
         L += ["```", ""]
     if a["per_dow"]:
         tot = {k: sum(v.values()) for k, v in a["per_dow"].items()}
         top = max(tot.values())
-        L += ["### 요일별", "", "```"]
+        L += ["### 요일별 (KST)", "", "```"]
         for k in "월화수목금토일":
             if k in tot:
                 L.append(f"{k}   {_bar(tot[k], top):<18} {tot[k]:>5,}")
