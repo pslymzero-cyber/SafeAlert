@@ -133,7 +133,37 @@ python3 analyze_alerts.py alerts.json --days 28
 기간 · 위험/경고 건수 · 일평균 · 관측 단말 수 · 조우 기기쌍 수 · 시간대별 · 요일별 ·
 상위 조우쌍 · RSSI 중앙값이 나온다. 합성 데이터로 형식은 확인해 두었다.
 
-> 이 저장소의 세션에서는 Firebase 로 나가는 요청이 차단된다. 콘솔에서 내보낸 JSON 을 넘기면 된다.
+### 왜 원격 세션에서 못 받는가
+
+이 저장소의 Claude Code 원격 세션은 **환경의 네트워크 정책**으로 Firebase 에 못 나간다.
+egress gateway 가 CONNECT 에 403 을 준다 (`connect_rejected`).
+
+```
+safealert-98d7e-default-rtdb.firebaseio.com:443 — connect_rejected
+  (the egress proxy denied the CONNECT (organization policy))
+```
+
+허용 목록은 패키지 레지스트리(npm · PyPI · crates · Go)와 Anthropic API 뿐이다
+(`curl -sS "$HTTPS_PROXY/__agentproxy/status"` 의 `noProxy` 참조, `selective: false`).
+Firebase CLI 도 `firebase login` 이 브라우저 OAuth 라 같은 이유로 불가능하다.
+
+**그래서 `fetch_alerts.sh` 는 사내 PC 전용이다.**
+
+```bash
+cd docs/presentation/cousolve
+./fetch_alerts.sh            # 기본 루트 wf11
+./fetch_alerts.sh <루트>     # 기기 개발자 설정에서 바꿨다면
+```
+
+google-services.json 에서 DB 주소를 읽어 → 날짜 목록 확인 → 전체 내려받기 → 집계까지 한 번에 간다.
+권한 오류(401/403)가 나면 Firebase CLI · 콘솔 내보내기로 안내한다.
+
+### google-services.json 확인 (선행)
+
+커밋된 `app/google-services.json` 에 **`firebase_url` 이 없다.** 앱은 이 값에만 의존하므로
+(`FirebaseManager.kt:14` · 하드코딩된 주소 없음), 이 파일 그대로면 `FirebaseDatabase.getInstance()`
+가 예외를 던진다. 자동 업데이트 · 비콘 세트 공유가 실제로 동작해 왔다면 빌드 PC 의 로컬 파일이
+다른 것이다. 콘솔에서 다시 받아 맞춰 둘 것.
 
 ## 숫자 원칙
 
