@@ -19,12 +19,14 @@ FONT = "에스코어 드림 4 Regular"
 FONT_M = "에스코어 드림 5 Medium"
 
 
-def _run(para, text, size, bold=False, color=INK, italic=False, font=None):
+def _run(para, text, size, bold=False, color=INK, italic=False, font=None, u=False):
+    """u=True 는 추정치 표시다. 자료 전체에서 밑줄은 '실측 아님' 하나의 뜻만 갖는다."""
     r = para.add_run()
     r.text = text
     r.font.size = Pt(size)
     r.font.bold = bold
     r.font.italic = italic
+    r.font.underline = bool(u)
     r.font.name = font or (FONT_M if bold else FONT)
     r.font.color.rgb = color
     rPr = r._r.get_or_add_rPr()
@@ -43,7 +45,7 @@ def _chunks(para, chunks, size, color):
         chunks = [(chunks, {})]
     for t, o in chunks:
         _run(para, t, o.get("size", size), o.get("bold", False),
-             o.get("color", color), o.get("italic", False), o.get("font"))
+             o.get("color", color), o.get("italic", False), o.get("font"), o.get("u", False))
 
 
 def text(slide, x, y, w, h, chunks, size=10, align=PP_ALIGN.LEFT, color=INK,
