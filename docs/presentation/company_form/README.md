@@ -110,13 +110,25 @@ python3 build_company_deck.py            # base.pptx → SafeAlert_보고_2026.0
 | 완료 1/5 | `ROADMAP.md` Progress 표, `STATE.md` current_phase 01 COMPLETE |
 | 이 순서인 이유 ① 측정 수단이 먼저 | `ROADMAP.md` Overview |
 | 이 순서인 이유 ② 단계별 단독 배포 | Phase 5 **출하 상태** 주석 (원인 귀속) |
-| Andon — 동작 보존 실패 | Phase 3 REFACTOR-04 수용 게이트 |
-| Andon — CI 게이트 적색 | `.github/workflows/release.yml` 테스트 게이트 (Phase 1 완료분) |
-| Andon — UWB 의존 파손 | `.claude/CLAUDE.md` Dependencies (alpha09 파괴 변경 리스크) |
+| Andon 현장 — 미발령 | `BUG-02` 저속 접근 WARNING 미도달 (Phase 2 수정 예정) |
+| Andon 현장 — 오발령 지속 | `v1.1.49` RSSI 상시위험 회귀 · `v1.1.56` 이탈 플랩 억제 · `v1.1.51` 재발령 억제 |
+| Andon 현장 — 감지 중단 | `v1.1.64` 무성 실패 제거 (상시 알림 '이상' 승격) |
+| Andon 현장 — 경보 피로 | `v1.1.61` 체류 자동 뮤트 · `v1.1.62` 세이프존 (둘 다 이 실패 모드 대책) |
+| Andon 배포 — 버전 혼재 | 1바이트 프로토콜 구버전 뒤호환 (`.claude/CLAUDE.md` Compatibility) |
+| Andon 배포 — 서비스 미기동 | `v1.1.62` 버그B 역할 전환 stop→start 레이스 · 버그C START_STICKY 좀비 |
 | 조치 — 즉시 롤백 | `06_utils/UpdateManager.kt` Firebase 권위 자동 업데이트 |
+| 조치 — 빌드 차단 | `.github/workflows/release.yml` 테스트 게이트 (Phase 1 완료분) |
 
 Andon 은 CouSolve 프레임워크의 6번 항목(Solution 진행의 중단 여부를 결정할 기준)이다.
 로드맵을 넣는 이상 **어느 조건에서 멈추는지**가 같이 있어야 계획이 계획으로 읽힌다.
+
+기준은 개발 게이트가 아니라 **현장에서 라인을 세우는 조건**으로 적는다. 두 갈래다 —
+운영 중 실상황(미발령 · 오발령 지속 · 감지 중단 · 경보 피로)과 업데이트 · 수정 중
+상황(버전 혼재 · 보호 공백 · 서비스 미기동 · 회귀 재발). 각 항목에 `즉시 중단` /
+`관측 시 판단` 을 붙여 대응 속도를 구분한다.
+
+네 개의 현장 기준은 전부 이미 겪은 증상이다. 위 표의 커밋이 그 근거이고, 그래서
+'있을 법한 일'이 아니라 '다시 나오면 멈춰야 하는 일'로 적혀 있다.
 
 ## 삽화
 
