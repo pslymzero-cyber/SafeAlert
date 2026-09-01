@@ -238,3 +238,71 @@ def chart(slide, x, y, w, h, cats, vals, kind="col", num_fmt="#,##0",
         '<a:noFill/><a:ln><a:noFill/></a:ln></c:spPr>')
     cs.insert(list(cs).index(cs.find(C + "chart")) + 1, sp)
     return gf
+
+
+# ── Ian 의 2026 CouSolve Idea Contest 제출본에서 가져온 표기 ──────────
+# 그 자료가 이 양식을 실제로 어떻게 채웠는지가 기준이다:
+#   · AS-IS / Pain Point, Target / Vision, Data / Issue  — 굵은 머리말 + 내용
+#   · 'A vs. B'  ➡  우선한 쪽                            — 긴장 관계 표기
+#   · 단계 흐름 (윗줄 굵게 / 아랫줄 기술 요소 이탤릭)
+#   · 색 머리띠를 두른 KPI 카드
+#   · 장 맨 아래 이탤릭 한 줄
+
+def kv(slide, x, y, w, items, size=9.5, gap=0.30, key_color=INK):
+    """'AS-IS : …' 처럼 굵은 머리말을 붙인 줄을 쌓는다."""
+    for i, (k, v) in enumerate(items):
+        text(slide, x, y + i * gap, w, gap,
+             [("· ", {"color": INK3}), (k + " : ", {"bold": True, "color": key_color}),
+              (v, {})], size=size)
+    return y + len(items) * gap
+
+
+def arrow(slide, x, y, w=0.42, h=0.20, color=RGBColor(0xB8, 0xBF, 0xC4)):
+    from pptx.enum.shapes import MSO_SHAPE
+    sh = slide.shapes.add_shape(MSO_SHAPE.RIGHT_ARROW, Inches(x), Inches(y), Inches(w), Inches(h))
+    sh.fill.solid(); sh.fill.fore_color.rgb = color
+    sh.line.fill.background(); sh.shadow.inherit = False
+    sh.text_frame.text = ""
+    return sh
+
+
+def versus(slide, x, y, w, rows, size=9.5, gap=0.35, split=0.46):
+    """'A vs. B'  ➡  우선한 쪽 — 계약사 자료의 Tradeoffs 표기."""
+    lw = w * split
+    for i, (left, right) in enumerate(rows):
+        yy = y + i * gap
+        text(slide, x, yy, lw - 0.30, gap,
+             left if not isinstance(left, str) else [(left, {"bold": True})],
+             size=size, align=PP_ALIGN.RIGHT)
+        arrow(slide, x + lw - 0.22, yy + 0.05, 0.38, 0.17)
+        text(slide, x + lw + 0.28, yy, w - lw - 0.28, gap,
+             right if not isinstance(right, str) else [(right, {})], size=size)
+    return y + len(rows) * gap
+
+
+def kpi_card(slide, x, y, w, h, tag, name, body, color):
+    """색 머리띠 + 흰 본문. 계약사 자료의 핵심 KPI 카드."""
+    from pptx.enum.shapes import MSO_SHAPE
+    head_h = 0.42
+    top = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(x), Inches(y), Inches(w), Inches(head_h))
+    top.fill.solid(); top.fill.fore_color.rgb = color
+    top.line.fill.background(); top.shadow.inherit = False
+    top.text_frame.text = ""
+    box = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(x), Inches(y + head_h),
+                                 Inches(w), Inches(h - head_h))
+    box.fill.solid(); box.fill.fore_color.rgb = WHITE
+    box.line.color.rgb = LINE; box.line.width = Pt(0.75); box.shadow.inherit = False
+    box.text_frame.text = ""
+    text(slide, x, y + 0.04, w, 0.20, [(tag, {"color": WHITE})], size=8, align=PP_ALIGN.CENTER)
+    text(slide, x, y + 0.19, w, 0.24, [(name, {"bold": True, "color": WHITE})],
+         size=10.5, align=PP_ALIGN.CENTER)
+    yy = y + head_h + 0.12
+    for chunks, sz in body:
+        text(slide, x + 0.10, yy, w - 0.20, 0.24, chunks, size=sz, align=PP_ALIGN.CENTER)
+        yy += 0.26
+    return box
+
+
+def quote(slide, y, t, size=9.5, x=0.85, w=11.70):
+    return text(slide, x, y, w, 0.28, [("“" + t + "”", {"italic": True, "color": INK2})],
+                size=size, align=PP_ALIGN.CENTER)
