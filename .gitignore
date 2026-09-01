@@ -22,3 +22,7 @@ docs/presentation/web/node_modules
 
 # 파이썬 캐시
 __pycache__/
+
+# 사내 표준 폼 원본에서 만든 base — 폼 자체가 사외비라 커밋하지 않는다
+docs/presentation/company_form/base.pptx
+docs/presentation/cousolve/base_cousolve.pptx
