@@ -166,11 +166,13 @@ Firebase CLI 도 `firebase login` 이 브라우저 OAuth 라 같은 이유로 �
 ### 폰으로 보려면 — `alert-digest.yml`
 
 `.github/workflows/alert-digest.yml` 이 **매주 월요일 06:00 KST** 에 돌면서
-사업장별 경보 이력을 집계해 `docs/alerts/DIGEST.md` 로 커밋한다.
-폰의 GitHub 앱에서 그 파일 하나만 열면 된다 — 설치도 로그인도 따로 없다.
+사업장별 경보 이력을 집계해 **저장소 맨 위 `ALERTS.md`** 로 커밋한다.
+GitHub 앱에서 저장소만 열면 파일 목록 위쪽에 바로 보인다 — 경로를 타고 들어갈 필요가 없다.
+
+<https://github.com/pslymzero-cyber/SafeAlert/blob/master/ALERTS.md>
 
 ```
-사업장 목록(shallow) → 사업장별 최근 N일 alerts → analyze_alerts.py → DIGEST.md 커밋
+사업장 목록(shallow) → 사업장별 최근 N일 alerts → analyze_alerts.py → ALERTS.md 커밋
 ```
 
 - 최근 구간만 받는다 — `orderBy="$key"` + `startAt` 으로 전체를 끌어오지 않는다

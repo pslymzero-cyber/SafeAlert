@@ -5,7 +5,8 @@ name: Alert digest
 #   REST 로는 읽히지 않는다. FIREBASE_DB_SECRET 은 규칙을 우회하는 admin 권한이라
 #   여기서만 읽을 수 있다 — release.yml 의 version PATCH 와 같은 자격이다.
 #
-#   결과는 docs/alerts/DIGEST.md 한 장이다. 폰의 GitHub 앱에서 그대로 읽힌다.
+#   결과는 저장소 맨 위 ALERTS.md 한 장이다. GitHub 앱에서 저장소만 열면
+#   파일 목록 위쪽에 바로 보인다 — 경로를 타고 들어갈 필요가 없다.
 #   원본 JSON 은 커밋하지 않는다 — 이 저장소는 공개다.
 
 on:
@@ -60,7 +61,6 @@ jobs:
           DAYS: ${{ github.event.inputs.days || '28' }}
         run: |
           set -euo pipefail
-          mkdir -p docs/alerts
           FROM=$(date -u -d "-${DAYS} days" +%Y%m%d)
           NOW=$(TZ=Asia/Seoul date '+%Y-%m-%d %H:%M KST')
           {
@@ -71,7 +71,7 @@ jobs:
             echo "> \`.github/workflows/alert-digest.yml\` 이 매주 갱신한다."
             echo "> 원본 기록은 공개 저장소에 올리지 않는다 — 집계값만 남긴다."
             echo
-          } > docs/alerts/DIGEST.md
+          } > ALERTS.md
 
           for SITE in ${{ steps.sites.outputs.list }}; do
             # orderBy="$key" + startAt 으로 최근 구간만 받는다 (전체를 끌어오지 않는다)
@@ -81,10 +81,10 @@ jobs:
                  --data-urlencode "startAt=\"$FROM\"" \
                  -o "alerts-$SITE.json"; then
               python3 docs/presentation/cousolve/analyze_alerts.py "alerts-$SITE.json" \
-                --label "${SITE^^}" --md docs/alerts/DIGEST.md --append --no-ids
+                --label "${SITE^^}" --md ALERTS.md --append --no-ids
             else
               echo "::warning::$SITE 읽기 실패 — 건너뜀"
-              printf '## %s\n\n> 읽기 실패.\n\n' "${SITE^^}" >> docs/alerts/DIGEST.md
+              printf '## %s\n\n> 읽기 실패.\n\n' "${SITE^^}" >> ALERTS.md
             fi
             rm -f "alerts-$SITE.json"
           done
@@ -93,7 +93,7 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add docs/alerts/DIGEST.md
+          git add ALERTS.md
           git diff --staged --quiet && { echo "변경 없음"; exit 0; }
           git commit -m "chore(alerts): 경보 이력 집계 갱신"
           git push
