@@ -276,6 +276,10 @@ class BleService : LifecycleService() {
     // ── [v1.0.27] IMU 연동 동적 스캔 모드 (휴식/전투) ───────────────────────
     // 정지 5초 확정 → REST 절전(휴식). 이동 즉시 → ACTIVE 원복(전투).
     private val STATIONARY_ECO_DELAY_MS = 5_000L
+    // [v1.1.72 D] 장비(DEVICE=지게차·EPJ) 광고 슬립 유예 — 무접촉이 시작된 시각(0 = 유예 미시작).
+    //   evaluateAdvertiserPower 가 갱신, 근접/경보/이동이 생기면 0 으로 리셋.
+    private val DEVICE_SLEEP_GRACE_MS = 60_000L
+    @Volatile private var advIdleSinceMs = 0L
     private val ecoHandler = android.os.Handler(android.os.Looper.getMainLooper())
     // [v1.1.12 L1] 접근(kfVel>0) 마지막 관측 시각(ms). 정지 직전 다가오던 기기를 절전 진입으로 놓치지 않기 위한 영속 신호.
     //   processAlert 가 매 프레임 갱신, isDangerPresent() 가 SIGNAL_STALE_MS 신선도로 평가. (lastScanResultMs 선례와 동일하게 @Volatile Long)
@@ -325,9 +329,9 @@ class BleService : LifecycleService() {
 
     // ── [v1.0.42 Req3] RSSI 동적 슬립/웨이크 (송출 전력 관리) ─────────────────
     //   모든 타겟 RSSI ≤ SLEEP_RSSI_DBM(-90)/신호 없음 → 광고 슬립(연속 송출 중단, 하트비트만).
-    //   하나라도 RSSI ≥ WAKE_RSSI_DBM(-89) → 0ms 즉시 웨이크(연속 광고 재개 + LocalState 강송출).
+    //   하나라도 RSSI ≥ WAKE_RSSI_DBM(v1.1.72 기본 -95) → 0ms 즉시 웨이크(연속 광고 재개 + LocalState 강송출).
     //   스캔(RX)은 절대 멈추지 않으므로 접근 감지/웨이크는 항상 살아 있다.
-    // [판정 파라미터] WAKE/STALE — DevSettings 라이브 읽기(기본 -89/6000L = 기존값).
+    // [판정 파라미터] WAKE/STALE — DevSettings 라이브 읽기(기본 -95/6000L, v1.1.72 B).
     //   슬립 판정은 '웨이크 조건 불충족'(아래 evalAdvPower)으로 구현돼 SLEEP_RSSI_DBM 은 실코드 미사용
     //   (문서 경계값) — 설정 노출에서 제외하고 상수로 둔다.
     private val WAKE_RSSI_DBM: Int get() = DevSettings.wakeRssiDbm  // 이 값 이상(가까움)이면 즉시 웨이크
@@ -1567,13 +1571,24 @@ class BleService : LifecycleService() {
         //   '자다 깨어 정신 못 차리는' 첫 깨어남 지연 제거. 정지하면 정상 슬립 복귀.
         val moving = DevSettings.keepAdvertiseWhileMoving && !ImuFusion.isStationary
         when {
-            anyNear || hasAlert || moving -> if (adv.isPaused) {
-                adv.resumeAdvertising(); broadcastLocalState()
-                Log.d(TAG, "RSSI 웨이크(평가): 근접/경보/이동 → 연속 광고 재개")
+            anyNear || hasAlert || moving -> {
+                advIdleSinceMs = 0L                        // [v1.1.72 D] 무접촉 유예 카운터 리셋
+                if (adv.isPaused) {
+                    adv.resumeAdvertising(); broadcastLocalState()
+                    Log.d(TAG, "RSSI 웨이크(평가): 근접/경보/이동 → 연속 광고 재개")
+                }
             }
-            else -> if (!adv.isPaused) {
-                adv.pauseAdvertising()
-                Log.d(TAG, "RSSI 슬립(평가): 근접 신호 없음 → 하트비트 모드")
+            // [v1.1.72 D] 장비 역할 광고 슬립 유예 — 장비가 LOW_POWER(~1s) 로 자 버리면 접근하는
+            //   보행자가 장비의 첫 광고를 최대 1초 늦게 받는다(콜드스타트 지연의 송신측 절반).
+            //   배터리 타협: 슬립을 폐지하지 않고 '진입만' DEVICE_SLEEP_GRACE_MS 늦춘다.
+            //   보행자(WALKER)는 현행 그대로 즉시 슬립 — 배터리 영향 0.
+            else -> {
+                if (advIdleSinceMs == 0L) advIdleSinceMs = now
+                val grace = if (myMode == "DEVICE") DEVICE_SLEEP_GRACE_MS else 0L
+                if (now - advIdleSinceMs >= grace && !adv.isPaused) {
+                    adv.pauseAdvertising()
+                    Log.d(TAG, "RSSI 슬립(평가): 근접 신호 없음 → 하트비트 모드(유예 ${grace}ms 경과)")
+                }
             }
         }
         // [v1.1.23] 스캔 배칭 승격/복귀를 광고 슬립/웨이크와 동일 집계로 동기화 —

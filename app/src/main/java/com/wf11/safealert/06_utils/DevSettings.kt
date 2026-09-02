@@ -362,7 +362,7 @@ object DevSettings {
     // [전력·통신] 광고 웨이크 RSSI(dBm) — 하나라도 이 값 이상이면 즉시 웨이크
     //   (슬립 경계 SLEEP_RSSI_DBM 은 실코드 미사용 — 웨이크 임계 단일 판정이라 함께 노출 안 함)
     private const val KEY_WAKE_RSSI_DBM = "wake_rssi_dbm"
-    const val DEFAULT_WAKE_RSSI_DBM = -89
+    const val DEFAULT_WAKE_RSSI_DBM = -95   // [v1.1.72 B] -89→-95: 화면 꺼짐 웨이크/배칭 게이트를 더 먼 거리에서 열어 첫 접촉 지연 제거
     var wakeRssiDbm: Int
         get() = prefs.getInt(KEY_WAKE_RSSI_DBM, DEFAULT_WAKE_RSSI_DBM).coerceIn(-100, -60)
         set(v) = prefs.edit().putInt(KEY_WAKE_RSSI_DBM, v.coerceIn(-100, -60)).apply()

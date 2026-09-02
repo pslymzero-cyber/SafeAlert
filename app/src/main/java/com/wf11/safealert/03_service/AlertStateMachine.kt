@@ -809,7 +809,8 @@ class AlertStateMachine(
             else -> {
                 val dtSec = (now - prevAtMsForWarning).coerceAtLeast(1L) / 1000.0
                 val rateDbmPerSec = (medianValue - prevMedianForWarning) / dtSec
-                if (rateDbmPerSec <= -WARNING_DEPART_RATE_DBM_PER_SEC) 0 else (warningContactStreakMap[deviceId] ?: 0)
+                // [v1.1.72] 보존은 접근 중(kfVel > 0)일 때만 — 정지·이탈(kfVel <= 0) 미달 프레임은 즉시 0(스쳐 지나간 후 재격상 자기잠금 차단).
+                if (rateDbmPerSec <= -WARNING_DEPART_RATE_DBM_PER_SEC || kfVel <= 0.0) 0 else (warningContactStreakMap[deviceId] ?: 0)
             }
         }
         warningContactStreakMap[deviceId] = warningStreak
