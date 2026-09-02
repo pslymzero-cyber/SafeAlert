@@ -129,7 +129,7 @@ jobs:
                  --data-urlencode 'orderBy="$key"' \
                  --data-urlencode "startAt=\"$FROM\"" \
                  -o "alerts-$SITE.json"; then
-              python3 docs/presentation/cousolve/analyze_alerts.py "alerts-$SITE.json" \
+              python3 .github/scripts/analyze_alerts.py "alerts-$SITE.json" \
                 --label "${SITE^^}" --md ALERTS.md --append --no-ids
             else
               echo "::warning::$SITE 읽기 실패 — 건너뜀"

@@ -2,7 +2,7 @@
 """Firebase 경보 이력을 집계한다.
 
 두 곳에서 쓴다.
-  · 로컬  — `fetch_alerts.sh` 가 Firebase CLI 로 받은 JSON 을 넘긴다
+  · 로컬  — Firebase CLI 로 받은 JSON 을 넘긴다
   · CI    — `.github/workflows/alert-digest.yml` 이 사업장별로 받아 넘기고,
             `--md` 로 마크다운 요약을 만들어 저장소에 커밋한다 (폰에서 GitHub 앱으로 본다)
 
