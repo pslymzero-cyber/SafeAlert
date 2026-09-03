@@ -29,6 +29,11 @@
 - 현재 versionCode 128 / versionName 1.1.72
 - app/src/main 전체 .kt = 227,952 토큰으로 컨텍스트 창보다 크다. 전수 읽기는 불가능하다.
 
+### 폴백 가드
+`.planning/codebase/` 의 STACK.md · CONVENTIONS.md · ARCHITECTURE.md 를 삭제하지 마라.
+이 3개가 없으면 GSD가 CLAUDE.md에 본문을 통째로 다시 넣어(hasFallback:true)
+고정비 6,755토큰이 부활한다.
+
 <!-- GSD:project-start source:PROJECT.md -->
 
 ## Project

@@ -30,7 +30,7 @@
     "ai_integration_phase": true,
     "api_coverage_gate": true,
     "human_verify_mode": "end-of-phase",
-    "context_guard_mode": "warn",
+    "context_guard_mode": "auto",
     "text_mode": false,
     "research_before_questions": false,
     "discuss_mode": "discuss",
@@ -83,6 +83,14 @@
   "phase_naming": "sequential",
   "agent_skills": {},
   "claude_md_path": "./.claude/CLAUDE.md",
+  "claude_md_assembly": {
+    "mode": "embed",
+    "blocks": {
+      "stack": "link",
+      "conventions": "link",
+      "architecture": "link"
+    }
+  },
   "plan_review": {
     "source_grounding": true,
     "source_grounding_authority": "grep"
