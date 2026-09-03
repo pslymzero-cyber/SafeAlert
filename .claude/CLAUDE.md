@@ -34,6 +34,9 @@
 이 3개가 없으면 GSD가 CLAUDE.md에 본문을 통째로 다시 넣어(hasFallback:true)
 고정비 6,755토큰이 부활한다.
 
+### 백업본 보관
+- `*.bak` 삭제 조건: GSD가 CLAUDE.md를 1회 재생성한 뒤 마커 쌍 무결 + 7,000자 이하가 확인된 시점. 그때까지 보관한다.
+
 <!-- GSD:project-start source:PROJECT.md -->
 
 ## Project

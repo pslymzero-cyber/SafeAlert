@@ -27,3 +27,10 @@ __pycache__/
 docs/presentation/company_form/base.pptx
 docs/presentation/cousolve/base_cousolve.pptx
 docs/presentation/contest/base_contest.pptx
+
+# graphify: regenerable build output + local diff baseline
+/graphify-out/
+/.planning/graphs/.last-build-snapshot.json
+
+# 정비 백업본 — 삭제 조건 충족 전까지 로컬 보관 (.claude/CLAUDE.md 참조)
+*.bak
