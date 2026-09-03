@@ -18,6 +18,22 @@ object BeaconRegistry {
         prefs = context.applicationContext.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
     }
 
+    /**
+     * (v1.1.73) UUID 표기 정규화 — 레지스트리 안팎의 유일한 정규화 지점.
+     * 대시 없는 32자를 저장하면 BleScanner.buildFilters() 의 UUID.fromString 이 던지고
+     * 안쪽 runCatching 이 삼켜 해당 프로파일의 HW 필터가 조용히 누락됐다.
+     * 동시에 스캔 표본은 bytesToUuidString 이 만든 대시 36자라 문자열 비교가 영원히 어긋났다.
+     * MAC(콜론 포함) 과 형식 불명 문자열은 대문자·trim 만 하고 그대로 통과시킨다.
+     */
+    fun normUuid(raw: String): String {
+        val s = raw.trim().uppercase()
+        if (s.contains(':')) return s
+        val hex = s.replace("-", "")
+        if (hex.length != 32 || !hex.all { it in "0123456789ABCDEF" }) return s
+        return "${hex.substring(0, 8)}-${hex.substring(8, 12)}-${hex.substring(12, 16)}-" +
+               "${hex.substring(16, 20)}-${hex.substring(20)}"
+    }
+
     fun getAll(): List<BeaconProfile> {
         val json = prefs.getString(KEY_LIST, "[]") ?: "[]"
         return runCatching {
@@ -25,7 +41,7 @@ object BeaconRegistry {
             (0 until arr.length()).map { i ->
                 val obj = arr.getJSONObject(i)
                 BeaconProfile(
-                    uuid          = obj.getString("uuid").uppercase(),
+                    uuid          = normUuid(obj.getString("uuid")),
                     label         = obj.getString("label"),
                     type          = obj.optString("type", "IBEACON"),
                     addedAt       = obj.optLong("addedAt", 0L),
@@ -38,42 +54,51 @@ object BeaconRegistry {
     }
 
     fun containsUuid(uuid: String): Boolean =
-        getAll().any { it.type != "MAC" && it.uuid.equals(uuid.trim(), ignoreCase = true) }
+        getAll().any { it.type != "MAC" && it.uuid.equals(normUuid(uuid), ignoreCase = true) }
 
     fun containsMac(mac: String): Boolean =
-        getAll().any { it.type == "MAC" && it.uuid.equals(mac.trim(), ignoreCase = true) }
+        getAll().any { it.type == "MAC" && it.uuid.equals(normUuid(mac), ignoreCase = true) }
 
     // (v1.1.62) 존 비콘(zoneMute) 프로파일 조회 — 스캐너가 경보 대상에서 제외하고 존 신호로 돌리기 위함
     fun findZoneProfileByUuid(uuid: String): BeaconProfile? =
-        getAll().firstOrNull { it.zoneMute && it.type != "MAC" && it.uuid.equals(uuid.trim(), ignoreCase = true) }
+        getAll().firstOrNull { it.zoneMute && it.type != "MAC" && it.uuid.equals(normUuid(uuid), ignoreCase = true) }
 
     fun findZoneProfileByMac(mac: String): BeaconProfile? =
-        getAll().firstOrNull { it.zoneMute && it.type == "MAC" && it.uuid.equals(mac.trim(), ignoreCase = true) }
+        getAll().firstOrNull { it.zoneMute && it.type == "MAC" && it.uuid.equals(normUuid(mac), ignoreCase = true) }
 
     fun getLabelByUuid(uuid: String): String =
-        getAll().firstOrNull { it.uuid.equals(uuid.trim(), ignoreCase = true) }?.label ?: uuid
+        getAll().firstOrNull { it.uuid.equals(normUuid(uuid), ignoreCase = true) }?.label ?: uuid
 
     fun getLabelByMac(mac: String): String =
-        getAll().firstOrNull { it.type == "MAC" && it.uuid.equals(mac.trim(), ignoreCase = true) }?.label ?: mac
+        getAll().firstOrNull { it.type == "MAC" && it.uuid.equals(normUuid(mac), ignoreCase = true) }?.label ?: mac
 
     fun add(profile: BeaconProfile): Boolean {
         val list = getAll().toMutableList()
         if (list.size >= MAX_PROFILES) return false
-        if (list.any { it.uuid.equals(profile.uuid, ignoreCase = true) }) return false
-        list.add(profile.copy(uuid = profile.uuid.uppercase()))
+        val uuid = normUuid(profile.uuid)
+        if (list.any { it.uuid.equals(uuid, ignoreCase = true) }) return false
+        list.add(profile.copy(uuid = uuid))
         save(list)
         return true
     }
 
     fun remove(uuid: String) {
-        val list = getAll().filter { !it.uuid.equals(uuid, ignoreCase = true) }
+        val list = getAll().filter { !it.uuid.equals(normUuid(uuid), ignoreCase = true) }
         save(list)
     }
 
     fun count(): Int = getAll().size
 
+    /**
+     * 레지스트리 변경 통지. add·remove·mergeProfiles 가 전부 save() 를 경유하므로 여기가 유일 지점.
+     * 저장 자체는 정상이었으나 소비자(HW 스캔필터·상태맵)가 변경을 통보받지 못해
+     * 삭제한 UUID 가 상태맵에 잔류하고 신규 UUID 는 칩셋 필터에서 누락됐다.
+     */
+    var onChanged: (() -> Unit)? = null
+
     private fun save(list: List<BeaconProfile>) {
         prefs.edit().putString(KEY_LIST, exportToJson(list)).apply()
+        onChanged?.invoke()
     }
 
     // ── 기기 간 공유 (export / import) ──────────────────────────
@@ -100,7 +125,7 @@ object BeaconRegistry {
         val arr = JSONArray(json)
         (0 until arr.length()).mapNotNull { i ->
             val obj = arr.optJSONObject(i) ?: return@mapNotNull null
-            val uuid = obj.optString("uuid", "").trim().uppercase()
+            val uuid = normUuid(obj.optString("uuid", ""))
             if (uuid.isEmpty()) return@mapNotNull null
             BeaconProfile(
                 uuid          = uuid,
@@ -125,7 +150,7 @@ object BeaconRegistry {
         val list = getAll().toMutableList()
         var added = 0; var updated = 0; var skipped = 0
         incoming.forEach { p ->
-            val uuid = p.uuid.trim().uppercase()
+            val uuid = normUuid(p.uuid)
             if (uuid.isEmpty()) return@forEach
             val norm = p.copy(uuid = uuid)
             val idx = list.indexOfFirst { it.uuid.equals(uuid, ignoreCase = true) }

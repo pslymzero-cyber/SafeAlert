@@ -356,6 +356,9 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
         handler.post(timeoutChecker)
         handler.postDelayed(antiThrottleRunnable, SCAN_RESTART_MS)
         // [v1.0.26 Req1] 'RX 스캔 시작' 상태 송출 제거 — tv_ble_status 는 감지 기기 목록 전용.
+        // 비콘 등록·삭제 즉시 반영. HW 필터는 startScan 시점 스냅샷이라 재시작해야 갱신되고,
+        // 삭제된 기기는 표본이 끊겨 상태전이 기반 정리가 돌지 않는다(TTL 스윕도 UWB 실측 중이면 유예).
+        BeaconRegistry.onChanged = { handler.post { forceLoseAll(); restartScan() } }
     }
 
     private fun startScanInternal() {
@@ -474,6 +477,7 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
         try { scanner.stopScan(bleScanCallback) } catch (_: Exception) {}
         detectedDevices.clear()
         scanCallback = null
+        BeaconRegistry.onChanged = null
         // [v1.0.26 Req1] 'RX 스캔 중지' 상태 송출 제거.
     }
 
