@@ -56,7 +56,13 @@ phase_link: Phase 04 (기기 상태 단일화) — 이 버그가 좀비 엔트�
   3. `02_ble/BleScanner.kt` `stopScanning()` — `BeaconRegistry.onChanged = null` (누수 방지).
 
 - **verification**: `./gradlew.bat :app:compileDebugKotlin` 통과(경고는 SDK XML 버전 안내뿐).
-  실기 검증 필요: UUID 삭제 직후 경보 소멸 / UUID 신규 등록 직후 즉시 감지(HW 필터 갱신).
+  Robolectric 시뮬레이션 통과(`BeaconRegistryChangeSimulationTest`, 2/2, 실기 불요):
+  - s1 UUID 삭제 -> `lost=[SAFEALERT_EPJ_0002, SAFEALERT_FORK_0001, SAFEALERT_WALKER_BEA_AAAAAAAA]`,
+    detected 3->0, `containsUuid=false`, 스캔에러 0 (좀비 엔트리 잔류 없음).
+    TTL 스윕은 벽시계라 가상 루퍼로 발화하지 않으므로 소실 통지는 `forceLoseAll()` 뿐이다.
+  - s2 UUID 등록(대시 없는 32-hex) -> `normUuid=11223344-5566-7788-9900-AABBCCDDEEFF`,
+    필터 1->2 (iBeacon 0->1), `manufacturerId=0x004C` / `data=[0x02,0x15]+UUID16` 일치, activeScans 1건 유지.
+  로그: `app/build/sim_registry_s1_delete.log` · `app/build/sim_registry_s2_add.log`.
 
 - **files_changed**:
   - `app/src/main/java/com/wf11/safealert/06_utils/BeaconRegistry.kt`
