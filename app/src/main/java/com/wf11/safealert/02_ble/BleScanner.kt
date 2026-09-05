@@ -11,7 +11,6 @@ import android.os.ParcelUuid
 import android.util.Log
 import com.wf11.safealert.service.BleService
 import com.wf11.safealert.utils.BeaconRegistry
-import com.wf11.safealert.utils.DevSettings
 import java.util.UUID
 
 class BleScanner(private val scanner: BluetoothLeScanner) {
@@ -311,10 +310,11 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
                     filters.add(ScanFilter.Builder()
                         .setServiceUuid(ParcelUuid(java.util.UUID.fromString(profile.uuid)))
                         .build())
-                }
+                }.onFailure { Log.w(TAG, "스캔 필터 생성 실패(SERVICE_UUID) ${profile.uuid}: ${it.message} — 이 기기는 칩셋 단에서 폐기되어 미감지") }
             }
             BeaconRegistry.getAll().filter { it.type == "MAC" }.forEach { profile ->
                 runCatching { filters.add(ScanFilter.Builder().setDeviceAddress(profile.uuid).build()) }
+                    .onFailure { Log.w(TAG, "스캔 필터 생성 실패(MAC) ${profile.uuid}: ${it.message} — 이 기기는 칩셋 단에서 폐기되어 미감지") }
             }
             // [v1.1.14] iBeacon 등록 비콘 — 제조사데이터(0x004C) 패턴 필터.
             //   iBeacon 은 SERVICE_UUID·MAC 을 광고하지 않으므로 위 두 필터로는 칩셋 단에서
@@ -331,9 +331,9 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
                     filters.add(ScanFilter.Builder()
                         .setManufacturerData(0x004C, pattern, mask)
                         .build())
-                }
+                }.onFailure { Log.w(TAG, "스캔 필터 생성 실패(IBEACON) ${profile.uuid}: ${it.message} — 이 기기는 칩셋 단에서 폐기되어 미감지") }
             }
-        }
+        }.onFailure { Log.w(TAG, "등록 비콘 스캔 필터 일괄 생성 실패: ${it.message} — 기본 SERVICE_UUID 필터만 적용됨") }
         return filters
     }
 

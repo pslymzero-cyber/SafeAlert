@@ -8,7 +8,6 @@ import android.os.ParcelUuid
 import android.os.SystemClock
 import android.util.Log
 import java.util.UUID
-import kotlin.math.abs
 
 class BleAdvertiser(
     private val advertiser: BluetoothLeAdvertiser,

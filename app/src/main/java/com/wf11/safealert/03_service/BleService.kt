@@ -26,7 +26,6 @@ import com.wf11.safealert.ble.BleScanCallback
 import com.wf11.safealert.ble.KalmanFilter
 import com.wf11.safealert.ble.MedianFilter
 import com.wf11.safealert.ble.RssiPreFilter
-import com.wf11.safealert.firebase.FirebaseManager
 import com.wf11.safealert.utils.BeaconRegistry
 import com.wf11.safealert.ui.MainActivity
 import com.wf11.safealert.utils.DevSettings
@@ -268,6 +267,12 @@ class BleService : LifecycleService() {
     @Volatile private var txFault:      String? = null   // BleAdvertiser.onTxFault
     @Volatile private var soundFault:   String? = null   // AlertSoundPlayer.onSoundFault
     @Volatile private var overlayFault: String? = null   // OverlayManager.onOverlayFault
+    // [치명] setStreamVolume 은 방해금지·기기정책에 막혀도 예외를 던지지 않는다(조용히 무시).
+    //   catch 는 실행되지 않으므로 되읽기로만 잡힌다. 잡지 못하면 '볼륨 0인 채 경보음 재생'
+    //   = sound/vibration/overlay 3중 독립 채널로도 걸러지지 않는 유일한 완전 무음 경로.
+    //   systemFault(checkSystemHealth 가 주기적으로 null 덮어씀)·soundFault(AlertSoundPlayer
+    //   콜백이 덮어씀)를 재사용할 수 없어 전용 슬롯을 둔다.
+    @Volatile private var volumeFault:  String? = null   // forceAlarmVolume 되읽기 검증
     @Volatile private var faultBeeped   = false          // 이상 진입 시 1회만 경고음
 
     @Volatile private var lastScanResultMs = 0L
@@ -361,6 +366,8 @@ class BleService : LifecycleService() {
     //   BleScanner.onZoneBeaconSignal 별도 경로로만 흐른다. beaconKey="ZONE_"+uuid8/MAC.
     //   myZoneInside=내가 존 안(어느 존이든 1개 이상 inside) → 자기 소리·진동 억제+광고 IN_ZONE 비트.
     //   peerInZoneMap=상대의 IN_ZONE 선언 수신 캐시 → 그 기기를 무해(SAFE) 판정(억제 전용).
+    //   [미착수-낮음4] 아래 4맵은 키가 deviceId 가 아니라 beaconKey 이므로 DeviceStateRegistry 에
+    //   일부러 등록하지 않는다. 정리는 reevaluateZones() TTL 하드 제거 + stopAll() 수동 clear 로 이중 커버.
     private val zoneSampleMap    = mutableMapOf<String, Int>()     // beaconKey → 진입 연속 표본 수
     private val zoneEnterRssiMap = mutableMapOf<String, Int>()     // beaconKey → 프로파일 진입 임계(dBm)
     private val zoneLastSeenMap  = mutableMapOf<String, Long>()    // beaconKey → 마지막 수신 시각(ms)
@@ -440,23 +447,14 @@ class BleService : LifecycleService() {
     }, uwbDist)
 
     // [Phase 3 T3] 판정 상태는 AlertStateMachine 소유 - 아래는 동일 인스턴스 별칭(리플렉션 테스트/잔여 호출부용)
-    private val wasStationaryMap = asm.wasStationaryMap
     private val alertState = asm.alertState
     private val kalmanFilters = asm.kalmanFilters
-    private val lastKfVelMap = asm.lastKfVelMap
     private val filterPreserveMap = asm.filterPreserveMap
     private val timeGateWaiveSet = asm.timeGateWaiveSet
-    private val shadowFusionMap = asm.shadowFusionMap
-    private val rushFrameMap = asm.rushFrameMap
     private val dangerContactStreakMap = asm.dangerContactStreakMap
     private val warningContactStreakMap = asm.warningContactStreakMap
-    private val warningMissRefMap = asm.warningMissRefMap
     private val trackingStateMap = asm.trackingStateMap
-    private val crossingStartMap = asm.crossingStartMap
-    private val departingStartMap = asm.departingStartMap
     private val recedingStartMap = asm.recedingStartMap
-    private val recedeRefMap = asm.recedeRefMap
-    private val recedePeakMap = asm.recedePeakMap
     private val deviceRssiMap = asm.deviceRssiMap
     private val mutedDevices = asm.mutedDevices
     private val peerInZoneMap = asm.peerInZoneMap
@@ -466,11 +464,9 @@ class BleService : LifecycleService() {
     private val deviceTurnMap = asm.deviceTurnMap
     private val reverseRssiHist = asm.reverseRssiHist
     private val reversePrepUntil = asm.reversePrepUntil
-    private val firebaseLastSaveMap = asm.firebaseLastSaveMap
     private val pendingDisplayMap = asm.pendingDisplayMap
     private val approachStreakStartMap = asm.approachStreakStartMap
     private val fastApproachStreakMap = asm.fastApproachStreakMap
-    private val forwardBiasLatchMap = asm.forwardBiasLatchMap
     private val KF_VEL_SEED_TTL_MS get() = asm.KF_VEL_SEED_TTL_MS
 
     // 아래 3개는 별칭 — 소유는 UwbDistanceManager 이고 같은 인스턴스를 가리킨다(호출부 diff 0 +
@@ -1000,8 +996,17 @@ class BleService : LifecycleService() {
             val maxVol = am.getStreamMaxVolume(AudioManager.STREAM_ALARM)
             val target = (maxVol * DevSettings.alarmVolume / 100f).toInt().coerceIn(0, maxVol)
             am.setStreamVolume(AudioManager.STREAM_ALARM, target, 0)
-            Log.d(TAG, "알람 볼륨: $target/$maxVol (${DevSettings.alarmVolume}%)")
-        } catch (e: Exception) { Log.w(TAG, "볼륨 강제 설정 실패: ${e.message}") }
+            val actual = am.getStreamVolume(AudioManager.STREAM_ALARM)   // 실제 반영 여부 되읽기
+            Log.d(TAG, "알람 볼륨: $actual/$maxVol (요청 $target, ${DevSettings.alarmVolume}%)")
+            // target == 0 은 사용자가 알람 볼륨 0% 로 설정한 의도된 상태이므로 이상 아님.
+            if (target > 0 && actual == 0)
+                setVolumeFault("알람 볼륨 0 — 방해금지·기기정책에 막힘, 경보음이 들리지 않을 수 있음")
+            else
+                setVolumeFault(null)
+        } catch (e: Exception) {
+            Log.w(TAG, "볼륨 강제 설정 실패: ${e.message}")
+            setVolumeFault("알람 볼륨 설정 실패 — 경보음이 들리지 않을 수 있음")
+        }
         volumeGuardHandler.removeCallbacksAndMessages(null)   // [v1.0.46 #11] 연속 호출 시 직전 해제 예약 갱신
         volumeGuardHandler.postDelayed({ ignoringVolumeChange = false }, 300)
     }
@@ -1338,21 +1343,6 @@ class BleService : LifecycleService() {
             suffix.isBlank() -> "알 수 없음"
             else -> suffix
         }
-    }
-
-    /**
-     * v1.0.29 0x02 특수경보용 표시문자열 생성.
-     * 예) "Ian이 급정거 또는 급회전 중입니다."
-     * 한글 이름은 받침 유무로 조사(이/가)를 고르고, 영문·숫자는 예시에 맞춰 "이"를 쓴다.
-     */
-    private fun makeSuddenLabel(name: String): String {
-        val last = name.trim().lastOrNull()
-        val josa = when {
-            last == null -> "이"
-            last.code in 0xAC00..0xD7A3 -> if ((last.code - 0xAC00) % 28 != 0) "이" else "가"
-            else -> "이"
-        }
-        return "$name$josa 급정거 또는 급회전 중입니다."
     }
 
     /** v1.0.34 Category(CAT_*) -> 표시용 역할명. */
@@ -1749,6 +1739,7 @@ class BleService : LifecycleService() {
         AlertSoundPlayer.stopSound()
         VibrationHelper.stopVibration(this)
         releaseAlertWakeLock()   // [v1.1.9] 알림 종료 → WakeLock 즉시 해제(timeout 대기 없이)
+        releaseDetectionWakeLock()   // [미착수-낮음3] bounded(500ms) 라도 alertWakeLock 과 해제 규칙 일치
         alertState.clear()
         suddenLabelMap.clear()
         deviceCategoryMap.clear()
@@ -1785,6 +1776,7 @@ class BleService : LifecycleService() {
         txFault      = null
         soundFault   = null
         overlayFault = null
+        volumeFault  = null
         faultBeeped  = false
         isRunning  = false
         lastStatus = ""
@@ -1801,6 +1793,7 @@ class BleService : LifecycleService() {
         DevSettings.unregisterOnChange(devPrefsListener)   // [v1.0.42 Req5] 설정 라이브 전파 해제
         if (isRunning) stopAll()
         releaseAlertWakeLock()   // [v1.1.9] !isRunning 경로 등 stopAll 미경유 시에도 확실히 해제
+        releaseDetectionWakeLock()   // [미착수-낮음3] 위와 동일
         super.onDestroy()
     }
 
@@ -1874,7 +1867,7 @@ class BleService : LifecycleService() {
 
     /** 현재 살아 있는 이상 사유를 한 줄로 합친다. 모두 정상이면 null. */
     private fun faultSummary(): String? =
-        listOfNotNull(systemFault, txFault, soundFault, overlayFault)
+        listOfNotNull(systemFault, txFault, soundFault, overlayFault, volumeFault)
             .joinToString(" · ")
             .ifEmpty { null }
 
@@ -1916,6 +1909,7 @@ class BleService : LifecycleService() {
             if (!faultBeeped) {
                 faultBeeped = true
                 runCatching { AlertSoundPlayer.playWarning(this) }
+                    .onFailure { Log.w(TAG, "결함 경고음 실패: ${it.message}") }
             }
         } else {
             faultBeeped = false
@@ -1931,6 +1925,14 @@ class BleService : LifecycleService() {
         if (systemFault == reason) return
         systemFault = reason
         if (reason != null) Log.w(TAG, "시스템 이상: $reason") else Log.i(TAG, "시스템 이상 해소")
+        refreshNotification()
+    }
+
+    /** 알람 볼륨 이상. forceAlarmVolume() 의 되읽기 검증 결과만 이 슬롯을 쓴다. */
+    private fun setVolumeFault(reason: String?) {
+        if (volumeFault == reason) return
+        volumeFault = reason
+        if (reason != null) Log.w(TAG, "볼륨 이상: $reason") else Log.i(TAG, "볼륨 이상 해소")
         refreshNotification()
     }
 

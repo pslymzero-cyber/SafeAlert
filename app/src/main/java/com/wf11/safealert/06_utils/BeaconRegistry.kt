@@ -19,7 +19,7 @@ object BeaconRegistry {
     }
 
     /**
-     * (v1.1.73) UUID 표기 정규화 — 레지스트리 안팎의 유일한 정규화 지점.
+     * (v1.1.72) UUID 표기 정규화 — 레지스트리 안팎의 유일한 정규화 지점.
      * 대시 없는 32자를 저장하면 BleScanner.buildFilters() 의 UUID.fromString 이 던지고
      * 안쪽 runCatching 이 삼켜 해당 프로파일의 HW 필터가 조용히 누락됐다.
      * 동시에 스캔 표본은 bytesToUuidString 이 만든 대시 36자라 문자열 비교가 영원히 어긋났다.
