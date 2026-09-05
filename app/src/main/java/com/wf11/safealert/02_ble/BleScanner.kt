@@ -56,6 +56,20 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
 
         // [v1.0.29] 상대 모션 상태 ServiceData 디코드용 (송신측 addServiceData 와 동일 UUID)
         private val SERVICE_DATA_UUID = ParcelUuid(UUID.fromString(BleConstants.SERVICE_UUID))
+
+        // [v1.1.74] 발견 스캔(비콘 관리 15초) 중에는 HW 필터를 풀어 미등록 UUID 도 잡히게 한다.
+        //   같은 BluetoothLeScanner 를 공유하는 스캔 클라이언트의 필터는 스택/컨트롤러 레벨에서
+        //   병합되므로, 등록 UUID 필터가 걸려 있으면 무필터 발견 스캔에도 미등록 광고가 도달하지
+        //   못한다(레지스트리에 없는 비콘은 영원히 발견 불가인 순환 구조).
+        @Volatile private var discoveryMode = false
+        @Volatile private var liveRestart: (() -> Unit)? = null
+
+        /** 발견 스캔(비콘 관리 15초) 중에는 HW 필터를 풀어 미등록 UUID 도 잡히게 한다. */
+        fun setDiscoveryMode(on: Boolean) {
+            if (discoveryMode == on) return
+            discoveryMode = on
+            liveRestart?.invoke()
+        }
     }
 
     private var scanCallback: BleScanCallback? = null
@@ -300,6 +314,10 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
     // 메인 CPU 를 깨우지 않고 칩셋 단에서 즉시 폐기된다(화면 꺼짐·절전 모드 배터리 절감 핵심).
     // ※ BleAdvertiser 가 동일 SERVICE_UUID 를 광고하므로 우리 기기는 이 필터를 정상 통과한다.
     private fun buildFilters(): List<ScanFilter> {
+        // [v1.1.74] 위 'emptyList() 금지' 원칙의 한정 예외 — 사용자 개시·포그라운드·15초 발견 스캔 동안만.
+        // 스캔 자체는 계속 돌므로 경보 파이프라인은 살아 있고, 발견 스캔 종료 시
+        // setDiscoveryMode(false) → restartScan 으로 필터가 즉시 복원된다.
+        if (discoveryMode) return emptyList()
         val filters = mutableListOf<ScanFilter>()
         filters.add(ScanFilter.Builder()
             .setServiceUuid(ParcelUuid(UUID.fromString(BleConstants.SERVICE_UUID)))
@@ -359,6 +377,7 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
         // 비콘 등록·삭제 즉시 반영. HW 필터는 startScan 시점 스냅샷이라 재시작해야 갱신되고,
         // 삭제된 기기는 표본이 끊겨 상태전이 기반 정리가 돌지 않는다(TTL 스윕도 UWB 실측 중이면 유예).
         BeaconRegistry.onChanged = { handler.post { forceLoseAll(); restartScan() } }
+        liveRestart = { handler.post { restartScan() } }
     }
 
     private fun startScanInternal() {
@@ -478,6 +497,7 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
         detectedDevices.clear()
         scanCallback = null
         BeaconRegistry.onChanged = null
+        liveRestart = null
         // [v1.0.26 Req1] 'RX 스캔 중지' 상태 송출 제거.
     }
 
