@@ -1,5 +1,6 @@
 package com.wf11.safealert.service
 
+import android.os.Build
 import android.util.Log
 import com.wf11.safealert.ble.BleConstants
 import com.wf11.safealert.ble.BleScanner
@@ -250,6 +251,20 @@ class AlertStateMachine(
     /** 기기 이탈·정리 시 그 기기의 등급별 쓰로틀을 모두 지운다(구버전 deviceId 단독 키 포함). */
     private fun clearFbThrottle(deviceId: String) {
         firebaseLastSaveMap.keys.removeAll { it == deviceId || it.startsWith("$deviceId|") }
+    }
+
+    // (v1.1.76) UWB 실측 표본 업로드 스로틀 — 역할쌍별 마지막 업로드 시각(ms).
+    //   판정은 ~120ms 주기라 그대로 올리면 초당 8건이 된다. 거리·RSSI 분포를 보는 데는
+    //   초당 1건이면 충분하고, 실기 측정 세션(수 분)에서도 총량이 수백 건에 머문다.
+    private val uwbProbeLastSaveMap = mutableMapOf<String, Long>()
+    private val UWB_PROBE_THROTTLE_MS = 1_000L
+
+    /** UWB 실거리 표본을 남긴다. 개발자 설정 스위치가 꺼져 있으면 아무 일도 하지 않는다. */
+    private fun uploadUwbProbe(pairKey: String, rssi: Int, distM: Float, now: Long) {
+        if (!DevSettings.uwbProbeUploadEnabled) return
+        if (now - (uwbProbeLastSaveMap[pairKey] ?: 0L) < UWB_PROBE_THROTTLE_MS) return
+        uwbProbeLastSaveMap[pairKey] = now
+        FirebaseManager.saveUwbProbe(fx.myId, Build.MODEL, DevSettings.uwbSiteCode, pairKey, distM, rssi)
     }
 
     // [판정 파라미터] DevSettings 라이브 읽기(기본 60_000L/5 = 기존값)
@@ -738,7 +753,13 @@ class AlertStateMachine(
         val uwbPairKey = fx.uwbPairKeyFor(deviceId)   // [v1.1.37 ③] 개별 기기 대신 역할쌍 세그먼트로 학습·조회
         // [v1.1.46] 학습 입력=신선한 실측만 — 마지막 표본이 오래된 UWB 거리에 '현재' RSSI 를 짝지으면
         //   Δ 가 오염돼 임계가 영구히 앞당겨진다(즉시 DANGER 증상의 한 축). 거리 표시도 같은 게이트.
-        uwbDist.freshUwbDistM(deviceId)?.let { UwbCalibrator.onSample(uwbPairKey, medianValue, it) }
+        uwbDist.freshUwbDistM(deviceId)?.let {
+            UwbCalibrator.onSample(uwbPairKey, medianValue, it)
+            // (v1.1.76) 같은 신선도 게이트로 실거리·RSSI 원표본을 집계용으로 남긴다(기본 OFF).
+            //   학습(onSample)의 0.3~8m 품질 게이트는 여기 걸지 않는다 — 경고 반경 15m 까지
+            //   환산하려면 그 바깥 구간의 표본이 오히려 필요하다. 기록 전용이라 판정에는 무관.
+            uploadUwbProbe(uwbPairKey, medianValue, it, System.currentTimeMillis())
+        }
         // [v1.1.49] 학습(onSample)은 유지하되 그 출력(offsetDbFor)은 RSSI 판정에서 완전 분리한다.
         //   역할쌍 키 uwbCalibOffset(최대 +10dB)이 NLOS 잔차로 +클램프까지 표류하면 effDanger 가 밀려
         //   올라가 'RSSI 판정이면 신호 세기와 무관하게 상시 위험'이 되던 회귀(UWB 도입 v1.1.31 이후)를

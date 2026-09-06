@@ -17,7 +17,7 @@
 따라서 1건 = 경보 1회가 아니라 '해당 분(分)에 그 기기와 가까워졌다' 다.
 중복이 걷힌 값이라 위험했던 순간의 대용 지표로 쓸 수 있다. 사고 건수가 아니다.
 """
-import argparse, json, sys
+import argparse, json, os, sys
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 
@@ -95,6 +95,8 @@ def aggregate(alerts, days=0, since=""):
         "danger_avg": round(total.get("DANGER", 0) / n, 1),
         "warning_avg": round(total.get("WARNING", 0) / n, 1),
         "devices": len(devices), "pairs": len(pairs),
+        # 실동률 분자 — 상대로만 잡힌 기기는 빼고, 스스로 기록을 남긴 기기만 센다.
+        "recorders": sorted({b for _, b, _, _ in events}),
         "top_pairs": pairs.most_common(5),
         "per_day": {d: dict(c) for d, c in sorted(per_day.items())},
         "per_hour": {h: dict(c) for h, c in sorted(per_hour.items())},
@@ -104,6 +106,117 @@ def aggregate(alerts, days=0, since=""):
     }
     out.update(derive(events, rssi, out["per_day"]))
     return out
+
+
+def load_node(path):
+    """alerts 가 아닌 노드(echo_calib · uwb_probe)를 그대로 읽는다. 없으면 빈 dict."""
+    if not path or not os.path.exists(path):
+        return {}
+    try:
+        return json.load(open(path, encoding="utf-8")) or {}
+    except (OSError, ValueError):
+        return {}
+
+
+# ── 단말 가동 ────────────────────────────────────────────────
+#   '경보가 없었다' 와 '앱이 꺼져 있었다' 를 가른다.
+#   echo_calib/<기기ID> = {model, ts, peers} 는 앱이 도는 동안 1시간마다 덮어써진다
+#   (CalibrationEngine.maybeUploadEchoCalib · ECHO_FB_UPLOAD_INTERVAL_MS = 3_600_000).
+#   그 ts 가 곧 기기별 마지막 생존 신호라 하트비트를 따로 만들 필요가 없다.
+#   한계 둘 — 노드는 덮어쓰기라 과거 이력이 없어 '지금 몇 대가 살아 있나' 만 나오고,
+#   에코 상대가 하나도 없으면 업로드를 건너뛰므로(peers.isEmpty) 하루 종일 혼자였던
+#   기기는 안 잡힌다. 즉 이 값은 실동 대수의 하한이다.
+FRESH_H = 24         # 이 시간 안에 스탬프가 찍혔으면 '가동 중'
+STALE_D = 7          # 이 기간을 넘으면 '멈춘 것으로 본다'
+
+
+def uptime(echo, recorders, now_s=None):
+    if not isinstance(echo, dict) or not echo:
+        return {}
+    now = now_s if now_s is not None else datetime.now(KST).timestamp()
+    rec = set(recorders or ())
+    fresh, week, stale, models = [], [], [], Counter()
+    for key, node in echo.items():
+        if not isinstance(node, dict):
+            continue
+        dev = _norm(key)
+        models[str(node.get("model") or "?")] += 1
+        ts = node.get("ts")
+        age_h = (now - ts / 1000.0) / 3600.0 if isinstance(ts, (int, float)) else None
+        if age_h is None or age_h > STALE_D * 24:
+            stale.append(dev)
+        elif age_h <= FRESH_H:
+            fresh.append(dev)
+        else:
+            week.append(dev)
+    reg = {_norm(k) for k in echo}
+    silent = sorted(reg - rec)                 # 등록돼 있는데 기간 중 기록이 하나도 없는 기기
+    return {
+        "registered": len(reg),
+        "fresh": len(fresh), "week": len(week), "stale": len(stale),
+        "recorded": len(reg & rec),
+        "silent": len(silent),
+        "unregistered": len(rec - reg),        # 기록은 남겼는데 echo 노드가 없는 기기
+        "rate": round(len(reg & rec) / len(reg) * 100, 1) if reg else None,
+        "models": models.most_common(6),
+    }
+
+
+# ── UWB 실거리 대비 RSSI ──────────────────────────────────────
+#   경보 임계는 dBm 인데 현장이 묻는 것은 미터다. uwb_probe 는 UWB 가 잰 실거리와
+#   같은 프레임의 RSSI 를 짝지어 둔 원표본이라(AlertStateMachine.uploadUwbProbe),
+#   여기서 "경고 -75dBm · 위험 -55dBm 이 실제 몇 m 인가" 를 역산한다.
+#   개발자 설정의 'UWB 실측 표본 업로드' 가 켜진 세션에서만 쌓인다 — 기본 OFF.
+BIN_M = 0.5          # 거리 구간 폭
+MIN_BIN_N = 3        # 이 미만인 구간은 중앙값을 믿지 않는다
+THRESHOLDS = (("경고", -75), ("위험", -55))
+
+
+def _cross(bins, thr):
+    """중앙값 RSSI 가 임계를 지나는 거리를 이웃 구간 사이 선형보간으로 찾는다.
+    잡음으로 한 구간만 튀어 내려간 곳을 임계 통과로 읽지 않도록, 다음 구간도
+    임계 아래에 있을 때만 인정한다(마지막 구간은 확인할 다음이 없어 그대로 본다)."""
+    pts = [(b["mid"], b["p50"]) for b in bins if b["n"] >= MIN_BIN_N]
+    for i, ((d0, r0), (d1, r1)) in enumerate(zip(pts, pts[1:])):
+        if (r0 - thr) * (r1 - thr) > 0 or r0 == r1:
+            continue
+        if i + 2 < len(pts) and pts[i + 2][1] > thr:
+            continue                                   # 곧바로 되돌아옴 = 잡음
+        return round(d0 + (d1 - d0) * (r0 - thr) / (r0 - r1), 1)
+    return None
+
+
+def probe_bins(probe, since=""):
+    recs = []
+    for day, items in (probe or {}).items():
+        if not (isinstance(day, str) and day.isdigit() and len(day) == 8):
+            continue
+        if since and day < since:
+            continue
+        for r in (items or {}).values():
+            if not isinstance(r, dict):
+                continue
+            d, q = r.get("distM"), r.get("rssi")
+            if isinstance(d, (int, float)) and isinstance(q, int) and d > 0:
+                recs.append((float(d), q, str(r.get("pairKey") or "?")))
+    if not recs:
+        return {}
+    by_bin = defaultdict(list)
+    for d, q, _ in recs:
+        by_bin[int(d / BIN_M)].append(q)
+    bins = []
+    for k in sorted(by_bin):
+        v = sorted(by_bin[k])
+        bins.append({"lo": round(k * BIN_M, 1), "hi": round((k + 1) * BIN_M, 1),
+                     "mid": round((k + 0.5) * BIN_M, 1), "n": len(v),
+                     "p10": _pct(v, 10), "p50": _pct(v, 50), "p90": _pct(v, 90)})
+    return {
+        "n": len(recs),
+        "days": len({d for d in (probe or {}) if isinstance(d, str) and d.isdigit()}),
+        "bins": bins,
+        "pairs": Counter(k for _, _, k in recs).most_common(6),
+        "cross": {nm: _cross(bins, thr) for nm, thr in THRESHOLDS},
+    }
 
 
 # ── 파생 지표 ────────────────────────────────────────────────
@@ -193,7 +306,7 @@ def _bar(v, top, width=18):
     return "█" * max(1, round(v / top * width)) if v else ""
 
 
-def markdown(a, label):
+def markdown(a, label, up=None, pb=None):
     L = [f"## {label}", ""]
     if not a["n_days"]:
         L += ["> 집계할 데이터가 없다. 기기 개발자 설정의 `firebaseRoot` 와 "
@@ -209,6 +322,23 @@ def markdown(a, label):
         f"| 서로 가까워진 기기쌍 | {a['pairs']}쌍 |",
         "",
     ]
+    if up:
+        L += ["### 단말 가동", "",
+              "`echo_calib` 노드의 마지막 스탬프다. 앱이 도는 동안 1시간마다 덮어써지므로 "
+              "'경보가 없었다' 와 '앱이 꺼져 있었다' 가 여기서 갈린다.", "",
+              "| 항목 | 값 |", "|------|----|",
+              f"| 등록 단말 | {up['registered']}대 |",
+              f"| 최근 {FRESH_H}시간 내 생존 | {up['fresh']}대 |",
+              f"| {FRESH_H}시간~{STALE_D}일 | {up['week']}대 |",
+              f"| {STALE_D}일 초과 · 스탬프 없음 | {up['stale']}대 |",
+              f"| 기간 중 경보를 남긴 단말 | {up['recorded']}대 |"]
+        if up.get("rate") is not None:
+            L.append(f"| 실동률 (기록 단말 / 등록 단말) | **{up['rate']}%** |")
+        if up.get("unregistered"):
+            L.append(f"| 기록은 있으나 등록 노드 없음 | {up['unregistered']}대 |")
+        L += ["", "> 하한값이다. 에코 상대를 하나도 못 만난 기기는 업로드를 건너뛰고, "
+                  "노드는 덮어쓰기라 과거 이력이 남지 않는다. 등록 대수도 MDM 배포 대수가 "
+                  "아니라 '한 번이라도 올라온 대수' 다.", ""]
     if a["per_hour"]:
         tot = {h: sum(c.values()) for h, c in a["per_hour"].items()}
         top = max(tot.values())
@@ -261,6 +391,28 @@ def markdown(a, label):
         L += ["", "> 설정 임계는 경고 -75dBm · 위험 -55dBm 이고 역할쌍 보정 +0~8dB 가 붙는다. "
                   "위 실측 분포가 그 임계와 얼마나 맞는지가 판정 정확도의 1차 지표다.", ""]
 
+    if pb:
+        L += ["### UWB 실거리 대비 RSSI (임계의 미터 환산)", "",
+              f"UWB 가 잰 실거리와 같은 프레임의 RSSI 표본 **{pb['n']:,}건** "
+              f"({pb['days']}일). 임계가 실제로 몇 m 인지를 재는 유일한 근거다.", "",
+              "| 거리 | 표본 | P10 | 중앙값 | P90 |", "|------|-----:|----:|------:|----:|"]
+        for b_ in pb["bins"]:
+            mark = "" if b_["n"] >= MIN_BIN_N else " ·표본부족"
+            L.append(f"| {b_['lo']}~{b_['hi']}m | {b_['n']:,}{mark} | {b_['p10']} | "
+                     f"**{b_['p50']}** | {b_['p90']} |")
+        L += [""]
+        hit = [f"{nm} {thr}dBm → 약 **{pb['cross'][nm]}m**"
+               for nm, thr in THRESHOLDS if pb["cross"].get(nm) is not None]
+        miss = [f"{nm} {thr}dBm" for nm, thr in THRESHOLDS if pb["cross"].get(nm) is None]
+        if hit:
+            L += ["> 중앙값 곡선이 임계를 지나는 지점 — " + " · ".join(hit), ""]
+        if miss:
+            L += ["> " + " · ".join(miss) + " 은 표본 구간 밖이라 환산되지 않았다. "
+                  "그 거리대에서 표본을 더 받아야 한다.", ""]
+        if pb.get("pairs"):
+            L += ["> 역할쌍별 표본 — " +
+                  " · ".join(f"{k} {c:,}" for k, c in pb["pairs"]), ""]
+
     if a.get("role_pairs"):
         tot = sum(c for _, c in a["role_pairs"])
         L += ["### 역할쌍별 접근 (v1.1.72 이후 기록분)", "",
@@ -288,17 +440,23 @@ def main():
     p.add_argument("--append", action="store_true", help="--md 파일에 이어 쓴다")
     p.add_argument("--no-ids", action="store_true",
                    help="기기 ID 를 결과에 넣지 않는다 (공개 저장소용)")
+    p.add_argument("--echo", help="echo_calib 노드 JSON - 단말 가동/실동률 계산용")
+    p.add_argument("--probe", help="uwb_probe 노드 JSON - UWB 실거리 대비 RSSI 계산용")
     args = p.parse_args()
 
     a = aggregate(load(args.path), args.days, args.since)
+    up = uptime(load_node(args.echo), a.get("recorders")) if args.echo else None
+    pb = probe_bins(load_node(args.probe), args.since) if args.probe else None
     if args.no_ids:
         a.pop("top_pairs", None)
+    a.pop("recorders", None)                       # 기기 ID 라 결과물에 남기지 않는다
 
     if args.md:
         with open(args.md, "a" if args.append else "w", encoding="utf-8") as f:
-            f.write(markdown(a, args.label) + "\n")
+            f.write(markdown(a, args.label, up, pb) + "\n")
     if args.out:
-        json.dump({**a, "주의": CAVEAT}, open(args.out, "w", encoding="utf-8"),
+        json.dump({**a, "uptime": up, "uwb_probe": pb, "주의": CAVEAT},
+                  open(args.out, "w", encoding="utf-8"),
                   ensure_ascii=False, indent=2)
 
     if not a["n_days"]:

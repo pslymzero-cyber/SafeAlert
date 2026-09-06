@@ -34,6 +34,14 @@
         "$id": {
           ".write": true
         }
+      },
+
+      "uwb_probe": {
+        "$day": {
+          "$probeId": {
+            ".write": "!data.exists()"
+          }
+        }
       }
     }
   }
