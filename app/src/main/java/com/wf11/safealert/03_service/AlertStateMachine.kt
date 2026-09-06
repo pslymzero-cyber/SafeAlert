@@ -242,6 +242,16 @@ class AlertStateMachine(
     //   같은 기기에 대해 FIREBASE_SAVE_THROTTLE_MS(1분) 안에는 재업로드하지 않는다.
     internal val firebaseLastSaveMap = mutableMapOf<String, Long>()
 
+    // [쓰로틀 등급 분리] 종전에는 키가 deviceId 하나뿐이라 WARNING 을 저장한 뒤 1분 안에
+    //   DANGER 로 올라가면 그 DANGER 가 통째로 버려졌다. 경고→위험 격상은 가장 중요한 기록인데
+    //   그것만 빠지는 구조였다. 키에 등급을 붙여 등급마다 따로 센다.
+    private fun fbKey(deviceId: String, level: String) = "$deviceId|$level"
+
+    /** 기기 이탈·정리 시 그 기기의 등급별 쓰로틀을 모두 지운다(구버전 deviceId 단독 키 포함). */
+    private fun clearFbThrottle(deviceId: String) {
+        firebaseLastSaveMap.keys.removeAll { it == deviceId || it.startsWith("$deviceId|") }
+    }
+
     // [판정 파라미터] DevSettings 라이브 읽기(기본 60_000L/5 = 기존값)
     internal val FIREBASE_SAVE_THROTTLE_MS: Long get() = DevSettings.firebaseThrottleMs
 
@@ -860,7 +870,7 @@ class AlertStateMachine(
             suddenLabelMap.remove(deviceId)
             deviceCategoryMap.remove(deviceId)
             deviceTurnMap.remove(deviceId); reverseRssiHist.remove(deviceId); reversePrepUntil.remove(deviceId)   // [v1.1.7 #1/#2]
-            firebaseLastSaveMap.remove(deviceId)
+            clearFbThrottle(deviceId)
             timeGateWaiveSet.remove(deviceId) // [v1.1.58 fix4] 미추적 강등 — 미소비 TimeGate 면제권 회수
             fx.rssiPreFilter.clear(deviceId)     // [v1.0.38 클린업] 미추적 기기 EMA 전처리 상태 정리
             fx.medianFilter.clear(deviceId)      // [v1.0.45] Median 윈도우 정리(워밍업 상태 리셋)
@@ -1248,7 +1258,7 @@ class AlertStateMachine(
                 deviceCategoryMap.remove(deviceId)
                 deviceStateMap.remove(deviceId)
                 deviceTurnMap.remove(deviceId); reverseRssiHist.remove(deviceId); reversePrepUntil.remove(deviceId)   // [v1.1.7 #1/#2]
-                firebaseLastSaveMap.remove(deviceId)
+                clearFbThrottle(deviceId)
                 pendingDisplayMap.remove(deviceId)   // [v1.0.49 #3]
                 fx.sendAlertBroadcast(deviceId, BleConstants.LEVEL_SAFE)
                 if (alertState.isEmpty()) {
@@ -1386,7 +1396,7 @@ class AlertStateMachine(
                 forwardBiasLatchMap.remove(deviceId)      // [v1.1.11 C1] 이탈 정리 → 래치 리셋
                 fx.clearDwellMute(deviceId)                  // (v1.1.61) 이탈 확정 = 존 이탈 — dwell 뮤트 리셋
                 deviceRssiMap.remove(deviceId)
-                firebaseLastSaveMap.remove(deviceId)
+                clearFbThrottle(deviceId)
                 pendingDisplayMap.remove(deviceId)   // [v1.0.49 #3]
                 fx.sendAlertBroadcast(deviceId, BleConstants.LEVEL_SAFE)
                 if (alertState.isEmpty()) {
@@ -1668,10 +1678,12 @@ class AlertStateMachine(
                 if (DevSettings.soundEnabled && !dwellSuppressed)
                     fx.playDanger()
                 if (DevSettings.autoSaveAlerts) {
-                    val lastFbSave = firebaseLastSaveMap[deviceId] ?: 0L
+                    val fbk = fbKey(deviceId, "DANGER")
+                    val lastFbSave = firebaseLastSaveMap[fbk] ?: 0L
                     if (now - lastFbSave >= FIREBASE_SAVE_THROTTLE_MS) {
-                        firebaseLastSaveMap[deviceId] = now
-                        FirebaseManager.saveAlert(deviceId, fx.myId, avgRssi, "DANGER")
+                        firebaseLastSaveMap[fbk] = now
+                        FirebaseManager.saveAlert(deviceId, fx.myId, avgRssi, "DANGER",
+                            BleConstants.categoryName(fx.myCategory), BleConstants.categoryName(rCategory))
                     }
                 }
                 val name = fx.extractDisplayName(deviceId)
@@ -1690,10 +1702,12 @@ class AlertStateMachine(
                     fx.playWarning()
                 // [v1.0.30 Req3] Firebase 경보 저장 쓰로틀 — 같은 기기 1분 1회로 제한(모바일데이터 방어)
                 if (DevSettings.autoSaveAlerts) {
-                    val lastFbSave = firebaseLastSaveMap[deviceId] ?: 0L
+                    val fbk = fbKey(deviceId, "WARNING")
+                    val lastFbSave = firebaseLastSaveMap[fbk] ?: 0L
                     if (now - lastFbSave >= FIREBASE_SAVE_THROTTLE_MS) {
-                        firebaseLastSaveMap[deviceId] = now
-                        FirebaseManager.saveAlert(deviceId, fx.myId, avgRssi, "WARNING")
+                        firebaseLastSaveMap[fbk] = now
+                        FirebaseManager.saveAlert(deviceId, fx.myId, avgRssi, "WARNING",
+                            BleConstants.categoryName(fx.myCategory), BleConstants.categoryName(rCategory))
                     }
                 }
                 val name = fx.extractDisplayName(deviceId)
@@ -1818,7 +1832,7 @@ class AlertStateMachine(
                 deviceCategoryMap.remove(deviceId)
                 deviceStateMap.remove(deviceId)
                 deviceTurnMap.remove(deviceId); reverseRssiHist.remove(deviceId); reversePrepUntil.remove(deviceId)
-                firebaseLastSaveMap.remove(deviceId)
+                clearFbThrottle(deviceId)
                 pendingDisplayMap.remove(deviceId)
                 // ★ uwbSampleAtMsMap 은 보존 — Case A 신선도 근거(지우면 다음 표본까지 순간 RSSI 폴백). peerUwbSeenMap 은 진단용 보존
                 fx.sendAlertBroadcast(deviceId, BleConstants.LEVEL_SAFE)
@@ -1903,10 +1917,12 @@ class AlertStateMachine(
                 if (DevSettings.vibrationEnabled && !dwellSuppressed) fx.vibrateDanger()
                 if (DevSettings.soundEnabled && !dwellSuppressed)     fx.playDanger()
                 if (DevSettings.autoSaveAlerts) {
-                    val lastFbSave = firebaseLastSaveMap[deviceId] ?: 0L
+                    val fbk = fbKey(deviceId, "DANGER")
+                    val lastFbSave = firebaseLastSaveMap[fbk] ?: 0L
                     if (now - lastFbSave >= FIREBASE_SAVE_THROTTLE_MS) {
-                        firebaseLastSaveMap[deviceId] = now
-                        FirebaseManager.saveAlert(deviceId, fx.myId, deviceRssiMap[deviceId] ?: 0, "DANGER")
+                        firebaseLastSaveMap[fbk] = now
+                        FirebaseManager.saveAlert(deviceId, fx.myId, deviceRssiMap[deviceId] ?: 0, "DANGER",
+                            BleConstants.categoryName(fx.myCategory), BleConstants.categoryName(rCategory))
                     }
                 }
                 fx.updateFloatingOverlay()
@@ -1917,10 +1933,12 @@ class AlertStateMachine(
                 if (DevSettings.vibrationEnabled && !idleIdleQuiet && !dwellSuppressed) fx.vibrateWarning()
                 if (DevSettings.soundEnabled && !idleIdleQuiet && !dwellSuppressed)     fx.playWarning()
                 if (DevSettings.autoSaveAlerts) {
-                    val lastFbSave = firebaseLastSaveMap[deviceId] ?: 0L
+                    val fbk = fbKey(deviceId, "WARNING")
+                    val lastFbSave = firebaseLastSaveMap[fbk] ?: 0L
                     if (now - lastFbSave >= FIREBASE_SAVE_THROTTLE_MS) {
-                        firebaseLastSaveMap[deviceId] = now
-                        FirebaseManager.saveAlert(deviceId, fx.myId, deviceRssiMap[deviceId] ?: 0, "WARNING")
+                        firebaseLastSaveMap[fbk] = now
+                        FirebaseManager.saveAlert(deviceId, fx.myId, deviceRssiMap[deviceId] ?: 0, "WARNING",
+                            BleConstants.categoryName(fx.myCategory), BleConstants.categoryName(rCategory))
                     }
                 }
                 fx.updateFloatingOverlay()
