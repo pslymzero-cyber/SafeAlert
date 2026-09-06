@@ -13,7 +13,10 @@ object FirebaseManager {
     private const val TAG = "FirebaseManager"
     private val db get() = FirebaseDatabase.getInstance().reference.child(DevSettings.firebaseRoot)
 
-    fun saveAlert(deviceId: String, walkerId: String, rssi: Int, level: String) {
+    // 역할(myRole/peerRole)은 03_service 에서 이름으로 변환해 넘긴다 — 04_firebase 는
+    //   02_ble 에 의존하지 않는다(레이어 규칙). 기본값이 있어 기존 호출은 그대로 컴파일된다.
+    fun saveAlert(deviceId: String, walkerId: String, rssi: Int, level: String,
+                  myRole: String = "UNKNOWN", peerRole: String = "UNKNOWN") {
         val today = SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(Date())
         val alertId = UUID.randomUUID().toString()
         val data = mapOf(
@@ -21,7 +24,9 @@ object FirebaseManager {
             "deviceId" to deviceId,
             "walkerId" to walkerId,
             "rssi" to rssi,
-            "alertLevel" to level
+            "alertLevel" to level,
+            "myRole" to myRole,
+            "peerRole" to peerRole
         )
         db.child("alerts").child(today).child(alertId).setValue(data)
             .addOnFailureListener { Log.e(TAG, "경보 저장 실패: ${it.message}") }

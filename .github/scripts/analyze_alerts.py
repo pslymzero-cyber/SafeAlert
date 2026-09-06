@@ -64,7 +64,7 @@ def aggregate(alerts, days=0, since=""):
         dates = dates[-days:]
     per_day, per_hour, per_dow = defaultdict(Counter), defaultdict(Counter), defaultdict(Counter)
     pairs, devices, rssi = Counter(), set(), defaultdict(list)
-    total = Counter()
+    total, roles = Counter(), Counter()
     events = []                                    # 파생 지표용 원시 이벤트
     for d in dates:
         for rec in (alerts.get(d) or {}).values():
@@ -78,6 +78,10 @@ def aggregate(alerts, days=0, since=""):
             pairs[tuple(sorted((a, b)))] += 1
             if isinstance(rec.get("rssi"), int):
                 rssi[lv].append(rec["rssi"])
+            # v1.1.72 부터 기록된다. 이전 레코드에는 없으므로 그때는 집계에서 빠진다.
+            mine, peer = rec.get("myRole"), rec.get("peerRole")
+            if mine and peer and "UNKNOWN" not in (mine, peer):
+                roles[tuple(sorted((str(mine), str(peer))))] += 1
             ts = rec.get("timestamp")
             if isinstance(ts, (int, float)):
                 t = datetime.fromtimestamp(ts / 1000, KST)
@@ -96,6 +100,7 @@ def aggregate(alerts, days=0, since=""):
         "per_hour": {h: dict(c) for h, c in sorted(per_hour.items())},
         "per_dow": {k: dict(v) for k, v in per_dow.items()},
         "rssi_median": {lv: sorted(v)[len(v) // 2] for lv, v in rssi.items() if v},
+        "role_pairs": roles.most_common(),
     }
     out.update(derive(events, rssi, out["per_day"]))
     return out
@@ -255,6 +260,17 @@ def markdown(a, label):
                 L.append(f"| {nm} | {s['n']:,} | {s['p10']} | **{s['p50']}** | {s['p90']} | ")
         L += ["", "> 설정 임계는 경고 -75dBm · 위험 -55dBm 이고 역할쌍 보정 +0~8dB 가 붙는다. "
                   "위 실측 분포가 그 임계와 얼마나 맞는지가 판정 정확도의 1차 지표다.", ""]
+
+    if a.get("role_pairs"):
+        tot = sum(c for _, c in a["role_pairs"])
+        L += ["### 역할쌍별 접근 (v1.1.72 이후 기록분)", "",
+              "| 역할쌍 | 건수 | 비중 |", "|--------|-----:|-----:|"]
+        NM = {"WALKER": "보행자", "FORKLIFT": "지게차", "EPJ": "EPJ"}
+        for (x, y), c in a["role_pairs"]:
+            L.append(f"| {NM.get(x, x)} ↔ {NM.get(y, y)} | {c:,} | {c/tot*100:.1f}% |")
+        L += ["", "> 지게차가 낀 조합이 이 앱이 겨냥한 위험이다. 그 비중이 곧 표본의 적합성이다.", ""]
+    else:
+        L += ["> 역할쌍 집계는 v1.1.72 이후 기록부터 나온다 (그 전 레코드에는 역할 필드가 없다).", ""]
 
     L += [f"> {CAVEAT}", ""]
     return "\n".join(L)

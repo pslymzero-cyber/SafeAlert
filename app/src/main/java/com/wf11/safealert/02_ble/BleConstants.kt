@@ -141,6 +141,14 @@ object BleConstants {
     /** 패킹된 1바이트에서 Category(bits 7:6) 추출. */
     fun decodeCategory(payload: Int): Int = ((payload and 0xFF) shr CAT_SHIFT) and CAT_MASK
 
+    /** 역할 코드를 집계용 이름으로. 미상(널·범위 밖)은 UNKNOWN — 경보 기록의 역할 필드에 쓴다. */
+    fun categoryName(cat: Int?): String = when (cat) {
+        CAT_WALKER   -> "WALKER"
+        CAT_EPJ      -> "EPJ"
+        CAT_FORKLIFT -> "FORKLIFT"
+        else         -> "UNKNOWN"
+    }
+
     /** 패킹된 1바이트에서 State(bits 5:4) 추출. */
     fun decodeState(payload: Int): Int = ((payload and 0xFF) shr STATE_SHIFT) and STATE_MASK
 
