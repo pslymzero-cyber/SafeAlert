@@ -33,6 +33,28 @@ object FirebaseManager {
         Log.d(TAG, "경보 저장: $level $deviceId rssi=$rssi")
     }
 
+    // ── (v1.1.76) UWB 실측 표본 — 성능 사양의 물리 거리 근거 ─────────────
+    //   UWB 가 잰 실거리(m)와 같은 프레임의 BLE RSSI 를 한 건으로 남긴다. 이 둘이 있어야
+    //   "경고 -75dBm / 위험 -55dBm 이 실제로 몇 m 인가" 를 역산할 수 있다. 학습값(Δ)은
+    //   기기 안에만 있어 반출되지 않으므로, 집계용으로는 이 원표본이 필요하다.
+    //   개발자 설정 스위치(DevSettings.uwbProbeUploadEnabled)가 켜진 동안에만 호출된다 —
+    //   상시 수집이 아니라 실기 측정 세션용이라 기본은 꺼져 있다.
+    fun saveUwbProbe(myId: String, model: String, site: String,
+                     pairKey: String, distM: Float, rssi: Int) {
+        val today = SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(Date())
+        val data = mapOf(
+            "timestamp" to System.currentTimeMillis(),
+            "walkerId"  to myId,
+            "model"     to model,
+            "site"      to site,
+            "pairKey"   to pairKey,
+            "distM"     to distM,
+            "rssi"      to rssi
+        )
+        db.child("uwb_probe").child(today).child(UUID.randomUUID().toString()).setValue(data)
+            .addOnFailureListener { Log.e(TAG, "UWB 표본 저장 실패: ${it.message}") }
+    }
+
     // ── 기기 간 비콘 공유 (이름붙은 세트) ───────────────────────
     //   같은 root(firebaseRoot) 아래 beacon_share/<key> 에 선택분을 업로드,
     //   다른 기기가 목록에서 골라 내려받아 병합한다. (v1.1.17)

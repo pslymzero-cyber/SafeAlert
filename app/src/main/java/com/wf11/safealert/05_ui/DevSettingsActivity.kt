@@ -117,6 +117,8 @@ class DevSettingsActivity : AppCompatActivity() {
         updateReversePrepEnabled()
         // (v1.1.38 B·C) UWB 강제 스위치 상태 복원 + 진단 라인 초기 갱신
         binding.swUwbForce.isChecked = DevSettings.uwbForce
+        // (v1.1.76) UWB 실측 표본 업로드 — 기본 OFF. 하드웨어 미지원이면 켤 이유가 없어 비활성.
+        binding.swUwbProbeUpload.isChecked = DevSettings.uwbProbeUploadEnabled
         refreshUwbDiag()
         // (v1.1.63) [협력·교환] — BLE 감지 설정에서 이관: 상호 RSSI 교환 + 협력 수용 완화(0~20 dB)
         binding.swReciprocalRssi.isChecked = DevSettings.reciprocalRssiEnabled
@@ -128,6 +130,7 @@ class DevSettingsActivity : AppCompatActivity() {
         binding.swUwbVelPromote.isChecked = DevSettings.uwbVelPromoteEnabled
         binding.swUwbVelRelease.isChecked = DevSettings.uwbVelReleaseEnabled
         if (!UwbRanger.isHardwareSupported(this)) {
+            binding.swUwbProbeUpload.isEnabled = false
             binding.swUwbPromote.isEnabled    = false
             binding.swUwbVelPromote.isEnabled = false
             binding.swUwbVelRelease.isEnabled = false
@@ -257,6 +260,7 @@ class DevSettingsActivity : AppCompatActivity() {
             updateSectionSummaries()
         })
         // (v1.1.63) [UWB 고급] — BLE 감지 설정에서 이관. 스위치 3종 즉시 기록(BleService 가 라이브 read).
+        binding.swUwbProbeUpload.setOnCheckedChangeListener { _, c -> DevSettings.uwbProbeUploadEnabled = c; updateSectionSummaries() }
         binding.swUwbPromote.setOnCheckedChangeListener    { _, c -> DevSettings.uwbPromoteEnabled    = c; updateSectionSummaries() }
         binding.swUwbVelPromote.setOnCheckedChangeListener { _, c -> DevSettings.uwbVelPromoteEnabled = c; updateSectionSummaries() }
         binding.swUwbVelRelease.setOnCheckedChangeListener { _, c -> DevSettings.uwbVelReleaseEnabled = c; updateSectionSummaries() }
@@ -417,7 +421,9 @@ class DevSettingsActivity : AppCompatActivity() {
             "상호 RSSI ${onOff(binding.swReciprocalRssi.isChecked)} · 완화 +${binding.seekCoopSlack.progress} dB"
         binding.secUwbadvSummary.text =
             "강제 ${onOff(binding.swUwbForce.isChecked)} · 승격 ${onOff(binding.swUwbPromote.isChecked)}/" +
-            "${onOff(binding.swUwbVelPromote.isChecked)}/${onOff(binding.swUwbVelRelease.isChecked)}"
+            "${onOff(binding.swUwbVelPromote.isChecked)}/${onOff(binding.swUwbVelRelease.isChecked)}" +
+            // 켠 채로 잊으면 계속 올라가므로 접힌 요약에서도 보이게 한다.
+            (if (binding.swUwbProbeUpload.isChecked) " · 표본업로드 ON" else "")
         binding.secAppinfoSummary.text = "v${BuildConfig.VERSION_NAME}"
     }
 

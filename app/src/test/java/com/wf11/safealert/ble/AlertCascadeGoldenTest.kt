@@ -112,14 +112,19 @@ class AlertCascadeGoldenTest {
     @Test
     fun goldenProfile_neutralizesSideEffects() {
         // Task 3 부작용 무해화 단언(D-2D) — newService() 가 적용한 골든 프로파일이 진동·소리·
-        // Firebase 자동저장·오버레이 4종을 모두 차단하는 구성인지 확인한다. 완전성(31개 심볼 중
-        // 30줄 대입 커버)은 plan Task 3 <verify> 의 grep-count 비교 커맨드가 담당(테스트 코드 중복 방지).
+        // Firebase 자동저장(경보·UWB 표본)·오버레이 5종을 모두 차단하는 구성인지 확인한다.
+        // 완전성(32개 심볼 중 31줄 대입 커버)은 plan Task 3 <verify> 의 grep-count 비교 커맨드가
+        // 담당(테스트 코드 중복 방지).
         BleServiceTestHarness.newService()
         val context = RuntimeEnvironment.getApplication()
 
         assertFalse("골든 프로파일인데 vibrationEnabled=true — 진동 무해화 실패", DevSettings.vibrationEnabled)
         assertFalse("골든 프로파일인데 soundEnabled=true — 소리 무해화 실패", DevSettings.soundEnabled)
         assertFalse("골든 프로파일인데 autoSaveAlerts=true — Firebase 저장 무해화 실패", DevSettings.autoSaveAlerts)
+        assertFalse(
+            "골든 프로파일인데 uwbProbeUploadEnabled=true — UWB 표본 Firebase 저장 무해화 실패",
+            DevSettings.uwbProbeUploadEnabled
+        )
         assertFalse(
             "골든 프로파일인데 canDrawOverlays=true — OverlayManager.showSidebar 게이트가 무력화된다",
             OverlayManager.canDrawOverlays(context)
@@ -189,6 +194,7 @@ class AlertCascadeGoldenTest {
         DevSettings.uwbPairDangerMeters,
         DevSettings.uwbPairWarnMeters,
         DevSettings.uwbPrimaryAuthorityEnabled,
+        DevSettings.uwbProbeUploadEnabled,
         DevSettings.uwbPromoteEnabled,
         DevSettings.uwbVelPromoteEnabled,
         DevSettings.uwbVelReleaseEnabled,

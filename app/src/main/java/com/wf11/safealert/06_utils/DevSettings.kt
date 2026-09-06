@@ -585,6 +585,15 @@ object DevSettings {
         get() = prefs.getBoolean(KEY_UWB_CALIB_ENABLED, true)
         set(v) = prefs.edit().putBoolean(KEY_UWB_CALIB_ENABLED, v).apply()
 
+    // (v1.1.76) UWB 실측 표본 업로드 — UWB 실거리(m)와 같은 프레임의 BLE RSSI 를 짝지어
+    //   uwb_probe/<yyyyMMdd> 에 남긴다. 임계(-75/-55dBm)가 실제 몇 m 인지를 재는 유일한 근거라
+    //   실기 측정 세션에서만 켠다. OFF = 업로드 자체가 없음(기본) — 학습(onSample)과는 무관하게
+    //   기록만 담당하므로 켜고 끄어도 경보 거동은 완전히 동일하다. 페어당 1초 1건으로 스로틀.
+    private const val KEY_UWB_PROBE_UPLOAD = "uwb_probe_upload"
+    var uwbProbeUploadEnabled: Boolean
+        get() = prefs.getBoolean(KEY_UWB_PROBE_UPLOAD, false)
+        set(v) = prefs.edit().putBoolean(KEY_UWB_PROBE_UPLOAD, v).apply()
+
     // (v1.1.31) 거리 표시 방식 — 감지 목록·플로팅 위젯의 신호 표기.
     //   0 = dBm만 / 1 = UWB 실측 페어만 미터 / 2 = 전부 미터(비UWB 는 RSSI 역산 '약 X m', 기본).
     //   경보 임계 슬라이더는 dBm 그대로 — 표시 전용 설정이라 경보 로직에 영향 없음.

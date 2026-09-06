@@ -139,14 +139,38 @@ jobs:
                  --data-urlencode 'orderBy="$key"' \
                  --data-urlencode "startAt=\"$FROM\"" \
                  -o "alerts-$SITE.json"; then
+
+              # echo_calib = 기기별 마지막 생존 스탬프(1시간마다 덮어쓰기). 실동률의 분모다.
+              #   기기 수만큼의 작은 노드라 통째로 받는다. 없으면 그 섹션만 빠진다.
+              ECHO=""
+              if curl -fsS --get "${DB%/}/$SITE/echo_calib.json" \
+                   --data-urlencode "auth=$KEY" -o "echo-$SITE.json"; then
+                ECHO="--echo echo-$SITE.json"
+              else
+                echo "::notice::$SITE echo_calib 없음 — 단말 가동 섹션 생략"
+              fi
+
+              # uwb_probe = UWB 실거리 × RSSI 원표본. 개발자 설정 스위치를 켠 세션에만 쌓인다.
+              #   alerts 와 같은 일자 키라 같은 방식으로 기간을 자른다.
+              PROBE=""
+              if curl -fsS --get "${DB%/}/$SITE/uwb_probe.json" \
+                   --data-urlencode "auth=$KEY" \
+                   --data-urlencode 'orderBy="$key"' \
+                   --data-urlencode "startAt=\"$FROM\"" \
+                   -o "probe-$SITE.json"; then
+                PROBE="--probe probe-$SITE.json"
+              else
+                echo "::notice::$SITE uwb_probe 없음 — 거리 환산 섹션 생략"
+              fi
+
               python3 .github/scripts/analyze_alerts.py "alerts-$SITE.json" \
                 --label "${SITE^^}" --md ALERTS.md --append --no-ids \
-                ${SINCE:+--from "$SINCE"}
+                $ECHO $PROBE ${SINCE:+--from "$SINCE"}
             else
               echo "::warning::$SITE 읽기 실패 — 건너뜀"
               printf '## %s\n\n> 읽기 실패.\n\n' "${SITE^^}" >> ALERTS.md
             fi
-            rm -f "alerts-$SITE.json"
+            rm -f "alerts-$SITE.json" "echo-$SITE.json" "probe-$SITE.json"
           done
 
       - name: 변경분 커밋
