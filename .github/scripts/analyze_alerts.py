@@ -34,6 +34,21 @@ CAVEAT = ("1건 = 경보 1회가 아니라 가까워진 1분이다 (같은 상�
           "사고 건수가 아니라 위험했던 순간의 대용 지표다.")
 
 
+# 같은 단말이 두 형태로 기록된다 — saveAlert 의 deviceId 는 스캐너가 만든 fullId
+#   (BleConstants.DEVICE_PREFIX/WALKER_PREFIX + 상대 ID) 이고, walkerId 는 접두사 없는
+#   자기 myId 다. 접두사를 떼지 않으면 한 대가 두 대로 세어지고, 같은 조우를 양쪽이
+#   기록해도 짝이 맞지 않는다.
+ID_PREFIXES = ("SAFEALERT_DEVICE_", "SAFEALERT_WALKER_")
+
+
+def _norm(v):
+    s = str(v if v is not None else "?")
+    for p in ID_PREFIXES:
+        if s.startswith(p):
+            return s[len(p):]
+    return s
+
+
 def load(path):
     doc = json.load(open(path, encoding="utf-8"))
     if isinstance(doc, dict) and isinstance(doc.get("alerts"), dict):
@@ -56,7 +71,7 @@ def aggregate(alerts, days=0):
             lv = rec.get("alertLevel", "?")
             total[lv] += 1
             per_day[d][lv] += 1
-            a, b = str(rec.get("deviceId", "?")), str(rec.get("walkerId", "?"))
+            a, b = _norm(rec.get("deviceId")), _norm(rec.get("walkerId"))
             devices.update((a, b))
             pairs[tuple(sorted((a, b)))] += 1
             if isinstance(rec.get("rssi"), int):
@@ -66,7 +81,7 @@ def aggregate(alerts, days=0):
                 t = datetime.fromtimestamp(ts / 1000, KST)
                 per_hour[t.hour][lv] += 1
                 per_dow["월화수목금토일"[t.weekday()]][lv] += 1
-                events.append((ts / 1000.0, b, a, lv))   # (초, 기록자, 상대, 등급)
+                events.append((ts / 1000.0, b, a, lv))   # (초, 기록자, 상대, 등급) - 둘 다 정규화됨
     n = len(dates) or 1
     out = {
         "dates": dates, "n_days": len(dates),
