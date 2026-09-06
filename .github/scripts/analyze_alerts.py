@@ -56,8 +56,10 @@ def load(path):
     return doc or {}
 
 
-def aggregate(alerts, days=0):
+def aggregate(alerts, days=0, since=""):
     dates = sorted(k for k in alerts if k.isdigit() and len(k) == 8)
+    if since:
+        dates = [d for d in dates if d >= since]
     if days:
         dates = dates[-days:]
     per_day, per_hour, per_dow = defaultdict(Counter), defaultdict(Counter), defaultdict(Counter)
@@ -262,6 +264,8 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("path")
     p.add_argument("--days", type=int, default=0, help="최근 N일만 (0=전체)")
+    p.add_argument("--from", dest="since", default="",
+                   help="이 날짜(YYYYMMDD)부터만 - 발표 자료용으로 기간을 고정할 때")
     p.add_argument("--out", help="집계 결과 JSON 경로")
     p.add_argument("--md", help="마크다운 요약 경로")
     p.add_argument("--label", default="집계", help="마크다운 제목에 쓸 사업장 이름")
@@ -270,7 +274,7 @@ def main():
                    help="기기 ID 를 결과에 넣지 않는다 (공개 저장소용)")
     args = p.parse_args()
 
-    a = aggregate(load(args.path), args.days)
+    a = aggregate(load(args.path), args.days, args.since)
     if args.no_ids:
         a.pop("top_pairs", None)
 

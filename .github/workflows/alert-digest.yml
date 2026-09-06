@@ -18,6 +18,10 @@ on:
         description: '집계할 최근 일수'
         required: false
         default: '28'
+      from:
+        description: '시작일 고정 (YYYYMMDD). 넣으면 days 를 무시한다 - 발표 자료용'
+        required: false
+        default: ''
 
 concurrency:
   group: alert-digest
@@ -81,16 +85,22 @@ jobs:
           DB: ${{ secrets.FIREBASE_DB_URL }}
           KEY: ${{ secrets.FIREBASE_DB_SECRET }}
           DAYS: ${{ github.event.inputs.days || '28' }}
+          SINCE: ${{ github.event.inputs.from || '' }}
           MISSING: ${{ steps.creds.outputs.missing }}
           SITES: ${{ steps.sites.outputs.list }}
         run: |
           set -euo pipefail
-          FROM=$(date -u -d "-${DAYS} days" +%Y%m%d)
+          # SINCE 가 있으면 기간을 못박는다 - 재실행해도 발표 숫자가 움직이지 않는다.
+          FROM=${SINCE:-$(date -u -d "-${DAYS} days" +%Y%m%d)}
           NOW=$(TZ=Asia/Seoul date '+%Y-%m-%d %H:%M KST')
           {
             echo "# 경보 이력 집계"
             echo
-            echo "> 자동 생성 — $NOW · 최근 ${DAYS}일 (${FROM} 이후)"
+            if [ -n "$SINCE" ]; then
+              echo "> 자동 생성 — $NOW · 기간 고정 (${FROM} 이후)"
+            else
+              echo "> 자동 생성 — $NOW · 최근 ${DAYS}일 (${FROM} 이후)"
+            fi
             echo ">"
             echo "> \`.github/workflows/alert-digest.yml\` 이 매주 갱신한다."
             echo "> 원본 기록은 공개 저장소에 올리지 않는다 — 집계값만 남긴다."
@@ -130,7 +140,8 @@ jobs:
                  --data-urlencode "startAt=\"$FROM\"" \
                  -o "alerts-$SITE.json"; then
               python3 .github/scripts/analyze_alerts.py "alerts-$SITE.json" \
-                --label "${SITE^^}" --md ALERTS.md --append --no-ids
+                --label "${SITE^^}" --md ALERTS.md --append --no-ids \
+                ${SINCE:+--from "$SINCE"}
             else
               echo "::warning::$SITE 읽기 실패 — 건너뜀"
               printf '## %s\n\n> 읽기 실패.\n\n' "${SITE^^}" >> ALERTS.md
