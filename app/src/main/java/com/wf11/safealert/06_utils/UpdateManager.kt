@@ -94,7 +94,9 @@ object UpdateManager {
                 cursor.close()
             }
         }
-        context.registerReceiver(
+        // [미착수-중간1] Activity Context 에 등록하면 Activity 가 먼저 죽을 때 해제 경로가 사라진다.
+        //   applicationContext 는 프로세스 수명이라 onReceive 자가 해제가 항상 도달한다.
+        context.applicationContext.registerReceiver(
             receiver,
             IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE),
             Context.RECEIVER_NOT_EXPORTED

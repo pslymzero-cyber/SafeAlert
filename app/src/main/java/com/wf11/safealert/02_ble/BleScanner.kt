@@ -11,7 +11,6 @@ import android.os.ParcelUuid
 import android.util.Log
 import com.wf11.safealert.service.BleService
 import com.wf11.safealert.utils.BeaconRegistry
-import com.wf11.safealert.utils.DevSettings
 import java.util.UUID
 
 class BleScanner(private val scanner: BluetoothLeScanner) {
@@ -57,6 +56,20 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
 
         // [v1.0.29] 상대 모션 상태 ServiceData 디코드용 (송신측 addServiceData 와 동일 UUID)
         private val SERVICE_DATA_UUID = ParcelUuid(UUID.fromString(BleConstants.SERVICE_UUID))
+
+        // [v1.1.74] 발견 스캔(비콘 관리 15초) 중에는 HW 필터를 풀어 미등록 UUID 도 잡히게 한다.
+        //   같은 BluetoothLeScanner 를 공유하는 스캔 클라이언트의 필터는 스택/컨트롤러 레벨에서
+        //   병합되므로, 등록 UUID 필터가 걸려 있으면 무필터 발견 스캔에도 미등록 광고가 도달하지
+        //   못한다(레지스트리에 없는 비콘은 영원히 발견 불가인 순환 구조).
+        @Volatile private var discoveryMode = false
+        @Volatile private var liveRestart: (() -> Unit)? = null
+
+        /** 발견 스캔(비콘 관리 15초) 중에는 HW 필터를 풀어 미등록 UUID 도 잡히게 한다. */
+        fun setDiscoveryMode(on: Boolean) {
+            if (discoveryMode == on) return
+            discoveryMode = on
+            liveRestart?.invoke()
+        }
     }
 
     private var scanCallback: BleScanCallback? = null
@@ -301,6 +314,10 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
     // 메인 CPU 를 깨우지 않고 칩셋 단에서 즉시 폐기된다(화면 꺼짐·절전 모드 배터리 절감 핵심).
     // ※ BleAdvertiser 가 동일 SERVICE_UUID 를 광고하므로 우리 기기는 이 필터를 정상 통과한다.
     private fun buildFilters(): List<ScanFilter> {
+        // [v1.1.74] 위 'emptyList() 금지' 원칙의 한정 예외 — 사용자 개시·포그라운드·15초 발견 스캔 동안만.
+        // 스캔 자체는 계속 돌므로 경보 파이프라인은 살아 있고, 발견 스캔 종료 시
+        // setDiscoveryMode(false) → restartScan 으로 필터가 즉시 복원된다.
+        if (discoveryMode) return emptyList()
         val filters = mutableListOf<ScanFilter>()
         filters.add(ScanFilter.Builder()
             .setServiceUuid(ParcelUuid(UUID.fromString(BleConstants.SERVICE_UUID)))
@@ -311,10 +328,11 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
                     filters.add(ScanFilter.Builder()
                         .setServiceUuid(ParcelUuid(java.util.UUID.fromString(profile.uuid)))
                         .build())
-                }
+                }.onFailure { Log.w(TAG, "스캔 필터 생성 실패(SERVICE_UUID) ${profile.uuid}: ${it.message} — 이 기기는 칩셋 단에서 폐기되어 미감지") }
             }
             BeaconRegistry.getAll().filter { it.type == "MAC" }.forEach { profile ->
                 runCatching { filters.add(ScanFilter.Builder().setDeviceAddress(profile.uuid).build()) }
+                    .onFailure { Log.w(TAG, "스캔 필터 생성 실패(MAC) ${profile.uuid}: ${it.message} — 이 기기는 칩셋 단에서 폐기되어 미감지") }
             }
             // [v1.1.14] iBeacon 등록 비콘 — 제조사데이터(0x004C) 패턴 필터.
             //   iBeacon 은 SERVICE_UUID·MAC 을 광고하지 않으므로 위 두 필터로는 칩셋 단에서
@@ -331,9 +349,9 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
                     filters.add(ScanFilter.Builder()
                         .setManufacturerData(0x004C, pattern, mask)
                         .build())
-                }
+                }.onFailure { Log.w(TAG, "스캔 필터 생성 실패(IBEACON) ${profile.uuid}: ${it.message} — 이 기기는 칩셋 단에서 폐기되어 미감지") }
             }
-        }
+        }.onFailure { Log.w(TAG, "등록 비콘 스캔 필터 일괄 생성 실패: ${it.message} — 기본 SERVICE_UUID 필터만 적용됨") }
         return filters
     }
 
@@ -356,6 +374,10 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
         handler.post(timeoutChecker)
         handler.postDelayed(antiThrottleRunnable, SCAN_RESTART_MS)
         // [v1.0.26 Req1] 'RX 스캔 시작' 상태 송출 제거 — tv_ble_status 는 감지 기기 목록 전용.
+        // 비콘 등록·삭제 즉시 반영. HW 필터는 startScan 시점 스냅샷이라 재시작해야 갱신되고,
+        // 삭제된 기기는 표본이 끊겨 상태전이 기반 정리가 돌지 않는다(TTL 스윕도 UWB 실측 중이면 유예).
+        BeaconRegistry.onChanged = { handler.post { forceLoseAll(); restartScan() } }
+        liveRestart = { handler.post { restartScan() } }
     }
 
     private fun startScanInternal() {
@@ -474,6 +496,8 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
         try { scanner.stopScan(bleScanCallback) } catch (_: Exception) {}
         detectedDevices.clear()
         scanCallback = null
+        BeaconRegistry.onChanged = null
+        liveRestart = null
         // [v1.0.26 Req1] 'RX 스캔 중지' 상태 송출 제거.
     }
 

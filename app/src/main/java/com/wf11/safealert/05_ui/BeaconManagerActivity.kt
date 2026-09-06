@@ -361,6 +361,8 @@ class BeaconManagerActivity : AppCompatActivity() {
             ?: run { Toast.makeText(this, "블루투스를 켜주세요", Toast.LENGTH_SHORT).show(); return }
 
         isScanning = true
+        // [v1.1.74] 발견 스캔 동안만 BleScanner 의 HW 필터를 해제 — 미등록 UUID 도 잡히게 한다.
+        com.wf11.safealert.ble.BleScanner.setDiscoveryMode(true)
         foundMap.clear()
         foundAdapter.update(emptyList())
         binding.layoutScanResult.visibility = View.VISIBLE
@@ -375,6 +377,8 @@ class BeaconManagerActivity : AppCompatActivity() {
 
     private fun stopScan() {
         isScanning = false
+        // [v1.1.74] 15초 타이머·중지 버튼·onDestroy 가 모두 여기로 수렴 — 단일 복원 지점.
+        com.wf11.safealert.ble.BleScanner.setDiscoveryMode(false)
         stopHandler.removeCallbacksAndMessages(null)
         runCatching {
             (getSystemService(BluetoothManager::class.java))?.adapter?.bluetoothLeScanner?.stopScan(scanCallback)

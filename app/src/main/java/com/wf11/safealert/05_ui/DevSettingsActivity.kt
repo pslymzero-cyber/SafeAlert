@@ -16,7 +16,6 @@ import kotlinx.coroutines.launch
 import com.wf11.safealert.BuildConfig
 import com.wf11.safealert.service.BleService
 import com.wf11.safealert.service.DeviceStateRegistry
-import com.wf11.safealert.utils.BeaconRegistry
 import com.wf11.safealert.utils.DevSettings
 import com.wf11.safealert.utils.UwbRanger
 import com.wf11.safealert.databinding.ActivityDevSettingsBinding

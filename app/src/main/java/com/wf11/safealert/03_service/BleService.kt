@@ -26,7 +26,6 @@ import com.wf11.safealert.ble.BleScanCallback
 import com.wf11.safealert.ble.KalmanFilter
 import com.wf11.safealert.ble.MedianFilter
 import com.wf11.safealert.ble.RssiPreFilter
-import com.wf11.safealert.firebase.FirebaseManager
 import com.wf11.safealert.utils.BeaconRegistry
 import com.wf11.safealert.ui.MainActivity
 import com.wf11.safealert.utils.DevSettings
@@ -268,6 +267,12 @@ class BleService : LifecycleService() {
     @Volatile private var txFault:      String? = null   // BleAdvertiser.onTxFault
     @Volatile private var soundFault:   String? = null   // AlertSoundPlayer.onSoundFault
     @Volatile private var overlayFault: String? = null   // OverlayManager.onOverlayFault
+    // [치명] setStreamVolume 은 방해금지·기기정책에 막혀도 예외를 던지지 않는다(조용히 무시).
+    //   catch 는 실행되지 않으므로 되읽기로만 잡힌다. 잡지 못하면 '볼륨 0인 채 경보음 재생'
+    //   = sound/vibration/overlay 3중 독립 채널로도 걸러지지 않는 유일한 완전 무음 경로.
+    //   systemFault(checkSystemHealth 가 주기적으로 null 덮어씀)·soundFault(AlertSoundPlayer
+    //   콜백이 덮어씀)를 재사용할 수 없어 전용 슬롯을 둔다.
+    @Volatile private var volumeFault:  String? = null   // forceAlarmVolume 되읽기 검증
     @Volatile private var faultBeeped   = false          // 이상 진입 시 1회만 경고음
 
     @Volatile private var lastScanResultMs = 0L
@@ -276,6 +281,10 @@ class BleService : LifecycleService() {
     // ── [v1.0.27] IMU 연동 동적 스캔 모드 (휴식/전투) ───────────────────────
     // 정지 5초 확정 → REST 절전(휴식). 이동 즉시 → ACTIVE 원복(전투).
     private val STATIONARY_ECO_DELAY_MS = 5_000L
+    // [v1.1.72 D] 장비(DEVICE=지게차·EPJ) 광고 슬립 유예 — 무접촉이 시작된 시각(0 = 유예 미시작).
+    //   evaluateAdvertiserPower 가 갱신, 근접/경보/이동이 생기면 0 으로 리셋.
+    private val DEVICE_SLEEP_GRACE_MS = 60_000L
+    @Volatile private var advIdleSinceMs = 0L
     private val ecoHandler = android.os.Handler(android.os.Looper.getMainLooper())
     // [v1.1.12 L1] 접근(kfVel>0) 마지막 관측 시각(ms). 정지 직전 다가오던 기기를 절전 진입으로 놓치지 않기 위한 영속 신호.
     //   processAlert 가 매 프레임 갱신, isDangerPresent() 가 SIGNAL_STALE_MS 신선도로 평가. (lastScanResultMs 선례와 동일하게 @Volatile Long)
@@ -325,9 +334,9 @@ class BleService : LifecycleService() {
 
     // ── [v1.0.42 Req3] RSSI 동적 슬립/웨이크 (송출 전력 관리) ─────────────────
     //   모든 타겟 RSSI ≤ SLEEP_RSSI_DBM(-90)/신호 없음 → 광고 슬립(연속 송출 중단, 하트비트만).
-    //   하나라도 RSSI ≥ WAKE_RSSI_DBM(-89) → 0ms 즉시 웨이크(연속 광고 재개 + LocalState 강송출).
+    //   하나라도 RSSI ≥ WAKE_RSSI_DBM(v1.1.72 기본 -95) → 0ms 즉시 웨이크(연속 광고 재개 + LocalState 강송출).
     //   스캔(RX)은 절대 멈추지 않으므로 접근 감지/웨이크는 항상 살아 있다.
-    // [판정 파라미터] WAKE/STALE — DevSettings 라이브 읽기(기본 -89/6000L = 기존값).
+    // [판정 파라미터] WAKE/STALE — DevSettings 라이브 읽기(기본 -95/6000L, v1.1.72 B).
     //   슬립 판정은 '웨이크 조건 불충족'(아래 evalAdvPower)으로 구현돼 SLEEP_RSSI_DBM 은 실코드 미사용
     //   (문서 경계값) — 설정 노출에서 제외하고 상수로 둔다.
     private val WAKE_RSSI_DBM: Int get() = DevSettings.wakeRssiDbm  // 이 값 이상(가까움)이면 즉시 웨이크
@@ -357,6 +366,8 @@ class BleService : LifecycleService() {
     //   BleScanner.onZoneBeaconSignal 별도 경로로만 흐른다. beaconKey="ZONE_"+uuid8/MAC.
     //   myZoneInside=내가 존 안(어느 존이든 1개 이상 inside) → 자기 소리·진동 억제+광고 IN_ZONE 비트.
     //   peerInZoneMap=상대의 IN_ZONE 선언 수신 캐시 → 그 기기를 무해(SAFE) 판정(억제 전용).
+    //   [미착수-낮음4] 아래 4맵은 키가 deviceId 가 아니라 beaconKey 이므로 DeviceStateRegistry 에
+    //   일부러 등록하지 않는다. 정리는 reevaluateZones() TTL 하드 제거 + stopAll() 수동 clear 로 이중 커버.
     private val zoneSampleMap    = mutableMapOf<String, Int>()     // beaconKey → 진입 연속 표본 수
     private val zoneEnterRssiMap = mutableMapOf<String, Int>()     // beaconKey → 프로파일 진입 임계(dBm)
     private val zoneLastSeenMap  = mutableMapOf<String, Long>()    // beaconKey → 마지막 수신 시각(ms)
@@ -436,23 +447,14 @@ class BleService : LifecycleService() {
     }, uwbDist)
 
     // [Phase 3 T3] 판정 상태는 AlertStateMachine 소유 - 아래는 동일 인스턴스 별칭(리플렉션 테스트/잔여 호출부용)
-    private val wasStationaryMap = asm.wasStationaryMap
     private val alertState = asm.alertState
     private val kalmanFilters = asm.kalmanFilters
-    private val lastKfVelMap = asm.lastKfVelMap
     private val filterPreserveMap = asm.filterPreserveMap
     private val timeGateWaiveSet = asm.timeGateWaiveSet
-    private val shadowFusionMap = asm.shadowFusionMap
-    private val rushFrameMap = asm.rushFrameMap
     private val dangerContactStreakMap = asm.dangerContactStreakMap
     private val warningContactStreakMap = asm.warningContactStreakMap
-    private val warningMissRefMap = asm.warningMissRefMap
     private val trackingStateMap = asm.trackingStateMap
-    private val crossingStartMap = asm.crossingStartMap
-    private val departingStartMap = asm.departingStartMap
     private val recedingStartMap = asm.recedingStartMap
-    private val recedeRefMap = asm.recedeRefMap
-    private val recedePeakMap = asm.recedePeakMap
     private val deviceRssiMap = asm.deviceRssiMap
     private val mutedDevices = asm.mutedDevices
     private val peerInZoneMap = asm.peerInZoneMap
@@ -462,11 +464,9 @@ class BleService : LifecycleService() {
     private val deviceTurnMap = asm.deviceTurnMap
     private val reverseRssiHist = asm.reverseRssiHist
     private val reversePrepUntil = asm.reversePrepUntil
-    private val firebaseLastSaveMap = asm.firebaseLastSaveMap
     private val pendingDisplayMap = asm.pendingDisplayMap
     private val approachStreakStartMap = asm.approachStreakStartMap
     private val fastApproachStreakMap = asm.fastApproachStreakMap
-    private val forwardBiasLatchMap = asm.forwardBiasLatchMap
     private val KF_VEL_SEED_TTL_MS get() = asm.KF_VEL_SEED_TTL_MS
 
     // 아래 3개는 별칭 — 소유는 UwbDistanceManager 이고 같은 인스턴스를 가리킨다(호출부 diff 0 +
@@ -996,8 +996,17 @@ class BleService : LifecycleService() {
             val maxVol = am.getStreamMaxVolume(AudioManager.STREAM_ALARM)
             val target = (maxVol * DevSettings.alarmVolume / 100f).toInt().coerceIn(0, maxVol)
             am.setStreamVolume(AudioManager.STREAM_ALARM, target, 0)
-            Log.d(TAG, "알람 볼륨: $target/$maxVol (${DevSettings.alarmVolume}%)")
-        } catch (e: Exception) { Log.w(TAG, "볼륨 강제 설정 실패: ${e.message}") }
+            val actual = am.getStreamVolume(AudioManager.STREAM_ALARM)   // 실제 반영 여부 되읽기
+            Log.d(TAG, "알람 볼륨: $actual/$maxVol (요청 $target, ${DevSettings.alarmVolume}%)")
+            // target == 0 은 사용자가 알람 볼륨 0% 로 설정한 의도된 상태이므로 이상 아님.
+            if (target > 0 && actual == 0)
+                setVolumeFault("알람 볼륨 0 — 방해금지·기기정책에 막힘, 경보음이 들리지 않을 수 있음")
+            else
+                setVolumeFault(null)
+        } catch (e: Exception) {
+            Log.w(TAG, "볼륨 강제 설정 실패: ${e.message}")
+            setVolumeFault("알람 볼륨 설정 실패 — 경보음이 들리지 않을 수 있음")
+        }
         volumeGuardHandler.removeCallbacksAndMessages(null)   // [v1.0.46 #11] 연속 호출 시 직전 해제 예약 갱신
         volumeGuardHandler.postDelayed({ ignoringVolumeChange = false }, 300)
     }
@@ -1336,21 +1345,6 @@ class BleService : LifecycleService() {
         }
     }
 
-    /**
-     * v1.0.29 0x02 특수경보용 표시문자열 생성.
-     * 예) "Ian이 급정거 또는 급회전 중입니다."
-     * 한글 이름은 받침 유무로 조사(이/가)를 고르고, 영문·숫자는 예시에 맞춰 "이"를 쓴다.
-     */
-    private fun makeSuddenLabel(name: String): String {
-        val last = name.trim().lastOrNull()
-        val josa = when {
-            last == null -> "이"
-            last.code in 0xAC00..0xD7A3 -> if ((last.code - 0xAC00) % 28 != 0) "이" else "가"
-            else -> "이"
-        }
-        return "$name$josa 급정거 또는 급회전 중입니다."
-    }
-
     /** v1.0.34 Category(CAT_*) -> 표시용 역할명. */
     private fun categoryRoleName(category: Int): String = when (category) {
         BleConstants.CAT_EPJ      -> "EPJ"
@@ -1567,13 +1561,24 @@ class BleService : LifecycleService() {
         //   '자다 깨어 정신 못 차리는' 첫 깨어남 지연 제거. 정지하면 정상 슬립 복귀.
         val moving = DevSettings.keepAdvertiseWhileMoving && !ImuFusion.isStationary
         when {
-            anyNear || hasAlert || moving -> if (adv.isPaused) {
-                adv.resumeAdvertising(); broadcastLocalState()
-                Log.d(TAG, "RSSI 웨이크(평가): 근접/경보/이동 → 연속 광고 재개")
+            anyNear || hasAlert || moving -> {
+                advIdleSinceMs = 0L                        // [v1.1.72 D] 무접촉 유예 카운터 리셋
+                if (adv.isPaused) {
+                    adv.resumeAdvertising(); broadcastLocalState()
+                    Log.d(TAG, "RSSI 웨이크(평가): 근접/경보/이동 → 연속 광고 재개")
+                }
             }
-            else -> if (!adv.isPaused) {
-                adv.pauseAdvertising()
-                Log.d(TAG, "RSSI 슬립(평가): 근접 신호 없음 → 하트비트 모드")
+            // [v1.1.72 D] 장비 역할 광고 슬립 유예 — 장비가 LOW_POWER(~1s) 로 자 버리면 접근하는
+            //   보행자가 장비의 첫 광고를 최대 1초 늦게 받는다(콜드스타트 지연의 송신측 절반).
+            //   배터리 타협: 슬립을 폐지하지 않고 '진입만' DEVICE_SLEEP_GRACE_MS 늦춘다.
+            //   보행자(WALKER)는 현행 그대로 즉시 슬립 — 배터리 영향 0.
+            else -> {
+                if (advIdleSinceMs == 0L) advIdleSinceMs = now
+                val grace = if (myMode == "DEVICE") DEVICE_SLEEP_GRACE_MS else 0L
+                if (now - advIdleSinceMs >= grace && !adv.isPaused) {
+                    adv.pauseAdvertising()
+                    Log.d(TAG, "RSSI 슬립(평가): 근접 신호 없음 → 하트비트 모드(유예 ${grace}ms 경과)")
+                }
             }
         }
         // [v1.1.23] 스캔 배칭 승격/복귀를 광고 슬립/웨이크와 동일 집계로 동기화 —
@@ -1734,6 +1739,7 @@ class BleService : LifecycleService() {
         AlertSoundPlayer.stopSound()
         VibrationHelper.stopVibration(this)
         releaseAlertWakeLock()   // [v1.1.9] 알림 종료 → WakeLock 즉시 해제(timeout 대기 없이)
+        releaseDetectionWakeLock()   // [미착수-낮음3] bounded(500ms) 라도 alertWakeLock 과 해제 규칙 일치
         alertState.clear()
         suddenLabelMap.clear()
         deviceCategoryMap.clear()
@@ -1770,6 +1776,7 @@ class BleService : LifecycleService() {
         txFault      = null
         soundFault   = null
         overlayFault = null
+        volumeFault  = null
         faultBeeped  = false
         isRunning  = false
         lastStatus = ""
@@ -1786,6 +1793,7 @@ class BleService : LifecycleService() {
         DevSettings.unregisterOnChange(devPrefsListener)   // [v1.0.42 Req5] 설정 라이브 전파 해제
         if (isRunning) stopAll()
         releaseAlertWakeLock()   // [v1.1.9] !isRunning 경로 등 stopAll 미경유 시에도 확실히 해제
+        releaseDetectionWakeLock()   // [미착수-낮음3] 위와 동일
         super.onDestroy()
     }
 
@@ -1859,7 +1867,7 @@ class BleService : LifecycleService() {
 
     /** 현재 살아 있는 이상 사유를 한 줄로 합친다. 모두 정상이면 null. */
     private fun faultSummary(): String? =
-        listOfNotNull(systemFault, txFault, soundFault, overlayFault)
+        listOfNotNull(systemFault, txFault, soundFault, overlayFault, volumeFault)
             .joinToString(" · ")
             .ifEmpty { null }
 
@@ -1901,6 +1909,7 @@ class BleService : LifecycleService() {
             if (!faultBeeped) {
                 faultBeeped = true
                 runCatching { AlertSoundPlayer.playWarning(this) }
+                    .onFailure { Log.w(TAG, "결함 경고음 실패: ${it.message}") }
             }
         } else {
             faultBeeped = false
@@ -1916,6 +1925,14 @@ class BleService : LifecycleService() {
         if (systemFault == reason) return
         systemFault = reason
         if (reason != null) Log.w(TAG, "시스템 이상: $reason") else Log.i(TAG, "시스템 이상 해소")
+        refreshNotification()
+    }
+
+    /** 알람 볼륨 이상. forceAlarmVolume() 의 되읽기 검증 결과만 이 슬롯을 쓴다. */
+    private fun setVolumeFault(reason: String?) {
+        if (volumeFault == reason) return
+        volumeFault = reason
+        if (reason != null) Log.w(TAG, "볼륨 이상: $reason") else Log.i(TAG, "볼륨 이상 해소")
         refreshNotification()
     }
 

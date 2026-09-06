@@ -557,7 +557,9 @@ class UwbRanger(
                     synchronized(this) { scheduleRestartLocked(RESTART_BACKOFF_MS) }
                     return
                 }
-                val payload = try { buildAdvertisePayload(sc) } catch (e: Exception) { return }
+                val payload = try { buildAdvertisePayload(sc) } catch (e: Exception) {
+                    Log.w(TAG, "광고 페이로드 생성 실패 → RSSI 폴백: ${e.message}"); return
+                }
                 synchronized(this) {
                     if (stopped || gen != sessionGen) return
                     sessionScope = sc
@@ -577,7 +579,9 @@ class UwbRanger(
                     synchronized(this) { scheduleRestartLocked(RESTART_BACKOFF_MS) }
                     return
                 }
-                val payload = try { buildAdvertisePayload(sc) } catch (e: Exception) { return }
+                val payload = try { buildAdvertisePayload(sc) } catch (e: Exception) {
+                    Log.w(TAG, "광고 페이로드 생성 실패 → RSSI 폴백: ${e.message}"); return
+                }
                 val served = LinkedHashMap<String, ByteArray>()
                 synchronized(this) {
                     if (stopped || gen != sessionGen) return
@@ -625,7 +629,9 @@ class UwbRanger(
                     synchronized(this) { scheduleRestartLocked(RESTART_BACKOFF_MS) }
                     return
                 }
-                val payload = try { buildAdvertisePayload(sc) } catch (e: Exception) { return }
+                val payload = try { buildAdvertisePayload(sc) } catch (e: Exception) {
+                    Log.w(TAG, "광고 페이로드 생성 실패 → RSSI 폴백: ${e.message}"); return
+                }
                 synchronized(this) {
                     if (stopped || gen != sessionGen) return
                     sessionScope = sc
