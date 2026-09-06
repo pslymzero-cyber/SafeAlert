@@ -36,12 +36,14 @@ object BleServiceTestHarness {
 
     /**
      * 02-01 골든 DevSettings 프로파일(Task 3, D-2D) — processAlert(BleService.kt:1406-2543)가
-     * 참조하는 DevSettings 심볼 31개 중 대입 가능한 29개 var 전부 + beaconGainPercent(간접) 를
+     * 참조하는 DevSettings 심볼 32개 중 대입 가능한 30개 var 전부 + beaconGainPercent(간접) 를
      * 알파벳순으로 명시 대입한다. 상수 참조가 아니라 리터럴 값으로 고정 — 출하 기본값이 나중에
      * 바뀌어도 이 골든 프로파일은 그대로여서(D-2D "기본값 변경에 면역") 동작이 흔들리지 않는다.
      * 제외 2개: KALMAN_PRESET_FAST(세팅 아닌 상수), beaconGainDbm(val — beaconGainPercent 로 간접
-     * 세팅). 부작용 3종(vibrationEnabled·soundEnabled·autoSaveAlerts)만 false 로 못박아 진동/
-     * 소리/Firebase 저장을 차단한다(오버레이는 canDrawOverlays() 기본 false 로 이미 무해화).
+     * 세팅). 부작용 4종(vibrationEnabled·soundEnabled·autoSaveAlerts·uwbProbeUploadEnabled)만
+     * false 로 못박아 진동/소리/Firebase 저장(경보·UWB 표본 양쪽)을 차단한다(오버레이는
+     * canDrawOverlays() 기본 false 로 이미 무해화). (v1.1.76) uwbProbeUploadEnabled 추가 —
+     * 켜지면 processAlert 가 FirebaseManager.saveUwbProbe 를 부른다.
      */
     fun applyGoldenDevSettings() {
         DevSettings.autoSaveAlerts = false                 // 부작용 무해화 — FirebaseManager.saveAlert 차단
@@ -70,6 +72,7 @@ object BleServiceTestHarness {
         DevSettings.uwbPairDangerMeters = 3.0f
         DevSettings.uwbPairWarnMeters = 5.0f
         DevSettings.uwbPrimaryAuthorityEnabled = true
+        DevSettings.uwbProbeUploadEnabled = false      // 부작용 무해화 — FirebaseManager.saveUwbProbe 차단
         DevSettings.uwbPromoteEnabled = false
         DevSettings.uwbVelPromoteEnabled = false
         DevSettings.uwbVelReleaseEnabled = false
