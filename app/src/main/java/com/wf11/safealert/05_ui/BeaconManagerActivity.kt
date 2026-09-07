@@ -95,7 +95,7 @@ class BeaconManagerActivity : AppCompatActivity() {
         // (v1.1.62) 항목5: 존 비콘(안전구역) 등록 옵션 — 접촉 기기는 IN_ZONE 송출+무음, 상대는 무해 판정
         val cbZone = CheckBox(this).apply { text = "존 비콘(안전구역) — 존 안에서는 경보 송·수신 전면 중지" }
         val etZoneRssi = EditText(this).apply {
-            hint = "존 반경 dBm · 작을수록 넓다 (-80 방 전체 / -65 기본 / -50 코앞)"
+            hint = "존 반경 dBm · 작을수록 넓다 (-80 기본·방 전체 / -65 약 1~2m / -50 코앞)"
             inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_SIGNED
             visibility = View.GONE
         }
@@ -117,12 +117,16 @@ class BeaconManagerActivity : AppCompatActivity() {
                     Toast.makeText(this, "MAC 형식이 올바르지 않습니다\n예: AA:BB:CC:DD:EE:FF", Toast.LENGTH_SHORT).show()
                     return@setPositiveButton
                 }
-                val zoneRssi = (etZoneRssi.text.toString().trim().toIntOrNull() ?: -65).coerceIn(-100, -30)
-                val ok = BeaconRegistry.add(BeaconProfile(mac, label, "MAC", rssiOffset = 15,
+                val zoneRssi = (etZoneRssi.text.toString().trim().toIntOrNull() ?: -80).coerceIn(-100, -30)
+                // SmartTag/하드웨어 비콘은 기본 +15dBm (약 3배 범위) 적용.
+                // (v1.1.76) 단 존 비콘은 예외 — 존 판정은 zoneEnterRssi 로만 하고 rssiOffset 을 보지 않는다.
+                //   +15 를 걸어봐야 판정에 영향이 없고, 화면에 '범위 +15dBm' 만 찍혀 오독을 만든다.
+                val offset = if (cbZone.isChecked) 0 else 15
+                val ok = BeaconRegistry.add(BeaconProfile(mac, label, "MAC", rssiOffset = offset,
                     zoneMute = cbZone.isChecked, zoneEnterRssi = zoneRssi))
-                // SmartTag/하드웨어 비콘은 기본 +15dBm (약 3배 범위) 적용
+                val rangeNote = if (offset > 0) " (범위 +${offset}dBm)" else ""
                 val zoneNote = if (cbZone.isChecked) " · 존 반경 ${zoneRangeLabel(zoneRssi)}(${zoneRssi}dBm)" else ""
-                if (ok) { Toast.makeText(this, "등록됨: $label (범위 +15dBm)$zoneNote", Toast.LENGTH_SHORT).show(); refreshProfiles() }
+                if (ok) { Toast.makeText(this, "등록됨: $label$rangeNote$zoneNote", Toast.LENGTH_SHORT).show(); refreshProfiles() }
                 else    Toast.makeText(this, "이미 등록되어 있거나 한도 초과", Toast.LENGTH_SHORT).show()
             }
             .setNegativeButton("취소", null)
@@ -169,7 +173,7 @@ class BeaconManagerActivity : AppCompatActivity() {
         // (v1.1.62) 항목5: 존 비콘(안전구역) 등록 옵션 — 접촉 기기는 IN_ZONE 송출+무음, 상대는 무해 판정
         val cbZone = CheckBox(this).apply { text = "존 비콘(안전구역) — 존 안에서는 경보 송·수신 전면 중지" }
         val etZoneRssi = EditText(this).apply {
-            hint = "존 반경 dBm · 작을수록 넓다 (-80 방 전체 / -65 기본 / -50 코앞)"
+            hint = "존 반경 dBm · 작을수록 넓다 (-80 기본·방 전체 / -65 약 1~2m / -50 코앞)"
             inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_SIGNED
             visibility = View.GONE
         }
@@ -198,8 +202,10 @@ class BeaconManagerActivity : AppCompatActivity() {
                     return@setPositiveButton
                 }
                 val type   = if (spType.selectedItemPosition == 0) "IBEACON" else "SERVICE_UUID"
-                val offset = when (spRange.selectedItemPosition) { 1 -> 10; 2 -> 20; else -> 0 }
-                val zoneRssi = (etZoneRssi.text.toString().trim().toIntOrNull() ?: -65).coerceIn(-100, -30)
+                // (v1.1.76) 존 비콘은 rssiOffset 을 쓰지 않는다 — MAC 등록 경로와 동일 규칙
+                val offset = if (cbZone.isChecked) 0
+                             else when (spRange.selectedItemPosition) { 1 -> 10; 2 -> 20; else -> 0 }
+                val zoneRssi = (etZoneRssi.text.toString().trim().toIntOrNull() ?: -80).coerceIn(-100, -30)
                 val ok = BeaconRegistry.add(BeaconProfile(uuid, label, type, rssiOffset = offset,
                     zoneMute = cbZone.isChecked, zoneEnterRssi = zoneRssi))
                 if (ok) {
@@ -494,14 +500,17 @@ class BeaconManagerActivity : AppCompatActivity() {
             h.b.tvLabel.text = p.label
             h.b.tvUuid.text  = p.uuid
             val typeStr  = when (p.type) { "IBEACON" -> "iBeacon"; "MAC" -> "MAC 주소"; else -> "Service UUID" }
+            // (v1.1.76) 존 비콘에는 범위 표기를 붙이지 않는다 — 존 판정은 rssiOffset 을 보지 않으므로
+            //   '범위 +15dBm' 이 찍히면 존 반경이 그만큼 넓어진 것으로 오독된다.
             val rangeStr = when {
-                p.rssiOffset >= 20 -> "범위 매우 넓음(+${p.rssiOffset}dBm)"
-                p.rssiOffset > 0   -> "범위 +${p.rssiOffset}dBm"
-                else               -> "기본 범위"
+                p.zoneMute         -> ""
+                p.rssiOffset >= 20 -> " · 범위 매우 넓음(+${p.rssiOffset}dBm)"
+                p.rssiOffset > 0   -> " · 범위 +${p.rssiOffset}dBm"
+                else               -> " · 기본 범위"
             }
             // (v1.1.62) 존 비콘 마커 — 목록에서 안전구역 프로파일 식별
             val zoneStr = if (p.zoneMute) " · 존 반경 ${zoneRangeLabel(p.zoneEnterRssi)}(${p.zoneEnterRssi}dBm)" else ""
-            h.b.tvType.text = "$typeStr · $rangeStr$zoneStr"
+            h.b.tvType.text = "$typeStr$rangeStr$zoneStr"
             h.b.btnDelete.setOnClickListener {
                 AlertDialog.Builder(this@BeaconManagerActivity)
                     .setTitle("삭제 확인").setMessage("'${p.label}' UUID 프로파일을 삭제하시겠습니까?\n이 UUID의 비콘이 전부 감지되지 않습니다.")
@@ -519,9 +528,9 @@ class BeaconManagerActivity : AppCompatActivity() {
  *   존 설치처(흡연장·사무실·휴게실·화장실)는 방 전체를 덮어야 하므로 -80 전후가 표준.
  */
 internal fun zoneRangeLabel(dbm: Int): String = when {
-    dbm <= -85 -> "매우 넓음"
-    dbm <= -75 -> "넓음"
-    dbm <= -60 -> "보통"
-    dbm <= -45 -> "좁음"
-    else       -> "매우 좁음"
+    dbm <= -85 -> "매우 넓음(방 전체)"
+    dbm <= -75 -> "넓음(약 3~5m)"
+    dbm <= -60 -> "보통(약 1~2m)"
+    dbm <= -45 -> "좁음(약 1m 이내)"
+    else       -> "매우 좁음(코앞)"
 }

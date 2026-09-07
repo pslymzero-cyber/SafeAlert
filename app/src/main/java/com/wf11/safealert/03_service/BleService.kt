@@ -1204,6 +1204,7 @@ class BleService : LifecycleService() {
         bleAdvertiser?.updateInZone(inside)
         bleAdvertiser?.updateRisk(getCurrentMaxLevel())   // 진입=SAFE 송출, 이탈=실제 레벨 복귀
         broadcastDeviceList(force = true)
+        broadcastLocalState()      // 존 전이를 내 상태 스냅샷에도 반영(값 변화 감지가 중복을 걸러낸다)
         sendStatusBroadcast(if (inside) "세이프존 — 경보 억제 중(존 비콘 접촉)" else "존 이탈 — 경보 복원")
         refreshNotification()
         Log.i(TAG, "(v1.1.65) myZoneInside=$inside (세이프존 전면 억제)")
@@ -1496,7 +1497,7 @@ class BleService : LifecycleService() {
         val cat = adv?.txCategory ?: myCategory
         val st  = adv?.txState   ?: BleConstants.PSTATE_IDLE
         val turn = adv?.txTurnDir ?: BleConstants.TURN_STRAIGHT
-        val snap = "$cat${31.toChar()}$st${31.toChar()}$turn"
+        val snap = "$cat${31.toChar()}$st${31.toChar()}$turn${31.toChar()}${if (myZoneInside) 1 else 0}"
         localSnapshot = snap
         if (snap == lastLocalSnapshot) return
         lastLocalSnapshot = snap

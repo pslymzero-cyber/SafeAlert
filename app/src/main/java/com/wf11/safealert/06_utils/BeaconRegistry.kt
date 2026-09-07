@@ -47,7 +47,7 @@ object BeaconRegistry {
                     addedAt       = obj.optLong("addedAt", 0L),
                     rssiOffset    = obj.optInt("rssiOffset", 0),
                     zoneMute      = obj.optBoolean("zoneMute", false),
-                    zoneEnterRssi = obj.optInt("zoneEnterRssi", -65)
+                    zoneEnterRssi = obj.optInt("zoneEnterRssi", -80)
                 )
             }
         }.getOrDefault(emptyList())
@@ -134,7 +134,7 @@ object BeaconRegistry {
                 addedAt       = obj.optLong("addedAt", 0L),
                 rssiOffset    = obj.optInt("rssiOffset", 0),
                 zoneMute      = obj.optBoolean("zoneMute", false),
-                zoneEnterRssi = obj.optInt("zoneEnterRssi", -65)
+                zoneEnterRssi = obj.optInt("zoneEnterRssi", -80)
             )
         }
     }.getOrDefault(emptyList())

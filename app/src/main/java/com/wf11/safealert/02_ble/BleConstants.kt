@@ -238,7 +238,8 @@ object BleConstants {
 data class LocalState(
     val category: Int  = BleConstants.CAT_WALKER,       // 내 역할 (CAT_*)
     val state: Int     = BleConstants.PSTATE_IDLE,       // 내 동적 상태 (PSTATE_*)
-    val turnDir: Int   = BleConstants.TURN_STRAIGHT      // 내 송출 회전 방향 (TURN_*)
+    val turnDir: Int   = BleConstants.TURN_STRAIGHT,     // 내 송출 회전 방향 (TURN_*)
+    val inZone: Boolean = false                          // 세이프존 진입 여부 (기본 false = 구포맷 하위호환)
 ) {
     val categoryLabel: String get() = BleConstants.categoryLabel(category)
     val stateLabel: String    get() = BleConstants.stateLabel(state)

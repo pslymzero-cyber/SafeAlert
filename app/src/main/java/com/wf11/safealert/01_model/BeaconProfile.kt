@@ -19,6 +19,9 @@ data class BeaconProfile(
     val rssiOffset: Int = 0,
     // (v1.1.62) 존 비콘 — true면 이 비콘은 경보 대상이 아니라 '안전구역' 마커.
     //   zoneEnterRssi 이상으로 수신 중인 기기는 IN_ZONE 선언(자기 무음+피어 무해 판정).
+    // (v1.1.76) 기본 -80 — 존은 raw rssi, 경보는 EMA+오프셋으로 판정해 스케일이 다르다.
+    //   기본을 -65 로 두면 경보 임계(-75, MAC 비콘은 오프셋 적용으로 더 낮음)보다 좁아
+    //   '경보는 뜨는데 존은 성립 안 하는' 사각지대가 설계상 반드시 생긴다.
     val zoneMute: Boolean = false,
-    val zoneEnterRssi: Int = -65
+    val zoneEnterRssi: Int = -80
 )

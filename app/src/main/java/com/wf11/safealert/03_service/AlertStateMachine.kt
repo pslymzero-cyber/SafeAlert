@@ -1434,7 +1434,10 @@ class AlertStateMachine(
                 return
             }
         } else {
-            recedingStartMap.remove(deviceId)
+            // [v1.1.76 결함C] 이탈 누적을 '접근이 확인된 프레임'에서만 리셋한다. 종전엔 비-이탈 프레임
+            //   1개마다 무조건 remove 해서, RSSI 노이즈로 isReceding 이 한 프레임만 꺾여도 누적이 0이 되고
+            //   RECEDING_CLEAR_MS 에 영영 도달하지 못했다(= '이탈 확인 → 경보 해제'(L1432) 사망).
+            if (kfVel > CPA_VEL_THRESHOLD) recedingStartMap.remove(deviceId)
             // [v1.1.6 검증 보강] fail-loud 무음 복구는 아래 shouldAlert 게이트(!shouldAlert 분기)로 이동.
             //   여기서 즉시 재발령하면 같은 프레임에 격상(levelEscalated)·쿨다운경과로 canonical 발령이 또
             //   playDanger 를 호출(비멱등 → 사이렌 끊김 stutter)할 수 있어, 발령을 건너뛰는 프레임에 한해
@@ -1539,13 +1542,15 @@ class AlertStateMachine(
             //   playDanger 중복호출(비멱등 stutter) 없음.
             //   [v1.1.6 DS-1/3] 판정 기준을 raw avg1sec → 평활 stableLevel 로 통일. (a) canonical 과 동일한
             //   거리 권위값(pEma 기반 stableLevel)을 써, '평활은 DANGER 인데 raw 노이즈 dip 으로 무음'이던
-            //   불일치(DS-3)를 제거한다. (b) isReceding 가드도 stableLevel<DANGER(L1085)라, 이탈 프레임은
-            //   여기 stableLevel>=DANGER 와 정확한 여집합으로 상호배타 → 진짜 이탈 즉시정지는 유지되고,
-            //   genuine 이탈로 stableLevel 이 이미 위험권 밖이면 복구가 되살리지 않아 ghost-danger 과알람도 없다.
+            //   불일치(DS-3)를 제거한다. (b) [v1.1.76 결함C 정정] 종전 주석은 'isReceding 가드가
+            //   stableLevel<DANGER 라 이 블록과 상호배타'라고 했으나, v1.1.22 가 isReceding 정의에
+            //   || isDepartingNow 를 넣으면서(L1365) 그 불변식은 깨졌다 — 위험권(stableLevel>=DANGER)
+            //   에서 멀어지는 중에도 isReceding=true 가 성립한다. 그래서 L1382 가 끈 사이렌을 같은
+            //   프레임에 이 복구가 되살렸다(= '이탈 중에도 알림 지속'). !isReceding 을 명시 가드한다.
             if (!fx.isMuted && !fx.isDeviceMuted(deviceId) && alertState.containsKey(deviceId) &&
                 !fx.isDwellMuted(deviceId, stableLevel) &&   // (v1.1.61) dwell 뮤트 존중 — 의도된 무음은 '복구'하지 않는다
                 !fx.myZoneInside &&                          // (v1.1.62) 존 안=가청 억제 — fail-loud 복구도 되살리지 않는다
-                stableLevel >= BleConstants.LEVEL_DANGER && !isDepartingNow &&   // [v1.1.22 B] 이탈측 무음복구 재발령 금지
+                stableLevel >= BleConstants.LEVEL_DANGER && !isDepartingNow && !isReceding &&   // [v1.1.22 B / v1.1.76 C] 이탈측 무음복구 재발령 금지
                 fx.activeSoundLevel < BleConstants.LEVEL_DANGER) {
                 fx.forceAlarmVolume()
                 fx.activeSoundLevel = BleConstants.LEVEL_DANGER
@@ -1668,7 +1673,10 @@ class AlertStateMachine(
         //   urgentBypass 의 속도항)은 뮤트 무시. median>=effDanger 항까지 쓰면 위험권에 '정지'한
         //   기기가 매 프레임 바이패스돼 영원히 안 뮤트("위험 거리도 동일하게" 스펙 무력화)라 속도항만.
         // (v1.1.62) || fx.myZoneInside — 존 비콘 접촉 중엔 무조건 가청 억제(urgentBypass 의 속도항도 안 뚫음).
-        val dwellSuppressed = (fx.isDwellMuted(deviceId, stableLevel) && kfVel < 2.0) || fx.myZoneInside
+        // [v1.1.76 결함C] || isReceding || isDepartingNow — 멀어지는 중엔 가청 억제. 이 한 줄이 아래
+        //   DANGER(vibrateDanger/playDanger)·WARNING 발령의 소리·진동을 한꺼번에 덮는다. 표시·브로드캐스트는 유지.
+        val dwellSuppressed = (fx.isDwellMuted(deviceId, stableLevel) && kfVel < 2.0) || fx.myZoneInside ||
+            isReceding || isDepartingNow
         if (!dwellSuppressed) fx.forceAlarmVolume()
         val globalMax = fx.getAudibleMaxLevel()   // (v1.1.61) 뮤트 기기 제외 — 무음 기기가 신규 경보를 못 막게
         if (stableLevel < globalMax) {

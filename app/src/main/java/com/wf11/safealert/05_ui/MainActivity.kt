@@ -368,7 +368,8 @@ class MainActivity : AppCompatActivity() {
         val cat     = f[0].toIntOrNull() ?: return null
         val st      = f[1].toIntOrNull() ?: return null
         val turnDir = f[2].toIntOrNull() ?: BleConstants.TURN_STRAIGHT   // [v1.1.7 #1] 속도→회전
-        return LocalState(cat, st, turnDir)
+        val inZone  = f.getOrNull(3) == "1"                              // 4번째 필드 없으면 false(구포맷 하위호환)
+        return LocalState(cat, st, turnDir, inZone)
     }
 
     /**
@@ -378,7 +379,7 @@ class MainActivity : AppCompatActivity() {
      */
     private fun updateLocalDisplay(local: LocalState) {
         binding.tvLocalState.text =
-            "상태: ${local.stateLabel} · 회전: ${local.turnLabel}"
+            (if (local.inZone) "세이프존 · " else "") + "상태: ${local.stateLabel} · 회전: ${local.turnLabel}"
     }
 
     /**
