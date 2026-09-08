@@ -432,7 +432,7 @@
                         <TextView
                             style="@style/SA.Hint"
                             android:layout_marginTop="@dimen/sa_space_hairline"
-                            android:text="전부 m: UWB 페어는 실측, 그 외는 신호 기반 추정(약 X m)" />
+                            android:text="전부 m: UWB 페어는 실측, 그 외는 신호 기반 추정(약 X m) · 표시 전용, 변경은 개발자 설정에서" />
 
                         <TextView
                             style="@style/SA.Label"
@@ -536,7 +536,7 @@
                             android:max="30" />
                         <TextView
                             style="@style/SA.Hint"
-                            android:text="기본: 지게차 쌍 15m 경고·8m 위험 / 그 외 5m 경고·3m 위험 · 0.5m 단위 즉시 반영" />
+                            android:text="기본: 지게차 쌍 15m 경고·8m 위험 / 그 외 5m 경고·3m 위험 · 표시 전용, 변경은 개발자 설정에서" />
                     </LinearLayout>
                 </LinearLayout>
             </androidx.cardview.widget.CardView>

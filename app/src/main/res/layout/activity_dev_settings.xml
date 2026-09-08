@@ -531,6 +531,52 @@
                         <TextView style="@style/SA.Hint" android:layout_marginTop="@dimen/sa_space_hairline"
                             android:text="실측으로 3샘플 연속 멀어지면 경보 완화(경고 반경 밖=해제) · 위험 반경 안·급접근 중엔 개입 없음 · 기본 꺼짐" />
 
+                        <View style="@style/SA.Divider" />
+
+                        <!-- (v1.1.79) 거리 표시 방식·UWB 판정 반경 — BLE 감지 설정에서 이관(그쪽은 읽기전용 표시) -->
+                        <TextView style="@style/SA.SubHeader" android:text="거리 표시 방식" />
+                        <RadioGroup android:id="@+id/rg_dev_dist_mode" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
+                            <RadioButton android:id="@+id/rb_dev_dist_dbm" style="@style/SA.Radio" android:text="dBm" />
+                            <RadioButton android:id="@+id/rb_dev_dist_uwb_m" style="@style/SA.Radio" android:text="UWB만 m" />
+                            <RadioButton android:id="@+id/rb_dev_dist_all_m" style="@style/SA.Radio" android:text="전부 m" />
+                        </RadioGroup>
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="@dimen/sa_space_hairline"
+                            android:text="전부 m: UWB 페어는 실측, 그 외는 신호 기반 추정(약 X m)" />
+
+                        <TextView style="@style/SA.SubHeader" android:text="UWB 판정 반경" />
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="@dimen/sa_space_hairline"
+                            android:text="UWB 실측 신호가 오는 상대에게 적용 · 지게차가 낀 쌍/그 외 쌍 각각 경고·위험 거리 · 0.5m 단위 즉시 반영" />
+
+                        <LinearLayout style="@style/SA.Row">
+                            <TextView style="@style/SA.RowLabel" android:text="지게차 쌍 경고" />
+                            <TextView android:id="@+id/tv_dev_uwb_fk_warn" style="@style/SA.Value" android:textColor="@color/sa_warning" android:text="15m" />
+                        </LinearLayout>
+                        <SeekBar android:id="@+id/seek_dev_uwb_fk_warn" android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:layout_marginTop="@dimen/sa_space_xs" android:min="2" android:max="80" />
+
+                        <LinearLayout style="@style/SA.Row">
+                            <TextView style="@style/SA.RowLabel" android:text="지게차 쌍 위험" />
+                            <TextView android:id="@+id/tv_dev_uwb_fk_danger" style="@style/SA.Value" android:textColor="@color/sa_danger" android:text="8m" />
+                        </LinearLayout>
+                        <SeekBar android:id="@+id/seek_dev_uwb_fk_danger" android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:layout_marginTop="@dimen/sa_space_xs" android:min="1" android:max="60" />
+
+                        <LinearLayout style="@style/SA.Row">
+                            <TextView style="@style/SA.RowLabel" android:text="그 외 쌍 경고" />
+                            <TextView android:id="@+id/tv_dev_uwb_pair_warn" style="@style/SA.Value" android:textColor="@color/sa_warning" android:text="5m" />
+                        </LinearLayout>
+                        <SeekBar android:id="@+id/seek_dev_uwb_pair_warn" android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:layout_marginTop="@dimen/sa_space_xs" android:min="2" android:max="40" />
+
+                        <LinearLayout style="@style/SA.Row">
+                            <TextView style="@style/SA.RowLabel" android:text="그 외 쌍 위험" />
+                            <TextView android:id="@+id/tv_dev_uwb_pair_danger" style="@style/SA.Value" android:textColor="@color/sa_danger" android:text="3m" />
+                        </LinearLayout>
+                        <SeekBar android:id="@+id/seek_dev_uwb_pair_danger" android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:layout_marginTop="@dimen/sa_space_xs" android:min="1" android:max="30" />
+                        <TextView style="@style/SA.Hint"
+                            android:text="기본: 지게차 쌍 15m 경고·8m 위험 / 그 외 5m 경고·3m 위험" />
+
                     </LinearLayout>
                 </LinearLayout>
             </androidx.cardview.widget.CardView>

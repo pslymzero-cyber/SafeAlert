@@ -139,11 +139,29 @@ class DevSettingsActivity : AppCompatActivity() {
         binding.swUwbPromote.isChecked    = DevSettings.uwbPromoteEnabled
         binding.swUwbVelPromote.isChecked = DevSettings.uwbVelPromoteEnabled
         binding.swUwbVelRelease.isChecked = DevSettings.uwbVelReleaseEnabled
+        // (v1.1.79) 거리 표시 방식·UWB 판정 반경 — BLE 감지 설정에서 이관(그쪽은 읽기전용 표시).
+        //   0=dBm만 / 1=UWB만 m / 2=전부 m(비UWB는 역산 추정), 반경 progress = 미터 × 2(0.5m 스텝).
+        binding.rgDevDistMode.check(
+            when (DevSettings.distanceDisplayMode) {
+                0    -> binding.rbDevDistDbm.id
+                1    -> binding.rbDevDistUwbM.id
+                else -> binding.rbDevDistAllM.id
+            }
+        )
+        binding.seekDevUwbFkWarn.progress     = (DevSettings.uwbForkliftWarnMeters   * 2).toInt().coerceIn(2, 80)
+        binding.seekDevUwbFkDanger.progress   = (DevSettings.uwbForkliftDangerMeters * 2).toInt().coerceIn(1, 60)
+        binding.seekDevUwbPairWarn.progress   = (DevSettings.uwbPairWarnMeters       * 2).toInt().coerceIn(2, 40)
+        binding.seekDevUwbPairDanger.progress = (DevSettings.uwbPairDangerMeters     * 2).toInt().coerceIn(1, 30)
+        updateDevUwbRadiusLabels()
         if (!UwbRanger.isHardwareSupported(this)) {
             binding.swUwbProbeUpload.isEnabled = false
             binding.swUwbPromote.isEnabled    = false
             binding.swUwbVelPromote.isEnabled = false
             binding.swUwbVelRelease.isEnabled = false
+            binding.seekDevUwbFkWarn.isEnabled     = false
+            binding.seekDevUwbFkDanger.isEnabled   = false
+            binding.seekDevUwbPairWarn.isEnabled   = false
+            binding.seekDevUwbPairDanger.isEnabled = false
         }
         // [v1.1.55→v1.1.63] Level 2 에코 자동보정(스위치·튜너블 3종·진단·초기화)은 BLE 감지 설정으로 이관.
     }
@@ -295,6 +313,34 @@ class DevSettingsActivity : AppCompatActivity() {
         binding.swUwbPromote.setOnCheckedChangeListener    { _, c -> DevSettings.uwbPromoteEnabled    = c; updateSectionSummaries() }
         binding.swUwbVelPromote.setOnCheckedChangeListener { _, c -> DevSettings.uwbVelPromoteEnabled = c; updateSectionSummaries() }
         binding.swUwbVelRelease.setOnCheckedChangeListener { _, c -> DevSettings.uwbVelReleaseEnabled = c; updateSectionSummaries() }
+
+        // (v1.1.79) 거리 표시 방식 — 즉시 라이브 반영(다음 목록 브로드캐스트부터 적용)
+        binding.rgDevDistMode.setOnCheckedChangeListener { _, checkedId ->
+            DevSettings.distanceDisplayMode = when (checkedId) {
+                binding.rbDevDistDbm.id  -> 0
+                binding.rbDevDistUwbM.id -> 1
+                else                     -> 2
+            }
+        }
+        // (v1.1.79) UWB 판정 반경 — progress/2 = 미터(0.5m 스텝). judgeUwbOnly 가 매 판정마다
+        //   DevSettings 를 직독하므로 별도 서비스 통지 불필요. 경고<위험 역설정은 자동 보정하지
+        //   않는다 — 위험 분기가 먼저 평가돼 위험 반경이 우선(무해).
+        binding.seekDevUwbFkWarn.setOnSeekBarChangeListener(seekListener { v ->
+            DevSettings.uwbForkliftWarnMeters = v / 2f
+            updateDevUwbRadiusLabels(); updateSectionSummaries()
+        })
+        binding.seekDevUwbFkDanger.setOnSeekBarChangeListener(seekListener { v ->
+            DevSettings.uwbForkliftDangerMeters = v / 2f
+            updateDevUwbRadiusLabels(); updateSectionSummaries()
+        })
+        binding.seekDevUwbPairWarn.setOnSeekBarChangeListener(seekListener { v ->
+            DevSettings.uwbPairWarnMeters = v / 2f
+            updateDevUwbRadiusLabels(); updateSectionSummaries()
+        })
+        binding.seekDevUwbPairDanger.setOnSeekBarChangeListener(seekListener { v ->
+            DevSettings.uwbPairDangerMeters = v / 2f
+            updateDevUwbRadiusLabels(); updateSectionSummaries()
+        })
 
         binding.btnReset.setOnClickListener { resetValues() }
 
@@ -454,7 +500,10 @@ class DevSettingsActivity : AppCompatActivity() {
             "강제 ${onOff(binding.swUwbForce.isChecked)} · 승격 ${onOff(binding.swUwbPromote.isChecked)}/" +
             "${onOff(binding.swUwbVelPromote.isChecked)}/${onOff(binding.swUwbVelRelease.isChecked)}" +
             // 켠 채로 잊으면 계속 올라가므로 접힌 요약에서도 보이게 한다.
-            (if (binding.swUwbProbeUpload.isChecked) " · 표본업로드 ON" else "")
+            (if (binding.swUwbProbeUpload.isChecked) " · 표본업로드 ON" else "") +
+            // (v1.1.79) 반경은 접힌 상태에서도 확인 — 지게차쌍 경고/위험 · 그 외 경고/위험
+            " · 반경 ${binding.tvDevUwbFkWarn.text}/${binding.tvDevUwbFkDanger.text}" +
+            "·${binding.tvDevUwbPairWarn.text}/${binding.tvDevUwbPairDanger.text}"
         binding.secAppinfoSummary.text = "v${BuildConfig.VERSION_NAME}"
     }
 
@@ -517,6 +566,17 @@ class DevSettingsActivity : AppCompatActivity() {
         binding.tvDevWarnRssiVal.text    = "${DevSettings.rssiWarning} dBm"
         binding.tvDevDangRssiVal.text    = "${DevSettings.rssiDanger} dBm"
     }
+
+    // (v1.1.79) UWB 판정 반경 라벨 — progress/2 = 미터. 정수 값은 "15m", 반미터는 "7.5m".
+    private fun updateDevUwbRadiusLabels() {
+        binding.tvDevUwbFkWarn.text     = fmtMeters(binding.seekDevUwbFkWarn.progress / 2f)
+        binding.tvDevUwbFkDanger.text   = fmtMeters(binding.seekDevUwbFkDanger.progress / 2f)
+        binding.tvDevUwbPairWarn.text   = fmtMeters(binding.seekDevUwbPairWarn.progress / 2f)
+        binding.tvDevUwbPairDanger.text = fmtMeters(binding.seekDevUwbPairDanger.progress / 2f)
+    }
+
+    private fun fmtMeters(v: Float): String =
+        if (v == v.toInt().toFloat()) "${v.toInt()}m" else "%.1fm".format(v)
 
     private fun seekListener(onChange: (Int) -> Unit) = object : android.widget.SeekBar.OnSeekBarChangeListener {
         override fun onProgressChanged(sb: android.widget.SeekBar, v: Int, b: Boolean) = onChange(v)

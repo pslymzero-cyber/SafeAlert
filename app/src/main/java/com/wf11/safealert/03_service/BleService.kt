@@ -116,7 +116,9 @@ class BleService : LifecycleService() {
     private val ZONE_MIN_SAMPLES     = 3
     private val ZONE_EXIT_HYST_DB    = 5
     private val ZONE_LOST_GRACE_MS   = 3_000L
-    private val ZONE_SIGNAL_STALE_MS = 4_000L
+    // 엔트리 폐기는 맵 누수 방지 전용 — 이탈 판정은 위 GRACE 가 이미 끝냈다. 4초는 광고 주기가 느린
+    // 비콘·45초 스캔 재시작 공백에서 진입 표본이 모이기 전에 카운터를 통째로 지워 영구 미진입을 만들었다.
+    private val ZONE_SIGNAL_STALE_MS = 30_000L
     private val muteHandler = android.os.Handler(android.os.Looper.getMainLooper())
     // [v1.0.46 #11] forceAlarmVolume 의 ignoringVolumeChange 해제(300ms) 전용 핸들러.
     //   muteHandler 공용이던 시절, muteTemporarily()의 removeCallbacksAndMessages(null)가 해제
@@ -1138,6 +1140,9 @@ class BleService : LifecycleService() {
     private fun onZoneBeaconSignal(beaconKey: String, rssi: Int, enterRssi: Int) {
         zoneLastSeenMap[beaconKey] = System.currentTimeMillis()
         zoneEnterRssiMap[beaconKey] = enterRssi
+        // 존 표본 원신호 — "비콘이 아예 안 잡힘"과 "잡히는데 임계 미달"을 현장에서 구분할 유일한 수단.
+        Log.d(TAG, "존 표본: ${beaconKey} rssi=${rssi} 임계=${enterRssi} " +
+                   "n=${zoneSampleMap[beaconKey] ?: 0} inside=${zoneInsideMap[beaconKey]}")
         when {
             rssi >= enterRssi -> {
                 val n = (zoneSampleMap[beaconKey] ?: 0) + 1
@@ -1154,7 +1159,10 @@ class BleService : LifecycleService() {
                     Log.i(TAG, "(v1.1.62) 존 이탈(세기 미달): $beaconKey rssi=$rssi < ${enterRssi - ZONE_EXIT_HYST_DB}")
                 }
             }
-            else -> zoneSampleMap[beaconKey] = 0   // 데드밴드 — 상태 유지, 진입 연속성만 끊음
+            // 데드밴드(enterRssi-5 <= rssi < enterRssi) — 상태·표본 모두 유지.
+            // 여기서 카운터를 0으로 밀면 실환경의 정상 RSSI 요동(±5~10dB)이 경계 부근에서
+            // 매번 연속성을 끊어, 임계를 넘나드는 동안 3표본이 영원히 모이지 않는다.
+            else -> Unit
         }
         refreshMyZoneInside()
     }

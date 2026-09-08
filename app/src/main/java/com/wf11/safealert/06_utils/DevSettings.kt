@@ -61,8 +61,10 @@ object DevSettings {
     private const val KEY_LOG_VERBOSE           = "log_verbose"
 
     private lateinit var prefs: SharedPreferences
+    private var appCtx: Context? = null
 
     fun init(context: Context) {
+        appCtx = context.applicationContext
         prefs = context.applicationContext.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
         // (v1.1.56 U4a) EMA 하강 알파 기본 0.05→0.12 1회 마이그레이션 — 스피너 초기 programmatic
         //   선택도 putFloat 로 저장되므로 DEFAULT 변경만으론 기존 설치에 미반영. 마커 1회에 한해
@@ -699,13 +701,51 @@ object DevSettings {
     // (v1.1.77) 사업장 코드 — 알림·보정 데이터 전역 분리 네임스페이스(예: "WF11"). 빈 값=공용.
     //   메인화면이 정식 입력처이고 BLE 설정 UWB 섹션은 읽기전용 표시. 대소문자 무관(대문자 정규화)이며
     //   [A-Z0-9_-] 외 문자는 버려 Firebase 경로·SharedPreferences 파일명에 그대로 쓸 수 있게 한다.
-    //   변경 즉시 UwbCalibrator/CalibrationEngine/BeaconRegistry 의 applySite 가 현재 프로파일을
-    //   저장하고 해당 사업장 프로파일로 전환한다(각 사업장 학습 보존 — 지워지지 않음).
+    //   소비자(BeaconRegistry/CalibrationEngine)는 매 접근마다 sitePrefName() 으로 현재 센터 파일을
+    //   열고, 최초로 코드가 붙는 순간 adoptCommonPrefs() 가 공용 파일 내용을 그 센터로 1회 인계한다.
     private const val KEY_UWB_SITE_CODE = "uwb_site_code"   // 키는 v1.1.34 그대로(마이그레이션 불필요)
     const val SITE_CODE_MAX_LEN = 12
     var siteCode: String
         get() = normalizeSite(prefs.getString(KEY_UWB_SITE_CODE, "") ?: "")
-        set(v) = prefs.edit().putString(KEY_UWB_SITE_CODE, normalizeSite(v)).apply()
+        set(v) {
+            val next = normalizeSite(v)
+            if (next == siteCode) return
+            prefs.edit().putString(KEY_UWB_SITE_CODE, next).apply()
+            adoptCommonPrefs(next)
+        }
+
+    // 사업장 분리 대상 저장소(공용 파일명). 코드가 붙으면 base_CODE 로 갈라진다.
+    private val SITE_PREF_BASES = listOf("beacon_registry", "echo_diff_stats")
+
+    /**
+     * 최초로 센터명이 붙을 때 공용 파일의 기존 학습·등록 정보를 그 센터 파일로 1회 인계한다.
+     * 인계 없이 전환하면 등록 비콘 목록(존 비콘 포함)과 에코 보정이 통째로 빈 상태가 되어
+     * 안전구역 무음화가 조용히 죽는다. 대상 파일이 이미 비어 있지 않으면 손대지 않는다
+     * (그 센터의 학습값이 우선 — 사업장 간 왕복 전환에서도 덮어쓰지 않는다).
+     */
+    private fun adoptCommonPrefs(site: String) {
+        val ctx = appCtx ?: return
+        if (site.isEmpty()) return
+        SITE_PREF_BASES.forEach { base ->
+            val dst = ctx.getSharedPreferences(base + "_" + site, Context.MODE_PRIVATE)
+            if (dst.all.isNotEmpty()) return@forEach
+            val src = ctx.getSharedPreferences(base, Context.MODE_PRIVATE)
+            if (src.all.isEmpty()) return@forEach
+            val e = dst.edit()
+            src.all.forEach { (k, v) ->
+                when (v) {
+                    is String  -> e.putString(k, v)
+                    is Int     -> e.putInt(k, v)
+                    is Long    -> e.putLong(k, v)
+                    is Float   -> e.putFloat(k, v)
+                    is Boolean -> e.putBoolean(k, v)
+                    is Set<*>  -> @Suppress("UNCHECKED_CAST") e.putStringSet(k, v as Set<String>)
+                }
+            }
+            e.apply()
+            android.util.Log.i("DevSettings", "센터 전환 인계: ${base} -> ${base}_${site} (${src.all.size}건)")
+        }
+    }
 
     /** 입력 문자열을 사업장 코드 표준형으로 — 대문자화 후 [A-Z0-9_-] 만 남기고 최대 12자. */
     fun normalizeSite(raw: String): String =
