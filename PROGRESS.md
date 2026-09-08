@@ -856,3 +856,188 @@ UpdateManager.kt / BleService.kt / VibrationHelper.kt / UwbRanger.kt / BeaconReg
 - 미커밋 누적이 4건으로 증가 (기존 3건 + 이번 건). 커밋은 사용자 명시 요청 시만. 태그·푸시 금지.
 - `확인필요(삭제 비권장) 5건`(BleConstants MOTION_STATE_*/CAT_RESERVED/TURN_RESERVED,
   BleService EXTRA_RSSI)은 감사 판단대로 손대지 않음 — 프로토콜 예약값이라 삭제 시 호환성 위험.
+
+---
+
+## 2026-09-07 — 세이프존 결함 A/B/C 수정 (진행 중 · 컨텍스트 정리 시점 기록)
+
+### 결함 정의 (실기 보고)
+- **A** = 세이프존 비콘 옆인데 경보가 울린다
+- **B** = 세이프존 진입 여부가 화면에 표시되지 않는다
+- **C** = 멀어지는 중(이탈)인데 범위를 벗어날 때까지 알림이 계속된다
+
+### 완료 작업
+- 조사는 이전 세션에서 종료. 산출물 `C:\Users\pslym\Downloads\_작업\safezone_wf_findings_20260907.txt` (SURVIVED[0..3] 만 사용). **재조사 금지.**
+- 결함 C 진단 확정: 근본원인 2개
+  1. `recedingStartMap` 이 비-이탈 프레임마다 무조건 remove 되어 `RECEDING_CLEAR_MS` 누적이 0으로 리셋 → '이탈 확인 → 경보 해제' 경로에 영영 도달 못 함
+  2. fail-loud 무음복구 블록이 `isReceding` 을 보지 않아, 이탈 판정이 끈 사이렌을 같은 프레임에 되살림
+     (기존 주석의 '상호배타' 근거는 v1.1.22 가 `isReceding` 정의에 `|| isDepartingNow` 를 넣으며 깨진 낡은 불변식)
+- **수정 3줄 중 1줄 적용 완료** — `AlertStateMachine.kt` L1437-1440, 이탈 누적 리셋을 `kfVel > CPA_VEL_THRESHOLD` 프레임으로 한정.
+
+### 수정 파일 · 함수
+- `app/src/main/java/com/wf11/safealert/03_service/AlertStateMachine.kt`
+  - `processAlert()` (L571~L1744, 단일 거대 함수) 내부 3곳만 대상
+  - L1440 적용됨 / L1551 fail-loud 조건 미적용 / L1674 `dwellSuppressed` 미적용
+  - L1929 의 두 번째 `dwellSuppressed` 는 `judgeUwbOnly()` 내부 → `isReceding`/`isDepartingNow` 스코프 밖 → **범위 제외**(별건)
+
+### 확정 스펙
+- 버전은 **1.1.76 유지**(버그 수정이라 versionName 미증가). 현재 versionCode 132.
+  `.claude/CLAUDE.md:29` 의 "128 / 1.1.72" 는 stale — git tag 로 실증됨.
+- 변경 파급 범위: `AlertStateMachine` 을 참조하는 파일은 `BleService.kt` 단 1개.
+  3줄 모두 지역변수·private 맵만 건드리므로 public API 시그니처 변화 0, BLE 페이로드 레이아웃 무변경.
+- 표시·브로드캐스트는 유지하고 **가청(소리·진동)만 억제**하는 방향으로 C 를 고친다.
+
+### 남은 순서
+1. `AlertStateMachine.kt` L1674 `dwellSuppressed` 에 `|| isReceding || isDepartingNow` 추가 (핵심 — DANGER/WARNING 발령을 한꺼번에 덮음)
+2. 같은 파일 L1551 fail-loud 조건에 `&& !isReceding` 추가 + 무효해진 주석 근거 정정 (이중 안전망)
+3. 컴파일 검증
+4. 결함 B — SURVIVED[3] fix_sketch 판정 후 수정
+5. 결함 A — SURVIVED[0]/[1] fix_sketch 기반 근본 수정
+6. `mempalace_diary_write(agent_name=claude, wing=wing_safealert)`
+
+### 미해결 이슈
+- **미커밋** 상태. 커밋은 사용자 명시 요청 시에만.
+- `Co-Authored-By` 귀속 충돌 3중 — 시스템 리마인더(부착 지시) vs 전역 CLAUDE.md(Opus 4.8) vs Ruflo CLAUDE.md:11(`.claude/settings.json` 에 `attribution.commit` 없으면 금지). **커밋 직전 사용자에게 질의 필요.**
+- 결함 B 성격 충돌 미판정: 사용자 지시("브로드캐스트에 zone 필드 없음 → 그릴 뷰 자체가 없다") vs 메모리(safealert-safezone-suppression-broken-paused.md: "표시 코드는 이미 존재·발화만 안 함"). SURVIVED[3] 로 판정한다.
+- 결함 A 는 `zoneEnterRssi` -65 → -80 단독 변경으로 해결이라 보고하지 말 것 (캘리브레이션 부재가 함께 있음).
+- GateGuard 훅은 Bash 게이트와 Edit/Write 게이트가 **별개**이며 요구 항목이 다르다. 컨텍스트 압축이 두 게이트를 모두 리셋한다.
+
+---
+
+## 2026-09-07 — 결함 C 수정 완료 (v1.1.76 유지)
+
+### 완료 작업
+- `AlertStateMachine.kt` 결함 C 3지점 전부 적용. 순증 5줄(주석 포함).
+  1. (선행 완료) `kfVel > CPA_VEL_THRESHOLD` 일 때만 remove — 저속 이탈에서 상태 조기소멸 방지
+  2. `dwellSuppressed` 정의에 `|| isReceding || isDepartingNow` — 이탈 중 가청 억제. 단일 지점에서 DANGER(`vibrateDanger`/`playDanger`)·WARNING 의 소리·진동을 한꺼번에 덮는다. 표시·브로드캐스트는 유지.
+  3. fail-loud 즉시재발령 조건에 `&& !isReceding` — 이중 안전망. 무효해진 종전 주석 근거도 정정.
+
+### 확정 스펙
+- **근본 원인**: v1.1.22 가 `isReceding` 정의에 `|| isDepartingNow` 를 넣으면서 "isReceding 가드는 `stableLevel<DANGER` 구간 전용" 이라는 불변식이 깨졌다. 그 결과 위험권에서 멀어지는 프레임에 (a) 게이트가 가청을 못 막고 (b) fail-loud 복구가 같은 프레임에 사이렌을 되살렸다 = "이탈 중에도 알림 지속".
+- 범위 제외: `judgeUwbOnly` 내부의 두 번째 `dwellSuppressed` 는 별건.
+- public API 변화 0 — 전부 `processAlert` 내부 지역변수/private 맵. BLE 페이로드 레이아웃 미변경.
+
+### 검증
+- `./gradlew compileDebugKotlin` **통과** (오류 0. SDK XML v4 경고만 — 기존과 동일, 무관).
+
+### 남은 순서
+1. 결함 B — SURVIVED[3] fix_sketch 판정 후 수정
+2. 결함 A — SURVIVED[0]/[1] fix_sketch 기반 근본 수정
+3. `mempalace_diary_write(agent_name=claude, wing=wing_safealert)`
+
+### 미해결 이슈
+- **미커밋** 유지. 결함 A·B 까지 묶어 커밋할지 사용자 판단 대기.
+- 실기 회귀 검증 미실시 — 이탈 시 소리·진동은 꺼지되 화면 표시는 남는지 현장 확인 필요.
+
+---
+
+## [2026-09-07] 세이프존 결함 A/B/C — 중단 시점 스냅샷 (컨텍스트 초기화 직전)
+
+### 완료
+- **결함 C (이탈 중 알림 지속) — 코드 수정 3지점 완료 + 컴파일 오류 0.**
+  - 근본원인: v1.1.22 가 `isReceding` 정의에 `|| isDepartingNow` 를 넣으면서
+    "isReceding 가드는 stableLevel<DANGER" 불변식이 깨짐 -> 위험권에서 멀어져도 isReceding=true
+    -> L1382 가 끈 사이렌을 fail-loud 복구가 같은 프레임에 되살림.
+  - 수정 파일: 03_service/AlertStateMachine.kt (순증 5줄)
+    1. CPA remove 조건에 kfVel > CPA_VEL_THRESHOLD 게이트 (선행 세션)
+    2. dwellSuppressed 에 || isReceding || isDepartingNow 추가
+    3. fail-loud 재발령 조건에 && !isDepartingNow && !isReceding 추가
+  - 범위 제외: judgeUwbOnly 내부의 두 번째 dwellSuppressed (별건)
+  - **미커밋.** versionName 1.1.76 유지 (버그 수정 -> 버전 증가 없음).
+
+### 진행 중 (코드 미수정 — 좌표만 확정)
+- **결함 B (세이프존 상태를 나르는 상설 브로드캐스트 채널 부재)** — findings SURVIVED[3]
+  - 존 판정값은 존재해 알림 제목 분기는 정상(BleService.kt:1891-1893). **화면 채널만 없다.**
+  - **주의: findings 파일의 라인번호가 실제보다 2줄 앞선다. 아래는 실측값.**
+  - 수정 대상 3파일 4지점:
+    1. 03_service/BleService.kt **1499** `val snap` -> 4번째 필드 `${if (myZoneInside) 1 else 0}` 추가
+    2. 03_service/BleService.kt **1206** `broadcastDeviceList(force = true)` 옆에 `broadcastLocalState()` 한 줄 추가
+    3. 02_ble/BleConstants.kt **238-245** `data class LocalState(` 에 inZone 필드 추가(기본값 false)
+    4. 05_ui/MainActivity.kt **364-372** 파서 / **379-382** 표시 — `f.getOrNull(3) == "1"` + "세이프존 · " 프리픽스
+  - 하위호환 확인됨: parseLocalSnapshot 이 `if (f.size < 3) return null` 로 0..2 만 읽음 -> 필드 추가 무해.
+  - BLE 광고 페이로드가 아니라 **앱 내부 LocalBroadcast 문자열**이라 1바이트 프로토콜 제약과 무관.
+  - 위험: BleConstants.kt 262/263 에 동명 게터(stateLabel/turnLabel)를 가진 별개 data class 존재
+    -> Edit 앵커는 반드시 `data class LocalState(` 선언 라인 포함으로 잡을 것 (unique match 실패 방지).
+  - LocalState 소비처는 MainActivity.kt:381 하나뿐 -> 파급 최소.
+
+### 미착수
+- **결함 A** — findings SURVIVED[0]/[1] 의 fix_sketch 기반. **-65->-80 만 고치고 "A 해결" 보고 금지.**
+- 결함 B 적용 후 ./gradlew compileDebugKotlin 검증.
+
+### 미해결 지침 충돌
+1. .claude/CLAUDE.md GSD("Edit 전 /gsd-debug") vs 사용자의 "재조사 금지" + Ruflo "1-2줄 수정에 스웜 금지"
+   -> 사용자 지시 우선으로 진행 중.
+2. system-reminder 의 Co-Authored-By 부착 지시 vs Ruflo 규칙 11 절대 금지 -> **커밋 전 사용자에게 확인.**
+3. auto mode "Bash 우선(sed)" vs 사용자의 "한글 주석 Kotlin 편집은 Edit 툴" -> 사용자 지시 우선(인코딩 손상 방지).
+
+---
+
+## 2026-09-07 — 세이프존 결함 B (중단 스냅샷)
+
+### 완료
+- 결함 C: Edit 3건, 컴파일 오류 0. **미커밋**. AlertStateMachine.kt 는 재수정 금지.
+- 결함 B: Edit 4건 전부 적용 완료. **컴파일 미검증 / 미커밋.**
+  - BleService.kt `broadcastLocalState` — snap 문자열에 4번째 필드(`myZoneInside` 0/1) 추가. 기존 값 변화 감지 로직이 그대로 재사용되어 존 전이 때 자동 재송출.
+  - BleService.kt `refreshMyZoneInside` — `broadcastDeviceList(force = true)` 바로 아래에 `broadcastLocalState()` 호출 1줄 추가. 그 위에서 `myZoneInside` 를 먼저 대입하므로 갱신된 값을 읽는다.
+  - BleConstants.kt `data class LocalState` — `inZone: Boolean = false` 필드 추가. 기본값으로 기존 3인자 호출부 보호.
+  - MainActivity.kt `parseLocalSnapshot` — `f.size < 3` 가드 유지 + `getOrNull(3) == "1"` 로 inZone 파싱(구포맷 하위호환).
+  - MainActivity.kt `updateLocalDisplay` — inZone 일 때 `tvLocalState` 앞에 "세이프존 · " 프리픽스.
+
+### 확정 스펙
+- LocalBroadcast `EXTRA_LOCAL_STATE` 포맷: `<cat>\u001F<state>\u001F<turnDir>` → `<cat>\u001F<state>\u001F<turnDir>\u001F<0|1>`.
+- 이 변경은 앱 내부 문자열이지 BLE 광고 페이로드가 아니다 → 1바이트 비트팩 레이아웃 제약과 무관.
+- `LocalState(...)` 생성자 호출부는 MainActivity.kt 단 1곳(Grep 검증). `copy()`·component1~3 무손상.
+- `broadcastLocalState()` 는 전부 BleService 내부 private 호출 — 외부 public API 영향 없음.
+- versionName 1.1.76 / versionCode 132 유지(버그 수정이므로 증가 없음).
+
+### 남은 순서
+1. `cd /c/Users/pslym/Downloads/SafeAlert && ./gradlew compileDebugKotlin` — 결함 B 컴파일 검증. **미실행**(GateGuard 게이트 1회 차단 후 세션 중단).
+2. 결함 A — `C:\Users\pslym\Downloads\_작업\safezone_wf_findings_20260907.txt` 의 SURVIVED[0..2] 구간만 awk 로 읽고 수정. RSSI `-65 → -80` 단독 변경은 부분 수정에 불과하다.
+3. `mempalace_diary_write(agent_name=claude, wing=wing_safealert)`.
+4. 커밋은 사용자 명시 요청 시에만. 태그·푸시 임의 금지.
+
+### 미해결 이슈
+- 결함 B 컴파일 미검증.
+- 결함 A 미착수.
+- Co-Authored-By 충돌: Ruflo CLAUDE.md 규칙11(금지) vs 시스템 부착 지시(요구). 커밋 직전에 사용자에게 물어서 결정.
+
+---
+
+## v1.1.77 — 사업장 코드 분리 + 개발자 설정 미러링 (2026-09-08)
+
+### 완료 작업
+- (A) 사업장 코드 승격: 기존 `uwb_site_code` 키를 전역 사업장 코드로 통합. 마이그레이션 불필요.
+- (B) 메인화면 입력란 신설(이름 옆). 대소문자 무관 — 저장 시 대문자 정규화.
+- (C) 보행자/지게차 모드 시작 시 코드 없으면 팝업 강제. 빈 값이면 다이얼로그가 닫히지 않는다.
+- (D) 데이터 4종 사업장 분리: Firebase 경보 로그 / 에코편차 통계 / UWB 보정 프로파일 / 비콘 등록 정보.
+- (E) 개발자 설정에 BLE 설정 항목 복제(볼륨·경고/위험 신호세기·에코편차 자동보정).
+- (F) BLE 설정에서 위 항목 락(읽기 전용, alpha 0.4). 필터 강도(칼만 프리셋)만 편집 가능.
+- (G) versionCode 132→133 / versionName 1.1.76→1.1.77.
+
+### 수정 파일·함수 (13개)
+- `06_utils/DevSettings.kt` — `siteCode` / `normalizeSite` / `sitePrefName(base)` / `SITE_CODE_MAX_LEN`
+- `06_utils/BeaconRegistry.kt` — `prefs` 를 val→get() 으로 전환(사업장별 파일 지연 조회)
+- `03_service/CalibrationEngine.kt` — `activeSite` 초기화, `echoPrefs()` 네임스페이싱, `applySite(myId)` 신설
+- `03_service/BleService.kt:1631` — `CalibrationEngine.applySite(myId)` 1줄
+- `04_firebase/FirebaseManager.kt` — `siteNode(name)` 헬퍼, `saveAlert` 에 site 필드, echo_calib 경로 분리
+- `05_ui/MainActivity.kt` — `saveSiteCode()` / `requireSiteCode(onReady)` 게이트 3곳
+- `05_ui/DevSettingsActivity.kt` — `loadValues`/`setupListeners` 확장, `updateDevAlarmLabels()` 신설
+- `05_ui/BleSettingsActivity.kt` — `loadDevManagedValues()` / `lockDevManaged()` 신설
+- `06_utils/UwbCalibrator.kt`, `03_service/AlertStateMachine.kt` — `uwbSiteCode` → `siteCode` rename
+- `res/layout/activity_main.xml`, `activity_ble_settings.xml`, `activity_dev_settings.xml`
+- `app/build.gradle`
+
+### 확정 스펙
+- prefs 파일명 규칙: 코드가 비면 기존 파일명 그대로, 있으면 `<base>_<CODE>`. 기존 사용자 데이터 무손실.
+- Firebase 경로: `siteNode(name)` — 코드가 비면 구경로 유지. `beacon_share` / `/version` 노드는 전 사업장 공용(의도적).
+- 락 범위는 사용자 지정: 필터 강도만 BLE 설정에서 편집 가능, 나머지는 개발자 설정이 원본.
+- 에코 진단 텍스트 패널은 개발자 설정에 복제하지 않음(설정이 아니라 표시).
+- 값 연동에 별도 동기화 코드 없음 — 두 화면 모두 같은 `dev_settings` prefs 를 `DevSettings` 프로퍼티로만 접근.
+
+### 남은 순서
+1. 실기 검증(사업장 코드 입력 → 모드 시작 → 개발자 설정 값 변경이 BLE 설정에 반영되는지).
+2. 커밋·태그·푸시는 사용자 명시 요청 시에만.
+
+### 미해결 이슈
+- Co-Authored-By 충돌 미해결(커밋 직전 `.claude/settings.json` 의 `attribution.commit` 확인 필요).
+- 직전 세션의 결함 A 미착수 — 이번 작업과 무관하게 그대로 남아 있다.

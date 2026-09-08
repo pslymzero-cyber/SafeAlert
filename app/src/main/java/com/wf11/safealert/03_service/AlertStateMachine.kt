@@ -264,7 +264,7 @@ class AlertStateMachine(
         if (!DevSettings.uwbProbeUploadEnabled) return
         if (now - (uwbProbeLastSaveMap[pairKey] ?: 0L) < UWB_PROBE_THROTTLE_MS) return
         uwbProbeLastSaveMap[pairKey] = now
-        FirebaseManager.saveUwbProbe(fx.myId, Build.MODEL, DevSettings.uwbSiteCode, pairKey, distM, rssi)
+        FirebaseManager.saveUwbProbe(fx.myId, Build.MODEL, DevSettings.siteCode, pairKey, distM, rssi)
     }
 
     // [판정 파라미터] DevSettings 라이브 읽기(기본 60_000L/5 = 기존값)

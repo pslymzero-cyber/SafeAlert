@@ -18,7 +18,7 @@ import kotlin.math.roundToInt
 //   UWB 미지원/세션 없음/학습 부족(5샘플 미만)/킬스위치 OFF 면 항상 0 = 기존 거동과 완전 동일.
 //   경보는 여전히 100% RSSI 구동 — UWB 는 임계를 '보정'만 하므로 UWB 가 끊겨도 이음새가 없다.
 //
-// (v1.1.34) 사업장 보정 프로파일 — 학습 저장소를 사업장 코드(DevSettings.uwbSiteCode)로
+// (v1.1.34) 사업장 보정 프로파일 — 학습 저장소를 사업장 코드(DevSettings.siteCode)로
 //   네임스페이스(SharedPreferences uwb_calib_<사업장>)해 사업장별로 영속·전환한다.
 //   · 사업장 미지정(빈 값) = 종전 파일(uwb_calib)·종전 공식 그대로 — 100% 현행 동일.
 //   · 사업장 지정 시 2성분 모델: 기준선 baseline(느린 EMA, 감쇠·GC 없음 = 사업장 장기 특성)
@@ -75,7 +75,7 @@ object UwbCalibrator {
 
     fun init(context: Context) {
         appCtx = context.applicationContext
-        activeSite = DevSettings.uwbSiteCode   // SafeAlertApp 이 DevSettings.init 이후에 부른다
+        activeSite = DevSettings.siteCode   // SafeAlertApp 이 DevSettings.init 이후에 부른다
         loadProfile(activeSite)
     }
 
@@ -83,7 +83,7 @@ object UwbCalibrator {
     //   떠나는 프로파일을 먼저 저장하므로 사업장을 오가도 각 사업장의 학습이 보존된다.
     @Synchronized
     fun applySite() {
-        val newSite = DevSettings.uwbSiteCode
+        val newSite = DevSettings.siteCode
         if (newSite == activeSite) return
         persistNow(System.currentTimeMillis())   // dirty 아니면 no-op — 타이핑 중간값 파일이 안 생긴다
         activeSite = newSite

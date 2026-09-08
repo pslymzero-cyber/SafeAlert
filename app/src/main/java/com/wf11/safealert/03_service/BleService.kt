@@ -1628,6 +1628,7 @@ class BleService : LifecycleService() {
         bleAdvertiser?.refreshAdvertiseMode()
         applyUwbLiveState()   // (v1.1.30) UWB 토글 라이브 반영
         UwbCalibrator.applySite()   // (v1.1.34) 사업장 코드 변경 → Δ보정 프로파일 전환(무변경 no-op)
+        CalibrationEngine.applySite(myId)   // (v1.1.77) 에코편차 통계도 같은 시점에 전환(무변경 no-op)
         Log.d(TAG, "[Req5] 설정 라이브 반영(key=$changedKey): KF프리셋=$preset 위험=${BleConstants.rssiDanger}dBm 경고=${BleConstants.rssiWarning}dBm TimeGate=${DevSettings.timeGateMs}ms 스캔주기=${BleConstants.scanPeriodMs}ms 광고간격=${BleConstants.advertiseInterval}ms")
         sendStatusBroadcast("설정 라이브 반영됨")
     }

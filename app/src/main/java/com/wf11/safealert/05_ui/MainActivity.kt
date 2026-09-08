@@ -12,6 +12,8 @@ import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
+import android.text.InputFilter
+import android.text.InputType
 import android.text.Spannable
 import android.text.SpannableStringBuilder
 import android.text.style.ForegroundColorSpan
@@ -26,6 +28,7 @@ import android.provider.Settings
 import android.view.View
 import android.view.Window
 import android.view.WindowManager
+import android.widget.EditText
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
@@ -41,6 +44,8 @@ import com.wf11.safealert.utils.OverlayManager
 import com.wf11.safealert.databinding.ActivityMainBinding
 import com.wf11.safealert.databinding.DialogPinBinding
 import com.wf11.safealert.service.BleService
+import com.wf11.safealert.service.CalibrationEngine
+import com.wf11.safealert.utils.UwbCalibrator
 import com.wf11.safealert.utils.UpdateManager
 import com.wf11.safealert.utils.UwbRanger
 import java.text.SimpleDateFormat
@@ -256,11 +261,14 @@ class MainActivity : AppCompatActivity() {
         binding.tvVersionFooter.text = "v${BuildConfig.VERSION_NAME}  ·  Created by Ian"
         // 저장된 이름 복원
         binding.etDisplayName.setText(prefs.getString("display_name", ""))
+        // (v1.1.77) 저장된 사업장 코드 복원 — BLE 설정 UWB 섹션과 같은 값(dev_settings.uwb_site_code)
+        binding.etSiteCode.setText(DevSettings.siteCode)
 
         // [v1.0.34] 3-Role 선택 — 보행자(WALKER) / EPJ·지게차(DEVICE) + Category 동시 지정
-        binding.cardRoleWalker.setOnClickListener   { saveDisplayName(); onRoleSelected("WALKER", BleConstants.CAT_WALKER) }
-        binding.cardRoleEpj.setOnClickListener      { saveDisplayName(); onRoleSelected("DEVICE", BleConstants.CAT_EPJ) }
-        binding.cardRoleForklift.setOnClickListener { saveDisplayName(); onRoleSelected("DEVICE", BleConstants.CAT_FORKLIFT) }
+        //   (v1.1.77) 사업장 코드가 없으면 requireSiteCode 가 입력 팝업을 띄우고 시작을 막는다.
+        binding.cardRoleWalker.setOnClickListener   { requireSiteCode { onRoleSelected("WALKER", BleConstants.CAT_WALKER) } }
+        binding.cardRoleEpj.setOnClickListener      { requireSiteCode { onRoleSelected("DEVICE", BleConstants.CAT_EPJ) } }
+        binding.cardRoleForklift.setOnClickListener { requireSiteCode { onRoleSelected("DEVICE", BleConstants.CAT_FORKLIFT) } }
         binding.btnStop.setOnClickListener       { stopServiceImmediately() }
         binding.btnSwitchRole.setOnClickListener { confirmSwitchRole() }   // [v1.1.60] 역할 전환
         binding.cardSettings.setOnClickListener  { showPinDialog() }
@@ -323,6 +331,7 @@ class MainActivity : AppCompatActivity() {
     override fun onPause() {
         super.onPause()
         statusHandler.removeCallbacks(statusRunnable)   // [v1.0.46 배터리(b)]
+        saveSiteCode()   // (v1.1.77) 모드 시작 없이 나가도 입력한 코드는 남긴다
     }
 
     override fun onDestroy() {
@@ -784,6 +793,56 @@ class MainActivity : AppCompatActivity() {
     private fun saveDisplayName() {
         val name = binding.etDisplayName.text?.toString()?.trim() ?: ""
         prefs.edit().putString("display_name", name).apply()
+    }
+
+    /**
+     * (v1.1.77) 사업장 코드 저장 — setter 가 대문자·[A-Z0-9_-] 로 정규화하므로 소문자 입력도 그대로 받는다.
+     * 두 applySite 는 코드가 안 바뀌면 no-op. 서비스가 꺼져 있으면 BleService 의 라이브 반영 경로가
+     * 돌지 않아 이전 사업장 프로파일이 남으므로 여기서 직접 전환한다.
+     */
+    private fun saveSiteCode() {
+        DevSettings.siteCode = binding.etSiteCode.text?.toString() ?: ""
+        UwbCalibrator.applySite()
+        CalibrationEngine.applySite(myId())
+    }
+
+    /**
+     * (v1.1.77) 모드 시작 게이트 — 사업장 코드가 있어야 시작한다.
+     * 코드가 비면 경보 로그·보정 데이터가 전 사업장 공용 네임스페이스로 섞이므로,
+     * 입력 팝업을 띄우고 받기 전에는 onReady 를 호출하지 않는다.
+     */
+    private fun requireSiteCode(onReady: () -> Unit) {
+        saveDisplayName()
+        saveSiteCode()
+        if (DevSettings.siteCode.isNotEmpty()) { onReady(); return }
+
+        val input = EditText(this).apply {
+            hint = "예: WF11"
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS
+            filters = arrayOf(InputFilter.LengthFilter(DevSettings.SITE_CODE_MAX_LEN))
+            setPadding(56, 32, 56, 32)
+        }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("사업장 코드 입력")
+            .setMessage("사업장마다 경보 기록과 보정 데이터가 따로 관리됩니다.\n코드를 입력해야 시작할 수 있습니다. (대소문자 무관)")
+            .setView(input)
+            .setPositiveButton("확인", null)   // 아래에서 직접 처리 — 빈 값이면 닫히지 않게
+            .setNegativeButton("취소", null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val code = DevSettings.normalizeSite(input.text?.toString() ?: "")
+                if (code.isEmpty()) {
+                    input.error = "영문·숫자로 입력하세요"
+                } else {
+                    binding.etSiteCode.setText(code)
+                    saveSiteCode()
+                    dialog.dismiss()
+                    onReady()
+                }
+            }
+        }
+        dialog.show()
     }
 
     private fun myId(): String {

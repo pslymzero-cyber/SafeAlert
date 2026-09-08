@@ -310,26 +310,57 @@
 
                 </LinearLayout>
 
-                <!-- 이름 입력 (선택) -->
-                <com.google.android.material.textfield.TextInputLayout
+                <!-- 이름(선택) + 사업장 코드(필수) 나란히 -->
+                <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="10dp"
-                    android:hint="이름 또는 직번 (선택, 예: 홍길동)"
-                    android:textColorHint="@color/sa_text_tertiary"
-                    style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
-                    app:boxCornerRadiusTopStart="@dimen/sa_radius_sm" app:boxCornerRadiusTopEnd="@dimen/sa_radius_sm"
-                    app:boxCornerRadiusBottomStart="@dimen/sa_radius_sm" app:boxCornerRadiusBottomEnd="@dimen/sa_radius_sm"
-                    app:boxStrokeColor="@color/box_stroke_dark" app:hintTextColor="@color/sa_accent_soft">
-                    <com.google.android.material.textfield.TextInputEditText
-                        android:id="@+id/et_display_name"
-                        android:layout_width="match_parent"
+                    android:orientation="horizontal">
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:layout_width="0dp"
+                        android:layout_weight="1.7"
                         android:layout_height="wrap_content"
-                        android:inputType="textPersonName"
-                        android:textSize="@dimen/sa_type_section"
-                        android:textColor="@color/sa_text_primary"
-                        android:imeOptions="actionDone"/>
-                </com.google.android.material.textfield.TextInputLayout>
+                        android:hint="이름 또는 직번 (선택)"
+                        android:textColorHint="@color/sa_text_tertiary"
+                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                        app:boxCornerRadiusTopStart="@dimen/sa_radius_sm" app:boxCornerRadiusTopEnd="@dimen/sa_radius_sm"
+                        app:boxCornerRadiusBottomStart="@dimen/sa_radius_sm" app:boxCornerRadiusBottomEnd="@dimen/sa_radius_sm"
+                        app:boxStrokeColor="@color/box_stroke_dark" app:hintTextColor="@color/sa_accent_soft">
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/et_display_name"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:inputType="textPersonName"
+                            android:textSize="@dimen/sa_type_section"
+                            android:textColor="@color/sa_text_primary"
+                            android:imeOptions="actionNext"/>
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <!-- (v1.1.77) 사업장 코드 — 대소문자 무관(대문자로 정규화). 알림·보정 데이터 분리 키 -->
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:layout_width="0dp"
+                        android:layout_weight="1"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="@dimen/sa_space_sm"
+                        android:hint="사업장 코드"
+                        android:textColorHint="@color/sa_text_tertiary"
+                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                        app:boxCornerRadiusTopStart="@dimen/sa_radius_sm" app:boxCornerRadiusTopEnd="@dimen/sa_radius_sm"
+                        app:boxCornerRadiusBottomStart="@dimen/sa_radius_sm" app:boxCornerRadiusBottomEnd="@dimen/sa_radius_sm"
+                        app:boxStrokeColor="@color/box_stroke_dark" app:hintTextColor="@color/sa_accent_soft">
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/et_site_code"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:inputType="textCapCharacters"
+                            android:maxLength="12"
+                            android:textSize="@dimen/sa_type_section"
+                            android:textColor="@color/sa_text_primary"
+                            android:imeOptions="actionDone"/>
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                </LinearLayout>
 
                 <!-- [v1.0.34] 보행자 역할 카드 -->
                 <androidx.cardview.widget.CardView

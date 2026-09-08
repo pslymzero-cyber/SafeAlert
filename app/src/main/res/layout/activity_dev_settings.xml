@@ -122,8 +122,15 @@
 
                     <LinearLayout android:id="@+id/sec_sound_body" style="@style/SA.SectionBody">
 
+                        <!-- (v1.1.77) 경보 볼륨 — 여기가 원본. BLE 감지 설정에서는 잠긴 채 값만 보여준다 -->
+                        <LinearLayout style="@style/SA.Row" android:layout_marginTop="0dp">
+                            <TextView style="@style/SA.RowLabel" android:text="경보 볼륨" />
+                            <TextView android:id="@+id/tv_dev_alarm_volume_val" style="@style/SA.Value" />
+                        </LinearLayout>
+                        <SeekBar android:id="@+id/seek_dev_alarm_volume" android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:layout_marginTop="@dimen/sa_space_xs" android:min="50" android:max="100" />
                         <TextView style="@style/SA.Hint" android:layout_marginTop="0dp"
-                            android:text="경보 볼륨은 BLE 감지 설정 › 경보 기본에서 조절합니다 (50~100%)" />
+                            android:text="유효 50~100% (기본 100). 경보음 재생 볼륨. 현장 소음을 뚫어야 하므로 50% 미만으로는 내리지 않습니다." />
 
                         <LinearLayout style="@style/SA.Row">
                             <TextView style="@style/SA.RowLabel" android:text="진동 사용" />
@@ -160,6 +167,64 @@
 
                         <TextView style="@style/SA.Hint" android:layout_marginTop="0dp"
                             android:text="경보 판정·필터의 핵심 수치. 기본값은 현장 검증값이며 저장 즉시 서비스에 반영됩니다. '기본값으로 초기화'로 전체 복원." />
+
+                        <!-- (v1.1.77) 경보 임계 신호세기 — 여기가 원본. BLE 감지 설정에서는 잠긴 채 값만 보여준다 -->
+                        <View style="@style/SA.Divider" />
+                        <TextView style="@style/SA.SubHeader" android:text="경보 임계 신호세기" />
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="@dimen/sa_space_hairline"
+                            android:text="값이 작을수록(예: -85) 먼 거리에서 경보합니다. 위험은 경고보다 커야(가까워야) 정상입니다." />
+
+                        <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
+                            <TextView style="@style/SA.RowLabel" android:text="경고 신호세기 (dBm)" />
+                            <TextView android:id="@+id/tv_dev_warn_rssi_val" style="@style/SA.Value" />
+                        </LinearLayout>
+                        <SeekBar android:id="@+id/seek_dev_warn_rssi" android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:layout_marginTop="@dimen/sa_space_xs" android:min="30" android:max="100" />
+
+                        <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
+                            <TextView style="@style/SA.RowLabel" android:text="위험 신호세기 (dBm)" />
+                            <TextView android:id="@+id/tv_dev_dang_rssi_val" style="@style/SA.Value" />
+                        </LinearLayout>
+                        <SeekBar android:id="@+id/seek_dev_dang_rssi" android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:layout_marginTop="@dimen/sa_space_xs" android:min="30" android:max="100" />
+
+                        <View style="@style/SA.Divider" />
+                        <TextView style="@style/SA.SubHeader" android:text="에코편차 자동보정" />
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="@dimen/sa_space_hairline"
+                            android:text="서로 측정한 RSSI 차이를 모아 기기별 편차를 자동으로 깎습니다. 통계 진단값은 BLE 감지 설정에서 볼 수 있습니다." />
+
+                        <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
+                            <TextView style="@style/SA.RowLabel" android:text="자동보정 사용" />
+                            <Switch android:id="@+id/sw_dev_echo_auto_calib" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                        </LinearLayout>
+
+                        <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
+                            <TextView style="@style/SA.RowLabel" android:text="최소 표본 수" />
+                            <EditText android:id="@+id/et_dev_echo_min_ticks" style="@style/SA.EditNumber" />
+                        </LinearLayout>
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="0dp"
+                            android:text="이 개수를 모으기 전까지는 보정값을 쓰지 않습니다." />
+
+                        <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
+                            <TextView style="@style/SA.RowLabel" android:text="최대 산포 IQR (dB)" />
+                            <EditText android:id="@+id/et_dev_echo_max_iqr" style="@style/SA.EditNumber" />
+                        </LinearLayout>
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="0dp"
+                            android:text="표본이 이보다 많이 흔들면 신뢰하지 않고 보정을 건너뜁니다." />
+
+                        <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
+                            <TextView style="@style/SA.RowLabel" android:text="보정 상한 (dB)" />
+                            <EditText android:id="@+id/et_dev_echo_clamp" style="@style/SA.EditNumber" />
+                        </LinearLayout>
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="0dp"
+                            android:text="자동보정이 한 번에 움직일 수 있는 최대폭. 폭주를 막는 안전장치입니다." />
+
+                        <Button android:id="@+id/btn_dev_echo_reset"
+                            android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:layout_marginTop="@dimen/sa_space_md"
+                            android:text="에코편차 통계 초기화"
+                            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                            android:textColor="@color/sa_text_secondary" android:textSize="@dimen/sa_type_body" />
 
                         <!-- [v1.1.24] 역할별 조기경보 오프셋 — effWarning/effDanger 를 역할쌍별로 더 먼 거리로 당김 -->
                         <TextView style="@style/SA.SubHeader" android:text="역할별 조기경보 오프셋" />

@@ -15,6 +15,7 @@ import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 import com.wf11.safealert.BuildConfig
 import com.wf11.safealert.service.BleService
+import com.wf11.safealert.service.CalibrationEngine
 import com.wf11.safealert.service.DeviceStateRegistry
 import com.wf11.safealert.utils.DevSettings
 import com.wf11.safealert.utils.UwbRanger
@@ -62,6 +63,15 @@ class DevSettingsActivity : AppCompatActivity() {
         binding.spinnerVibWarning.setSelection(vibWarningIndex(DevSettings.vibrationWarningMs))
         binding.spinnerVibCount.setSelection(vibCountIndex(DevSettings.vibrationDangerCount))
         binding.switchSound.isChecked = DevSettings.soundEnabled
+        // (v1.1.77) BLE 감지 설정에서 이관된 원본 항목 — 같은 dev_settings prefs 라 값은 자동 연동된다
+        binding.seekDevAlarmVolume.progress = DevSettings.alarmVolume.coerceIn(50, 100)
+        binding.seekDevWarnRssi.progress    = (-DevSettings.rssiWarning).coerceIn(30, 100)
+        binding.seekDevDangRssi.progress    = (-DevSettings.rssiDanger ).coerceIn(30, 100)
+        updateDevAlarmLabels()
+        binding.swDevEchoAutoCalib.isChecked = DevSettings.echoAutoCalibEnabled
+        binding.etDevEchoMinTicks.setText(DevSettings.echoCalMinTicks.toString())
+        binding.etDevEchoMaxIqr.setText(DevSettings.echoCalMaxIqrDb.toString())
+        binding.etDevEchoClamp.setText(DevSettings.echoCalClampDb.toString())
         // Firebase
         binding.etFirebaseRoot.setText(DevSettings.firebaseRoot)
         binding.switchAutoSave.isChecked = DevSettings.autoSaveAlerts
@@ -192,6 +202,27 @@ class DevSettingsActivity : AppCompatActivity() {
         binding.switchWalkerRx.setOnCheckedChangeListener { _, c -> DevSettings.walkerRx = c }
         binding.switchVibration.setOnCheckedChangeListener { _, c -> DevSettings.vibrationEnabled = c; updateSectionSummaries() }
         binding.switchSound.setOnCheckedChangeListener { _, c -> DevSettings.soundEnabled = c; updateSectionSummaries() }
+        // (v1.1.77) 이관된 원본 항목 — BLE 감지 설정은 이 값을 잠긴 채 보여주기만 한다
+        binding.seekDevAlarmVolume.setOnSeekBarChangeListener(seekListener { v ->
+            DevSettings.alarmVolume = v.coerceIn(50, 100); updateDevAlarmLabels()
+        })
+        binding.seekDevWarnRssi.setOnSeekBarChangeListener(seekListener { v ->
+            DevSettings.rssiWarning = -v.coerceIn(30, 100); updateDevAlarmLabels()
+        })
+        binding.seekDevDangRssi.setOnSeekBarChangeListener(seekListener { v ->
+            DevSettings.rssiDanger = -v.coerceIn(30, 100); updateDevAlarmLabels()
+        })
+        binding.swDevEchoAutoCalib.setOnCheckedChangeListener { _, c -> DevSettings.echoAutoCalibEnabled = c }
+        bindIntField(binding.etDevEchoMinTicks, { DevSettings.echoCalMinTicks }, { DevSettings.echoCalMinTicks = it })
+        bindIntField(binding.etDevEchoMaxIqr,   { DevSettings.echoCalMaxIqrDb }, { DevSettings.echoCalMaxIqrDb = it })
+        bindIntField(binding.etDevEchoClamp,    { DevSettings.echoCalClampDb },  { DevSettings.echoCalClampDb = it })
+        binding.btnDevEchoReset.setOnClickListener {
+            CalibrationEngine.echoDiffLive.clear()
+            // 현재 사업장 파일만 비운다 — 다른 사업장 학습값은 건드리지 않는다
+            getSharedPreferences(DevSettings.sitePrefName(CalibrationEngine.ECHO_PREFS), MODE_PRIVATE)
+                .edit().clear().apply()
+            Toast.makeText(this, "에코편차 통계 초기화 완료", Toast.LENGTH_SHORT).show()
+        }
         binding.switchAutoSave.setOnCheckedChangeListener { _, c -> DevSettings.autoSaveAlerts = c }
         binding.switchVerbose.setOnCheckedChangeListener { _, c -> DevSettings.logVerbose = c }
         binding.switchDebug.setOnCheckedChangeListener { _, c ->
@@ -479,6 +510,13 @@ class DevSettingsActivity : AppCompatActivity() {
     // 저장값과 가장 가까운 프리셋 단계 선택 (프리셋 외 값이 저장돼 있어도 안전). 폴백=중심 index4.
     private fun presetIndex(presets: DoubleArray, v: Double) =
         presets.indices.minByOrNull { kotlin.math.abs(presets[it] - v) } ?: 4
+
+    /** (v1.1.77) 이관 항목 값 라벨 — 슬라이더 progress 는 절댓값, 저장은 음수 dBm */
+    private fun updateDevAlarmLabels() {
+        binding.tvDevAlarmVolumeVal.text = "${DevSettings.alarmVolume}%"
+        binding.tvDevWarnRssiVal.text    = "${DevSettings.rssiWarning} dBm"
+        binding.tvDevDangRssiVal.text    = "${DevSettings.rssiDanger} dBm"
+    }
 
     private fun seekListener(onChange: (Int) -> Unit) = object : android.widget.SeekBar.OnSeekBarChangeListener {
         override fun onProgressChanged(sb: android.widget.SeekBar, v: Int, b: Boolean) = onChange(v)

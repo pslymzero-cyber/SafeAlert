@@ -13,6 +13,13 @@ object FirebaseManager {
     private const val TAG = "FirebaseManager"
     private val db get() = FirebaseDatabase.getInstance().reference.child(DevSettings.firebaseRoot)
 
+    /**
+     * (v1.1.77) 사업장별 노드 — 경보 로그·에코보정을 사업장 단위로 가른다.
+     * 코드가 비면 구버전과 같은 경로를 그대로 쓴다(기존 데이터 접근 유지).
+     */
+    private fun siteNode(name: String) =
+        DevSettings.siteCode.let { if (it.isEmpty()) db.child(name) else db.child(name).child(it) }
+
     // 역할(myRole/peerRole)은 03_service 에서 이름으로 변환해 넘긴다 — 04_firebase 는
     //   02_ble 에 의존하지 않는다(레이어 규칙). 기본값이 있어 기존 호출은 그대로 컴파일된다.
     fun saveAlert(deviceId: String, walkerId: String, rssi: Int, level: String,
@@ -26,9 +33,10 @@ object FirebaseManager {
             "rssi" to rssi,
             "alertLevel" to level,
             "myRole" to myRole,
-            "peerRole" to peerRole
+            "peerRole" to peerRole,
+            "site" to DevSettings.siteCode
         )
-        db.child("alerts").child(today).child(alertId).setValue(data)
+        siteNode("alerts").child(today).child(alertId).setValue(data)
             .addOnFailureListener { Log.e(TAG, "경보 저장 실패: ${it.message}") }
         Log.d(TAG, "경보 저장: $level $deviceId rssi=$rssi")
     }
@@ -134,14 +142,14 @@ object FirebaseManager {
             "ts"    to System.currentTimeMillis(),
             "peers" to peers.mapValues { (_, v) -> mapOf("m" to v.first, "n" to v.second, "iqr" to v.third) }
         )
-        db.child("echo_calib").child(sanitizeKey(myId)).setValue(data)
+        siteNode("echo_calib").child(sanitizeKey(myId)).setValue(data)
             .addOnSuccessListener { Log.d(TAG, "에코보정 업로드: $myId (피어 ${peers.size})"); onResult(true) }
             .addOnFailureListener { Log.e(TAG, "에코보정 업로드 실패: ${it.message}"); onResult(false) }
     }
 
     /** 전 노드 다운로드 — 실패·부재 시 빈 리스트(호출부는 캐시 유지). */
     fun downloadEchoCalibAll(onResult: (List<EchoCalibNode>) -> Unit) {
-        db.child("echo_calib").get()
+        siteNode("echo_calib").get()
             .addOnSuccessListener { snap ->
                 val nodes = snap.children.mapNotNull { c ->
                     val id = c.key ?: return@mapNotNull null

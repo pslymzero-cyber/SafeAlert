@@ -12,10 +12,16 @@ object BeaconRegistry {
     private const val PREF_NAME = "beacon_registry"
     private const val KEY_LIST  = "beacon_profiles"
 
-    private lateinit var prefs: SharedPreferences
+    private lateinit var appCtx: Context
+
+    // (v1.1.77) 사업장별 등록 정보 분리 — 매 접근마다 현재 사업장 파일을 연다(getSharedPreferences 는
+    //   프로세스 내 캐시라 반복 호출이 저렴). getAll() 이 매번 디스크를 파싱하는 구조라 인메모리
+    //   잔여분이 없어, 사업장이 바뀌면 별도 리로드 없이 즉시 해당 사업장 목록으로 전환된다.
+    private val prefs: SharedPreferences
+        get() = appCtx.getSharedPreferences(DevSettings.sitePrefName(PREF_NAME), Context.MODE_PRIVATE)
 
     fun init(context: Context) {
-        prefs = context.applicationContext.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+        appCtx = context.applicationContext
     }
 
     /**

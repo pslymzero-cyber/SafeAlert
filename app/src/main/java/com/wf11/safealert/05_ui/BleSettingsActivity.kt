@@ -71,6 +71,7 @@ class BleSettingsActivity : AppCompatActivity() {
         setupListeners()
         setupAccordion()
         updateSectionSummaries()
+        lockDevManaged()   // (v1.1.77) 리스너 배선 뒤에 잠근다 — 순서가 바뀌어도 결과는 같지만 의도를 남긴다
     }
 
     private fun loadValues() {
@@ -83,22 +84,7 @@ class BleSettingsActivity : AppCompatActivity() {
             }
         )
 
-        // RSSI 임계 (dBm) — 슬라이더 progress=절댓값(30~100), 저장은 음수 dBm
-        binding.seekWarnDist.progress = (-DevSettings.rssiWarning).coerceIn(30, 100)
-        binding.seekDangDist.progress = (-DevSettings.rssiDanger ).coerceIn(30, 100)
-        updateDistLabels()
-
-        // (v1.1.63) 경보 볼륨 — 개발자 설정에서 이동. 50~100% (DevSettings 도 50 하한 클램프)
-        val vol = DevSettings.alarmVolume.coerceIn(50, 100)
-        binding.seekAlarmVolume.progress = vol
-        binding.tvAlarmVolumeVal.text = "${vol}%"
-
-        // (v1.1.63) 에코편차 자동보정 — 개발자 설정에서 이관. 스위치 + 튜너 3종 + 진단 패널(폴러가 갱신)
-        binding.swEchoAutoCalib.isChecked = DevSettings.echoAutoCalibEnabled
-        binding.etEchoMinTicks.setText(DevSettings.echoCalMinTicks.toString())
-        binding.etEchoMaxIqr.setText(DevSettings.echoCalMaxIqrDb.toString())
-        binding.etEchoClamp.setText(DevSettings.echoCalClampDb.toString())
-        refreshEchoDiag()
+        loadDevManagedValues()   // (v1.1.77) 개발자 설정·메인 화면이 정하는 값 — 여기서는 표시만
 
         // 비콘 수신 강도(%) — 슬라이더 progress = percent/10 (0~30 → 0~300%)
         binding.seekBeaconGain.progress = (DevSettings.beaconGainPercent / 10).coerceIn(0, 30)
@@ -124,9 +110,6 @@ class BleSettingsActivity : AppCompatActivity() {
             }
         )
 
-        // (v1.1.34) 사업장 코드 = 보정 프로파일 키 (UWB 승격·해제 토글 3종은 v1.1.63 부터 개발자 설정)
-        binding.etUwbSite.setText(DevSettings.uwbSiteCode)
-
         // [v1.1.46] UWB 판정 반경(역할쌍 차등) — progress = 미터 × 2(0.5m 스텝)
         binding.seekUwbFkWarn.progress     = (DevSettings.uwbForkliftWarnMeters   * 2).toInt().coerceIn(2, 80)
         binding.seekUwbFkDanger.progress   = (DevSettings.uwbForkliftDangerMeters * 2).toInt().coerceIn(1, 60)
@@ -144,6 +127,46 @@ class BleSettingsActivity : AppCompatActivity() {
 
         // (v1.1.38 A) UWB 권한/시스템 진입점 초기 상태 반영
         refreshUwbPermState()
+    }
+
+    /**
+     * (v1.1.77) 개발자 설정에서 정하는 값 + 메인 화면의 사업장 코드를 화면에 반영.
+     * 대상 위젯은 전부 lockDevManaged() 로 잠겨 있어 되읽어 덮어써도 사용자 입력을 잃지 않는다.
+     * onResume 에서도 부르는 이유 — 개발자 설정·메인 화면에서 바꾼 값이 복귀 시 보여야 한다.
+     */
+    private fun loadDevManagedValues() {
+        // RSSI 임계 (dBm) — 슬라이더 progress=절댓값(30~100), 저장은 음수 dBm
+        binding.seekWarnDist.progress = (-DevSettings.rssiWarning).coerceIn(30, 100)
+        binding.seekDangDist.progress = (-DevSettings.rssiDanger ).coerceIn(30, 100)
+        updateDistLabels()
+
+        // (v1.1.63) 경보 볼륨 — 50~100% (DevSettings 도 50 하한 클램프)
+        val vol = DevSettings.alarmVolume.coerceIn(50, 100)
+        binding.seekAlarmVolume.progress = vol
+        binding.tvAlarmVolumeVal.text = "${vol}%"
+
+        // (v1.1.63) 에코편차 자동보정 — 스위치 + 튜너 3종 + 진단 패널(폴러가 갱신)
+        binding.swEchoAutoCalib.isChecked = DevSettings.echoAutoCalibEnabled
+        binding.etEchoMinTicks.setText(DevSettings.echoCalMinTicks.toString())
+        binding.etEchoMaxIqr.setText(DevSettings.echoCalMaxIqrDb.toString())
+        binding.etEchoClamp.setText(DevSettings.echoCalClampDb.toString())
+        refreshEchoDiag()
+
+        // (v1.1.34→v1.1.77) 사업장 코드 = 전역 분리 키. 입력처는 메인 화면으로 옮겼고 여기는 표시만.
+        binding.etUwbSite.setText(DevSettings.siteCode)
+    }
+
+    /**
+     * (v1.1.77) 개발자 설정 전용 항목 잠금 — 값은 보여주되 이 화면에서는 못 바꾼다.
+     * 필터 강도(rgKalmanPreset)·비콘 게인·UWB 항목은 그대로 편집 가능.
+     * 에코 상세 펼침 행(rowEchoAutoCalib)은 잠그지 않는다 — 진단값을 봐야 하기 때문.
+     */
+    private fun lockDevManaged() {
+        listOf<View>(
+            binding.seekWarnDist, binding.seekDangDist, binding.seekAlarmVolume,
+            binding.swEchoAutoCalib, binding.etEchoMinTicks, binding.etEchoMaxIqr,
+            binding.etEchoClamp, binding.btnEchoReset, binding.etUwbSite
+        ).forEach { it.isEnabled = false; it.alpha = 0.4f }
     }
 
     private fun setupListeners() {
@@ -203,7 +226,7 @@ class BleSettingsActivity : AppCompatActivity() {
         bindIntField(binding.etEchoClamp,    { DevSettings.echoCalClampDb },  { DevSettings.echoCalClampDb = it })
         binding.btnEchoReset.setOnClickListener {
             CalibrationEngine.echoDiffLive.clear()
-            getSharedPreferences(CalibrationEngine.ECHO_PREFS, MODE_PRIVATE).edit().clear().apply()
+            getSharedPreferences(DevSettings.sitePrefName(CalibrationEngine.ECHO_PREFS), MODE_PRIVATE).edit().clear().apply()
             refreshEchoDiag()
             Toast.makeText(this, "에코편차 통계 초기화 완료", Toast.LENGTH_SHORT).show()
         }
@@ -244,7 +267,7 @@ class BleSettingsActivity : AppCompatActivity() {
         //   BleService applyLiveSettings 경유 호출은 무변경 no-op 이라 이중 호출 무해. 타이핑
         //   중간값 프로파일은 파일이 생기지 않는다(persist dirty 게이트).
         binding.etUwbSite.doAfterTextChanged {
-            DevSettings.uwbSiteCode = it?.toString() ?: ""
+            DevSettings.siteCode = it?.toString() ?: ""
             UwbCalibrator.applySite()
         }
 
@@ -382,7 +405,7 @@ class BleSettingsActivity : AppCompatActivity() {
     //   1줄=통계(중앙값·산포·에코%·n), 2줄=Level 2 보정 상태(후보/적용중/게이트 사유). 말미에 FB 프라이어 요약.
     private fun refreshEchoDiag() {
         val saved = CalibrationEngine.parseEchoBlob(
-            getSharedPreferences(CalibrationEngine.ECHO_PREFS, MODE_PRIVATE).getString(CalibrationEngine.ECHO_KEY, "") ?: "")
+            getSharedPreferences(DevSettings.sitePrefName(CalibrationEngine.ECHO_PREFS), MODE_PRIVATE).getString(CalibrationEngine.ECHO_KEY, "") ?: "")
         saved.putAll(CalibrationEngine.echoDiffLive)
         val on = DevSettings.echoAutoCalibEnabled
         val minT = DevSettings.echoCalMinTicks
@@ -474,6 +497,7 @@ class BleSettingsActivity : AppCompatActivity() {
     // (v1.1.63) 화면 표시 중에만 에코 진단 폴링 — onResume 시작 / onPause 정지(배터리·리소스 절약)
     override fun onResume() {
         super.onResume()
+        loadDevManagedValues()   // (v1.1.77) 개발자 설정·메인 화면에서 바꾼 값 재반영
         echoDiagHandler.removeCallbacks(echoDiagPoller)
         echoDiagHandler.post(echoDiagPoller)
     }

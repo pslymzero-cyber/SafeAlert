@@ -696,13 +696,29 @@ object DevSettings {
         get() = prefs.getFloat(KEY_UWB_APPROACH_SPEED_KMH, DEFAULT_UWB_APPROACH_SPEED_KMH).coerceIn(1f, 30f)
         set(v) = prefs.edit().putFloat(KEY_UWB_APPROACH_SPEED_KMH, v.coerceIn(1f, 30f)).apply()
 
-    // (v1.1.34) 사업장 코드 — UWB Δ보정 학습 프로파일 네임스페이스 키(예: "WF11"). 빈 값=공용
-    //   (현행과 완전 동일). 변경 즉시 UwbCalibrator.applySite 가 현재 프로파일을 저장하고 해당
-    //   사업장 프로파일로 전환한다(각 사업장 학습 보존 — 지워지지 않음).
-    private const val KEY_UWB_SITE_CODE = "uwb_site_code"
-    var uwbSiteCode: String
-        get() = prefs.getString(KEY_UWB_SITE_CODE, "")?.trim() ?: ""
-        set(v) = prefs.edit().putString(KEY_UWB_SITE_CODE, v.trim()).apply()
+    // (v1.1.77) 사업장 코드 — 알림·보정 데이터 전역 분리 네임스페이스(예: "WF11"). 빈 값=공용.
+    //   메인화면이 정식 입력처이고 BLE 설정 UWB 섹션은 읽기전용 표시. 대소문자 무관(대문자 정규화)이며
+    //   [A-Z0-9_-] 외 문자는 버려 Firebase 경로·SharedPreferences 파일명에 그대로 쓸 수 있게 한다.
+    //   변경 즉시 UwbCalibrator/CalibrationEngine/BeaconRegistry 의 applySite 가 현재 프로파일을
+    //   저장하고 해당 사업장 프로파일로 전환한다(각 사업장 학습 보존 — 지워지지 않음).
+    private const val KEY_UWB_SITE_CODE = "uwb_site_code"   // 키는 v1.1.34 그대로(마이그레이션 불필요)
+    const val SITE_CODE_MAX_LEN = 12
+    var siteCode: String
+        get() = normalizeSite(prefs.getString(KEY_UWB_SITE_CODE, "") ?: "")
+        set(v) = prefs.edit().putString(KEY_UWB_SITE_CODE, normalizeSite(v)).apply()
+
+    /** 입력 문자열을 사업장 코드 표준형으로 — 대문자화 후 [A-Z0-9_-] 만 남기고 최대 12자. */
+    fun normalizeSite(raw: String): String =
+        raw.trim().uppercase()
+            .filter { it in 'A'..'Z' || it in '0'..'9' || it == '_' || it == '-' }
+            .take(SITE_CODE_MAX_LEN)
+
+    /**
+     * 사업장별 SharedPreferences 파일명 — 코드가 없으면 구버전과 동일한 공용 파일을 그대로 쓴다.
+     * siteCode 가 이미 [A-Z0-9_-] 로 정규화돼 있어 파일명 이스케이프가 필요 없다.
+     */
+    fun sitePrefName(base: String): String =
+        if (siteCode.isEmpty()) base else base + "_" + siteCode
 
     // (v1.1.40) 섀도우 IMU 융합 — 정지(IMU)+상대 FORWARD 페이로드일 때 median 스트림 전용 섀도우
     //   칼만으로 접근을 병렬 추적, DANGER 이탈 프레임의 EMA 하강 알파 부스트(0.4)와 TTC 예비

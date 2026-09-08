@@ -99,6 +99,12 @@
                                 android:text="강한 평활" />
                         </RadioGroup>
 
+                        <!-- (v1.1.77) 아래 항목은 개발자 설정 전용 — 이 화면에서는 값만 보여준다 -->
+                        <TextView
+                            style="@style/SA.Hint"
+                            android:layout_marginTop="@dimen/sa_space_sm"
+                            android:text="아래 신호세기·경보 볼륨·에코편차 자동보정은 개발자 설정에서만 변경할 수 있습니다" />
+
                         <LinearLayout style="@style/SA.Row">
                             <TextView
                                 style="@style/SA.RowLabel"
@@ -437,7 +443,7 @@
                             android:id="@+id/et_uwb_site"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:hint="예: WF11 (빈 값 = 공용 프로파일)"
+                            android:hint="메인 화면에서 입력 (빈 값 = 공용)"
                             android:textSize="@dimen/sa_type_body"
                             android:textColor="@color/sa_text_secondary"
                             android:inputType="text"
@@ -445,7 +451,7 @@
                         <TextView
                             style="@style/SA.Hint"
                             android:layout_marginTop="@dimen/sa_space_hairline"
-                            android:text="UWB 보정 학습값을 사업장별로 저장·전환 · 사업장 학습은 지워지지 않고 코드 변경 시 즉시 불러옴" />
+                            android:text="입력은 메인 화면에서 · 경보 기록·비콘 등록·보정 학습이 사업장별로 나뉘며 코드 변경 시 즉시 전환" />
 
                         <View style="@style/SA.Divider" />
 
