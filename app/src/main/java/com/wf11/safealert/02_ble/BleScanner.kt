@@ -209,7 +209,11 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
             }
 
             // Service UUID 비콘 감지
-            record.serviceUuids?.forEach { parcelUuid ->
+            // (v1.1.79) serviceUuids(AD 0x02/0x03/0x06/0x07) 와 serviceData(AD 0x16) 는 광고 패킷에서
+            //   서로 독립된 필드다. 16비트 SIG UUID 계열 비콘(0000FDA5-… 등)은 서비스데이터로만
+            //   광고해 serviceUuids 가 비어 있는 경우가 흔하다 — 그동안 이 분기에 영영 도달하지
+            //   못했고, 그래서 존 비콘으로 등록해도 onZoneBeaconSignal 이 한 번도 불리지 않았다.
+            ((record.serviceUuids ?: emptyList()) + (record.serviceData?.keys ?: emptySet())).forEach { parcelUuid ->
                 val uuidStr = parcelUuid.uuid.toString().uppercase()
                 if (BeaconRegistry.containsUuid(uuidStr)) {
                     // (v1.1.62) 존 비콘 분기 — iBeacon 경로와 동일
@@ -325,9 +329,15 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
         runCatching {
             BeaconRegistry.getAll().filter { it.type == "SERVICE_UUID" }.forEach { profile ->
                 runCatching {
-                    filters.add(ScanFilter.Builder()
-                        .setServiceUuid(ParcelUuid(java.util.UUID.fromString(profile.uuid)))
-                        .build())
+                    val pu = ParcelUuid(java.util.UUID.fromString(profile.uuid))
+                    filters.add(ScanFilter.Builder().setServiceUuid(pu).build())
+                    // (v1.1.79) 서비스데이터(AD 0x16) 로만 광고하는 비콘 대응.
+                    //   위 setServiceUuid 필터는 AD 0x02/0x03/0x06/0x07(Service UUID List) 만 매칭한다.
+                    //   0000FDA5-… 같은 16비트 SIG UUID 계열 비콘은 서비스데이터로만 광고하는 경우가
+                    //   흔해, 등록해도 칩셋 단에서 폐기돼 콜백조차 오지 않았다
+                    //   (= 존 비콘으로 등록해도 onZoneBeaconSignal 이 한 번도 안 불린 원인).
+                    //   빈 배열 필수 — AOSP matchesPartialData 는 data==null 에서 NPE 를 낸다.
+                    filters.add(ScanFilter.Builder().setServiceData(pu, byteArrayOf()).build())
                 }.onFailure { Log.w(TAG, "스캔 필터 생성 실패(SERVICE_UUID) ${profile.uuid}: ${it.message} — 이 기기는 칩셋 단에서 폐기되어 미감지") }
             }
             BeaconRegistry.getAll().filter { it.type == "MAC" }.forEach { profile ->

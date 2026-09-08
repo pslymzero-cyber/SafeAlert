@@ -416,7 +416,11 @@ class BeaconManagerActivity : AppCompatActivity() {
             }
 
             // Service UUID 방식 (SafeAlert UUID 제외)
-            record.serviceUuids?.forEach { parcelUuid ->
+            // (v1.1.79) serviceUuids(AD 0x02/0x03/0x06/0x07) 와 serviceData(AD 0x16) 는 광고 패킷에서
+            //   서로 독립된 필드다. 서비스데이터로만 광고하는 비콘은 serviceUuids 가 비어 있어
+            //   handled=false → MAC_ONLY 로 떨어졌고, 그래서 발견 목록에 UUID 등록 버튼이 안 떴다
+            //   (= UUID 를 지우면 다시 등록할 수 없던 원인).
+            ((record.serviceUuids ?: emptyList()) + (record.serviceData?.keys ?: emptySet())).forEach { parcelUuid ->
                 val uuid = parcelUuid.uuid.toString().uppercase()
                 if (!uuid.equals(com.wf11.safealert.ble.BleConstants.SERVICE_UUID, true)) {
                     foundMap[uuid] = FoundBeacon(mac, uuid, "SERVICE_UUID", rssi, name)
