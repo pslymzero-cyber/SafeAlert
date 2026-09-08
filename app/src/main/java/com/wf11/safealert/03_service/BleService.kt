@@ -903,6 +903,12 @@ class BleService : LifecycleService() {
     private fun onUwbSampleReceived(deviceId: String, distM: Float) {
         val now = System.currentTimeMillis()
         uwbSampleAtMsMap[deviceId] = now
+        // (v1.1.81) 세이프존 전면 억제 — RSSI 경로(processAlert 진입 return)와 같은 강도로 UWB 도 막는다.
+        //   이 콜백은 UwbRanger 가 직결 호출해 processAlert 의 존 게이트를 거치지 않으므로, 여기서
+        //   막지 않으면 존 안에서도 판정이 완주해 목록·오버레이에 계속 남는다(가청만 억제되던 비대칭).
+        //   표본 시각은 위에서 이미 기록했으므로 존 이탈 시 다음 표본에서 Case A 신선도가 즉시 복구된다.
+        //   진입 시점의 잔존 기기는 refreshMyZoneInside 의 forceLoseAll → onDeviceLost 가 정리한다.
+        if (myZoneInside) return
         if (!uwbJudgeModeExclusive(deviceId, now)) return
         acquireDetectionWakeLock(0)   // 0(강한 값) — 화면 꺼짐이면 항상 획득: UWB 실측 자체가 근접 증거
         try {
