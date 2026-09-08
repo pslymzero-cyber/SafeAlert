@@ -1041,3 +1041,10 @@ UpdateManager.kt / BleService.kt / VibrationHelper.kt / UwbRanger.kt / BeaconReg
 ### 미해결 이슈
 - Co-Authored-By 충돌 미해결(커밋 직전 `.claude/settings.json` 의 `attribution.commit` 확인 필요).
 - 직전 세션의 결함 A 미착수 — 이번 작업과 무관하게 그대로 남아 있다.
+
+### v1.1.78 — 표기 변경 "사업장 코드" → "센터명"
+- 사용자 노출 문자열 5곳만 치환: activity_main.xml(hint), activity_ble_settings.xml(라벨·설명), MainActivity.kt(다이얼로그 제목·본문)
+- 코드 식별자·저장 키(`siteCode`, `uwb_site_code`, `sitePrefName`)와 주석은 그대로 — 데이터 호환 유지
+- 입력 규칙 불변: 대문자 [A-Z0-9_-] 12자 정규화. **한글 센터명은 정규화에서 제거되므로 영문·숫자 표기만 가능**
+- 검증: `compileDebugKotlin processDebugResources` 통과
+- 표기만 바꾼 수정이지만 현장 배포가 필요해 patch 상향(versionCode 134). CI 는 `v*` 태그 push 로만 돌고, 앱은 VERSION_NAME 비교로 갱신하므로 버전 유지 시 배포 불가

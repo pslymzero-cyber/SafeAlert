@@ -823,8 +823,8 @@ class MainActivity : AppCompatActivity() {
             setPadding(56, 32, 56, 32)
         }
         val dialog = AlertDialog.Builder(this)
-            .setTitle("사업장 코드 입력")
-            .setMessage("사업장마다 경보 기록과 보정 데이터가 따로 관리됩니다.\n코드를 입력해야 시작할 수 있습니다. (대소문자 무관)")
+            .setTitle("센터명 입력")
+            .setMessage("센터마다 경보 기록과 보정 데이터가 따로 관리됩니다.\n센터명을 입력해야 시작할 수 있습니다. (대소문자 무관)")
             .setView(input)
             .setPositiveButton("확인", null)   // 아래에서 직접 처리 — 빈 값이면 닫히지 않게
             .setNegativeButton("취소", null)

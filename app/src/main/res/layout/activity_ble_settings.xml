@@ -438,7 +438,7 @@
                             style="@style/SA.Label"
                             android:layout_marginTop="14dp"
                             android:layout_marginBottom="@dimen/sa_space_xs"
-                            android:text="사업장 코드 (보정 프로파일)" />
+                            android:text="센터명 (보정 프로파일)" />
                         <EditText
                             android:id="@+id/et_uwb_site"
                             android:layout_width="match_parent"
@@ -451,7 +451,7 @@
                         <TextView
                             style="@style/SA.Hint"
                             android:layout_marginTop="@dimen/sa_space_hairline"
-                            android:text="입력은 메인 화면에서 · 경보 기록·비콘 등록·보정 학습이 사업장별로 나뉘며 코드 변경 시 즉시 전환" />
+                            android:text="입력은 메인 화면에서 · 경보 기록·비콘 등록·보정 학습이 센터별로 나뉘며 센터명 변경 시 즉시 전환" />
 
                         <View style="@style/SA.Divider" />
 

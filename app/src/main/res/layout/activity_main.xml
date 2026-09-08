@@ -343,7 +343,7 @@
                         android:layout_weight="1"
                         android:layout_height="wrap_content"
                         android:layout_marginStart="@dimen/sa_space_sm"
-                        android:hint="사업장 코드"
+                        android:hint="센터명"
                         android:textColorHint="@color/sa_text_tertiary"
                         style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
                         app:boxCornerRadiusTopStart="@dimen/sa_radius_sm" app:boxCornerRadiusTopEnd="@dimen/sa_radius_sm"
