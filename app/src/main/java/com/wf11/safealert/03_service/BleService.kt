@@ -109,13 +109,20 @@ class BleService : LifecycleService() {
     //   하드코드 상수 — 옵션 UI 는 사용자가 '추후'로 보류(임의 설정 노출 금지).
     private val DWELL_MUTE_MS = 5_000L
     // (v1.1.62) 항목5: 존 비콘(안전구역) 상태 머신 상수.
-    //   진입=enterRssi 이상 연속 ZONE_MIN_SAMPLES 표본(순간 스파이크 오진입 방지),
+    //   진입=enterRssi 이상 연속 ZONE_MIN_SAMPLES 표본,
     //   이탈=enterRssi−ZONE_EXIT_HYST_DB 미만 즉시(히스테리시스 데드밴드로 경계 플랩 방지)
     //        또는 신호 두절 ZONE_LOST_GRACE_MS 초과,
     //   엔트리 폐기=ZONE_SIGNAL_STALE_MS 초과(맵 누수 방지). 존 판정은 raw RSSI(게인 미적용).
-    private val ZONE_MIN_SAMPLES     = 3
+    // (v1.1.82) 진입 표본 3 -> 1. 존 비콘 광고를 '받는 동안'은 안전 모드여야 한다는 요구.
+    //   3표본은 광고 주기가 느리거나 스캔 공백이 낀 현장에서 연속성이 끊겨 영구 미진입을 만들었다.
+    //   대가: 단발 스파이크 1회로도 진입한다 - 다음 표본의 세기 미달 분기가 즉시 되돌린다.
+    private val ZONE_MIN_SAMPLES     = 1
     private val ZONE_EXIT_HYST_DB    = 5
-    private val ZONE_LOST_GRACE_MS   = 3_000L
+    // (v1.1.82) 신호 두절 유예 3초 -> 10초. 3초는 광고 주기가 5초인 비콘에서 표본 사이마다
+    //   폴링이 inside 를 내리고 zoneSampleMap 을 0으로 밀어, 표본이 계속 들어와도 영구 미진입
+    //   /플랩을 만들었다(= '첫 신호만 받는' 증상). 정상 이탈은 세기 미달 즉시 분기가 처리하고,
+    //   이 유예는 신호 완전 두절에만 걸린다 - 대가는 블랙아웃 시 억제가 최대 10초 늦게 풀린다.
+    private val ZONE_LOST_GRACE_MS   = 10_000L
     // 엔트리 폐기는 맵 누수 방지 전용 — 이탈 판정은 위 GRACE 가 이미 끝냈다. 4초는 광고 주기가 느린
     // 비콘·45초 스캔 재시작 공백에서 진입 표본이 모이기 전에 카운터를 통째로 지워 영구 미진입을 만들었다.
     private val ZONE_SIGNAL_STALE_MS = 30_000L
@@ -865,6 +872,10 @@ class BleService : LifecycleService() {
                             uwbRanger?.onPeerUwbAddressReceived(deviceId, uwbAddress)
                         }
                         override fun onZoneBeaconSignal(beaconKey: String, rssi: Int, enterRssi: Int) {
+                            // (v1.1.82) 존 비콘도 엄연한 스캔 결과다. 여기서 갱신하지 않으면 주변에
+                            //   기기 없이 존 비콘만 있는 현장에서 헬스체크가 15초마다 RX 스캔을
+                            //   재시작해 표본이 계속 끊긴다(= '첫 신호만 받는' 증상).
+                            lastScanResultMs = System.currentTimeMillis()
                             // (v1.1.62) 존 비콘 신호 → 서비스 존 상태 머신으로 배선(인터페이스 디폴트=no-op라 명시 필수)
                             this@BleService.onZoneBeaconSignal(beaconKey, rssi, enterRssi)
                         }

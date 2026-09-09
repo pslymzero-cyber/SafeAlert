@@ -1048,3 +1048,29 @@ UpdateManager.kt / BleService.kt / VibrationHelper.kt / UwbRanger.kt / BeaconReg
 - 입력 규칙 불변: 대문자 [A-Z0-9_-] 12자 정규화. **한글 센터명은 정규화에서 제거되므로 영문·숫자 표기만 가능**
 - 검증: `compileDebugKotlin processDebugResources` 통과
 - 표기만 바꾼 수정이지만 현장 배포가 필요해 patch 상향(versionCode 134). CI 는 `v*` 태그 push 로만 돌고, 앱은 VERSION_NAME 비교로 갱신하므로 버전 유지 시 배포 불가
+
+
+### v1.1.81 세이프존 미인식 조사 — 원인 두 층, 컨트롤러 APCF 미확정 (2026-09-09)
+- 조사 방식: Workflow wf_6687531b-e85 (17 에이전트, 렌즈·반증·critic·closer 3건·synth). 코드 편집 0건. 보고 파일: scratchpad/safezone_report_v1181.md
+- 스크린샷 dbe771bb 확정: '보행자2/3'(48:87:2D:9D:CA:C5/E7)=DX-SMART CP27 계열 전용 비콘(OUI SHEN ZHEN DA XIA LONG QUE), Public 주소. 0xFDA5=SIG Neurostim OAB, 0xFEAB=Nokia 멤버 UUID 를 펌웨어가 재사용. 폰 아님, SafeAlert 아님.
+- 원인 1층(v1.1.79 이하, 코드 확정): BleScanner 가 serviceUuids 만 읽고 필터도 setServiceUuid 뿐 → AD 0x16 서비스데이터로 실리는 FDA5 를 구조적으로 못 봄. 853b056(v1.1.80) 이 serviceData.keys 합산+setServiceData 필터로 수정.
+- 원인 2층(v1.1.80 이후, 사용자 보고 사실로 둠): 앱 코드·AOSP 호스트 필터(A12~15, APCF 2바이트 A5 FD 송신 확인)·권한 결함 없음. 유일 미확정=벤더 컨트롤러가 UUID 만 있는 2바이트 APCF 서비스데이터 패턴을 매칭하는가. 판정 레버=비콘 관리 15초 무필터 스캔 중에만 '존 표본' 찍히면 HW 필터 결함.
+- 부수: (d) onZoneBeaconSignal 이 lastScanResultMs 미갱신 → 비콘만 있는 환경에서 15초 헬스체크 RX 재시작 반복(1줄 수정 후보). (b) '진입' 문구 앱에 없음(표시 3곳: tvLocalState 접두·빈 목록 상태줄·알림 제목). (c) 5회/30초 쿼터 무음 실패, errorCode 6 분기 죽은 코드.
+- 실코드 확인: MAC 등록 존 프로파일도 onZoneBeaconSignal("ZONE_<MAC>") 호출(BleScanner.kt:231-239) → 컨트롤러 결함 시 MAC 등록 우회 유효.
+- 코드 변경안 7건 제안(사용자 결정 대기): 즉시 1 BleService:1146 lastScanResultMs 갱신 / 2 BleScanner:410 로그에 필터 수·offload / 3 BeaconManagerActivity 미커밋 diff 재수정(키 mac|uuid, R7 회귀 해소). 선택 4 :263 errorCode 6 제거 / 5 :483 주석. 조건부 6 GRACE(실측 후) / 7 setDeviceAddress 병렬 필터(컨트롤러 결함 확정 시).
+- 증상 1·2·3 상태: BeaconManagerActivity.kt 패치 컴파일 통과·미커밋. uuids.first() 순위 의존 회귀(R7) 때문에 그대로 빌드 금지.
+- 반증 8건 기록(3초 슬롯 순환·SCAN_RSP 전용·iBeacon 슬롯 꺼짐 추론·MAC 등록 존 불가 등) → 보고에서 제외.
+- 남은 순서: 사용자 실기 로그(adb logcat -s BleService:D BleScanner:D 90초) → 판정 → 변경안 적용 → compileDebugKotlin·testDebugUnitTest → 커밋은 요청 시.
+- 미해결: 컨트롤러 APCF 매칭 여부(HCI 스눕으로만 판정), 사무실 비콘=보행자2 물리 매핑, DX-SMART 슬롯 설정 미확인.
+
+
+### v1.1.82 세이프존 "첫 신호만 받음" 근본원인 2건 + 비콘 목록 중복행 (2026-09-09)
+- 사용자 요구: "세이프존 첫신호만 받는거 같은데, 그 신호를 받는 동안은 안전 모드로 바꿔야해"
+- 원인 1 (BleService.kt:112-125): ZONE_LOST_GRACE_MS 3초 < 존 비콘 광고 주기 5초. reevaluateZones 폴링이 GRACE 만료마다 inside=false 와 함께 zoneSampleMap=0 까지 밀어, 표본이 계속 들어와도 n 이 ZONE_MIN_SAMPLES(3)에 영영 도달하지 못했다. → GRACE 10초로 상향. 정상 이탈은 세기 미달 즉시 분기가 처리하므로 이 유예는 신호 완전 두절에만 걸린다.
+- 원인 2 (BleService.kt:873 콜백 override): onZoneBeaconSignal 이 lastScanResultMs 를 갱신하지 않아, 앱 기기 없이 존 비콘만 있는 현장에서 15초 헬스체크가 RX 스캔을 15초마다 재시작하며 표본을 끊었다(v1.1.81 조사 변경안 1번). → 1줄 추가.
+- 스펙 구현: ZONE_MIN_SAMPLES 3 → 1. 대가 = 존 밖 -92dBm/σ5 스파이크로도 억제 진입(MC 200시드 실측 전체 표본의 1.24%, 최장 연속 2표본, 다음 표본이 즉시 되돌림). 신호 완전 블랙아웃 시 해제 최대 10초 지연.
+- 비콘 관리 목록(BeaconManagerActivity.kt): foundMap 키를 UUID → MAC 으로 고정하고 pickBeaconUuid 로 패킷당 UUID 1개만 채택(iBeacon > 128비트 커스텀 > 16비트 SIG). v1.1.79 serviceData.keys 합산 이후 한 기기가 여러 줄로 불어나던 문제와 v1.1.81 조사에서 지적된 uuids.first() 순위 의존 회귀(R7)를 함께 해소. UUID 는 승격만 하고 MAC_ONLY 로 되돌리지 않는다.
+- 테스트(ZoneStateMachineSimTest.kt): 미러 상수 동기화(MIN_SAMPLES=1, GRACE_MS=10_000L), 소스 가드 정규식 갱신, 테스트 02 를 "존 밖 절대 미진입" → "억제가 지속되지 않는다"(연속 ≤2표본, 총 <2%) 경계 안전속성으로 재작성.
+- 검증: compileDebugKotlin 클린 / testDebugUnitTest --rerun-tasks 61 tests 0 failures. 진입 소요 표본 A 1.1 · B 1.6 · C 1.0 · E(5초 주기 비콘) 1.0 · F(45초 스캔공백) 1.0.
+- versionCode 137 → 138, versionName 1.1.81 → 1.1.82. UpdateManager.isNewer 가 versionName 문자열을 비교하므로 범프 없으면 현장 배포 불가.
+- 남은 순서: 실기 검증(존 비콘 앞 체류 시 즉시 안전 모드 전환·이탈 복귀). 미해결: v1.1.81 조사의 컨트롤러 APCF 매칭 여부는 여전히 미확정(이번 수정과 독립).

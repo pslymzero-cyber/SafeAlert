@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.AlertDialog
 import android.bluetooth.BluetoothManager
 import android.bluetooth.le.ScanCallback
+import android.bluetooth.le.ScanRecord
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
 import android.content.pm.PackageManager
@@ -394,42 +395,53 @@ class BeaconManagerActivity : AppCompatActivity() {
         foundAdapter.update(foundMap.values.sortedByDescending { it.rssi })
     }
 
+    /**
+     * (v1.1.82) 광고 패킷 하나에서 등록 후보 UUID 를 최대 1개만 고른다. 반환 = (UUID, type).
+     *
+     * 한 기기는 UUID 를 여러 개 광고한다. 폰이라면 OS 가 뿌리는 공용 서비스(Fast Pair 등)까지
+     * 섞여 있어, 전부 받아들이면 비콘 1대가 목록에서 여러 줄로 보인다. 그래서 하나만 고른다.
+     * 우선순위: iBeacon > 128비트 커스텀 > 그 외(16비트 SIG 할당).
+     * 16비트 SIG 형식도 버리지 않는 이유 — SafeAlert 자신의 SERVICE_UUID(0x1234) 가 그 형식이고,
+     * 실제 비콘 하드웨어도 16비트 커스텀 값을 쓰는 제품이 있다. 순위만 뒤로 민다.
+     */
+    private fun pickBeaconUuid(record: ScanRecord): Pair<String, String>? {
+        // iBeacon (Apple CompanyID 0x004C)
+        record.getManufacturerSpecificData(0x004C)?.let { data ->
+            BeaconRegistry.parseIBeaconUuid(data)?.let { return it to "IBEACON" }
+        }
+        // (v1.1.79) serviceUuids(AD 0x02/0x03/0x06/0x07) 와 serviceData(AD 0x16) 는 광고 패킷에서
+        //   서로 독립된 필드다. 서비스데이터로만 광고하는 비콘은 serviceUuids 가 비어 있어
+        //   UUID 등록 버튼이 안 떴다(= UUID 를 지우면 다시 등록할 수 없던 원인). 둘 다 본다.
+        val uuids = ((record.serviceUuids ?: emptyList()) + (record.serviceData?.keys ?: emptySet()))
+            .map { it.uuid.toString().uppercase() }
+            .filterNot { it.equals(com.wf11.safealert.ble.BleConstants.SERVICE_UUID, true) }
+        if (uuids.isEmpty()) return null
+        val sigSuffix = "-0000-1000-8000-00805F9B34FB"
+        val custom = uuids.firstOrNull { !(it.startsWith("0000") && it.endsWith(sigSuffix)) }
+        return (custom ?: uuids.first()) to "SERVICE_UUID"
+    }
+
     private val scanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
             val record = result.scanRecord ?: return
-            val rssi   = result.rssi
             val mac    = result.device.address ?: return
             // 1순위: 광고 패킷 내 이름, 2순위: 시스템 캐시 이름, 3순위: MAC 주소
             val name   = record.deviceName?.takeIf { it.isNotBlank() }
                 ?: result.device.name?.takeIf { it.isNotBlank() }
                 ?: mac
-            var handled = false
 
-            // iBeacon (Apple CompanyID 0x004C)
-            val iBeaconData = record.getManufacturerSpecificData(0x004C)
-            if (iBeaconData != null) {
-                val uuid = BeaconRegistry.parseIBeaconUuid(iBeaconData)
-                if (uuid != null) {
-                    foundMap[uuid] = FoundBeacon(mac, uuid, "IBEACON", rssi, name)
-                    handled = true
-                }
-            }
-
-            // Service UUID 방식 (SafeAlert UUID 제외)
-            // (v1.1.79) serviceUuids(AD 0x02/0x03/0x06/0x07) 와 serviceData(AD 0x16) 는 광고 패킷에서
-            //   서로 독립된 필드다. 서비스데이터로만 광고하는 비콘은 serviceUuids 가 비어 있어
-            //   handled=false → MAC_ONLY 로 떨어졌고, 그래서 발견 목록에 UUID 등록 버튼이 안 떴다
-            //   (= UUID 를 지우면 다시 등록할 수 없던 원인).
-            ((record.serviceUuids ?: emptyList()) + (record.serviceData?.keys ?: emptySet())).forEach { parcelUuid ->
-                val uuid = parcelUuid.uuid.toString().uppercase()
-                if (!uuid.equals(com.wf11.safealert.ble.BleConstants.SERVICE_UUID, true)) {
-                    foundMap[uuid] = FoundBeacon(mac, uuid, "SERVICE_UUID", rssi, name)
-                    handled = true
-                }
-            }
-
-            // UUID 없는 일반 BLE 기기 → MAC으로만 등록
-            if (!handled) foundMap[mac] = FoundBeacon(mac, "", "MAC_ONLY", rssi, name)
+            // (v1.1.82) 한 기기 = 한 행. foundMap 의 키를 MAC 으로 고정한다.
+            //   이전 키는 UUID 라, 한 기기가 광고하는 UUID 개수만큼 행이 생겼다. v1.1.79 에서
+            //   serviceData.keys 를 합산한 뒤로는 폰 OS 의 시스템 광고까지 전부 별도 행이 되어
+            //   같은 MAC 이 여러 줄로 보였고, 스캔이 길수록(ADV/SCAN_RSP 가 서로 다른 AD 필드를
+            //   실어 오므로) 계속 불어났다. MAC 은 기기당 하나뿐이라 그 누적이 원천 차단된다.
+            val picked = pickBeaconUuid(record)
+            val prev   = foundMap[mac]
+            // UUID 는 승격만 한다. UUID 를 싣지 않은 후속 패킷이 이미 잡아둔 UUID 를
+            // MAC_ONLY 로 되돌리면, 같은 기기가 등록 버튼 없는 행으로 바뀌어 버린다.
+            val uuid = picked?.first ?: prev?.uuid.orEmpty()
+            val type = if (uuid.isBlank()) "MAC_ONLY" else (picked?.second ?: prev?.type ?: "MAC_ONLY")
+            foundMap[mac] = FoundBeacon(mac, uuid, type, result.rssi, name)
 
             runOnUiThread {
                 foundAdapter.update(foundMap.values.sortedByDescending { it.rssi })
