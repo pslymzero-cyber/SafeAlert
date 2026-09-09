@@ -33,6 +33,7 @@ class ZoneStateMachineSimTest {
         const val ENTER = -80            // 존 비콘 기본 진입 임계(dBm)
         const val MIN_SAMPLES = 1        // v1.1.82: 3 -> 1(신호 받는 동안 안전 모드)
         const val HYST = 5
+        const val EXIT_SAMPLES = 3       // v1.1.83: 이탈 디바운스(단발 페이드로 억제가 끊기던 증상)
         const val GRACE_MS = 10_000L     // v1.1.82: 3s -> 10s(느린 비콘 표본 사이 유지)
         const val NEW_STALE_MS = 30_000L // v1.1.79 현재
         const val OLD_STALE_MS = 4_000L  // v1.1.79 직전(대조군)
@@ -129,12 +130,12 @@ class ZoneStateMachineSimTest {
             lastSeen = now; present = true
             when {
                 rssi >= ENTER -> {
-                    sample += 1
+                    sample = maxOf(sample, 0) + 1
                     if (sample >= MIN_SAMPLES && inside != true) inside = true
                 }
                 rssi < ENTER - HYST -> {
-                    sample = 0
-                    if (inside == true) inside = false
+                    sample = minOf(sample, 0) - 1
+                    if (-sample >= EXIT_SAMPLES && inside == true) inside = false
                 }
                 else -> if (deadbandResets) sample = 0
             }
@@ -189,26 +190,40 @@ class ZoneStateMachineSimTest {
     @Test
     fun `02 실제 코드 - 존 밖 신호로는 억제가 지속되지 않는다`() {
         // v1.1.82 로 진입 표본이 1이 되면서 '절대 미진입'은 더 이상 성립하지 않는다 —
-        // -92 평균/σ5 는 표본당 0.8% 로 임계(-80)를 스치고, 그 1표본은 진입을 만든다.
-        // 지켜야 할 안전 속성은 '스파이크 억제가 이어지지 않는다'로 바뀐다:
-        //   다음 표본(-92 < -85)이 즉시 되돌리므로 연속 체류는 2표본을 넘을 수 없고,
-        //   전체 표본 중 억제 상태 비율도 스파이크 확률 수준(<2%)에 머물러야 한다.
+        // -92 평균/s5 는 표본당 0.8% 로 임계(-80)를 스치고, 그 1표본은 진입을 만든다.
+        // v1.1.83 이탈 디바운스가 붙으면서 그 스파이크 억제는 즉시가 아니라 이탈선 아래
+        // EXIT_SAMPLES 표본을 받아야 풀린다. 그래서 안전 속성을 기계적으로 정확한 하나로 좁힌다:
+        //   억제가 유지되는 동안 이탈선(-85) 아래 표본이 EXIT_SAMPLES 개 연속될 수 없다.
+        // 데드밴드(-85..-80) 체류로 억제가 이어지는 것은 히스테리시스의 의도된 동작이므로
+        // 그쪽은 금지하지 않고 체류 비율 상한(스파이크 기여분)으로만 묶는다.
         val svc = BleServiceTestHarness.newService()
         val out = scenarios.first { it.name.startsWith("D") }
-        var inSamples = 0; var total = 0; var worstRun = 0
+        var inSamples = 0; var total = 0; var worstRun = 0; var spikes = 0
         (0 until MC_SEEDS).forEach { seed ->
-            val r = runReal(svc, frames(out, seed.toLong()))
-            var run = 0
-            r.trace.forEach { (_, inside) ->
+            val f = frames(out, seed.toLong())
+            val r = runReal(svc, f)
+            var run = 0; var belowRun = 0
+            r.trace.forEachIndexed { i, (_, inside) ->
                 total++
-                if (inside) { inSamples++; run++; if (run > worstRun) worstRun = run } else run = 0
+                if (f[i].second >= ENTER) spikes++
+                if (inside) {
+                    inSamples++; run++
+                    belowRun = if (f[i].second < ENTER - HYST) belowRun + 1 else 0
+                    assertTrue(
+                        "이탈선 아래 ${belowRun}표본 연속인데 억제 유지 seed=${seed} i=${i} - 디바운스 누수",
+                        belowRun < EXIT_SAMPLES
+                    )
+                    if (run > worstRun) worstRun = run
+                } else { run = 0; belowRun = 0 }
             }
-            assertTrue("존 밖(-92) 연속 억제 ${run}표본 seed=${seed}", run <= 2)
         }
         val pct = inSamples * 100.0 / total
-        assertTrue("존 밖 억제 체류 비율 %.2f%% — 단발 스파이크 수준을 초과".format(pct), pct < 2.0)
-        assertTrue("존 밖 최장 연속 억제 ${worstRun}표본 — 단발이 아니다", worstRun <= 2)
-        println("[오진입] 존 밖 ${MC_SEEDS}시드: 억제 체류 %.2f%%, 최장 연속 ${worstRun}표본 — 단발로 국한".format(pct))
+        val spikePct = spikes * 100.0 / total
+        val cap = spikePct * (1 + EXIT_SAMPLES) + 1.0
+        assertTrue("존 밖 억제 체류 %.2f%% - 스파이크 기여 상한 %.2f%% 초과".format(pct, cap), pct < cap)
+        println(("[오진입] 존 밖 ${MC_SEEDS}시드: 스파이크 %.2f%%, 억제 체류 %.2f%%(상한 %.2f%%), " +
+                "최장 연속 ${worstRun}표본 - 이탈선 아래 ${EXIT_SAMPLES}표본이면 반드시 해제")
+                .format(spikePct, pct, cap))
     }
 
     @Test
@@ -250,6 +265,7 @@ class ZoneStateMachineSimTest {
 
         has("""ZONE_MIN_SAMPLES\s*=\s*${MIN_SAMPLES}\b""", "ZONE_MIN_SAMPLES=${MIN_SAMPLES}")
         has("""ZONE_EXIT_HYST_DB\s*=\s*${HYST}\b""", "ZONE_EXIT_HYST_DB=${HYST}")
+        has("""ZONE_EXIT_SAMPLES\s*=\s*${EXIT_SAMPLES}\b""", "ZONE_EXIT_SAMPLES=${EXIT_SAMPLES}")
         has("""ZONE_LOST_GRACE_MS\s*=\s*10_000L""", "ZONE_LOST_GRACE_MS=10_000L")
         has("""ZONE_SIGNAL_STALE_MS\s*=\s*30_000L""", "ZONE_SIGNAL_STALE_MS=30_000L")
         // 데드밴드에서 표본 카운터를 리셋하면 경계 요동 구간에서 3표본이 영원히 모이지 않는다.

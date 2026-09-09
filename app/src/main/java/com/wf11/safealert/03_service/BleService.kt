@@ -118,6 +118,14 @@ class BleService : LifecycleService() {
     //   대가: 단발 스파이크 1회로도 진입한다 - 다음 표본의 세기 미달 분기가 즉시 되돌린다.
     private val ZONE_MIN_SAMPLES     = 1
     private val ZONE_EXIT_HYST_DB    = 5
+    // (v1.1.83) 이탈도 연속 표본을 요구한다. 진입이 1표본이 된 뒤에도 이탈은 1표본이라,
+    //   경계에서 RSSI 가 한 번만 처지면 억제가 즉시 풀렸다가 다음 표본에 되돌아왔다
+    //   (= '세이프존이 중간에 한번씩 끊긴다'). 실제로 존을 벗어나면 세기가 계속 낮게 유지되므로
+    //   연속 표본을 요구하면 노이즈와 실이탈이 갈린다.
+    //   3 인 이유: 경계 체류(수신 -80~-78dBm)에서 2 는 시간당 5~21회 오탈출이 남고 3 이면 0.6~5회다.
+    //   대가는 이탈 확정이 광고 2주기(약 10초) 늦는 것인데, 현장에서 10초는 작업 복귀나
+    //   장비 승차에 못 미치는 시간이라 억제가 남아도 위험하지 않다(pslym 판단).
+    private val ZONE_EXIT_SAMPLES    = 3
     // (v1.1.82) 신호 두절 유예 3초 -> 10초. 3초는 광고 주기가 5초인 비콘에서 표본 사이마다
     //   폴링이 inside 를 내리고 zoneSampleMap 을 0으로 밀어, 표본이 계속 들어와도 영구 미진입
     //   /플랩을 만들었다(= '첫 신호만 받는' 증상). 정상 이탈은 세기 미달 즉시 분기가 처리하고,
@@ -1160,9 +1168,11 @@ class BleService : LifecycleService() {
         // 존 표본 원신호 — "비콘이 아예 안 잡힘"과 "잡히는데 임계 미달"을 현장에서 구분할 유일한 수단.
         Log.d(TAG, "존 표본: ${beaconKey} rssi=${rssi} 임계=${enterRssi} " +
                    "n=${zoneSampleMap[beaconKey] ?: 0} inside=${zoneInsideMap[beaconKey]}")
+        // (v1.1.83) zoneSampleMap 은 부호 있는 연속 카운터다 — 양수=임계 이상 연속(진입용),
+        //   음수=데드밴드 아래 연속(이탈용). 맵을 하나 더 두지 않으려는 것 외에 다른 뜻은 없다.
         when {
             rssi >= enterRssi -> {
-                val n = (zoneSampleMap[beaconKey] ?: 0) + 1
+                val n = (zoneSampleMap[beaconKey] ?: 0).coerceAtLeast(0) + 1
                 zoneSampleMap[beaconKey] = n
                 if (n >= ZONE_MIN_SAMPLES && zoneInsideMap[beaconKey] != true) {
                     zoneInsideMap[beaconKey] = true
@@ -1170,10 +1180,11 @@ class BleService : LifecycleService() {
                 }
             }
             rssi < enterRssi - ZONE_EXIT_HYST_DB -> {
-                zoneSampleMap[beaconKey] = 0
-                if (zoneInsideMap[beaconKey] == true) {
+                val n = (zoneSampleMap[beaconKey] ?: 0).coerceAtMost(0) - 1
+                zoneSampleMap[beaconKey] = n
+                if (-n >= ZONE_EXIT_SAMPLES && zoneInsideMap[beaconKey] == true) {
                     zoneInsideMap[beaconKey] = false
-                    Log.i(TAG, "(v1.1.62) 존 이탈(세기 미달): $beaconKey rssi=$rssi < ${enterRssi - ZONE_EXIT_HYST_DB}")
+                    Log.i(TAG, "(v1.1.62) 존 이탈(세기 미달): $beaconKey rssi=$rssi < ${enterRssi - ZONE_EXIT_HYST_DB} (${-n}표본)")
                 }
             }
             // 데드밴드(enterRssi-5 <= rssi < enterRssi) — 상태·표본 모두 유지.
