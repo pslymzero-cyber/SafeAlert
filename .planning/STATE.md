@@ -5,9 +5,9 @@ current_phase: 03
 current_phase_name: BleService 분해
 status: complete
 stopped_at: Completed 03-refactor-01-PLAN.md
-last_updated: "2026-08-31T00:00:00.000Z"
-last_activity: 2026-08-31
-last_activity_desc: Phase 03 완료 - 커밋 849eb05
+last_updated: "2026-09-10T00:00:00.000Z"
+last_activity: 2026-09-10
+last_activity_desc: Quick 260910-vw5 완료 - v1.1.85 echo_calib 전역 경로 이동
 state_head: 849eb05dd72da6d40551d15d11b5d1b0861b77fe
 progress:
   total_phases: 5
@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-08-23)
 Phase: 03 (BleService 분해) — COMPLETE
 Plan: 1 of 1
 Status: Phase 04 계획 대기
-Last activity: 2026-08-31 — Phase 03 커밋 849eb05 완료
+Last activity: 2026-09-10 — Completed quick task 260910-vw5: v1.1.85 echo_calib 전역 경로 이동
 
 Progress: [██████░░░░] 60%
 
@@ -109,6 +109,7 @@ None yet.
 | Date | Task | Status |
 |------|------|--------|
 | 2026-09-10 | 260910-se6 — v1.1.84 익명 로그인 도입 + echo_calib 앱 버전 필드 (DB 규칙 잠금 1단계) | complete |
+| 2026-09-10 | 260910-vw5 — v1.1.85 echo_calib 전역 경로 이동 (사업장 분할 해제) | complete |
 
 ## Deferred Items
 
