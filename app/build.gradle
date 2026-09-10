@@ -80,6 +80,8 @@ dependencies {
     implementation platform('com.google.firebase:firebase-bom:32.7.2')
     implementation 'com.google.firebase:firebase-database-ktx'
     implementation 'com.google.firebase:firebase-analytics-ktx'
+    // (v1.1.84) 익명 인증 — DB 규칙 auth != null 잠금 사전 작업. 버전은 BOM 관리.
+    implementation 'com.google.firebase:firebase-auth-ktx'
 
     testImplementation 'junit:junit:4.13.2'
     // Robolectric 4.15.1 — 02-01 Task 1 체크포인트 승인 좌표(testImplementation 한정, T-02-SC 완화)
