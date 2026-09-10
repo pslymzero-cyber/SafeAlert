@@ -2,6 +2,7 @@
 
 import android.util.Log
 import com.google.firebase.database.FirebaseDatabase
+import com.wf11.safealert.BuildConfig
 import com.wf11.safealert.utils.DevSettings
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -139,6 +140,9 @@ object FirebaseManager {
     fun uploadEchoCalib(myId: String, model: String, peers: Map<String, Triple<Double, Int, Double>>, onResult: (Boolean) -> Unit) {
         val data = mapOf(
             "model" to model,
+            // (v1.1.84) 앱 버전 — echo_calib 은 1시간마다 전체 덮어쓰기라 항상 현재값이다.
+            //   서버에서 구버전 잔존 기기를 한눈에 식별하는 용도(규칙 잠금 롤아웃 검증).
+            "ver"   to BuildConfig.VERSION_NAME,
             "ts"    to System.currentTimeMillis(),
             "peers" to peers.mapValues { (_, v) -> mapOf("m" to v.first, "n" to v.second, "iqr" to v.third) }
         )
