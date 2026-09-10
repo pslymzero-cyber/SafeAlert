@@ -160,13 +160,23 @@ object FirebaseManager {
             .addOnSuccessListener { snap ->
                 // (v1.1.85) model 이 없는 자식은 구버전이 쓴 echo_calib/<사업장>/<기기ID> 의
                 //   사업장 세그먼트다 — 한 단계 내려가 손자를 기기 노드로 읽는다(롤아웃 중 흡수).
-                val nodes = snap.children.flatMap { c ->
-                    parseEchoNode(c)?.let { listOf(it) } ?: c.children.mapNotNull(::parseEchoNode)
+                val current = mutableListOf<EchoCalibNode>()
+                val legacy = mutableListOf<EchoCalibNode>()
+                for (c in snap.children) {
+                    val node = parseEchoNode(c)
+                    if (node != null) current += node else c.children.mapNotNullTo(legacy, ::parseEchoNode)
                 }
-                onResult(nodes)
+                onResult(mergeEchoNodes(legacy, current))
             }
             .addOnFailureListener { Log.e(TAG, "에코보정 노드 조회 실패: ${it.message}"); onResult(emptyList()) }
     }
+
+    /** (v1.1.86) 구·신 경로 혼재 흡수: 같은 기기ID 는 한 번만 남기고 current(신 경로)가 이긴다.
+     *  구 경로 echo_calib/<사업장>/<기기ID> 는 업그레이드해도 삭제되지 않고 잔존하므로, 걸러내지
+     *  않으면 같은 기기 표본이 두 번 세어져 Σn 이 배가 되고(신뢰도 과대), 옛 중앙값이 현재값과
+     *  n 가중 평균돼 영구히 절반 지분을 갖는다. */
+    fun mergeEchoNodes(legacy: List<EchoCalibNode>, current: List<EchoCalibNode>): List<EchoCalibNode> =
+        (legacy + current).associateBy { it.id }.values.toList()
 
     private fun parseEchoNode(c: DataSnapshot): EchoCalibNode? {
         val id = c.key ?: return null
