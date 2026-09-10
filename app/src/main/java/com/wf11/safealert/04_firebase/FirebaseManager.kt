@@ -1,6 +1,7 @@
 ﻿package com.wf11.safealert.firebase
 
 import android.util.Log
+import com.google.firebase.database.DataSnapshot
 import com.google.firebase.database.FirebaseDatabase
 import com.wf11.safealert.BuildConfig
 import com.wf11.safealert.utils.DevSettings
@@ -144,32 +145,40 @@ object FirebaseManager {
             //   서버에서 구버전 잔존 기기를 한눈에 식별하는 용도(규칙 잠금 롤아웃 검증).
             "ver"   to BuildConfig.VERSION_NAME,
             "ts"    to System.currentTimeMillis(),
+            // (v1.1.85) 사업장 코드는 경로가 아니라 라벨로만 남긴다(saveAlert 와 동일).
+            "site"  to DevSettings.siteCode,
             "peers" to peers.mapValues { (_, v) -> mapOf("m" to v.first, "n" to v.second, "iqr" to v.third) }
         )
-        siteNode("echo_calib").child(sanitizeKey(myId)).setValue(data)
+        db.child("echo_calib").child(sanitizeKey(myId)).setValue(data)
             .addOnSuccessListener { Log.d(TAG, "에코보정 업로드: $myId (피어 ${peers.size})"); onResult(true) }
             .addOnFailureListener { Log.e(TAG, "에코보정 업로드 실패: ${it.message}"); onResult(false) }
     }
 
     /** 전 노드 다운로드 — 실패·부재 시 빈 리스트(호출부는 캐시 유지). */
     fun downloadEchoCalibAll(onResult: (List<EchoCalibNode>) -> Unit) {
-        siteNode("echo_calib").get()
+        db.child("echo_calib").get()
             .addOnSuccessListener { snap ->
-                val nodes = snap.children.mapNotNull { c ->
-                    val id = c.key ?: return@mapNotNull null
-                    val model = c.child("model").getValue(String::class.java) ?: return@mapNotNull null
-                    val peers = c.child("peers").children.mapNotNull { pc ->
-                        val k = pc.key ?: return@mapNotNull null
-                        val m = pc.child("m").getValue(Double::class.java) ?: return@mapNotNull null
-                        val n = (pc.child("n").getValue(Long::class.java) ?: 0L).toInt()
-                        val iqr = pc.child("iqr").getValue(Double::class.java) ?: 0.0
-                        k to EchoPeerStat(m, n, iqr)
-                    }.toMap()
-                    EchoCalibNode(id, model, peers)
+                // (v1.1.85) model 이 없는 자식은 구버전이 쓴 echo_calib/<사업장>/<기기ID> 의
+                //   사업장 세그먼트다 — 한 단계 내려가 손자를 기기 노드로 읽는다(롤아웃 중 흡수).
+                val nodes = snap.children.flatMap { c ->
+                    parseEchoNode(c)?.let { listOf(it) } ?: c.children.mapNotNull(::parseEchoNode)
                 }
                 onResult(nodes)
             }
             .addOnFailureListener { Log.e(TAG, "에코보정 노드 조회 실패: ${it.message}"); onResult(emptyList()) }
+    }
+
+    private fun parseEchoNode(c: DataSnapshot): EchoCalibNode? {
+        val id = c.key ?: return null
+        val model = c.child("model").getValue(String::class.java) ?: return null
+        val peers = c.child("peers").children.mapNotNull { pc ->
+            val k = pc.key ?: return@mapNotNull null
+            val m = pc.child("m").getValue(Double::class.java) ?: return@mapNotNull null
+            val n = (pc.child("n").getValue(Long::class.java) ?: 0L).toInt()
+            val iqr = pc.child("iqr").getValue(Double::class.java) ?: 0.0
+            k to EchoPeerStat(m, n, iqr)
+        }.toMap()
+        return EchoCalibNode(id, model, peers)
     }
 
     /** 순수 집계: 방향성 모델쌍(내모델→상대모델) 프라이어 — 상대모델 → (fold 중앙값 dB, Σn).
