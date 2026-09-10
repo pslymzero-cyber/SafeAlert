@@ -104,6 +104,12 @@ None yet.
 - 01-ci-02 Task 2 체크포인트(gate=blocking-human) 정지 중: 프로덕션 diff(KalmanFilter.kt 단일 시임, 945c729..HEAD 기준 1파일/9삽입/6삭제) 사람 승인 대기. 승인 시 Task 3(실제 태그 push 종단 실증)로 진행 가능
 - 01-ci-02 Task 3 (checkpoint:human-verify gate=blocking-human): CI-01/CI-02 종단 실증 증거(그린 run 32700966688, 레드 run 32701255911) 수집 완료, 사람의 '승인' 입력 대기 중. 승인 전까지 01-ci 는 완료 처리되지 않음. 상세는 .planning/phases/01-ci/01-02-SUMMARY.md CHECKPOINT REACHED 섹션
 
+## Quick Tasks Completed
+
+| Date | Task | Status |
+|------|------|--------|
+| 2026-09-10 | 260910-se6 — v1.1.84 익명 로그인 도입 + echo_calib 앱 버전 필드 (DB 규칙 잠금 1단계) | complete |
+
 ## Deferred Items
 
 Items acknowledged and deferred at milestone close, most recent first:
