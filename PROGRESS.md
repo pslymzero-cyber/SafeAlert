@@ -1,6 +1,6 @@
 # PROGRESS — SafeAlert
 
-최종 갱신: 2026-08-31 / 작성자: claude
+최종 갱신: 2026-09-11 / 작성자: claude
 
 ---
 
@@ -1087,3 +1087,48 @@ UpdateManager.kt / BleService.kt / VibrationHelper.kt / UwbRanger.kt / BeaconReg
 - 검증: compileDebugKotlin 클린 / testDebugUnitTest 전체 통과. 존 밖(-92/σ5) MC 200시드 실측 스파이크 1.14%, 억제 체류 3.55%(상한 5.55%), 최장 연속 7표본(전부 데드밴드 체류, 이탈선 아래 3표본에서는 항상 해제).
 - versionCode 138 → 139, versionName 1.1.82 → 1.1.83.
 - 남은 순서: 실기 검증(존 앞 체류 중 끊김 재발 여부). 미해결: BALANCED 듀티(약 1.0초 스캔/4.1초 주기) + 45초 antiThrottle 300ms 공백이 드물게 GRACE 10초를 넘겨 "존 이탈(신호 두절)"을 낼 가능성은 미검증으로 남김.
+
+## 2026-09-11 — 보안 조치 재설치 릴리스 플랜 (미착수)
+
+- 완료 작업: 계획 수립만. 코드 변경 없음.
+- 계획서: `.planning/quick/260911-k7r-safealert-v1-1-87-release-signing/260911-k7r-PLAN.md`
+- 확정 스펙: v1.1.87(vc143) = allowBackup false, 표시이름(device_id) 거부목록 검증, apk_sha256 fail-closed 검증 + CI 해시 PATCH, release 서명 + assembleRelease, minify(선택). 서명 변경이라 전 기기 삭제 후 재설치 1회.
+- 규칙 잠금(auth != null)은 v1.1.88(vc144) 로 분리 — release.yml 이 정식 태그마다 규칙을 PUT 하므로 재설치 완료(echo_calib ver 전 기기 1.1.87) 확인 후에만.
+- 제외: Private 전환(자동 업데이트 정지), SYSTEM_ALERT_WINDOW 제거(오버레이 소실), 보존기간·Firebase 이전·MDM·UWB(회사/외부 결정 대기).
+- 남은 순서: Phase A 사람 작업(키스토어 생성·Secrets 등록·API 키 SHA-1 점검·기기별 설정 기록) → Phase B 코드 → Phase C 재설치 → Phase D 규칙 잠금.
+- 미해결: device_id 길이 상한 값(착수 시 etDisplayName maxLength·BLE 적재 방식 확인 후 결정).
+- 미해결(발견·실측): echo_calib 전역 규칙 누락. 무인증 GET /echo_calib.json=401, /TESTSITE/echo_calib.json=200. v1.1.85 전역 이동 후 rules 에 최상위 echo_calib 가 없어 $site 와일드카드에서 거부 → 전역 업로드·읽기 실패 추정. 수정=최상위 echo_calib 블록 추가(개방이라 재설치 불필요). 즉시 배포 또는 v1.1.87 포함 중 사용자 선택.
+
+## 2026-09-11 — v1.1.87 Phase B 구현 완료 (Quick 260911-k7r, 커밋 abd158a·태그 v1.1.87)
+
+- 완료 작업:
+  - Phase A: keystore 생성과 RELEASE_* Secret 4개 등록을 마쳤다. API 키는 SHA-1 제한이 없어 조치가 필요 없다.
+  - Phase B: B1~B8을 구현하고 검증했다. Phase D는 하지 않았다. 커밋·태그·푸시는 사용자 지시로 진행(abd158a, v1.1.87).
+- 수정 파일:
+  - `app/build.gradle`: 143/1.1.87, env 릴리스 서명, R8
+  - `release.yml`: keystore는 env로 복원. mv 게이트와 apksigner 지문 게이트를 추가하고, `apk_sha256`을 `/version`과 `/wf11/version`에 PATCH
+  - `UpdateManager.kt` 해시 fail-closed, `MainActivity.kt` InputFilter·검증·해시 전달
+  - `activity_main.xml` 힌트, `AndroidManifest.xml` allowBackup=false
+  - `FirebaseManager.kt` DEVICE_ID_MAX_BYTES·isValidDeviceId·utf8PrefixLen
+  - `BleAdvertiser.kt`, `BleService.kt` take(15)
+  - `database.rules.json` 최상위 echo_calib, `.gitignore` 키 확장자
+  - 테스트 신규 2파일
+- 확정 스펙:
+  - 힌트는 'nick name 또는 공정 (선택)'이다.
+  - 표시 이름은 UTF-8 15바이트까지(한글 5자, 영문 15자). BLE ID 상한도 14에서 15바이트로 올렸다.
+  - 15바이트를 넘는 기존 이름은 마이그레이션하지 않는다. 저장 시 Toast를 띄우고 되돌린다.
+  - E(echo_calib 규칙)는 즉시 배포로 승인됐다.
+  - 서명 지문 SHA-256은 5E:79:36:FA:...:0D:F4 (공개값, 전문은 release.yml 게이트에 있다).
+- 검증:
+  - testDebugUnitTest 72건 통과.
+  - env 없는 assembleRelease 성공(R8 통과, unsigned 6.4MB).
+  - rules JSON과 release.yml YAML 파싱 OK.
+- 남은 순서 (사용자):
+  1. Firebase 콘솔에서 E 규칙을 게시하고 `/echo_calib.json?shallow=true`가 200인지 확인한다.
+  2. Phase A 잔여: 익명 인증 확인, A4 11대 대조표, keystore 오프라인 백업 2곳 이상.
+  3. (완료) 커밋·태그 v1.1.87·푸시. 서명키 사본: `C:\Users\pslym\Documents\SafeAlert-keystore-backup\`.
+  4. Phase C: 기기마다 1회 재설치.
+  5. Phase D(v1.1.88)는 재설치 확인 후.
+- 미해결:
+  - 로컬 Windows Kotlin 컴파일이 소스를 MS949로 읽는다. 테스트 한글 리터럴은 유니코드 이스케이프로 우회했다. 로컬 빌드 APK는 한글 리터럴이 깨질 수 있으므로 배포는 CI만 한다.
+  - R8 실기 이상 여부는 미검증이다(이상이 있으면 1.1.88에서 minifyEnabled false).
