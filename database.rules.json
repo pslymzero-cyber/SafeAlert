@@ -9,9 +9,9 @@
     },
 
     "echo_calib": {
-      ".read": true,
+      ".read": "auth != null",
       "$id": {
-        ".write": true
+        ".write": "auth != null"
       }
     },
 
@@ -24,29 +24,29 @@
       "alerts": {
         "$day": {
           "$alertId": {
-            ".write": "!data.exists()"
+            ".write": "auth != null && !data.exists()"
           }
         }
       },
 
       "beacon_share": {
-        ".read": true,
+        ".read": "auth != null",
         "$key": {
-          ".write": true
+          ".write": "auth != null"
         }
       },
 
       "echo_calib": {
-        ".read": true,
+        ".read": "auth != null",
         "$id": {
-          ".write": true
+          ".write": "auth != null"
         }
       },
 
       "uwb_probe": {
         "$day": {
           "$probeId": {
-            ".write": "!data.exists()"
+            ".write": "auth != null && !data.exists()"
           }
         }
       }

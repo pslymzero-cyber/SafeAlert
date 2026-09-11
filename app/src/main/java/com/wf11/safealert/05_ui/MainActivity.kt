@@ -261,6 +261,15 @@ class MainActivity : AppCompatActivity() {
 
         // 하단 버전 표시 — BuildConfig에서 읽어 항상 최신값 반영
         binding.tvVersionFooter.text = "v${BuildConfig.VERSION_NAME}  ·  Created by Ian"
+        // (v1.1.88) 업데이트 후 첫 실행 1회 — 변경 사항 안내 (새 설치 포함). 문구 = strings.xml whats_new
+        if (prefs.getInt("last_seen_version_code", 0) < BuildConfig.VERSION_CODE) {
+            prefs.edit().putInt("last_seen_version_code", BuildConfig.VERSION_CODE).apply()
+            AlertDialog.Builder(this)
+                .setTitle("v${BuildConfig.VERSION_NAME} 변경 사항")
+                .setMessage(R.string.whats_new)
+                .setPositiveButton("확인", null)
+                .show()
+        }
         // 저장된 이름 복원
         binding.etDisplayName.setText(prefs.getString("display_name", ""))
         // (v1.1.87) UTF-8 15바이트 입력 상한(한글 5자·영문 15자) — 넘치는 입력은 받지 않는다

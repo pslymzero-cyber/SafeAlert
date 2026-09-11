@@ -61,7 +61,17 @@ object UpdateManager {
     fun downloadAndInstall(context: Context, apkUrl: String, expectedSha256: String, onProgress: (Int) -> Unit = {}) {
         val fileName = "safealert-update.apk"
         val destFile = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), fileName)
-        if (destFile.exists()) destFile.delete()
+        // (v1.1.88) 이미 받아 둔 파일이 기대 해시와 같으면 재다운로드 없이 바로 설치 창을 띄운다.
+        //   설치 창을 닫았다가 다시 누른 경우가 여기에 해당. 불일치면 지우고 새로 받는다.
+        if (destFile.exists()) {
+            val cached = runCatching { destFile.inputStream().use { sha256Hex(it) } }.getOrDefault("")
+            if (hashMatches(expectedSha256, cached)) {
+                Log.d(TAG, "받아 둔 APK 해시 일치 - 재다운로드 생략, 설치 창 표시")
+                installApk(context, destFile)
+                return
+            }
+            destFile.delete()
+        }
 
         val request = DownloadManager.Request(Uri.parse(apkUrl))
             .setTitle("SafeAlert 업데이트")
@@ -108,10 +118,12 @@ object UpdateManager {
         }
         // [미착수-중간1] Activity Context 에 등록하면 Activity 가 먼저 죽을 때 해제 경로가 사라진다.
         //   applicationContext 는 프로세스 수명이라 onReceive 자가 해제가 항상 도달한다.
+        // (v1.1.88) EXPORTED — 완료 방송은 DownloadProvider(system uid 아님)가 보내서 NOT_EXPORTED 면
+        //   Android 13+ 에서 막혀 설치 창이 안 뜰 수 있다. id 비교 + SHA-256 일치 후에만 설치하므로 안전.
         context.applicationContext.registerReceiver(
             receiver,
             IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE),
-            Context.RECEIVER_NOT_EXPORTED
+            Context.RECEIVER_EXPORTED
         )
     }
 
