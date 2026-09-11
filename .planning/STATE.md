@@ -6,9 +6,9 @@ current_phase_name: BleService 분해
 status: complete
 stopped_at: Completed 03-refactor-01-PLAN.md
 last_updated: "2026-09-11T00:00:00.000Z"
-last_activity: 2026-09-11
-last_activity_desc: Quick 260911-k7r 완료 - v1.1.87 릴리스 서명 Phase B (abd158a, 태그 v1.1.87)
-state_head: 849eb05dd72da6d40551d15d11b5d1b0861b77fe
+last_activity: 2026-09-12
+last_activity_desc: Quick 260912-32e 완료 - v1.1.88 규칙 잠금 Phase D + 첫 실행 변경 사항 창 + 캐시 APK 재사용 (커밋 0de98da, 태그 v1.1.88)
+state_head: 0de98dade218467c210f18b6181619f2cb574ff6
 progress:
   total_phases: 5
   completed_phases: 3
@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-08-23)
 Phase: 03 (BleService 분해) — COMPLETE
 Plan: 1 of 1
 Status: Phase 04 계획 대기
-Last activity: 2026-09-11 — Completed quick task 260911-k7r: v1.1.87 릴리스 서명 Phase B (abd158a, 태그 v1.1.87)
+Last activity: 2026-09-12 — Completed quick task 260912-32e: v1.1.88 규칙 잠금 Phase D + 첫 실행 변경 사항 창 + 캐시 APK 재사용 (커밋 0de98da, 태그 v1.1.88)
 
 Progress: [██████░░░░] 60%
 
@@ -111,6 +111,7 @@ None yet.
 | 2026-09-10 | 260910-se6 — v1.1.84 익명 로그인 도입 + echo_calib 앱 버전 필드 (DB 규칙 잠금 1단계) | complete |
 | 2026-09-10 | 260910-vw5 — v1.1.85 echo_calib 전역 경로 이동 (사업장 분할 해제) | complete |
 | 2026-09-11 | 260911-k7r — v1.1.87 릴리스 서명 + 업데이트 APK 해시 + 표시 이름 15바이트 (Phase B, abd158a) | complete |
+| 2026-09-12 | 260912-32e — v1.1.88 규칙 잠금(Phase D) + 첫 실행 변경 사항 창 + 다운로드 완료 수신기 EXPORTED + 캐시 APK 재사용 (0de98da, 태그 v1.1.88) | complete |
 
 ## Deferred Items
 

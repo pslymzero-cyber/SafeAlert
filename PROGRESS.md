@@ -7,7 +7,9 @@
 ## 현재 위치
 
 - 작업 디렉터리: `C:\Users\pslym\Downloads\SafeAlert`
-- 브랜치: `master`, HEAD = `84faba6` (보안 A + 업데이트 채널 공용화, 태그 v1.1.71 push 완료)
+- 브랜치: `master`, HEAD = `0de98da` (최신 태그 v1.1.88)
+- **v1.1.88 커밋·태그 완료** (`0de98da`, 태그 `v1.1.88`, quick 260912-32e, 2026-09-12): Phase D 규칙 잠금(database.rules.json, k7r PLAN 181-191 그대로, C4 선행조건은 사용자 지시로 면제) / versionCode 144·1.1.88 / MainActivity.onCreate 첫 실행 변경 사항 창(prefs `last_seen_version_code`, 문구 strings.xml `whats_new`) / UpdateManager 다운로드 완료 수신기 RECEIVER_EXPORTED / UpdateManager.downloadAndInstall 이미 받아 둔 APK 의 SHA-256 이 기대값과 같으면 재다운로드 생략하고 바로 설치 창(불일치면 삭제 후 재다운로드, hashMatches fail-closed 유지). assembleDebug + 단위테스트 통과. 태그 푸시로 release.yml 이 database.rules.json 을 Firebase 에 재적용한다. 다음 = V-1(무인증 PUT 401, /version.json 200)·V-2, 87→88 설치 창 자동 표시 실측. 미해결: ≤1.1.83 기기 서버 기록 중단(BLE 경보는 동작), 1.1.84~86 동작은 미확인. 알려진 한계: 변경 사항 창은 표시 시점에 prefs 를 저장하므로 창이 떠 있는 동안 액티비티가 재생성되면 그 버전 안내는 다시 뜨지 않는다(사용자 지시로 그대로 둠)
+- (이하 두 줄은 v1.1.71 시점 기록)
 - 진행 단계: **Phase 4 T1+T2+T3 완료** — T1 제거 경로 일원화 + T2 STATE-03 계기 + T3 테스트·문서 마감. 테스트 **57건 통과**(2026-09-04 XML 집계 실측, 스킵·실패·에러 0). REQUIREMENTS STATE-02·STATE-03·BUG-01 = Complete, **STATE-01만 Pending**
 - 다음 행동: **코드 전수 검사 4축 결과 종합 → 사용자 승인 후 수정 착수**(아래 「죽은 별칭 11줄 삭제 + 검증」 절 참조). 그 다음 **사용자 질문 4건 답변 전달 + 증상 기기 세션 로그 확인** — 아래 「v1.1.71 출시 후 현장 증상 조사」 절 참조. 실기 검증(2시간 연속 구동)은 사용자 지시로 보류. 커밋은 사용자 명시 요청 시에만
 
