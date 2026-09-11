@@ -29,6 +29,7 @@ import android.view.View
 import android.view.Window
 import android.view.WindowManager
 import android.widget.EditText
+import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
@@ -43,6 +44,7 @@ import com.wf11.safealert.utils.DevSettings
 import com.wf11.safealert.utils.OverlayManager
 import com.wf11.safealert.databinding.ActivityMainBinding
 import com.wf11.safealert.databinding.DialogPinBinding
+import com.wf11.safealert.firebase.FirebaseManager
 import com.wf11.safealert.service.BleService
 import com.wf11.safealert.service.CalibrationEngine
 import com.wf11.safealert.utils.UwbCalibrator
@@ -261,6 +263,13 @@ class MainActivity : AppCompatActivity() {
         binding.tvVersionFooter.text = "v${BuildConfig.VERSION_NAME}  ·  Created by Ian"
         // 저장된 이름 복원
         binding.etDisplayName.setText(prefs.getString("display_name", ""))
+        // (v1.1.87) UTF-8 15바이트 입력 상한(한글 5자·영문 15자) — 넘치는 입력은 받지 않는다
+        binding.etDisplayName.filters = arrayOf(InputFilter { src, start, end, dest, dstart, dend ->
+            val rest = dest.subSequence(0, dstart).toString() + dest.subSequence(dend, dest.length)
+            val room = FirebaseManager.DEVICE_ID_MAX_BYTES - rest.toByteArray(Charsets.UTF_8).size
+            val keep = if (room <= 0) 0 else FirebaseManager.utf8PrefixLen(src.subSequence(start, end), room)
+            if (keep == end - start) null else src.subSequence(start, start + keep)
+        })
         // (v1.1.77) 저장된 사업장 코드 복원 — BLE 설정 UWB 섹션과 같은 값(dev_settings.uwb_site_code)
         binding.etSiteCode.setText(DevSettings.siteCode)
 
@@ -792,6 +801,12 @@ class MainActivity : AppCompatActivity() {
 
     private fun saveDisplayName() {
         val name = binding.etDisplayName.text?.toString()?.trim() ?: ""
+        // (v1.1.87) 금지문자( . # $ [ ] / )·제어문자·15바이트 초과는 저장하지 않고 이전 값으로 되돌린다(치환 없음)
+        if (!FirebaseManager.isValidDeviceId(name)) {
+            Toast.makeText(this, "nick name 에 . # \$ [ ] / 는 쓸 수 없습니다 (한글 5자·영문 15자 이내)", Toast.LENGTH_LONG).show()
+            binding.etDisplayName.setText(prefs.getString("display_name", ""))
+            return
+        }
         prefs.edit().putString("display_name", name).apply()
     }
 
@@ -934,7 +949,7 @@ class MainActivity : AppCompatActivity() {
             .setTitle("새 버전이 있습니다")
             .setMessage(msg)
             .setPositiveButton("지금 업데이트") { _, _ ->
-                UpdateManager.downloadAndInstall(this, info.apkUrl)
+                UpdateManager.downloadAndInstall(this, info.apkUrl, info.apkSha256)
             }
         if (!info.forceUpdate) builder.setNegativeButton("나중에", null)
         updateDialog = builder.setCancelable(!info.forceUpdate).show()

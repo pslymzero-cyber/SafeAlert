@@ -81,6 +81,31 @@ object FirebaseManager {
     fun sanitizeKey(s: String): String =
         s.trim().replace(Regex("[.#$\\[\\]/]"), "_").ifEmpty { "set" }
 
+    // (v1.1.87) 표시 이름 = BLE 송출 ID 상한. UTF-8 15바이트 = 한글 5자·영문 15자 (BleAdvertiser 절단 폭과 동일)
+    const val DEVICE_ID_MAX_BYTES = 15
+
+    /** (v1.1.87) 표시 이름 검증 — trim 후 빈 값 허용, Firebase 키 금지문자·제어문자·15바이트 초과 거부. 치환하지 않는다. */
+    fun isValidDeviceId(s: String): Boolean {
+        val t = s.trim()
+        if (t.isEmpty()) return true
+        if (t.any { it in ".#$[]/" || it.isISOControl() }) return false
+        return t.toByteArray(Charsets.UTF_8).size <= DEVICE_ID_MAX_BYTES
+    }
+
+    /** (v1.1.87) s 의 앞에서부터 UTF-8 maxBytes 안에 드는 문자 수(서로게이트 쌍은 쪼개지 않음). 입력 필터용 */
+    fun utf8PrefixLen(s: CharSequence, maxBytes: Int): Int {
+        var bytes = 0
+        var i = 0
+        while (i < s.length) {
+            val cp = Character.codePointAt(s, i)
+            val n = when { cp < 0x80 -> 1; cp < 0x800 -> 2; cp < 0x10000 -> 3; else -> 4 }
+            if (bytes + n > maxBytes) break
+            bytes += n
+            i += Character.charCount(cp)
+        }
+        return i
+    }
+
     /** 선택한 비콘 프로파일(JSON)을 이름붙은 세트로 업로드 */
     fun uploadBeaconSet(setName: String, profilesJson: String, count: Int, sender: String, onResult: (Boolean) -> Unit) {
         val key = sanitizeKey(setName)

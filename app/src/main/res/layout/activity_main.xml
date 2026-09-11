@@ -321,7 +321,7 @@
                         android:layout_width="0dp"
                         android:layout_weight="1.7"
                         android:layout_height="wrap_content"
-                        android:hint="이름 또는 직번 (선택)"
+                        android:hint="nick name 또는 공정 (선택)"
                         android:textColorHint="@color/sa_text_tertiary"
                         style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
                         app:boxCornerRadiusTopStart="@dimen/sa_radius_sm" app:boxCornerRadiusTopEnd="@dimen/sa_radius_sm"

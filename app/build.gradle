@@ -12,8 +12,8 @@ android {
         applicationId "com.wf11.safealert"
         minSdk 26
         targetSdk 34
-        versionCode 142
-        versionName "1.1.86"
+        versionCode 143
+        versionName "1.1.87"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -26,6 +26,17 @@ android {
             keyAlias "androiddebugkey"
             keyPassword "android"
         }
+        // (v1.1.87) 릴리스 키 — 값은 환경변수로만 받는다(저장소·로그에 비밀값 금지). CI 는 Secret → step env.
+        release {
+            def ks = System.getenv("SA_RELEASE_KEYSTORE")
+            if (ks) {
+                storeFile file(ks)
+                storeType "pkcs12"
+                storePassword System.getenv("SA_RELEASE_STORE_PASSWORD")
+                keyAlias System.getenv("SA_RELEASE_KEY_ALIAS")
+                keyPassword System.getenv("SA_RELEASE_KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
@@ -33,7 +44,10 @@ android {
             signingConfig signingConfigs.debug
         }
         release {
-            minifyEnabled false
+            // 환경변수 없는 로컬 빌드는 unsigned 산출(app-release-unsigned.apk)
+            if (System.getenv("SA_RELEASE_KEYSTORE")) signingConfig signingConfigs.release
+            // (v1.1.87) R8 난독화. shrinkResources 는 넣지 않는다. 실기 이상 시 1.1.88 에서 false 로 되돌림
+            minifyEnabled true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }

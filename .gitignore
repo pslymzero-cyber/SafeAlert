@@ -29,3 +29,8 @@ docs/presentation/contest/base_contest.pptx
 
 # 정비 백업본 — 삭제 조건 충족 전까지 로컬 보관 (.claude/CLAUDE.md 참조)
 *.bak
+
+# (v1.1.87) 릴리스 서명 키 — 저장소 반입 금지
+*.jks
+*.p12
+*.keystore

@@ -8,6 +8,13 @@
       ".write": false
     },
 
+    "echo_calib": {
+      ".read": true,
+      "$id": {
+        ".write": true
+      }
+    },
+
     "$site": {
       "version": {
         ".read": true,

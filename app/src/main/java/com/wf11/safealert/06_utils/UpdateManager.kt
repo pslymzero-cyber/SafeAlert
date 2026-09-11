@@ -12,6 +12,8 @@ import androidx.core.content.FileProvider
 import com.google.firebase.database.FirebaseDatabase
 import com.wf11.safealert.BuildConfig
 import java.io.File
+import java.io.InputStream
+import java.security.MessageDigest
 
 object UpdateManager {
 
@@ -24,7 +26,8 @@ object UpdateManager {
         val latest: String,
         val apkUrl: String,
         val changelog: String,
-        val forceUpdate: Boolean
+        val forceUpdate: Boolean,
+        val apkSha256: String       // (v1.1.87) CI 가 올린 APK SHA-256. 공란이면 설치 거부(fail-closed)
     )
 
     fun checkForUpdate(context: Context, onResult: (UpdateInfo?) -> Unit) {
@@ -39,10 +42,11 @@ object UpdateManager {
                 val apkUrl    = snap.child("apk_url").getValue(String::class.java)   ?: run { onResult(null); return@addOnSuccessListener }
                 val changelog = snap.child("changelog").getValue(String::class.java) ?: ""
                 val force     = snap.child("force_update").getValue(Boolean::class.java) ?: false
+                val sha256    = snap.child("apk_sha256").getValue(String::class.java) ?: ""
 
                 if (isNewer(latest, CURRENT_VERSION)) {
                     Log.d(TAG, "새 버전 발견: $latest (현재: $CURRENT_VERSION)")
-                    onResult(UpdateInfo(latest, apkUrl, changelog, force))
+                    onResult(UpdateInfo(latest, apkUrl, changelog, force, sha256))
                 } else {
                     Log.d(TAG, "최신 버전 사용 중: $CURRENT_VERSION")
                     onResult(null)
@@ -54,7 +58,7 @@ object UpdateManager {
             }
     }
 
-    fun downloadAndInstall(context: Context, apkUrl: String, onProgress: (Int) -> Unit = {}) {
+    fun downloadAndInstall(context: Context, apkUrl: String, expectedSha256: String, onProgress: (Int) -> Unit = {}) {
         val fileName = "safealert-update.apk"
         val destFile = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), fileName)
         if (destFile.exists()) destFile.delete()
@@ -83,8 +87,16 @@ object UpdateManager {
                 if (cursor.moveToFirst()) {
                     val status = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
                     if (status == DownloadManager.STATUS_SUCCESSFUL) {
-                        Log.d(TAG, "다운로드 완료, 설치 시작")
-                        installApk(ctx, destFile)
+                        // (v1.1.87) 무결성 검증 — 불일치·기대값 공란이면 삭제하고 설치 거부
+                        val actual = runCatching { destFile.inputStream().use { sha256Hex(it) } }.getOrDefault("")
+                        if (hashMatches(expectedSha256, actual)) {
+                            Log.d(TAG, "다운로드 완료, 해시 일치, 설치 시작")
+                            installApk(ctx, destFile)
+                        } else {
+                            Log.e(TAG, "APK 해시 불일치 expected=$expectedSha256 actual=$actual — 설치 거부")
+                            destFile.delete()
+                            android.widget.Toast.makeText(ctx, "업데이트 파일 검증 실패 — 설치하지 않았습니다", android.widget.Toast.LENGTH_LONG).show()
+                        }
                     } else {
                         val reason = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_REASON))
                         Log.e(TAG, "다운로드 실패 status=$status reason=$reason")
@@ -111,6 +123,25 @@ object UpdateManager {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
         }
         context.startActivity(intent)
+    }
+
+    /** (v1.1.87) 스트리밍 SHA-256, 소문자 hex */
+    fun sha256Hex(input: InputStream): String {
+        val md = MessageDigest.getInstance("SHA-256")
+        val buf = ByteArray(64 * 1024)
+        while (true) {
+            val n = input.read(buf)
+            if (n < 0) break
+            md.update(buf, 0, n)
+        }
+        return md.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    /** (v1.1.87) 대소문자·앞뒤공백 무시. 어느 쪽이든 공란이면 false(fail-closed) */
+    fun hashMatches(expected: String, actual: String): Boolean {
+        val e = expected.trim().lowercase()
+        val a = actual.trim().lowercase()
+        return e.isNotEmpty() && e == a
     }
 
     // "1.2.3" 형식 비교 — latest > current 이면 true

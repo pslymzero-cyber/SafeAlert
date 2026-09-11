@@ -793,7 +793,8 @@ class BleService : LifecycleService() {
                     //   상대는 이 해시로 태그된 '상대가 측정한 나의 RSSI'를 에코에 실어 되돌려준다.
                     //   BleAdvertiser 가 광고 시 id 를 UTF-8 14바이트로 절단하므로(BleAdvertiser:196) 여기서도
                     //   동일 절단해야 상대 스캐너가 만든 fullId 와 해시가 일치한다(ASCII·14자 이하면 그대로).
-                    val myWireId = String(myId.toByteArray(Charsets.UTF_8).take(14).toByteArray(), Charsets.UTF_8)
+                    //   (v1.1.87) 절단 폭 14→15B — BleAdvertiser 와 반드시 같은 값.
+                    val myWireId = String(myId.toByteArray(Charsets.UTF_8).take(15).toByteArray(), Charsets.UTF_8)
                     val myPrefix = if (myMode == "DEVICE") BleConstants.DEVICE_PREFIX else BleConstants.WALKER_PREFIX
                     s.myEchoHash = BleConstants.shortHash(myPrefix + myWireId)
                     // [v1.1.47] BLE 신호 타임아웃(전투 2s/휴식 6s)이어도 신선한 UWB 실측(≤1s)이

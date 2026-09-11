@@ -282,8 +282,8 @@ class BleAdvertiser(
         val companyId = if (prefix == BleConstants.DEVICE_PREFIX)
             BleConstants.COMPANY_ID_DEVICE else BleConstants.COMPANY_ID_WALKER
 
-        // ID를 짧게 (최대 14바이트) — 전체 패킷 ≤ 31바이트 유지
-        val idBytes = deviceId.toByteArray(Charsets.UTF_8).take(14).toByteArray()
+        // ID를 짧게 (최대 15바이트 — v1.1.87 14→15, 한글 5자·영문 15자) — 전체 패킷 ≤ 31바이트 유지
+        val idBytes = deviceId.toByteArray(Charsets.UTF_8).take(15).toByteArray()
 
         // ── Primary 광고 패킷 (ServiceUUID 포함 → 화면 꺼짐에도 스캔 필터 작동) ──
         val advertiseData = AdvertiseData.Builder()
@@ -299,6 +299,7 @@ class BleAdvertiser(
                     // (v1.1.62) 확장 플래그 바이트 — bit0=IN_ZONE(존 비콘 접촉 선언).
                     //   상태 1바이트(2-2-2-2)는 만석이라 1바이트 증설. 구버전 수신은 byte[0]만
                     //   읽으므로 무해(뒤호환). ServiceData 5→6B, 전체 예산 28B ≤ 31B.
+                    //   (v1.1.87) ID 14→15B 로 전체 29B ≤ 31B.
                     (if (currentInZone) BleConstants.EXT_FLAG_IN_ZONE else 0).toByte()
                 )
             )
