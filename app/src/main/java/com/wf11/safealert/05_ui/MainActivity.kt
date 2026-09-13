@@ -277,8 +277,15 @@ class MainActivity : AppCompatActivity() {
         binding.etDisplayName.setText(prefs.getString("display_name", ""))
         // (v1.1.89 SA-1) 장비번호 입력 상한 — 대문자 강제 + 15자. 현장 라벨 최장 표기가 12자(8FBR18-20427)다.
         //   ASCII 전용이라 15자 = 15바이트 = BLE 송출 상한과 정확히 같다.
+        //   가운데 필터는 PDA 하드웨어 스캐너 대비다. 스캐너는 스캔값을 키보드 입력으로 던지면서
+        //   끝에 Enter/Tab 을 붙이는 경우가 많은데, 그것이 문자로 들어와 필드를 깨뜨리지 않게 걸러낸다.
+        //   라벨 QR 페이로드가 장비번호 원문("8FB25-40604")이라 스캔값이 그대로 이 필드에 들어온다.
         binding.etDisplayName.filters = arrayOf(
             InputFilter.AllCaps(),
+            InputFilter { src, start, end, _, _, _ ->
+                if ((start until end).none { src[it].isISOControl() }) null
+                else src.subSequence(start, end).filterNot { it.isISOControl() }
+            },
             InputFilter.LengthFilter(FirebaseManager.DEVICE_ID_MAX_BYTES)
         )
         // (v1.1.89 SA-1) 실시간 형식 피드백 — 저장은 requireSiteCode 진입 시점이라, 그 전에 형식을 보여준다
