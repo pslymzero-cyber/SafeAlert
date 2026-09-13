@@ -100,6 +100,7 @@ jobs:
           SA_RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
           SA_RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
           SA_RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+          SA_DEV_PIN: ${{ secrets.SA_DEV_PIN }}
         run: ./gradlew assembleRelease --no-daemon --console=plain
 
       # 서명이 빠지면 app-release-unsigned.apk 가 나와 mv 가 실패한다(자연 게이트)

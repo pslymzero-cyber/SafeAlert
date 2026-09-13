@@ -38,6 +38,16 @@
 ### 백업본 보관
 - `*.bak` 삭제 조건: GSD가 CLAUDE.md를 1회 재생성한 뒤 마커 쌍 무결 + 7,000자 이하가 확인된 시점. 그때까지 보관한다.
 
+### SafeAlert 이력 메모리
+- 인덱스: `~/.claude/projects/C--Users-pslym-Downloads-SafeAlert/memory/` 의 `MEMORY.md` + `MEMORY_1.md` + `MEMORY_2.md`
+- SafeAlert 폴더에서 연 세션에만 자동 로드된다. Downloads 에서 열었으면 로드되지 않으니 grep 으로 조회한다.
+- 신규 메모리는 Downloads 인덱스가 아니라 위 SafeAlert 경로에 쓴다.
+
+### 세션 폴더·git 규칙
+- SafeAlert 작업은 `C:\Users\pslym\Downloads\SafeAlert` 에서 연 세션에서 한다. 하네스 자동 메모리는 **세션을 연 디렉터리 기준**으로 경로가 갈리므로, 다른 폴더에서 열면 위 이력이 붙지 않는다. 폴더 무관 통합 이력은 MemPalace 가 담당한다.
+- Downloads 에서 열린 세션에서 SafeAlert 를 건드려야 하면, **손대기 전에 먼저** 이 파일과 위 메모리 인덱스를 읽는다. 건너뛰지 않는다.
+- git 명령은 `cd /c/Users/pslym/Downloads/SafeAlert && git ...` 로 경로를 명시한다 (턴마다 cwd 가 Downloads 로 리셋됨).
+
 <!-- GSD:project-start source:PROJECT.md -->
 
 ## Project

@@ -104,6 +104,16 @@
                         <Spinner android:id="@+id/spinner_advertise" android:layout_width="match_parent" android:layout_height="wrap_content"
                             android:entries="@array/advertise_labels" />
 
+                        <View style="@style/SA.Divider" />
+
+                        <!-- (v1.1.90) 사업장 코드 변경 경로 — 메인은 최초 1회 입력만, 이후 변경은 여기서만 -->
+                        <TextView style="@style/SA.SubHeader" android:text="사업장" />
+                        <TextView style="@style/SA.Label" android:layout_marginTop="10dp" android:text="사업장 코드(센터명)" />
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="1dp" android:text="영문·숫자 최대 12자 · 경보 기록과 보정 데이터가 사업장별로 분리됨" />
+                        <EditText android:id="@+id/et_dev_site_code" android:layout_width="match_parent"
+                            android:layout_height="wrap_content" android:inputType="textCapCharacters" android:maxLength="12"
+                            android:textSize="@dimen/sa_type_body" android:textColor="@color/sa_text_primary" />
+
                     </LinearLayout>
                 </LinearLayout>
             </androidx.cardview.widget.CardView>

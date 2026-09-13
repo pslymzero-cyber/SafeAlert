@@ -808,7 +808,7 @@ class BleService : LifecycleService() {
 
                             if (myMode == "WALKER"
                                 && deviceId.startsWith(BleConstants.WALKER_PREFIX)
-                                && !deviceId.contains("BEA_")   // [v1.1.58 fix1] 비콘(BEA_)은 walker 게이트 면제 — 보행자도 비콘 경보 수신(기존: 100% 차단)
+                                && !(deviceId.contains("BEA_") && !BeaconRegistry.isVisitorBeacon(deviceId))   // (v1.1.90) 장비용 비콘만 walker 게이트 면제 — 방문자용(미등록 포함)은 보행자 취급해 차단
                                 && !DevSettings.walkerDetectsWalker) return
 
                             // (v1.1.65) 세이프존 전면 억제 — 존 안에서는 '존 비콘 신호만' 받는다.
@@ -875,7 +875,7 @@ class BleService : LifecycleService() {
                             // (v1.1.62 버그A) walker 게이트 미러 — 판정(onDeviceDetected)이 거른 보행자끼리
                             //   UWB 세션만 열리면 judgeUwbOnly 가 걸러진 기기를 되살린다. 세션 개설 자체를 차단.
                             if (myMode == "WALKER" && deviceId.startsWith(BleConstants.WALKER_PREFIX)
-                                && !deviceId.contains("BEA_") && !DevSettings.walkerDetectsWalker) return
+                                && !(deviceId.contains("BEA_") && !BeaconRegistry.isVisitorBeacon(deviceId)) && !DevSettings.walkerDetectsWalker) return
                             // [v1.1.43] 0x9ABC 관측 기록(진단용 — 판정 불사용) + 주소 전달 = 세션 (재)개설 경로
                             peerUwbSeenMap[deviceId] = System.currentTimeMillis()
                             uwbRanger?.onPeerUwbAddressReceived(deviceId, uwbAddress)

@@ -287,7 +287,8 @@ class MainActivity : AppCompatActivity() {
         }
         renderDisplayName()
         // (v1.1.77) 저장된 사업장 코드 복원 — BLE 설정 UWB 섹션과 같은 값(dev_settings.uwb_site_code)
-        binding.etSiteCode.setText(DevSettings.siteCode)
+        // (v1.1.90) 비어 있을 때만 입력 가능. 값이 있으면 잠그고 변경은 개발자 설정에서만.
+        refreshSiteCodeField()
 
         // [v1.0.34] 3-Role 선택 — 보행자(WALKER) / EPJ·지게차(DEVICE) + Category 동시 지정
         //   (v1.1.77) 사업장 코드가 없으면 requireSiteCode 가 입력 팝업을 띄우고 시작을 막는다.
@@ -340,6 +341,9 @@ class MainActivity : AppCompatActivity() {
         //   백그라운드 감시는 BleService 단독 책임이라 Activity 폴링은 순수 전력 낭비였다.
         statusHandler.removeCallbacks(statusRunnable)
         statusHandler.post(statusRunnable)
+        // (v1.1.90) 개발자 설정에서 사업장 코드를 바꾸고 돌아온 경우 반영 — applySite 는 값이 같으면 no-op
+        refreshSiteCodeField()
+        CalibrationEngine.applySite(myId())
         // BLE 설정 요약 업데이트 — [v1.1.8] 칼만 단일화(고정값·혼합 제거)
         binding.tvBleModeSummary.text =
             "칼만 필터 · 위험 ${DevSettings.rssiDanger}dBm / 경고 ${DevSettings.rssiWarning}dBm"
@@ -944,9 +948,20 @@ class MainActivity : AppCompatActivity() {
      * 돌지 않아 이전 사업장 프로파일이 남으므로 여기서 직접 전환한다.
      */
     private fun saveSiteCode() {
+        // (v1.1.90) 잠긴 입력칸(값 있음)은 저장하지 않는다 — 옛 표시값이 개발자 설정에서 바꾼 값을 덮는 것 방지
+        if (!binding.etSiteCode.isEnabled) return
         DevSettings.siteCode = binding.etSiteCode.text?.toString() ?: ""
         UwbCalibrator.applySite()
         CalibrationEngine.applySite(myId())
+        refreshSiteCodeField()
+    }
+
+    /** (v1.1.90) 사업장 코드가 비어 있을 때만 메인에서 입력 허용. 값이 있으면 비활성화 + 안내. */
+    private fun refreshSiteCodeField() {
+        val locked = DevSettings.siteCode.isNotEmpty()
+        binding.etSiteCode.setText(DevSettings.siteCode)
+        binding.etSiteCode.isEnabled = !locked
+        binding.tilSiteCode.helperText = if (locked) "변경은 개발자 설정에서" else null
     }
 
     /**
@@ -1117,7 +1132,8 @@ class MainActivity : AppCompatActivity() {
             updateDots()
             pb.tvError.visibility = View.INVISIBLE
             if (input.length == 3) {
-                if (input.toString() == "368") {
+                // (v1.1.90) 설정 PIN — 값은 빌드 시 주입(BuildConfig + CI Secrets). 3자리 유지(장갑 입력)
+                if (input.toString() == BuildConfig.DEV_PIN) {
                     dialog.dismiss()
                     startActivity(Intent(this, DevSettingsActivity::class.java))
                 } else {

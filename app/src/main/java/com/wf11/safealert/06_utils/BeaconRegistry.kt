@@ -53,7 +53,8 @@ object BeaconRegistry {
                     addedAt       = obj.optLong("addedAt", 0L),
                     rssiOffset    = obj.optInt("rssiOffset", 0),
                     zoneMute      = obj.optBoolean("zoneMute", false),
-                    zoneEnterRssi = obj.optInt("zoneEnterRssi", -80)
+                    zoneEnterRssi = obj.optInt("zoneEnterRssi", -80),
+                    visitorBeacon = obj.optBoolean("visitorBeacon", true)
                 )
             }
         }.getOrDefault(emptyList())
@@ -121,6 +122,7 @@ object BeaconRegistry {
                 put("rssiOffset",    p.rssiOffset)
                 put("zoneMute",      p.zoneMute)
                 put("zoneEnterRssi", p.zoneEnterRssi)
+                put("visitorBeacon", p.visitorBeacon)
             })
         }
         return arr.toString()
@@ -140,7 +142,8 @@ object BeaconRegistry {
                 addedAt       = obj.optLong("addedAt", 0L),
                 rssiOffset    = obj.optInt("rssiOffset", 0),
                 zoneMute      = obj.optBoolean("zoneMute", false),
-                zoneEnterRssi = obj.optInt("zoneEnterRssi", -80)
+                zoneEnterRssi = obj.optInt("zoneEnterRssi", -80),
+                visitorBeacon = obj.optBoolean("visitorBeacon", true)
             )
         }
     }.getOrDefault(emptyList())
@@ -174,8 +177,14 @@ object BeaconRegistry {
     fun isBeaconFullId(fullId: String): Boolean = fullId.contains("BEA_")
 
     /** BleService의 fullId (예: SAFEALERT_WALKER_BEA_AABBCCDDEEFF)에서 rssiOffset 조회 */
-    fun getRssiOffsetForFullId(fullId: String): Int {
-        if (!fullId.contains("BEA_")) return 0
+    fun getRssiOffsetForFullId(fullId: String): Int = findProfileByFullId(fullId)?.rssiOffset ?: 0
+
+    /** (v1.1.90) fullId 의 비콘이 방문자용인지. 미등록·조회 실패 시 true(안전측 — 보행자 취급) */
+    fun isVisitorBeacon(fullId: String): Boolean = findProfileByFullId(fullId)?.visitorBeacon ?: true
+
+    /** (v1.1.90) fullId(BEA_ 마커) → 등록 프로파일 역조회. 비콘 아님·미등록이면 null */
+    fun findProfileByFullId(fullId: String): BeaconProfile? {
+        if (!fullId.contains("BEA_")) return null
         val key = fullId.substringAfter("BEA_")
         return getAll().firstOrNull { profile ->
             when (profile.type) {
@@ -189,7 +198,7 @@ object BeaconRegistry {
                     profile.uuid.replace("-", "").startsWith(key.take(8), ignoreCase = true)
                 }
             }
-        }?.rssiOffset ?: 0
+        }
     }
 
     // iBeacon manufacturer data에서 UUID 추출

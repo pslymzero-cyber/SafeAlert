@@ -18,6 +18,7 @@ import com.wf11.safealert.service.BleService
 import com.wf11.safealert.service.CalibrationEngine
 import com.wf11.safealert.service.DeviceStateRegistry
 import com.wf11.safealert.utils.DevSettings
+import com.wf11.safealert.utils.UwbCalibrator
 import com.wf11.safealert.utils.UwbRanger
 import com.wf11.safealert.databinding.ActivityDevSettingsBinding
 
@@ -74,6 +75,7 @@ class DevSettingsActivity : AppCompatActivity() {
         binding.etDevEchoClamp.setText(DevSettings.echoCalClampDb.toString())
         // Firebase
         binding.etFirebaseRoot.setText(DevSettings.firebaseRoot)
+        binding.etDevSiteCode.setText(DevSettings.siteCode)   // (v1.1.90) 사업장 코드 변경 경로
         binding.switchAutoSave.isChecked = DevSettings.autoSaveAlerts
         // 디버그
         binding.switchDebug.isChecked = DevSettings.debugMode
@@ -280,6 +282,13 @@ class DevSettingsActivity : AppCompatActivity() {
             val commit = { DevSettings.firebaseRoot = et.text.toString().trim().ifEmpty { "wf11" } }
             editCommitters += commit
             et.setOnFocusChangeListener { _, hasFocus -> if (!hasFocus) { commit(); et.setText(DevSettings.firebaseRoot) } }
+        }
+        // (v1.1.90) 사업장 코드 — 저장 시 UwbCalibrator 프로파일 전환. 경보 로그 경로 alerts/<사업장>/<날짜>/ 는 그대로
+        run {
+            val et = binding.etDevSiteCode
+            val commit: () -> Unit = { DevSettings.siteCode = et.text.toString(); UwbCalibrator.applySite() }
+            editCommitters += commit
+            et.setOnFocusChangeListener { _, hasFocus -> if (!hasFocus) { commit(); et.setText(DevSettings.siteCode) } }
         }
         bindLongField(binding.etTimegateMs,          { DevSettings.timeGateMs },             { DevSettings.timeGateMs = it })
         bindLongField(binding.etTimegateCornering,   { DevSettings.corneringTimeGateMs },    { DevSettings.corneringTimeGateMs = it })

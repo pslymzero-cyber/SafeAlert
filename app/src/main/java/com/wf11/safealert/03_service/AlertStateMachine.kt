@@ -1751,7 +1751,7 @@ class AlertStateMachine(
         // (v1.1.62 버그A) walker 게이트 이중 안전 — 세션 개설 차단(onUwbAddressReceived)이 1차지만,
         //   이미 열린 세션의 잔여 표본이 이 경로로 들어와도 걸러진 기기를 되살리지 않는다.
         if (fx.myMode == "WALKER" && deviceId.startsWith(BleConstants.WALKER_PREFIX)
-            && !deviceId.contains("BEA_") && !DevSettings.walkerDetectsWalker) return
+            && !(deviceId.contains("BEA_") && !BeaconRegistry.isVisitorBeacon(deviceId)) && !DevSettings.walkerDetectsWalker) return
         val rCategory = deviceCategoryMap[deviceId]
         val rState    = deviceStateMap[deviceId]
         val forkliftPair = fx.myCategory == BleConstants.CAT_FORKLIFT ||

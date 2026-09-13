@@ -23,5 +23,9 @@ data class BeaconProfile(
     //   기본을 -65 로 두면 경보 임계(-75, MAC 비콘은 오프셋 적용으로 더 낮음)보다 좁아
     //   '경보는 뜨는데 존은 성립 안 하는' 사각지대가 설계상 반드시 생긴다.
     val zoneMute: Boolean = false,
-    val zoneEnterRssi: Int = -80
+    val zoneEnterRssi: Int = -80,
+    // (신규) 방문자용 비콘 — true 면 이 UUID 프로파일은 보행자로 취급해
+    //   보행자 모드 PDA 에는 경보하지 않는다(지게차·EPJ 만 수신). 장비에 붙이는 비콘은 false.
+    //   기본 true — 기존 등록분은 전부 방문자용으로 해석된다.
+    val visitorBeacon: Boolean = true
 )

@@ -699,7 +699,7 @@ object DevSettings {
         set(v) = prefs.edit().putFloat(KEY_UWB_APPROACH_SPEED_KMH, v.coerceIn(1f, 30f)).apply()
 
     // (v1.1.77) 사업장 코드 — 알림·보정 데이터 전역 분리 네임스페이스(예: "WF11"). 빈 값=공용.
-    //   메인화면이 정식 입력처이고 BLE 설정 UWB 섹션은 읽기전용 표시. 대소문자 무관(대문자 정규화)이며
+    //   (v1.1.90) 메인화면은 비어 있을 때 최초 입력만, 이후 변경은 개발자 설정(PIN 뒤)에서만. BLE 설정 UWB 섹션은 읽기전용 표시. 대소문자 무관(대문자 정규화)이며
     //   [A-Z0-9_-] 외 문자는 버려 Firebase 경로·SharedPreferences 파일명에 그대로 쓸 수 있게 한다.
     //   소비자(BeaconRegistry/CalibrationEngine)는 매 접근마다 sitePrefName() 으로 현재 센터 파일을
     //   열고, 최초로 코드가 붙는 순간 adoptCommonPrefs() 가 공용 파일 내용을 그 센터로 1회 인계한다.

@@ -347,6 +347,7 @@
                         android:layout_weight="1"
                         android:layout_height="wrap_content"
                         android:layout_marginStart="@dimen/sa_space_sm"
+                        android:id="@+id/til_site_code"
                         android:hint="센터명"
                         android:textColorHint="@color/sa_text_tertiary"
                         style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"

@@ -15,6 +15,9 @@ android {
         versionCode 146
         versionName "1.1.90"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        // (v1.1.90) 설정 PIN — 값은 빌드 시 주입(BuildConfig + CI Secrets). 저장소에 실제 값을 두지 않는다.
+        //   우선순위: -PdevPin / ~/.gradle/gradle.properties devPin → 환경변수 SA_DEV_PIN → '000'
+        buildConfigField "String", "DEV_PIN", "\"${project.findProperty('devPin') ?: System.getenv('SA_DEV_PIN') ?: '000'}\""
     }
 
     // 디버그 keystore 경로 명시 — CI 러너가 자동 생성한 임의 키 대신 ~/.android/debug.keystore 를
