@@ -317,13 +317,13 @@
                     android:layout_marginTop="10dp"
                     android:orientation="horizontal">
 
-                    <!-- (v1.1.89 SA-1) 자산번호 전용 — 사람 이름을 받지 않는다. 형식 오류는 실시간 표시 -->
+                    <!-- (v1.1.89 SA-1) 장비번호 전용 — 사람 이름을 받지 않는다. 형식 오류는 실시간 표시 -->
                     <com.google.android.material.textfield.TextInputLayout
                         android:id="@+id/til_display_name"
                         android:layout_width="0dp"
                         android:layout_weight="1.7"
                         android:layout_height="wrap_content"
-                        android:hint="자산번호 (선택)"
+                        android:hint="장비번호 (선택)"
                         android:textColorHint="@color/sa_text_tertiary"
                         style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
                         app:helperTextEnabled="true"
@@ -336,7 +336,7 @@
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:inputType="textCapCharacters"
-                            android:maxLength="7"
+                            android:maxLength="15"
                             android:textSize="@dimen/sa_type_section"
                             android:textColor="@color/sa_text_primary"
                             android:imeOptions="actionNext"/>

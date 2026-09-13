@@ -275,11 +275,11 @@ class MainActivity : AppCompatActivity() {
         migrateDisplayNameToAssetId()
         // 저장된 이름 복원
         binding.etDisplayName.setText(prefs.getString("display_name", ""))
-        // (v1.1.89 SA-1) 자산번호 입력 상한 — 영문4 + 숫자3 = 7자. 대문자로 강제하고 초과 입력은 받지 않는다.
-        //   ASCII 7바이트라 BLE 송출 상한(15바이트) 은 구조적으로 넘길 수 없다.
+        // (v1.1.89 SA-1) 장비번호 입력 상한 — 대문자 강제 + 15자. 현장 라벨 최장 표기가 12자(8FBR18-20427)다.
+        //   ASCII 전용이라 15자 = 15바이트 = BLE 송출 상한과 정확히 같다.
         binding.etDisplayName.filters = arrayOf(
             InputFilter.AllCaps(),
-            InputFilter.LengthFilter(FirebaseManager.ASSET_ID_MAX_LEN)
+            InputFilter.LengthFilter(FirebaseManager.DEVICE_ID_MAX_BYTES)
         )
         // (v1.1.89 SA-1) 실시간 형식 피드백 — 저장은 requireSiteCode 진입 시점이라, 그 전에 형식을 보여준다
         binding.etDisplayName.doAfterTextChanged { showDisplayNameFeedback(it?.toString() ?: "") }
@@ -814,7 +814,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * (v1.1.89 SA-1) 자산번호 형식 실시간 피드백 — 저장 실패를 시작 직전에야 알게 되는 것을 막는다.
+     * (v1.1.89 SA-1) 장비번호 형식 실시간 피드백 — 저장 실패를 시작 직전에야 알게 되는 것을 막는다.
      * 빈 값은 허용이므로(자동 ID 사용) 오류로 표시하지 않는다.
      */
     private fun showDisplayNameFeedback(raw: String) {
@@ -831,7 +831,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * (v1.1.89 SA-1) 자산번호 형식 이행 — 구버전이 저장한 사람 이름을 송출 경로에서 걷어낸다.
+     * (v1.1.89 SA-1) 장비번호 형식 이행 — 구버전이 저장한 사람 이름을 송출 경로에서 걷어낸다.
      *
      * 두 키를 함께 본다. display_name 은 사용자가 입력한 표시 이름이고,
      * device_id 는 BleService.saveRunningMode 가 실행 시 그 표시 이름으로 덮어쓰는 값이라
@@ -849,13 +849,13 @@ class MainActivity : AppCompatActivity() {
         if (savedName.isNotEmpty()) {
             val norm = FirebaseManager.normalizeDeviceId(savedName)
             if (FirebaseManager.isValidDeviceId(norm)) {
-                if (norm != savedName) editor.putString("display_name", norm)   // 대소문자만 정규화
+                if (norm != savedName) editor.putString("display_name", norm)   // 대소문자·공백만 정규화
             } else {
                 editor.remove("display_name")
                 notify = true
             }
         }
-        // 자산번호도 자동 ID 도 아닌 값 = 구버전이 밀어 넣은 사람 이름 → 자동 ID 로 즉시 교체.
+        // 장비번호도 자동 ID 도 아닌 값 = 구버전이 밀어 넣은 사람 이름 → 자동 ID 로 즉시 교체.
         //   지우기만 하면 START_STICKY 복원 경로(BleService.onStartCommand)가 "SA-DEFAULT" 를 싣게 되고,
         //   이행된 기기 전부가 같은 ID 로 송출돼 피어 식별이 무너진다. 그래서 비우지 않고 새로 발급한다.
         if (savedId.isNotEmpty() && !FirebaseManager.isUsableAdvertisedId(savedId)) {
@@ -868,9 +868,9 @@ class MainActivity : AppCompatActivity() {
         AlertDialog.Builder(this)
             .setTitle("표시 이름 형식 변경")
             .setMessage(
-                "표시 이름이 자산번호 형식으로 바뀌었습니다.\n" +
+                "표시 이름에 장비번호만 입력하도록 바뀌었습니다.\n" +
                 "${FirebaseManager.ASSET_ID_HINT}\n\n" +
-                "형식에 맞지 않는 기존 이름은 삭제되었습니다. 자산번호를 다시 입력해 주세요.\n" +
+                "형식에 맞지 않는 기존 이름은 삭제되었습니다. 장비에 붙은 번호를 그대로 입력해 주세요.\n" +
                 "입력 전에는 자동 ID 로 송출되며 경보는 그대로 동작합니다."
             )
             .setPositiveButton("확인", null)
@@ -880,9 +880,9 @@ class MainActivity : AppCompatActivity() {
     private fun saveDisplayName() {
         val raw  = binding.etDisplayName.text?.toString() ?: ""
         val name = FirebaseManager.normalizeDeviceId(raw)
-        // (v1.1.89 SA-1) 자산번호 형식이 아니면 저장하지 않고 이전 값으로 되돌린다(치환 없음)
+        // (v1.1.89 SA-1) 장비번호 형식이 아니면 저장하지 않고 이전 값으로 되돌린다(치환 없음)
         if (!FirebaseManager.isValidDeviceId(name)) {
-            Toast.makeText(this, "표시 이름은 자산번호 형식입니다 — ${FirebaseManager.ASSET_ID_HINT}", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "표시 이름은 장비번호만 입력합니다 — ${FirebaseManager.ASSET_ID_HINT}", Toast.LENGTH_LONG).show()
             binding.etDisplayName.setText(prefs.getString("display_name", ""))
             return
         }

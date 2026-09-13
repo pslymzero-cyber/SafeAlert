@@ -85,39 +85,55 @@ object FirebaseManager {
     const val DEVICE_ID_MAX_BYTES = 15
 
     /**
-     * (v1.1.89 SA-1) 표시 이름 = 자산번호. 영문 2~4자 + 숫자 1~3자 (예: EPJ03, FL07).
-     * 사람 이름·닉네임을 받지 않는다 — 개인 식별 정보가 BLE 송출·Firebase 경보 로그로 들어가는 유일한 경로였다.
-     * ASCII 최대 7바이트 → DEVICE_ID_MAX_BYTES(15) 안에 항상 들어가고,
-     * Firebase 키 금지문자( . # $ [ ] / )·제어문자도 형식 자체로 배제된다.
+     * (v1.1.89 SA-1) 표시 이름 = 장비번호. 현장 라벨 표기를 그대로 받는다.
+     *   지게차 C/B : 8FB25-40604 / 8FB25-40577
+     *   리치       : 8FBR18-20427 / 8FBR18-20432
+     *
+     * 사람 이름·닉네임을 받지 않는다 — 이 값은 BLE 로 송출되고 Firebase 경보 로그의
+     * deviceId 로 그대로 저장되므로, 개인 식별 정보가 외부에 평문으로 쌓이는 통로였다.
+     *
+     * 규칙 — 대문자 영문·숫자·하이픈만. 영문과 숫자를 각각 1자 이상 포함하고
+     * 하이픈은 양끝·연속 불가, 전체 3~15자.
+     *   · 한글·공백·특수문자를 배제해 사람 이름이 들어올 수 없다
+     *   · 숫자 필수 → 영문 이름(KIM, PARK)이 통과하지 못한다
+     *   · 영문 필수 → 순수 숫자열(휴대폰 번호 01012345678)이 통과하지 못한다
+     *   · ASCII 전용 15자 = 15바이트 → DEVICE_ID_MAX_BYTES 와 동일. BLE 송출 상한을 넘지 않는다
+     *   · Firebase 키 금지문자( . # $ [ ] / )·제어문자도 문자집합에서 배제된다
      */
-    val ASSET_ID_REGEX = Regex("^[A-Z]{2,4}[0-9]{1,3}$")
+    val ASSET_ID_REGEX = Regex("^(?=.*[A-Z])(?=.*[0-9])[A-Z0-9]+(-[A-Z0-9]+)*$")
 
-    /** (v1.1.89) 자산번호 최대 길이 — 영문4 + 숫자3. 입력 필터 상한 */
-    const val ASSET_ID_MAX_LEN = 7
+    /** (v1.1.89) 장비번호 최소 길이 — 이보다 짧으면 장비 식별자로 볼 수 없다 */
+    const val ASSET_ID_MIN_LEN = 3
 
     /** (v1.1.89) 입력 안내 문구 — UI 힌트·오류·마이그레이션 안내가 같은 문장을 쓴다 */
-    const val ASSET_ID_HINT = "영문 2~4자 + 숫자 1~3자 (예: EPJ03, FL07)"
-
-    /** (v1.1.89) 자동 발급 ID 형식 — MainActivity.myId() 생성규칙("SA-" + UUID 8자 대문자) */
-    val AUTO_ID_REGEX = Regex("^SA-[0-9A-F]{8}$")
+    const val ASSET_ID_HINT = "장비번호를 그대로 입력 (예: 8FB25-40604) · 영문+숫자 3~15자"
 
     /** (v1.1.89) 입력 정규화 — 사업장 코드와 같은 규칙: 앞뒤 공백 제거 후 대문자화(소문자 입력 허용) */
     fun normalizeDeviceId(s: String): String = s.trim().uppercase(Locale.ROOT)
 
-    /** (v1.1.89 SA-1) 표시 이름 검증 — 빈 값은 허용(자동 ID 사용), 그 외는 자산번호 형식만 허용. 치환하지 않는다. */
+    /** (v1.1.89 SA-1) 표시 이름 검증 — 빈 값은 허용(자동 ID 사용), 그 외는 장비번호 형식만 허용. 치환하지 않는다. */
     fun isValidDeviceId(s: String): Boolean {
         val t = normalizeDeviceId(s)
         if (t.isEmpty()) return true
+        if (t.length < ASSET_ID_MIN_LEN || t.length > DEVICE_ID_MAX_BYTES) return false
         return ASSET_ID_REGEX.matches(t)
     }
 
     /**
-     * (v1.1.89 SA-1) 송출 ID 로 그대로 써도 되는 값인가 — 자산번호 또는 자동 발급 ID.
-     * 구버전이 device_id 에 써 넣은 사람 이름을 걸러내는 데 쓴다(빈 값은 불가).
+     * (v1.1.89) 자동 발급 ID 형식 — MainActivity.newAutoId() 생성규칙("SA-" + UUID 8자 대문자).
+     * 별도로 둔다: UUID 앞 8자가 전부 A~F 로 나오면(약 0.08%) 숫자가 없어 ASSET_ID_REGEX 를
+     * 만족하지 못하고, 이행이 매 실행마다 ID 를 새로 발급하는 무한 교체에 빠진다.
+     */
+    val AUTO_ID_REGEX = Regex("^SA-[0-9A-F]{8}$")
+
+    /**
+     * (v1.1.89 SA-1) 송출 ID 로 그대로 써도 되는 값인가 — 장비번호 또는 자동 발급 ID(빈 값은 불가).
+     * 구버전이 device_id 에 써 넣은 사람 이름을 걸러내는 데 쓴다.
      */
     fun isUsableAdvertisedId(s: String): Boolean {
         val t = normalizeDeviceId(s)
-        return ASSET_ID_REGEX.matches(t) || AUTO_ID_REGEX.matches(t)
+        if (t.isEmpty()) return false
+        return AUTO_ID_REGEX.matches(t) || isValidDeviceId(t)
     }
 
     /** (v1.1.87) s 의 앞에서부터 UTF-8 maxBytes 안에 드는 문자 수(서로게이트 쌍은 쪼개지 않음). 입력 필터용 */
