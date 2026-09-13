@@ -13,6 +13,7 @@
 | PROGRESS.md | 14,051 |
 | 02_ble/BleAdvertiser.kt | 12,479 |
 | res/layout/activity_main.xml | 11,436 |
+| docs/ARCHITECTURE.md | 4,200 |
 | .planning/** (전체 233,287) | 전량 |
 
 ### 위 파일 접근 절차 (예외 없음)
@@ -64,17 +65,17 @@ v1.0.1부터 v1.1.70까지 3개월간 70회 이상 릴리스하며 실제로 동
 
 <!-- GSD:stack-start -->
 ## Technology Stack
-상세: `docs/ARCHITECTURE.md` — 전체를 읽지 말고 grep -n 후 sed -n 'A,Bp' 로 필요한 섹션만 본다.
+상세: `sed -n '5,77p' docs/ARCHITECTURE.md` — 이 범위만 읽는다. 전체 읽기 금지.
 <!-- GSD:stack-end -->
 
 <!-- GSD:conventions-start -->
 ## Conventions
-상세: `docs/ARCHITECTURE.md` — 전체를 읽지 말고 grep -n 후 sed -n 'A,Bp' 로 필요한 섹션만 본다.
+상세: `sed -n '79,181p' docs/ARCHITECTURE.md` — 이 범위만 읽는다. 전체 읽기 금지.
 <!-- GSD:conventions-end -->
 
 <!-- GSD:architecture-start -->
 ## Architecture
-상세: `docs/ARCHITECTURE.md` — 전체를 읽지 말고 grep -n 후 sed -n 'A,Bp' 로 필요한 섹션만 본다.
+상세: `sed -n '183,350p' docs/ARCHITECTURE.md` — 이 범위만 읽는다. 전체 읽기 금지.
 <!-- GSD:architecture-end -->
 
 <!-- GSD:skills-start source:skills/ -->
