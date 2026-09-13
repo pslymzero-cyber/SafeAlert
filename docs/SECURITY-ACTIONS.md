@@ -53,6 +53,18 @@
 `card_role_epj` 는 레이아웃에서 `visibility="gone"` 이다. 되살리지 않고 EPJ·워키를
 장비 목록에 넣었다 — 카드를 늘리면 같은 불일치가 다시 생긴다.
 
+**EPJ 동작은 그대로 승계된다.** 구 EPJ 카드는 `onRoleSelected("DEVICE", CAT_EPJ)` 를
+불렀고, 새 경로는 `onRoleSelected("DEVICE", type.category)` 를 부르는데 `PitType.EPJ` ·
+`PitType.WALKIE` 의 `category` 가 그 `CAT_EPJ` 상수다. **인자가 같은 값이다.**
+EPJ 거동은 전부 이 정수 하나에서 갈린다 — 1바이트 페이로드의 Category 2비트,
+`walkerVsEpjBiasDb(+2)`, `epjVsEpjBiasDb(-2)`, `idleIdleSuppressEpjPairsEnabled(true)`,
+역할 라벨, 실행 화면 비주얼. 별도 분기나 플래그가 없어 우회 경로도 없다.
+`PitTypeTest.epjClassInheritsTheLegacyEpjCategory` 가 이 계약을 고정한다.
+
+**다만 승계가 아니라 부활이다.** `card_role_epj` 는 레이아웃 커밋 40개 내내 `gone`
+이었다. 즉 현재 배포판(v1.1.88)에서 EPJ 는 UI 로 선택할 수 없고, 위 EPJ 전용
+파라미터들은 최근 현장 검증을 거치지 않았다. 실기 검증에 EPJ 쌍을 반드시 포함한다.
+
 장비 선택은 시작할 때마다 거친다. 교대마다 타는 장비가 바뀌는데 직전 값으로 그냥
 시작하면 경보 로그가 다른 장비를 가리킨다. 직전 선택이 복원돼 있어 확인 1탭이면
 끝난다. 역할 전환(`performSwitchRole`)에서 장비로 넘어갈 때도 같은 팝업을 거친다.

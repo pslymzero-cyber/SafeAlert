@@ -31,6 +31,19 @@ class PitTypeTest {
         PitType.values().forEach { assertTrue(it.name, it.category in valid) }
     }
 
+    /**
+     * EPJ-class equipment must start with the EXACT constant the legacy (now hidden) EPJ card
+     * passed to onRoleSelected. Every EPJ behaviour downstream keys off this one int:
+     * the 2-bit advertising payload, walkerVsEpjBiasDb, epjVsEpjBiasDb, the idle-idle
+     * suppression pairs, the role label and the running-screen visuals. If this drifts,
+     * an EPJ silently runs with forklift alert radii.
+     */
+    @Test
+    fun epjClassInheritsTheLegacyEpjCategory() {
+        assertEquals(BleConstants.CAT_EPJ, PitType.EPJ.category)
+        assertEquals(BleConstants.CAT_EPJ, PitType.WALKIE.category)
+    }
+
     @Test
     fun categoryAssignment() {
         assertEquals(
