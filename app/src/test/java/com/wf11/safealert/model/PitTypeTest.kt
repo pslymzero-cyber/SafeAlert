@@ -21,19 +21,28 @@ class PitTypeTest {
         assertEquals(PitType.values().size, PitType.values().map { it.code }.toSet().size)
     }
 
-    /** a card must only offer equipment of its own category, or the alert radius is wrong */
+    /**
+     * the picked equipment decides the role, so every type must map to a real alert category.
+     * An unmapped type would start the service with a radius that does not match the machine.
+     */
     @Test
-    fun categorySplit() {
+    fun everyTypeMapsToAnAlertCategory() {
+        val valid = setOf(BleConstants.CAT_FORKLIFT, BleConstants.CAT_EPJ)
+        PitType.values().forEach { assertTrue(it.name, it.category in valid) }
+    }
+
+    @Test
+    fun categoryAssignment() {
         assertEquals(
             listOf("CB", "RT", "HR", "OP", "ST", "TT"),
-            PitType.forCategory(BleConstants.CAT_FORKLIFT).map { it.code }
+            PitType.values().filter { it.category == BleConstants.CAT_FORKLIFT }.map { it.code }
         )
         assertEquals(
             listOf("EP", "WK"),
-            PitType.forCategory(BleConstants.CAT_EPJ).map { it.code }
+            PitType.values().filter { it.category == BleConstants.CAT_EPJ }.map { it.code }
         )
-        // walkers carry no equipment - the caller falls back to the full list
-        assertTrue(PitType.forCategory(BleConstants.CAT_WALKER).isEmpty())
+        // walkers carry no equipment - they never reach the picker
+        assertTrue(PitType.values().none { it.category == BleConstants.CAT_WALKER })
     }
 
     @Test
@@ -42,6 +51,7 @@ class PitTypeTest {
         assertEquals("RT-07", PitType.buildId(PitType.REACH, 7))
         assertEquals("HR-99", PitType.buildId(PitType.HIGH_REACH, 99))
         assertEquals("EP-10", PitType.buildId(PitType.EPJ, 10))
+        assertEquals("WK-45", PitType.buildId(PitType.WALKIE, 45))
     }
 
     @Test

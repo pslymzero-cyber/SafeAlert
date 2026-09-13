@@ -533,7 +533,7 @@
                             <TextView
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                android:text="지게차"
+                                android:text="장비 작업자"
                                 android:textSize="@dimen/sa_type_section"
                                 android:textStyle="bold"
                                 android:textColor="@color/sa_text_primary" />
@@ -541,7 +541,7 @@
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:layout_marginTop="@dimen/sa_space_hairline"
-                                android:text="지게차·리치 운전자"
+                                android:text="지게차·리치·EPJ 등 장비 운전자"
                                 android:textSize="@dimen/sa_type_caption"
                                 android:textColor="@color/sa_text_tertiary" />
                         </LinearLayout>

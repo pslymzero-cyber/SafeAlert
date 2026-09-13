@@ -15,6 +15,9 @@ import com.wf11.safealert.ble.BleConstants
  *     센터명은 12자까지 허용돼 함께 실으면 예산을 넘긴다.
  *     Firebase 로그에는 저장 시점에 센터명을 붙여 `WF11-CB-01` 로 남는다.
  *
+ * [category] 가 경보 반경을 정한다. 사용자가 역할을 따로 고르지 않고 **장비를 고르면
+ * 역할이 따라온다** — 지게차를 고른 사람이 EPJ 반경으로 도는 불일치가 생길 수 없다.
+ *
  * [code] 는 BLE 로 나가는 값이라 **변경 금지**다. 현장에 배포된 기기와 표기가 어긋난다.
  * 새 장비는 아래에 추가만 한다(순서 = 선택 팝업 노출 순서).
  */
@@ -37,9 +40,6 @@ enum class PitType(val code: String, val label: String, val category: Int) {
          */
         const val NO_MIN = 1
         const val NO_MAX = 99
-
-        /** 역할(Category)에 속한 장비만. 지게차 카드에서 EPJ 가 보이면 경보 반경이 어긋난다. */
-        fun forCategory(category: Int): List<PitType> = PitType.values().filter { it.category == category }
 
         fun fromCode(code: String): PitType? = PitType.values().firstOrNull { it.code == code }
 

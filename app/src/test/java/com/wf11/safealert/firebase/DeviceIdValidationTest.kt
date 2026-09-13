@@ -21,7 +21,8 @@ class DeviceIdValidationTest {
 
     @Test
     fun acceptsPitIds() {
-        listOf("CB-01", "RT-07", "HR-99", "OP-12", "EP-03", "WK-45", "", "   ")
+        // FirebaseManager checks shape only - which codes are registered is PitType's job
+        listOf("CB-01", "RT-07", "HR-99", "OP-12", "ST-05", "TT-40", "EP-03", "WK-45", "", "   ")
             .forEach { assertTrue(it, FirebaseManager.isValidDeviceId(it)) }
     }
 

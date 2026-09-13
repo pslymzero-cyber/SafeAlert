@@ -283,7 +283,7 @@ class MainActivity : AppCompatActivity() {
             isFocusableInTouchMode = false
             isCursorVisible = false
             keyListener = null                     // 소프트 키보드·하드웨어 키 입력 차단
-            setOnClickListener { showPitSelectDialog(currentCategory) { } }
+            setOnClickListener { showPitSelectDialog { } }   // 시작 전 미리 골라두는 용도
         }
         renderDisplayName()
         // (v1.1.77) 저장된 사업장 코드 복원 — BLE 설정 UWB 섹션과 같은 값(dev_settings.uwb_site_code)
@@ -291,10 +291,11 @@ class MainActivity : AppCompatActivity() {
 
         // [v1.0.34] 3-Role 선택 — 보행자(WALKER) / EPJ·지게차(DEVICE) + Category 동시 지정
         //   (v1.1.77) 사업장 코드가 없으면 requireSiteCode 가 입력 팝업을 띄우고 시작을 막는다.
-        // (v1.1.89 SA-1) 보행자는 장비가 없으므로 자동 ID 로 간다. PIT 역할만 장비 선택을 거친다.
+        // (v1.1.89 SA-1) 장비 카드는 하나다. 역할(Category)은 고른 장비가 정한다 —
+        //   역할을 먼저 고르고 장비를 또 고르면 둘이 어긋날 수 있다.
+        //   card_role_epj 는 레이아웃에서 gone 이라 리스너를 달지 않는다(EPJ·워키는 장비 목록에 있다).
         binding.cardRoleWalker.setOnClickListener   { requireSiteCode { onRoleSelected("WALKER", BleConstants.CAT_WALKER) } }
-        binding.cardRoleEpj.setOnClickListener      { requireSiteCode { requirePitId(BleConstants.CAT_EPJ)      { onRoleSelected("DEVICE", BleConstants.CAT_EPJ) } } }
-        binding.cardRoleForklift.setOnClickListener { requireSiteCode { requirePitId(BleConstants.CAT_FORKLIFT) { onRoleSelected("DEVICE", BleConstants.CAT_FORKLIFT) } } }
+        binding.cardRoleForklift.setOnClickListener { requireSiteCode { startAsPitOperator() } }
         binding.btnStop.setOnClickListener       { stopServiceImmediately() }
         binding.btnSwitchRole.setOnClickListener { confirmSwitchRole() }   // [v1.1.60] 역할 전환
         binding.cardSettings.setOnClickListener  { showPinDialog() }
@@ -708,7 +709,7 @@ class MainActivity : AppCompatActivity() {
     //   유일 안전 경로. 전환 공백 1~2초는 EMA 워밍업(v1.1.29)이 콜드스타트를 완화한다.
     //   매핑: WALKER→지게차(DEVICE·CAT_FORKLIFT) / DEVICE(레거시 EPJ 포함)→보행자(WALKER·CAT_WALKER).
     private fun switchTargetLabel(): String =
-        if (currentMode == "WALKER") "지게차" else "보행자"
+        if (currentMode == "WALKER") "장비 작업자" else "보행자"
 
     // (v1.1.67) 상시 알림의 '전환' 액션 처리. 액션을 소비(action=null)해 화면 회전·재개 때
     //   같은 인텐트로 다이얼로그가 되살아나는 것을 막는다. 감시 중이 아니면 무시한다.
@@ -736,7 +737,8 @@ class MainActivity : AppCompatActivity() {
         //   겹치면 광고/스캔 재초기화가 이전 인스턴스 정리와 경합한다.
         statusHandler.postDelayed({
             if (isFinishing || isDestroyed) return@postDelayed
-            if (fromMode == "WALKER") onRoleSelected("DEVICE", BleConstants.CAT_FORKLIFT)
+            // (v1.1.89 SA-1) 장비로 전환할 때도 장비를 고르게 한다 — 고른 장비가 역할을 정한다
+            if (fromMode == "WALKER") startAsPitOperator()
             else onRoleSelected("WALKER", BleConstants.CAT_WALKER)
         }, 800L)
     }
@@ -831,13 +833,14 @@ class MainActivity : AppCompatActivity() {
      * 자유 입력을 대체한다. 키보드가 뜨지 않으므로 사람 이름이 들어올 경로가 없다.
      * 드롭다운은 장갑 낀 손·창고 조명을 전제로 크게(항목 64dp·22sp) 잡았다.
      *
-     * [category] 에 속한 장비만 목록에 올린다 — 지게차 카드에서 EPJ 를 고르면 경보 반경이
-     * 어긋난다. CAT_WALKER 처럼 해당 장비가 없으면 전체 목록을 보여준다(설정 화면 진입).
+     * 목록은 항상 전체다. 역할을 먼저 고르고 장비를 고르는 구조가 아니라,
+     * **장비를 고르면 역할(Category)이 따라오는** 구조이기 때문이다 — 지게차를 고른
+     * 사람이 EPJ 반경으로 도는 불일치가 생길 수 없다.
      *
-     * [onPicked] 는 선택이 확정된 뒤에만 호출된다. 취소·해제는 호출하지 않는다.
+     * [onPicked] 는 선택이 확정된 뒤에만 호출된다. 취소는 호출하지 않는다.
      */
-    private fun showPitSelectDialog(category: Int, onPicked: () -> Unit) {
-        val types = PitType.forCategory(category).ifEmpty { PitType.values().toList() }
+    private fun showPitSelectDialog(onPicked: (PitType) -> Unit) {
+        val types = PitType.values().toList()
         val nos   = (PitType.NO_MIN..PitType.NO_MAX).toList()
         val dlg   = DialogPitSelectBinding.inflate(layoutInflater)
 
@@ -849,20 +852,19 @@ class MainActivity : AppCompatActivity() {
         bind(dlg.spPitType, types) { it.label }
         bind(dlg.spPitNo, nos) { "%02d".format(it) }
 
-        // 직전 선택 복원 — 번호만 바꾸는 경우가 대부분이라 매번 처음부터 고르게 하지 않는다
+        // 직전 선택 복원 — 같은 장비를 계속 타는 경우가 대부분이라 확인 1탭으로 끝나게 한다
         PitType.parse(prefs.getString("display_name", "") ?: "")?.let { (t, n) ->
             types.indexOf(t).takeIf { it >= 0 }?.let { dlg.spPitType.setSelection(it) }
             dlg.spPitNo.setSelection(n - PitType.NO_MIN)
         }
 
-        fun picked() = PitType.buildId(
-            types[dlg.spPitType.selectedItemPosition],
-            nos[dlg.spPitNo.selectedItemPosition]
-        )
+        fun pickedType() = types[dlg.spPitType.selectedItemPosition]
+        fun pickedId()   = PitType.buildId(pickedType(), nos[dlg.spPitNo.selectedItemPosition])
         fun refresh() {
-            val id = picked()
-            dlg.tvPitPreview.text = "상대 화면 표시  $id
-경보 로그  ${FirebaseManager.withSite(id)}"
+            val id = pickedId()
+            dlg.tvPitPreview.text =
+                "역할  ${roleDisplayName(pickedType().category)}\n" +
+                "상대 화면 표시  $id\n경보 로그  ${FirebaseManager.withSite(id)}"
         }
         val watcher = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(p: AdapterView<*>?, v: View?, pos: Int, id: Long) = refresh()
@@ -876,28 +878,22 @@ class MainActivity : AppCompatActivity() {
             .setTitle("내 장비 선택")
             .setView(dlg.root)
             .setPositiveButton("확인") { _, _ ->
-                prefs.edit().putString("display_name", picked()).apply()
+                val type = pickedType()
+                prefs.edit().putString("display_name", pickedId()).apply()
                 renderDisplayName()
-                onPicked()
-            }
-            .setNeutralButton("해제(보행자)") { _, _ ->
-                // 장비에서 내렸을 때. 자동 ID 로 돌아가며 경보는 그대로 동작한다.
-                prefs.edit().remove("display_name").apply()
-                renderDisplayName()
+                onPicked(type)
             }
             .setNegativeButton("취소", null)
             .show()
     }
 
     /**
-     * (v1.1.89 SA-1) PIT 모드 시작 게이트 — 장비 ID 가 있어야 시작한다.
-     * 없으면 선택 팝업을 띄우고, 확정된 뒤에만 [onReady] 로 넘어간다.
-     * 취소하면 시작하지 않는다 — 경보가 도는 중이 아니라 시작 전이므로 안전 기능에 영향이 없다.
+     * (v1.1.89 SA-1) 장비 작업자 시작 — 고른 장비의 Category 로 시작한다.
+     * 매번 고르게 한다. 교대마다 타는 장비가 바뀌는데 직전 값으로 그냥 시작하면
+     * 경보 로그가 다른 장비를 가리킨다. 직전 선택이 복원돼 있어 확인 1탭이면 끝난다.
      */
-    private fun requirePitId(category: Int, onReady: () -> Unit) {
-        val id = prefs.getString("display_name", "") ?: ""
-        if (PitType.parse(id)?.first?.category == category) { onReady(); return }
-        showPitSelectDialog(category, onReady)
+    private fun startAsPitOperator() {
+        showPitSelectDialog { type -> onRoleSelected("DEVICE", type.category) }
     }
 
     /**
