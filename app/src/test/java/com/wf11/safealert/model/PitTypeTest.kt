@@ -7,7 +7,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** v1.1.89 (SA-1) PIT type / number selection that replaced free-text display names. */
+/** v1.1.90 (SA-1) PIT type / number selection that replaced free-text display names. */
 class PitTypeTest {
 
     private val KIM = "\uAE40\uC601\uC0DD"

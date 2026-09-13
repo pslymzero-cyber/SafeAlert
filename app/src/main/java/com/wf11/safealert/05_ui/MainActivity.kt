@@ -274,9 +274,9 @@ class MainActivity : AppCompatActivity() {
                 .setPositiveButton("확인", null)
                 .show()
         }
-        // (v1.1.89 SA-1) 구 형식(사람 이름) 저장값 이행 — 복원보다 먼저 돌려 낡은 값이 화면에 뜨지 않게 한다
+        // (v1.1.90 SA-1) 구 형식(사람 이름) 저장값 이행 — 복원보다 먼저 돌려 낡은 값이 화면에 뜨지 않게 한다
         migrateDisplayNameToPitId()
-        // (v1.1.89 SA-1) 표시 이름은 더 이상 타이핑하지 않는다. 탭하면 종류·번호 선택 팝업이 뜬다.
+        // (v1.1.90 SA-1) 표시 이름은 더 이상 타이핑하지 않는다. 탭하면 종류·번호 선택 팝업이 뜬다.
         //   입력 수단 자체를 없애는 것이 이번 변경의 핵심이다 — 사람 이름이 들어올 경로가 화면에 없다.
         binding.etDisplayName.apply {
             isFocusable = false
@@ -291,7 +291,7 @@ class MainActivity : AppCompatActivity() {
 
         // [v1.0.34] 3-Role 선택 — 보행자(WALKER) / EPJ·지게차(DEVICE) + Category 동시 지정
         //   (v1.1.77) 사업장 코드가 없으면 requireSiteCode 가 입력 팝업을 띄우고 시작을 막는다.
-        // (v1.1.89 SA-1) 장비 카드는 하나다. 역할(Category)은 고른 장비가 정한다 —
+        // (v1.1.90 SA-1) 장비 카드는 하나다. 역할(Category)은 고른 장비가 정한다 —
         //   역할을 먼저 고르고 장비를 또 고르면 둘이 어긋날 수 있다.
         //   card_role_epj 는 레이아웃에서 gone 이라 리스너를 달지 않는다(EPJ·워키는 장비 목록에 있다).
         binding.cardRoleWalker.setOnClickListener   { requireSiteCode { onRoleSelected("WALKER", BleConstants.CAT_WALKER) } }
@@ -737,7 +737,7 @@ class MainActivity : AppCompatActivity() {
         //   겹치면 광고/스캔 재초기화가 이전 인스턴스 정리와 경합한다.
         statusHandler.postDelayed({
             if (isFinishing || isDestroyed) return@postDelayed
-            // (v1.1.89 SA-1) 장비로 전환할 때도 장비를 고르게 한다 — 고른 장비가 역할을 정한다
+            // (v1.1.90 SA-1) 장비로 전환할 때도 장비를 고르게 한다 — 고른 장비가 역할을 정한다
             if (fromMode == "WALKER") startAsPitOperator()
             else onRoleSelected("WALKER", BleConstants.CAT_WALKER)
         }, 800L)
@@ -818,7 +818,7 @@ class MainActivity : AppCompatActivity() {
         TextViewCompat.setCompoundDrawableTintList(btn, ColorStateList.valueOf(accent))
     }
 
-    /** (v1.1.89 SA-1) 표시 이름 필드 그리기 — 저장된 장비 ID, 없으면 자동 ID 안내 */
+    /** (v1.1.90 SA-1) 표시 이름 필드 그리기 — 저장된 장비 ID, 없으면 자동 ID 안내 */
     private fun renderDisplayName() {
         val id = prefs.getString("display_name", "") ?: ""
         binding.etDisplayName.setText(id)
@@ -828,7 +828,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * (v1.1.89 SA-1) 장비 선택 팝업 — 종류 드롭다운 + 번호 드롭다운(1~99).
+     * (v1.1.90 SA-1) 장비 선택 팝업 — 종류 드롭다운 + 번호 드롭다운(1~99).
      *
      * 자유 입력을 대체한다. 키보드가 뜨지 않으므로 사람 이름이 들어올 경로가 없다.
      * 드롭다운은 장갑 낀 손·창고 조명을 전제로 크게(항목 64dp·22sp) 잡았다.
@@ -888,7 +888,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * (v1.1.89 SA-1) 장비 작업자 시작 — 고른 장비의 Category 로 시작한다.
+     * (v1.1.90 SA-1) 장비 작업자 시작 — 고른 장비의 Category 로 시작한다.
      * 매번 고르게 한다. 교대마다 타는 장비가 바뀌는데 직전 값으로 그냥 시작하면
      * 경보 로그가 다른 장비를 가리킨다. 직전 선택이 복원돼 있어 확인 1탭이면 끝난다.
      */
@@ -897,7 +897,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * (v1.1.89 SA-1) 장비 ID 형식 이행 — 구버전이 저장한 사람 이름을 송출 경로에서 걷어낸다.
+     * (v1.1.90 SA-1) 장비 ID 형식 이행 — 구버전이 저장한 사람 이름을 송출 경로에서 걷어낸다.
      *
      * 두 키를 함께 본다. display_name 은 사용자가 입력하던 표시 이름이고,
      * device_id 는 BleService.saveRunningMode 가 실행 시 그 표시 이름으로 덮어쓰는 값이라
@@ -987,7 +987,7 @@ class MainActivity : AppCompatActivity() {
         dialog.show()
     }
 
-    /** (v1.1.89) 자동 발급 ID 생성 — FirebaseManager.AUTO_ID_REGEX 와 같은 형식("SA-" + UUID 8자 대문자) */
+    /** (v1.1.90) 자동 발급 ID 생성 — FirebaseManager.AUTO_ID_REGEX 와 같은 형식("SA-" + UUID 8자 대문자) */
     private fun newAutoId(): String = "SA-" + UUID.randomUUID().toString().take(8).uppercase()
 
     private fun myId(): String {

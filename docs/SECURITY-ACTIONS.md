@@ -21,8 +21,8 @@
 | 송출 ID | `종류코드-번호` 5바이트 고정 — `CB-01`, `RT-07`, `HR-99` |
 | 경보 로그 | `센터명-장비ID` — `WF11-CB-01` |
 | 대상 | `PitType`(신규) / `FirebaseManager` / `MainActivity` / `dialog_pit_select.xml`(신규) / `activity_main.xml` |
-| 적용 | v1.1.89 (versionCode 145) |
-| 상태 | [x] 완료 — v1.1.89 |
+| 적용 | v1.1.90 (versionCode 146) |
+| 상태 | [x] 완료 — v1.1.90 |
 
 **형식 검증이 아니라 입력 수단 제거다.** 초안은 자유 입력에 정규식을 거는 방식이었다.
 그 방식은 규칙이 아무리 촘촘해도 우회 여지가 남고(`PARKYOUNGSU1`), 현장에서는 장갑 낀
@@ -190,4 +190,4 @@ SR-1, SR-2의 근본 해결책은 사내 이관이다. 금번 심사에서는 �
 | 2026-09-12 | ONESEC 앱 등록 완료 (`SID006037`) — Classification `Confidential(Red)`, Static Risk Score 20 |
 | 2026-09-12 | Security Review 신청 착수 (유형: 신규 In-House 애플리케이션 개발) |
 | 2026-09-12 | Security Review 제출 완료 — Due Date 2026-10-02 |
-| 2026-09-13 | SA-1 적용 (v1.1.89) — 표시명 자유 입력 폐지, 장비 종류·번호 선택식 전환, 역할 카드를 `장비 작업자` 로 통합 + `display_name`·`device_id` 이행 |
+| 2026-09-13 | SA-1 적용 (v1.1.90) — 표시명 자유 입력 폐지, 장비 종류·번호 선택식 전환, 역할 카드를 `장비 작업자` 로 통합 + `display_name`·`device_id` 이행 |

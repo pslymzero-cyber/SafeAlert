@@ -3,7 +3,7 @@ package com.wf11.safealert.model
 import com.wf11.safealert.ble.BleConstants
 
 /**
- * (v1.1.89 SA-1) PIT(Powered Industrial Truck) 장비 종류.
+ * (v1.1.90 SA-1) PIT(Powered Industrial Truck) 장비 종류.
  *
  * 표시 이름 자유 입력을 대체한다. 사람 이름·닉네임이 BLE 송출과 Firebase 경보 로그로
  * 들어가던 경로를, 입력 수단 자체를 없애 구조적으로 막는다. 현장은 종류와 번호를

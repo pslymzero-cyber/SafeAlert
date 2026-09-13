@@ -30,7 +30,7 @@ object FirebaseManager {
         val alertId = UUID.randomUUID().toString()
         val data = mapOf(
             "timestamp" to System.currentTimeMillis(),
-            "deviceId" to withSite(deviceId),   // (v1.1.89 SA-1) 센터명-장비ID (예: WF11-CB-01)
+            "deviceId" to withSite(deviceId),   // (v1.1.90 SA-1) 센터명-장비ID (예: WF11-CB-01)
             "walkerId" to withSite(walkerId),
             "rssi" to rssi,
             "alertLevel" to level,
@@ -85,7 +85,7 @@ object FirebaseManager {
     const val DEVICE_ID_MAX_BYTES = 15
 
     /**
-     * (v1.1.89 SA-1) 표시 이름 = PIT 장비 ID. `종류코드-번호` 두 토큰이다 — `CB-01`, `RT-07`.
+     * (v1.1.90 SA-1) 표시 이름 = PIT 장비 ID. `종류코드-번호` 두 토큰이다 — `CB-01`, `RT-07`.
      *
      * 자유 입력을 없애고 선택식(종류 드롭다운 + 번호 드롭다운)으로 바꿨으므로,
      * 사람 이름·닉네임이 들어올 경로가 구조적으로 존재하지 않는다. 이 검증은 구버전이
@@ -98,13 +98,13 @@ object FirebaseManager {
      */
     val PIT_ID_REGEX = Regex("^[A-Z]{2}-[0-9]{2}$")
 
-    /** (v1.1.89) 입력 안내 문구 — UI 힌트·마이그레이션 안내가 같은 문장을 쓴다 */
+    /** (v1.1.90) 입력 안내 문구 — UI 힌트·마이그레이션 안내가 같은 문장을 쓴다 */
     const val PIT_ID_HINT = "장비 종류와 번호를 선택하세요 (예: CB-01)"
 
-    /** (v1.1.89) 입력 정규화 — 사업장 코드와 같은 규칙: 앞뒤 공백 제거 후 대문자화 */
+    /** (v1.1.90) 입력 정규화 — 사업장 코드와 같은 규칙: 앞뒤 공백 제거 후 대문자화 */
     fun normalizeDeviceId(s: String): String = s.trim().uppercase(Locale.ROOT)
 
-    /** (v1.1.89 SA-1) 표시 이름 검증 — 빈 값은 허용(자동 ID 사용), 그 외는 장비 ID 형식만 허용. */
+    /** (v1.1.90 SA-1) 표시 이름 검증 — 빈 값은 허용(자동 ID 사용), 그 외는 장비 ID 형식만 허용. */
     fun isValidDeviceId(s: String): Boolean {
         val t = normalizeDeviceId(s)
         if (t.isEmpty()) return true
@@ -112,13 +112,13 @@ object FirebaseManager {
     }
 
     /**
-     * (v1.1.89) 자동 발급 ID 형식 — MainActivity.newAutoId() 생성규칙("SA-" + UUID 8자 대문자).
+     * (v1.1.90) 자동 발급 ID 형식 — MainActivity.newAutoId() 생성규칙("SA-" + UUID 8자 대문자).
      * 보행자처럼 장비 ID 가 없는 기기가 쓴다.
      */
     val AUTO_ID_REGEX = Regex("^SA-[0-9A-F]{8}$")
 
     /**
-     * (v1.1.89 SA-1) 송출 ID 로 그대로 써도 되는 값인가 — 장비 ID 또는 자동 발급 ID(빈 값은 불가).
+     * (v1.1.90 SA-1) 송출 ID 로 그대로 써도 되는 값인가 — 장비 ID 또는 자동 발급 ID(빈 값은 불가).
      * 구버전이 device_id 에 써 넣은 사람 이름을 걸러내는 데 쓴다.
      */
     fun isUsableAdvertisedId(s: String): Boolean {
@@ -128,7 +128,7 @@ object FirebaseManager {
     }
 
     /**
-     * (v1.1.89 SA-1) 경보 로그용 전체 식별자 — `센터명-장비ID`. `WF11-CB-01` 로 남는다.
+     * (v1.1.90 SA-1) 경보 로그용 전체 식별자 — `센터명-장비ID`. `WF11-CB-01` 로 남는다.
      *
      * BLE 에는 센터명을 싣지 않는다(예산·중복). 대신 저장 시점에 붙인다. BLE 로 만난
      * 상대는 물리적으로 같은 센터 안에 있으므로 내 센터 코드를 그대로 적용한다 —

@@ -6,7 +6,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * v1.1.89 (SA-1) display name = PIT id chosen from two dropdowns: TYPE-NN (CB-01, RT-07).
+ * v1.1.90 (SA-1) display name = PIT id chosen from two dropdowns: TYPE-NN (CB-01, RT-07).
  * Free text entry is gone from the screen, so this validator is the second line of defence -
  * it rejects what older versions stored and anything arriving from outside.
  */
