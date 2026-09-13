@@ -17,11 +17,34 @@
 | 항목 | 내용 |
 |---|---|
 | 목표 | 저장 값을 자산 식별자로 한정해 개인 식별 정보 유입 경로를 없앤다 |
-| 조치 | 입력 검증을 자산번호 형식으로 제한 (예: `EPJ03`, `FL07`) |
-| 대상 | `FirebaseManager.isValidDeviceId()` + 기존 표시명 마이그레이션 |
+| 조치 | 입력 검증을 자산번호 형식 `^[A-Z]{2,4}[0-9]{1,3}$` 로 제한 (예: `EPJ03`, `FL07`). 소문자 입력은 대문자로 정규화 |
+| 대상 | `FirebaseManager.isValidDeviceId()` / `MainActivity` 입력·이행 / `activity_main.xml` |
 | 효과 | 개인 식별 정보 저장 경로를 코드 수준에서 차단 |
-| 비고 | 전 현장 기기 업데이트 필요. BLE 페이로드 15바이트 제한 내 수용 가능 |
-| 상태 | [ ] 미착수 |
+| 적용 | v1.1.89 (versionCode 145) |
+| 비고 | 전 현장 기기 업데이트 필요. ASCII 최대 7바이트로 BLE 15바이트 제한을 구조적으로 넘길 수 없음 |
+| 상태 | [x] 완료 — v1.1.89 |
+
+**저장 경로 2개를 함께 정리한다.** `display_name`(사용자 입력)만 지우면 부족하다.
+`BleService.saveRunningMode()` 가 실행 시 `device_id` 를 표시 이름으로 덮어쓰기 때문에,
+옛 이름이 자동 ID 자리에 그대로 남아 계속 송출된다. 두 키를 모두 검사한다.
+
+| 기존 값 | 이행 동작 | 경보 영향 |
+|---|---|---|
+| `display_name` 이 자산번호 | 대문자로만 정규화 | 없음 |
+| `display_name` 이 사람 이름 | 삭제 + 1회 안내 팝업 | 없음 — 자동 ID 로 송출 |
+| `device_id` 가 자산번호 / 자동 ID | 유지 | 없음 |
+| `device_id` 가 사람 이름 | 자동 ID 신규 발급으로 교체 | 없음 |
+
+`device_id` 를 지우지 않고 **교체**하는 이유는 `BleService.onStartCommand()` 의
+`START_STICKY` 복원 경로가 키 부재 시 `"SA-DEFAULT"` 를 싣기 때문이다.
+지우기만 하면 이행된 기기 전부가 같은 ID 로 송출돼 피어 식별이 무너진다.
+
+이행은 `MainActivity.onCreate()` 에서 1회 수행하고, 어떤 분기에서도 서비스 시작이나
+경보 판정을 막지 않는다. 형식 위반 입력은 저장만 거부하고 직전 값으로 되돌리므로
+시작 게이트(`requireSiteCode`)는 그대로 통과한다.
+
+**로컬 에코 보정 데이터는 영향받지 않는다.** 보정값은 모델쌍 단위로 로컬 prefs 에
+저장되며 `device_id` 는 업로더 태그로만 쓰인다(`CalibrationEngine.persistEchoAll`).
 
 ### [SA-2] 사업장 코드 변경 경로를 인증 계층으로 이동
 
@@ -107,3 +130,4 @@ SR-1, SR-2의 근본 해결책은 사내 이관이다. 금번 심사에서는 �
 | 2026-09-12 | ONESEC 앱 등록 완료 (`SID006037`) — Classification `Confidential(Red)`, Static Risk Score 20 |
 | 2026-09-12 | Security Review 신청 착수 (유형: 신규 In-House 애플리케이션 개발) |
 | 2026-09-12 | Security Review 제출 완료 — Due Date 2026-10-02 |
+| 2026-09-13 | SA-1 적용 (v1.1.89) — 표시명 자산번호 형식 강제 + `display_name`·`device_id` 이행 |

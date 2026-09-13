@@ -84,12 +84,40 @@ object FirebaseManager {
     // (v1.1.87) 표시 이름 = BLE 송출 ID 상한. UTF-8 15바이트 = 한글 5자·영문 15자 (BleAdvertiser 절단 폭과 동일)
     const val DEVICE_ID_MAX_BYTES = 15
 
-    /** (v1.1.87) 표시 이름 검증 — trim 후 빈 값 허용, Firebase 키 금지문자·제어문자·15바이트 초과 거부. 치환하지 않는다. */
+    /**
+     * (v1.1.89 SA-1) 표시 이름 = 자산번호. 영문 2~4자 + 숫자 1~3자 (예: EPJ03, FL07).
+     * 사람 이름·닉네임을 받지 않는다 — 개인 식별 정보가 BLE 송출·Firebase 경보 로그로 들어가는 유일한 경로였다.
+     * ASCII 최대 7바이트 → DEVICE_ID_MAX_BYTES(15) 안에 항상 들어가고,
+     * Firebase 키 금지문자( . # $ [ ] / )·제어문자도 형식 자체로 배제된다.
+     */
+    val ASSET_ID_REGEX = Regex("^[A-Z]{2,4}[0-9]{1,3}$")
+
+    /** (v1.1.89) 자산번호 최대 길이 — 영문4 + 숫자3. 입력 필터 상한 */
+    const val ASSET_ID_MAX_LEN = 7
+
+    /** (v1.1.89) 입력 안내 문구 — UI 힌트·오류·마이그레이션 안내가 같은 문장을 쓴다 */
+    const val ASSET_ID_HINT = "영문 2~4자 + 숫자 1~3자 (예: EPJ03, FL07)"
+
+    /** (v1.1.89) 자동 발급 ID 형식 — MainActivity.myId() 생성규칙("SA-" + UUID 8자 대문자) */
+    val AUTO_ID_REGEX = Regex("^SA-[0-9A-F]{8}$")
+
+    /** (v1.1.89) 입력 정규화 — 사업장 코드와 같은 규칙: 앞뒤 공백 제거 후 대문자화(소문자 입력 허용) */
+    fun normalizeDeviceId(s: String): String = s.trim().uppercase(Locale.ROOT)
+
+    /** (v1.1.89 SA-1) 표시 이름 검증 — 빈 값은 허용(자동 ID 사용), 그 외는 자산번호 형식만 허용. 치환하지 않는다. */
     fun isValidDeviceId(s: String): Boolean {
-        val t = s.trim()
+        val t = normalizeDeviceId(s)
         if (t.isEmpty()) return true
-        if (t.any { it in ".#$[]/" || it.isISOControl() }) return false
-        return t.toByteArray(Charsets.UTF_8).size <= DEVICE_ID_MAX_BYTES
+        return ASSET_ID_REGEX.matches(t)
+    }
+
+    /**
+     * (v1.1.89 SA-1) 송출 ID 로 그대로 써도 되는 값인가 — 자산번호 또는 자동 발급 ID.
+     * 구버전이 device_id 에 써 넣은 사람 이름을 걸러내는 데 쓴다(빈 값은 불가).
+     */
+    fun isUsableAdvertisedId(s: String): Boolean {
+        val t = normalizeDeviceId(s)
+        return ASSET_ID_REGEX.matches(t) || AUTO_ID_REGEX.matches(t)
     }
 
     /** (v1.1.87) s 의 앞에서부터 UTF-8 maxBytes 안에 드는 문자 수(서로게이트 쌍은 쪼개지 않음). 입력 필터용 */

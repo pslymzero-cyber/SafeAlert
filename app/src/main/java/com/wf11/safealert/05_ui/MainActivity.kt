@@ -34,6 +34,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.widget.TextViewCompat
+import androidx.core.widget.doAfterTextChanged
 import com.google.android.material.button.MaterialButton
 import com.wf11.safealert.BuildConfig
 import com.wf11.safealert.R
@@ -270,15 +271,19 @@ class MainActivity : AppCompatActivity() {
                 .setPositiveButton("확인", null)
                 .show()
         }
+        // (v1.1.89 SA-1) 구 형식(사람 이름) 저장값 이행 — 복원보다 먼저 돌려 낡은 값이 화면에 뜨지 않게 한다
+        migrateDisplayNameToAssetId()
         // 저장된 이름 복원
         binding.etDisplayName.setText(prefs.getString("display_name", ""))
-        // (v1.1.87) UTF-8 15바이트 입력 상한(한글 5자·영문 15자) — 넘치는 입력은 받지 않는다
-        binding.etDisplayName.filters = arrayOf(InputFilter { src, start, end, dest, dstart, dend ->
-            val rest = dest.subSequence(0, dstart).toString() + dest.subSequence(dend, dest.length)
-            val room = FirebaseManager.DEVICE_ID_MAX_BYTES - rest.toByteArray(Charsets.UTF_8).size
-            val keep = if (room <= 0) 0 else FirebaseManager.utf8PrefixLen(src.subSequence(start, end), room)
-            if (keep == end - start) null else src.subSequence(start, start + keep)
-        })
+        // (v1.1.89 SA-1) 자산번호 입력 상한 — 영문4 + 숫자3 = 7자. 대문자로 강제하고 초과 입력은 받지 않는다.
+        //   ASCII 7바이트라 BLE 송출 상한(15바이트) 은 구조적으로 넘길 수 없다.
+        binding.etDisplayName.filters = arrayOf(
+            InputFilter.AllCaps(),
+            InputFilter.LengthFilter(FirebaseManager.ASSET_ID_MAX_LEN)
+        )
+        // (v1.1.89 SA-1) 실시간 형식 피드백 — 저장은 requireSiteCode 진입 시점이라, 그 전에 형식을 보여준다
+        binding.etDisplayName.doAfterTextChanged { showDisplayNameFeedback(it?.toString() ?: "") }
+        showDisplayNameFeedback(binding.etDisplayName.text?.toString() ?: "")
         // (v1.1.77) 저장된 사업장 코드 복원 — BLE 설정 UWB 섹션과 같은 값(dev_settings.uwb_site_code)
         binding.etSiteCode.setText(DevSettings.siteCode)
 
@@ -808,14 +813,80 @@ class MainActivity : AppCompatActivity() {
         TextViewCompat.setCompoundDrawableTintList(btn, ColorStateList.valueOf(accent))
     }
 
+    /**
+     * (v1.1.89 SA-1) 자산번호 형식 실시간 피드백 — 저장 실패를 시작 직전에야 알게 되는 것을 막는다.
+     * 빈 값은 허용이므로(자동 ID 사용) 오류로 표시하지 않는다.
+     */
+    private fun showDisplayNameFeedback(raw: String) {
+        val til  = binding.tilDisplayName
+        val name = FirebaseManager.normalizeDeviceId(raw)
+        // 안내 문구는 항상 같은 자리에 둔다 — 오류일 때만 error 로 올려 색만 바뀌게 해서 줄 높이가 흔들리지 않는다
+        if (FirebaseManager.isValidDeviceId(name)) {
+            til.error = null
+            til.helperText = FirebaseManager.ASSET_ID_HINT
+        } else {
+            til.helperText = null
+            til.error = FirebaseManager.ASSET_ID_HINT
+        }
+    }
+
+    /**
+     * (v1.1.89 SA-1) 자산번호 형식 이행 — 구버전이 저장한 사람 이름을 송출 경로에서 걷어낸다.
+     *
+     * 두 키를 함께 본다. display_name 은 사용자가 입력한 표시 이름이고,
+     * device_id 는 BleService.saveRunningMode 가 실행 시 그 표시 이름으로 덮어쓰는 값이라
+     * display_name 만 지우면 자동 ID 자리에 옛 이름이 그대로 남는다.
+     *
+     * 어느 경우에도 경보 동작은 끊지 않는다 — 값을 비우면 myId() 가 자동 ID 를 새로 발급하고,
+     * 시작 경로(startServiceWithCurrentMode)는 그 값을 그대로 싣는다.
+     */
+    private fun migrateDisplayNameToAssetId() {
+        val savedName = prefs.getString("display_name", "") ?: ""
+        val savedId   = prefs.getString("device_id", "") ?: ""
+        val editor    = prefs.edit()
+        var notify    = false
+
+        if (savedName.isNotEmpty()) {
+            val norm = FirebaseManager.normalizeDeviceId(savedName)
+            if (FirebaseManager.isValidDeviceId(norm)) {
+                if (norm != savedName) editor.putString("display_name", norm)   // 대소문자만 정규화
+            } else {
+                editor.remove("display_name")
+                notify = true
+            }
+        }
+        // 자산번호도 자동 ID 도 아닌 값 = 구버전이 밀어 넣은 사람 이름 → 자동 ID 로 즉시 교체.
+        //   지우기만 하면 START_STICKY 복원 경로(BleService.onStartCommand)가 "SA-DEFAULT" 를 싣게 되고,
+        //   이행된 기기 전부가 같은 ID 로 송출돼 피어 식별이 무너진다. 그래서 비우지 않고 새로 발급한다.
+        if (savedId.isNotEmpty() && !FirebaseManager.isUsableAdvertisedId(savedId)) {
+            editor.putString("device_id", newAutoId())
+            notify = true
+        }
+        editor.apply()
+        if (!notify) return
+
+        AlertDialog.Builder(this)
+            .setTitle("표시 이름 형식 변경")
+            .setMessage(
+                "표시 이름이 자산번호 형식으로 바뀌었습니다.\n" +
+                "${FirebaseManager.ASSET_ID_HINT}\n\n" +
+                "형식에 맞지 않는 기존 이름은 삭제되었습니다. 자산번호를 다시 입력해 주세요.\n" +
+                "입력 전에는 자동 ID 로 송출되며 경보는 그대로 동작합니다."
+            )
+            .setPositiveButton("확인", null)
+            .show()
+    }
+
     private fun saveDisplayName() {
-        val name = binding.etDisplayName.text?.toString()?.trim() ?: ""
-        // (v1.1.87) 금지문자( . # $ [ ] / )·제어문자·15바이트 초과는 저장하지 않고 이전 값으로 되돌린다(치환 없음)
+        val raw  = binding.etDisplayName.text?.toString() ?: ""
+        val name = FirebaseManager.normalizeDeviceId(raw)
+        // (v1.1.89 SA-1) 자산번호 형식이 아니면 저장하지 않고 이전 값으로 되돌린다(치환 없음)
         if (!FirebaseManager.isValidDeviceId(name)) {
-            Toast.makeText(this, "nick name 에 . # \$ [ ] / 는 쓸 수 없습니다 (한글 5자·영문 15자 이내)", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "표시 이름은 자산번호 형식입니다 — ${FirebaseManager.ASSET_ID_HINT}", Toast.LENGTH_LONG).show()
             binding.etDisplayName.setText(prefs.getString("display_name", ""))
             return
         }
+        if (name != raw) binding.etDisplayName.setText(name)   // 정규화 결과를 화면에도 반영
         prefs.edit().putString("display_name", name).apply()
     }
 
@@ -869,10 +940,13 @@ class MainActivity : AppCompatActivity() {
         dialog.show()
     }
 
+    /** (v1.1.89) 자동 발급 ID 생성 — FirebaseManager.AUTO_ID_REGEX 와 같은 형식("SA-" + UUID 8자 대문자) */
+    private fun newAutoId(): String = "SA-" + UUID.randomUUID().toString().take(8).uppercase()
+
     private fun myId(): String {
         val saved = prefs.getString("device_id", null)
         if (saved != null) return saved
-        val newId = "SA-" + UUID.randomUUID().toString().take(8).uppercase()
+        val newId = newAutoId()
         prefs.edit().putString("device_id", newId).apply()
         return newId
     }
