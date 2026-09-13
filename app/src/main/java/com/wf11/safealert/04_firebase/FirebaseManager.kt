@@ -30,8 +30,8 @@ object FirebaseManager {
         val alertId = UUID.randomUUID().toString()
         val data = mapOf(
             "timestamp" to System.currentTimeMillis(),
-            "deviceId" to deviceId,
-            "walkerId" to walkerId,
+            "deviceId" to withSite(deviceId),   // (v1.1.89 SA-1) 센터명-장비ID (예: WF11-CB-01)
+            "walkerId" to withSite(walkerId),
             "rssi" to rssi,
             "alertLevel" to level,
             "myRole" to myRole,
@@ -40,7 +40,7 @@ object FirebaseManager {
         )
         siteNode("alerts").child(today).child(alertId).setValue(data)
             .addOnFailureListener { Log.e(TAG, "경보 저장 실패: ${it.message}") }
-        Log.d(TAG, "경보 저장: $level $deviceId rssi=$rssi")
+        Log.d(TAG, "경보 저장: $level ${withSite(deviceId)} rssi=$rssi")
     }
 
     // ── (v1.1.76) UWB 실측 표본 — 성능 사양의 물리 거리 근거 ─────────────
@@ -85,55 +85,58 @@ object FirebaseManager {
     const val DEVICE_ID_MAX_BYTES = 15
 
     /**
-     * (v1.1.89 SA-1) 표시 이름 = 장비번호. 현장 라벨 표기를 그대로 받는다.
-     *   지게차 C/B : 8FB25-40604 / 8FB25-40577
-     *   리치       : 8FBR18-20427 / 8FBR18-20432
+     * (v1.1.89 SA-1) 표시 이름 = PIT 장비 ID. `종류코드-번호` 두 토큰이다 — `CB-01`, `RT-07`.
      *
-     * 사람 이름·닉네임을 받지 않는다 — 이 값은 BLE 로 송출되고 Firebase 경보 로그의
-     * deviceId 로 그대로 저장되므로, 개인 식별 정보가 외부에 평문으로 쌓이는 통로였다.
+     * 자유 입력을 없애고 선택식(종류 드롭다운 + 번호 드롭다운)으로 바꿨으므로,
+     * 사람 이름·닉네임이 들어올 경로가 구조적으로 존재하지 않는다. 이 검증은 구버전이
+     * 남긴 값과 외부에서 들어온 값을 거르는 2차 방어선이다.
      *
-     * 규칙 — 대문자 영문·숫자·하이픈만. 영문과 숫자를 각각 1자 이상 포함하고
-     * 하이픈은 양끝·연속 불가, 전체 3~15자.
-     *   · 한글·공백·특수문자를 배제해 사람 이름이 들어올 수 없다
-     *   · 숫자 필수 → 영문 이름(KIM, PARK)이 통과하지 못한다
-     *   · 영문 필수 → 순수 숫자열(휴대폰 번호 01012345678)이 통과하지 못한다
-     *   · ASCII 전용 15자 = 15바이트 → DEVICE_ID_MAX_BYTES 와 동일. BLE 송출 상한을 넘지 않는다
-     *   · Firebase 키 금지문자( . # $ [ ] / )·제어문자도 문자집합에서 배제된다
+     * 종류코드가 실제 등록된 장비인지는 여기서 보지 않는다 — 04_firebase 는 01_model 에
+     * 의존하지 않는다(레이어 규칙). 코드 유효성은 선택 UI 의 PitType.parse 가 판정한다.
+     *
+     * 5바이트 고정이라 BLE 송출 상한(15바이트) 대비 10바이트가 남는다. 센터명은 싣지 않는다.
      */
-    val ASSET_ID_REGEX = Regex("^(?=.*[A-Z])(?=.*[0-9])[A-Z0-9]+(-[A-Z0-9]+)*$")
+    val PIT_ID_REGEX = Regex("^[A-Z]{2}-[0-9]{2}$")
 
-    /** (v1.1.89) 장비번호 최소 길이 — 이보다 짧으면 장비 식별자로 볼 수 없다 */
-    const val ASSET_ID_MIN_LEN = 3
+    /** (v1.1.89) 입력 안내 문구 — UI 힌트·마이그레이션 안내가 같은 문장을 쓴다 */
+    const val PIT_ID_HINT = "장비 종류와 번호를 선택하세요 (예: CB-01)"
 
-    /** (v1.1.89) 입력 안내 문구 — UI 힌트·오류·마이그레이션 안내가 같은 문장을 쓴다 */
-    const val ASSET_ID_HINT = "장비번호를 그대로 입력 (예: 8FB25-40604) · 영문+숫자 3~15자"
-
-    /** (v1.1.89) 입력 정규화 — 사업장 코드와 같은 규칙: 앞뒤 공백 제거 후 대문자화(소문자 입력 허용) */
+    /** (v1.1.89) 입력 정규화 — 사업장 코드와 같은 규칙: 앞뒤 공백 제거 후 대문자화 */
     fun normalizeDeviceId(s: String): String = s.trim().uppercase(Locale.ROOT)
 
-    /** (v1.1.89 SA-1) 표시 이름 검증 — 빈 값은 허용(자동 ID 사용), 그 외는 장비번호 형식만 허용. 치환하지 않는다. */
+    /** (v1.1.89 SA-1) 표시 이름 검증 — 빈 값은 허용(자동 ID 사용), 그 외는 장비 ID 형식만 허용. */
     fun isValidDeviceId(s: String): Boolean {
         val t = normalizeDeviceId(s)
         if (t.isEmpty()) return true
-        if (t.length < ASSET_ID_MIN_LEN || t.length > DEVICE_ID_MAX_BYTES) return false
-        return ASSET_ID_REGEX.matches(t)
+        return PIT_ID_REGEX.matches(t)
     }
 
     /**
      * (v1.1.89) 자동 발급 ID 형식 — MainActivity.newAutoId() 생성규칙("SA-" + UUID 8자 대문자).
-     * 별도로 둔다: UUID 앞 8자가 전부 A~F 로 나오면(약 0.08%) 숫자가 없어 ASSET_ID_REGEX 를
-     * 만족하지 못하고, 이행이 매 실행마다 ID 를 새로 발급하는 무한 교체에 빠진다.
+     * 보행자처럼 장비 ID 가 없는 기기가 쓴다.
      */
     val AUTO_ID_REGEX = Regex("^SA-[0-9A-F]{8}$")
 
     /**
-     * (v1.1.89 SA-1) 송출 ID 로 그대로 써도 되는 값인가 — 장비번호 또는 자동 발급 ID(빈 값은 불가).
+     * (v1.1.89 SA-1) 송출 ID 로 그대로 써도 되는 값인가 — 장비 ID 또는 자동 발급 ID(빈 값은 불가).
      * 구버전이 device_id 에 써 넣은 사람 이름을 걸러내는 데 쓴다.
      */
     fun isUsableAdvertisedId(s: String): Boolean {
         val t = normalizeDeviceId(s)
         if (t.isEmpty()) return false
-        return AUTO_ID_REGEX.matches(t) || isValidDeviceId(t)
+        return AUTO_ID_REGEX.matches(t) || PIT_ID_REGEX.matches(t)
+    }
+
+    /**
+     * (v1.1.89 SA-1) 경보 로그용 전체 식별자 — `센터명-장비ID`. `WF11-CB-01` 로 남는다.
+     *
+     * BLE 에는 센터명을 싣지 않는다(예산·중복). 대신 저장 시점에 붙인다. BLE 로 만난
+     * 상대는 물리적으로 같은 센터 안에 있으므로 내 센터 코드를 그대로 적용한다 —
+     * 경로(`alerts/{site}/...`)와 `site` 필드가 이미 같은 전제 위에 서 있다.
+     */
+    fun withSite(id: String): String {
+        val site = DevSettings.siteCode
+        return if (site.isEmpty() || id.isEmpty()) id else "$site-$id"
     }
 
     /** (v1.1.87) s 의 앞에서부터 UTF-8 maxBytes 안에 드는 문자 수(서로게이트 쌍은 쪼개지 않음). 입력 필터용 */

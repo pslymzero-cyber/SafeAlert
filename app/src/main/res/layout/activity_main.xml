@@ -317,17 +317,16 @@
                     android:layout_marginTop="10dp"
                     android:orientation="horizontal">
 
-                    <!-- (v1.1.89 SA-1) 장비번호 전용 — 사람 이름을 받지 않는다. 형식 오류는 실시간 표시 -->
+                    <!-- (v1.1.89 SA-1) 장비 선택 전용 — 타이핑하지 않는다. 탭하면 종류·번호 선택 팝업이 뜬다 -->
                     <com.google.android.material.textfield.TextInputLayout
                         android:id="@+id/til_display_name"
                         android:layout_width="0dp"
                         android:layout_weight="1.7"
                         android:layout_height="wrap_content"
-                        android:hint="장비번호 (선택)"
+                        android:hint="내 장비 (탭하여 선택)"
                         android:textColorHint="@color/sa_text_tertiary"
                         style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
                         app:helperTextEnabled="true"
-                        app:errorEnabled="true"
                         app:boxCornerRadiusTopStart="@dimen/sa_radius_sm" app:boxCornerRadiusTopEnd="@dimen/sa_radius_sm"
                         app:boxCornerRadiusBottomStart="@dimen/sa_radius_sm" app:boxCornerRadiusBottomEnd="@dimen/sa_radius_sm"
                         app:boxStrokeColor="@color/box_stroke_dark" app:hintTextColor="@color/sa_accent_soft">
@@ -335,11 +334,11 @@
                             android:id="@+id/et_display_name"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:inputType="textCapCharacters"
-                            android:maxLength="15"
+                            android:inputType="none"
+                            android:focusable="false"
+                            android:cursorVisible="false"
                             android:textSize="@dimen/sa_type_section"
-                            android:textColor="@color/sa_text_primary"
-                            android:imeOptions="actionNext"/>
+                            android:textColor="@color/sa_text_primary"/>
                     </com.google.android.material.textfield.TextInputLayout>
 
                     <!-- (v1.1.77) 사업장 코드 — 대소문자 무관(대문자로 정규화). 알림·보정 데이터 분리 키 -->

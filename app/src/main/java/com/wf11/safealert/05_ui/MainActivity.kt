@@ -28,23 +28,26 @@ import android.provider.Settings
 import android.view.View
 import android.view.Window
 import android.view.WindowManager
+import android.widget.AdapterView
+import android.widget.ArrayAdapter
 import android.widget.EditText
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.widget.TextViewCompat
-import androidx.core.widget.doAfterTextChanged
 import com.google.android.material.button.MaterialButton
 import com.wf11.safealert.BuildConfig
 import com.wf11.safealert.R
 import com.wf11.safealert.ble.BleConstants
 import com.wf11.safealert.ble.LocalState
+import com.wf11.safealert.model.PitType
 import com.wf11.safealert.utils.BeaconRegistry
 import com.wf11.safealert.utils.DevSettings
 import com.wf11.safealert.utils.OverlayManager
 import com.wf11.safealert.databinding.ActivityMainBinding
 import com.wf11.safealert.databinding.DialogPinBinding
+import com.wf11.safealert.databinding.DialogPitSelectBinding
 import com.wf11.safealert.firebase.FirebaseManager
 import com.wf11.safealert.service.BleService
 import com.wf11.safealert.service.CalibrationEngine
@@ -272,33 +275,26 @@ class MainActivity : AppCompatActivity() {
                 .show()
         }
         // (v1.1.89 SA-1) 구 형식(사람 이름) 저장값 이행 — 복원보다 먼저 돌려 낡은 값이 화면에 뜨지 않게 한다
-        migrateDisplayNameToAssetId()
-        // 저장된 이름 복원
-        binding.etDisplayName.setText(prefs.getString("display_name", ""))
-        // (v1.1.89 SA-1) 장비번호 입력 상한 — 대문자 강제 + 15자. 현장 라벨 최장 표기가 12자(8FBR18-20427)다.
-        //   ASCII 전용이라 15자 = 15바이트 = BLE 송출 상한과 정확히 같다.
-        //   가운데 필터는 PDA 하드웨어 스캐너 대비다. 스캐너는 스캔값을 키보드 입력으로 던지면서
-        //   끝에 Enter/Tab 을 붙이는 경우가 많은데, 그것이 문자로 들어와 필드를 깨뜨리지 않게 걸러낸다.
-        //   라벨 QR 페이로드가 장비번호 원문("8FB25-40604")이라 스캔값이 그대로 이 필드에 들어온다.
-        binding.etDisplayName.filters = arrayOf(
-            InputFilter.AllCaps(),
-            InputFilter { src, start, end, _, _, _ ->
-                if ((start until end).none { src[it].isISOControl() }) null
-                else src.subSequence(start, end).filterNot { it.isISOControl() }
-            },
-            InputFilter.LengthFilter(FirebaseManager.DEVICE_ID_MAX_BYTES)
-        )
-        // (v1.1.89 SA-1) 실시간 형식 피드백 — 저장은 requireSiteCode 진입 시점이라, 그 전에 형식을 보여준다
-        binding.etDisplayName.doAfterTextChanged { showDisplayNameFeedback(it?.toString() ?: "") }
-        showDisplayNameFeedback(binding.etDisplayName.text?.toString() ?: "")
+        migrateDisplayNameToPitId()
+        // (v1.1.89 SA-1) 표시 이름은 더 이상 타이핑하지 않는다. 탭하면 종류·번호 선택 팝업이 뜬다.
+        //   입력 수단 자체를 없애는 것이 이번 변경의 핵심이다 — 사람 이름이 들어올 경로가 화면에 없다.
+        binding.etDisplayName.apply {
+            isFocusable = false
+            isFocusableInTouchMode = false
+            isCursorVisible = false
+            keyListener = null                     // 소프트 키보드·하드웨어 키 입력 차단
+            setOnClickListener { showPitSelectDialog(currentCategory) { } }
+        }
+        renderDisplayName()
         // (v1.1.77) 저장된 사업장 코드 복원 — BLE 설정 UWB 섹션과 같은 값(dev_settings.uwb_site_code)
         binding.etSiteCode.setText(DevSettings.siteCode)
 
         // [v1.0.34] 3-Role 선택 — 보행자(WALKER) / EPJ·지게차(DEVICE) + Category 동시 지정
         //   (v1.1.77) 사업장 코드가 없으면 requireSiteCode 가 입력 팝업을 띄우고 시작을 막는다.
+        // (v1.1.89 SA-1) 보행자는 장비가 없으므로 자동 ID 로 간다. PIT 역할만 장비 선택을 거친다.
         binding.cardRoleWalker.setOnClickListener   { requireSiteCode { onRoleSelected("WALKER", BleConstants.CAT_WALKER) } }
-        binding.cardRoleEpj.setOnClickListener      { requireSiteCode { onRoleSelected("DEVICE", BleConstants.CAT_EPJ) } }
-        binding.cardRoleForklift.setOnClickListener { requireSiteCode { onRoleSelected("DEVICE", BleConstants.CAT_FORKLIFT) } }
+        binding.cardRoleEpj.setOnClickListener      { requireSiteCode { requirePitId(BleConstants.CAT_EPJ)      { onRoleSelected("DEVICE", BleConstants.CAT_EPJ) } } }
+        binding.cardRoleForklift.setOnClickListener { requireSiteCode { requirePitId(BleConstants.CAT_FORKLIFT) { onRoleSelected("DEVICE", BleConstants.CAT_FORKLIFT) } } }
         binding.btnStop.setOnClickListener       { stopServiceImmediately() }
         binding.btnSwitchRole.setOnClickListener { confirmSwitchRole() }   // [v1.1.60] 역할 전환
         binding.cardSettings.setOnClickListener  { showPinDialog() }
@@ -820,49 +816,111 @@ class MainActivity : AppCompatActivity() {
         TextViewCompat.setCompoundDrawableTintList(btn, ColorStateList.valueOf(accent))
     }
 
-    /**
-     * (v1.1.89 SA-1) 장비번호 형식 실시간 피드백 — 저장 실패를 시작 직전에야 알게 되는 것을 막는다.
-     * 빈 값은 허용이므로(자동 ID 사용) 오류로 표시하지 않는다.
-     */
-    private fun showDisplayNameFeedback(raw: String) {
-        val til  = binding.tilDisplayName
-        val name = FirebaseManager.normalizeDeviceId(raw)
-        // 안내 문구는 항상 같은 자리에 둔다 — 오류일 때만 error 로 올려 색만 바뀌게 해서 줄 높이가 흔들리지 않는다
-        if (FirebaseManager.isValidDeviceId(name)) {
-            til.error = null
-            til.helperText = FirebaseManager.ASSET_ID_HINT
-        } else {
-            til.helperText = null
-            til.error = FirebaseManager.ASSET_ID_HINT
-        }
+    /** (v1.1.89 SA-1) 표시 이름 필드 그리기 — 저장된 장비 ID, 없으면 자동 ID 안내 */
+    private fun renderDisplayName() {
+        val id = prefs.getString("display_name", "") ?: ""
+        binding.etDisplayName.setText(id)
+        binding.tilDisplayName.helperText =
+            if (id.isEmpty()) "미선택 — 자동 ID 로 송출됩니다 (보행자)"
+            else "경보 로그: ${FirebaseManager.withSite(id)}"
     }
 
     /**
-     * (v1.1.89 SA-1) 장비번호 형식 이행 — 구버전이 저장한 사람 이름을 송출 경로에서 걷어낸다.
+     * (v1.1.89 SA-1) 장비 선택 팝업 — 종류 드롭다운 + 번호 드롭다운(1~99).
      *
-     * 두 키를 함께 본다. display_name 은 사용자가 입력한 표시 이름이고,
+     * 자유 입력을 대체한다. 키보드가 뜨지 않으므로 사람 이름이 들어올 경로가 없다.
+     * 드롭다운은 장갑 낀 손·창고 조명을 전제로 크게(항목 64dp·22sp) 잡았다.
+     *
+     * [category] 에 속한 장비만 목록에 올린다 — 지게차 카드에서 EPJ 를 고르면 경보 반경이
+     * 어긋난다. CAT_WALKER 처럼 해당 장비가 없으면 전체 목록을 보여준다(설정 화면 진입).
+     *
+     * [onPicked] 는 선택이 확정된 뒤에만 호출된다. 취소·해제는 호출하지 않는다.
+     */
+    private fun showPitSelectDialog(category: Int, onPicked: () -> Unit) {
+        val types = PitType.forCategory(category).ifEmpty { PitType.values().toList() }
+        val nos   = (PitType.NO_MIN..PitType.NO_MAX).toList()
+        val dlg   = DialogPitSelectBinding.inflate(layoutInflater)
+
+        fun <T> bind(sp: android.widget.Spinner, items: List<T>, label: (T) -> String) {
+            sp.adapter = ArrayAdapter(this, R.layout.item_spinner_large, items.map(label)).apply {
+                setDropDownViewResource(R.layout.item_spinner_dropdown_large)
+            }
+        }
+        bind(dlg.spPitType, types) { it.label }
+        bind(dlg.spPitNo, nos) { "%02d".format(it) }
+
+        // 직전 선택 복원 — 번호만 바꾸는 경우가 대부분이라 매번 처음부터 고르게 하지 않는다
+        PitType.parse(prefs.getString("display_name", "") ?: "")?.let { (t, n) ->
+            types.indexOf(t).takeIf { it >= 0 }?.let { dlg.spPitType.setSelection(it) }
+            dlg.spPitNo.setSelection(n - PitType.NO_MIN)
+        }
+
+        fun picked() = PitType.buildId(
+            types[dlg.spPitType.selectedItemPosition],
+            nos[dlg.spPitNo.selectedItemPosition]
+        )
+        fun refresh() {
+            val id = picked()
+            dlg.tvPitPreview.text = "상대 화면 표시  $id
+경보 로그  ${FirebaseManager.withSite(id)}"
+        }
+        val watcher = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(p: AdapterView<*>?, v: View?, pos: Int, id: Long) = refresh()
+            override fun onNothingSelected(p: AdapterView<*>?) = Unit
+        }
+        dlg.spPitType.onItemSelectedListener = watcher
+        dlg.spPitNo.onItemSelectedListener   = watcher
+        refresh()
+
+        AlertDialog.Builder(this)
+            .setTitle("내 장비 선택")
+            .setView(dlg.root)
+            .setPositiveButton("확인") { _, _ ->
+                prefs.edit().putString("display_name", picked()).apply()
+                renderDisplayName()
+                onPicked()
+            }
+            .setNeutralButton("해제(보행자)") { _, _ ->
+                // 장비에서 내렸을 때. 자동 ID 로 돌아가며 경보는 그대로 동작한다.
+                prefs.edit().remove("display_name").apply()
+                renderDisplayName()
+            }
+            .setNegativeButton("취소", null)
+            .show()
+    }
+
+    /**
+     * (v1.1.89 SA-1) PIT 모드 시작 게이트 — 장비 ID 가 있어야 시작한다.
+     * 없으면 선택 팝업을 띄우고, 확정된 뒤에만 [onReady] 로 넘어간다.
+     * 취소하면 시작하지 않는다 — 경보가 도는 중이 아니라 시작 전이므로 안전 기능에 영향이 없다.
+     */
+    private fun requirePitId(category: Int, onReady: () -> Unit) {
+        val id = prefs.getString("display_name", "") ?: ""
+        if (PitType.parse(id)?.first?.category == category) { onReady(); return }
+        showPitSelectDialog(category, onReady)
+    }
+
+    /**
+     * (v1.1.89 SA-1) 장비 ID 형식 이행 — 구버전이 저장한 사람 이름을 송출 경로에서 걷어낸다.
+     *
+     * 두 키를 함께 본다. display_name 은 사용자가 입력하던 표시 이름이고,
      * device_id 는 BleService.saveRunningMode 가 실행 시 그 표시 이름으로 덮어쓰는 값이라
-     * display_name 만 지우면 자동 ID 자리에 옛 이름이 그대로 남는다.
+     * display_name 만 지우면 옛 이름이 자동 ID 자리에 그대로 남아 계속 송출된다.
      *
-     * 어느 경우에도 경보 동작은 끊지 않는다 — 값을 비우면 myId() 가 자동 ID 를 새로 발급하고,
+     * 어느 경우에도 경보 동작은 끊지 않는다 — 값을 비우면 myId() 가 자동 ID 를 발급하고,
      * 시작 경로(startServiceWithCurrentMode)는 그 값을 그대로 싣는다.
      */
-    private fun migrateDisplayNameToAssetId() {
+    private fun migrateDisplayNameToPitId() {
         val savedName = prefs.getString("display_name", "") ?: ""
         val savedId   = prefs.getString("device_id", "") ?: ""
         val editor    = prefs.edit()
         var notify    = false
 
-        if (savedName.isNotEmpty()) {
-            val norm = FirebaseManager.normalizeDeviceId(savedName)
-            if (FirebaseManager.isValidDeviceId(norm)) {
-                if (norm != savedName) editor.putString("display_name", norm)   // 대소문자·공백만 정규화
-            } else {
-                editor.remove("display_name")
-                notify = true
-            }
+        if (savedName.isNotEmpty() && PitType.parse(savedName) == null) {
+            editor.remove("display_name")
+            notify = true
         }
-        // 장비번호도 자동 ID 도 아닌 값 = 구버전이 밀어 넣은 사람 이름 → 자동 ID 로 즉시 교체.
+        // 장비 ID 도 자동 ID 도 아닌 값 = 구버전이 밀어 넣은 사람 이름 → 자동 ID 로 즉시 교체.
         //   지우기만 하면 START_STICKY 복원 경로(BleService.onStartCommand)가 "SA-DEFAULT" 를 싣게 되고,
         //   이행된 기기 전부가 같은 ID 로 송출돼 피어 식별이 무너진다. 그래서 비우지 않고 새로 발급한다.
         if (savedId.isNotEmpty() && !FirebaseManager.isUsableAdvertisedId(savedId)) {
@@ -873,28 +931,15 @@ class MainActivity : AppCompatActivity() {
         if (!notify) return
 
         AlertDialog.Builder(this)
-            .setTitle("표시 이름 형식 변경")
+            .setTitle("장비 선택 방식으로 변경")
             .setMessage(
-                "표시 이름에 장비번호만 입력하도록 바뀌었습니다.\n" +
-                "${FirebaseManager.ASSET_ID_HINT}\n\n" +
-                "형식에 맞지 않는 기존 이름은 삭제되었습니다. 장비에 붙은 번호를 그대로 입력해 주세요.\n" +
-                "입력 전에는 자동 ID 로 송출되며 경보는 그대로 동작합니다."
+                "표시 이름을 직접 입력하지 않고, 장비 종류와 번호를 선택하도록 바뀌었습니다.\n" +
+                "${FirebaseManager.PIT_ID_HINT}\n\n" +
+                "형식에 맞지 않는 기존 이름은 삭제되었습니다. 역할을 선택하면 장비 선택 창이 뜹니다.\n" +
+                "선택 전에는 자동 ID 로 송출되며 경보는 그대로 동작합니다."
             )
             .setPositiveButton("확인", null)
             .show()
-    }
-
-    private fun saveDisplayName() {
-        val raw  = binding.etDisplayName.text?.toString() ?: ""
-        val name = FirebaseManager.normalizeDeviceId(raw)
-        // (v1.1.89 SA-1) 장비번호 형식이 아니면 저장하지 않고 이전 값으로 되돌린다(치환 없음)
-        if (!FirebaseManager.isValidDeviceId(name)) {
-            Toast.makeText(this, "표시 이름은 장비번호만 입력합니다 — ${FirebaseManager.ASSET_ID_HINT}", Toast.LENGTH_LONG).show()
-            binding.etDisplayName.setText(prefs.getString("display_name", ""))
-            return
-        }
-        if (name != raw) binding.etDisplayName.setText(name)   // 정규화 결과를 화면에도 반영
-        prefs.edit().putString("display_name", name).apply()
     }
 
     /**
@@ -914,7 +959,6 @@ class MainActivity : AppCompatActivity() {
      * 입력 팝업을 띄우고 받기 전에는 onReady 를 호출하지 않는다.
      */
     private fun requireSiteCode(onReady: () -> Unit) {
-        saveDisplayName()
         saveSiteCode()
         if (DevSettings.siteCode.isNotEmpty()) { onReady(); return }
 

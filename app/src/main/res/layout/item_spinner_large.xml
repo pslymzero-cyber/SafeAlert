@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  (v1.1.89 SA-1) 장비 선택 드롭다운 — 닫힌 상태(선택된 값).
+  장갑 낀 손·밝은 창고 조명을 전제로 글자와 높이를 키웠다. 일반 Spinner 기본 항목은
+  현장에서 읽히지 않는다.
+-->
+<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:minHeight="56dp"
+    android:gravity="center_vertical"
+    android:paddingStart="@dimen/sa_space_lg"
+    android:paddingEnd="@dimen/sa_space_xxl"
+    android:paddingTop="@dimen/sa_space_md"
+    android:paddingBottom="@dimen/sa_space_md"
+    android:textSize="@dimen/sa_type_display"
+    android:textStyle="bold"
+    android:textColor="@color/sa_text_primary"
+    android:singleLine="true"
+    android:ellipsize="end" />
