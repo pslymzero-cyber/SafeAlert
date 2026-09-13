@@ -28,6 +28,8 @@ import android.provider.Settings
 import android.view.View
 import android.view.Window
 import android.view.WindowManager
+import android.widget.AdapterView
+import android.widget.ArrayAdapter
 import android.widget.EditText
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
@@ -39,11 +41,13 @@ import com.wf11.safealert.BuildConfig
 import com.wf11.safealert.R
 import com.wf11.safealert.ble.BleConstants
 import com.wf11.safealert.ble.LocalState
+import com.wf11.safealert.model.PitType
 import com.wf11.safealert.utils.BeaconRegistry
 import com.wf11.safealert.utils.DevSettings
 import com.wf11.safealert.utils.OverlayManager
 import com.wf11.safealert.databinding.ActivityMainBinding
 import com.wf11.safealert.databinding.DialogPinBinding
+import com.wf11.safealert.databinding.DialogPitSelectBinding
 import com.wf11.safealert.firebase.FirebaseManager
 import com.wf11.safealert.service.BleService
 import com.wf11.safealert.service.CalibrationEngine
@@ -270,23 +274,28 @@ class MainActivity : AppCompatActivity() {
                 .setPositiveButton("확인", null)
                 .show()
         }
-        // 저장된 이름 복원
-        binding.etDisplayName.setText(prefs.getString("display_name", ""))
-        // (v1.1.87) UTF-8 15바이트 입력 상한(한글 5자·영문 15자) — 넘치는 입력은 받지 않는다
-        binding.etDisplayName.filters = arrayOf(InputFilter { src, start, end, dest, dstart, dend ->
-            val rest = dest.subSequence(0, dstart).toString() + dest.subSequence(dend, dest.length)
-            val room = FirebaseManager.DEVICE_ID_MAX_BYTES - rest.toByteArray(Charsets.UTF_8).size
-            val keep = if (room <= 0) 0 else FirebaseManager.utf8PrefixLen(src.subSequence(start, end), room)
-            if (keep == end - start) null else src.subSequence(start, start + keep)
-        })
+        // (v1.1.89 SA-1) 구 형식(사람 이름) 저장값 이행 — 복원보다 먼저 돌려 낡은 값이 화면에 뜨지 않게 한다
+        migrateDisplayNameToPitId()
+        // (v1.1.89 SA-1) 표시 이름은 더 이상 타이핑하지 않는다. 탭하면 종류·번호 선택 팝업이 뜬다.
+        //   입력 수단 자체를 없애는 것이 이번 변경의 핵심이다 — 사람 이름이 들어올 경로가 화면에 없다.
+        binding.etDisplayName.apply {
+            isFocusable = false
+            isFocusableInTouchMode = false
+            isCursorVisible = false
+            keyListener = null                     // 소프트 키보드·하드웨어 키 입력 차단
+            setOnClickListener { showPitSelectDialog { } }   // 시작 전 미리 골라두는 용도
+        }
+        renderDisplayName()
         // (v1.1.77) 저장된 사업장 코드 복원 — BLE 설정 UWB 섹션과 같은 값(dev_settings.uwb_site_code)
         binding.etSiteCode.setText(DevSettings.siteCode)
 
         // [v1.0.34] 3-Role 선택 — 보행자(WALKER) / EPJ·지게차(DEVICE) + Category 동시 지정
         //   (v1.1.77) 사업장 코드가 없으면 requireSiteCode 가 입력 팝업을 띄우고 시작을 막는다.
+        // (v1.1.89 SA-1) 장비 카드는 하나다. 역할(Category)은 고른 장비가 정한다 —
+        //   역할을 먼저 고르고 장비를 또 고르면 둘이 어긋날 수 있다.
+        //   card_role_epj 는 레이아웃에서 gone 이라 리스너를 달지 않는다(EPJ·워키는 장비 목록에 있다).
         binding.cardRoleWalker.setOnClickListener   { requireSiteCode { onRoleSelected("WALKER", BleConstants.CAT_WALKER) } }
-        binding.cardRoleEpj.setOnClickListener      { requireSiteCode { onRoleSelected("DEVICE", BleConstants.CAT_EPJ) } }
-        binding.cardRoleForklift.setOnClickListener { requireSiteCode { onRoleSelected("DEVICE", BleConstants.CAT_FORKLIFT) } }
+        binding.cardRoleForklift.setOnClickListener { requireSiteCode { startAsPitOperator() } }
         binding.btnStop.setOnClickListener       { stopServiceImmediately() }
         binding.btnSwitchRole.setOnClickListener { confirmSwitchRole() }   // [v1.1.60] 역할 전환
         binding.cardSettings.setOnClickListener  { showPinDialog() }
@@ -700,7 +709,7 @@ class MainActivity : AppCompatActivity() {
     //   유일 안전 경로. 전환 공백 1~2초는 EMA 워밍업(v1.1.29)이 콜드스타트를 완화한다.
     //   매핑: WALKER→지게차(DEVICE·CAT_FORKLIFT) / DEVICE(레거시 EPJ 포함)→보행자(WALKER·CAT_WALKER).
     private fun switchTargetLabel(): String =
-        if (currentMode == "WALKER") "지게차" else "보행자"
+        if (currentMode == "WALKER") "장비 작업자" else "보행자"
 
     // (v1.1.67) 상시 알림의 '전환' 액션 처리. 액션을 소비(action=null)해 화면 회전·재개 때
     //   같은 인텐트로 다이얼로그가 되살아나는 것을 막는다. 감시 중이 아니면 무시한다.
@@ -728,7 +737,8 @@ class MainActivity : AppCompatActivity() {
         //   겹치면 광고/스캔 재초기화가 이전 인스턴스 정리와 경합한다.
         statusHandler.postDelayed({
             if (isFinishing || isDestroyed) return@postDelayed
-            if (fromMode == "WALKER") onRoleSelected("DEVICE", BleConstants.CAT_FORKLIFT)
+            // (v1.1.89 SA-1) 장비로 전환할 때도 장비를 고르게 한다 — 고른 장비가 역할을 정한다
+            if (fromMode == "WALKER") startAsPitOperator()
             else onRoleSelected("WALKER", BleConstants.CAT_WALKER)
         }, 800L)
     }
@@ -808,15 +818,124 @@ class MainActivity : AppCompatActivity() {
         TextViewCompat.setCompoundDrawableTintList(btn, ColorStateList.valueOf(accent))
     }
 
-    private fun saveDisplayName() {
-        val name = binding.etDisplayName.text?.toString()?.trim() ?: ""
-        // (v1.1.87) 금지문자( . # $ [ ] / )·제어문자·15바이트 초과는 저장하지 않고 이전 값으로 되돌린다(치환 없음)
-        if (!FirebaseManager.isValidDeviceId(name)) {
-            Toast.makeText(this, "nick name 에 . # \$ [ ] / 는 쓸 수 없습니다 (한글 5자·영문 15자 이내)", Toast.LENGTH_LONG).show()
-            binding.etDisplayName.setText(prefs.getString("display_name", ""))
-            return
+    /** (v1.1.89 SA-1) 표시 이름 필드 그리기 — 저장된 장비 ID, 없으면 자동 ID 안내 */
+    private fun renderDisplayName() {
+        val id = prefs.getString("display_name", "") ?: ""
+        binding.etDisplayName.setText(id)
+        binding.tilDisplayName.helperText =
+            if (id.isEmpty()) "미선택 — 자동 ID 로 송출됩니다 (보행자)"
+            else "경보 로그: ${FirebaseManager.withSite(id)}"
+    }
+
+    /**
+     * (v1.1.89 SA-1) 장비 선택 팝업 — 종류 드롭다운 + 번호 드롭다운(1~99).
+     *
+     * 자유 입력을 대체한다. 키보드가 뜨지 않으므로 사람 이름이 들어올 경로가 없다.
+     * 드롭다운은 장갑 낀 손·창고 조명을 전제로 크게(항목 64dp·22sp) 잡았다.
+     *
+     * 목록은 항상 전체다. 역할을 먼저 고르고 장비를 고르는 구조가 아니라,
+     * **장비를 고르면 역할(Category)이 따라오는** 구조이기 때문이다 — 지게차를 고른
+     * 사람이 EPJ 반경으로 도는 불일치가 생길 수 없다.
+     *
+     * [onPicked] 는 선택이 확정된 뒤에만 호출된다. 취소는 호출하지 않는다.
+     */
+    private fun showPitSelectDialog(onPicked: (PitType) -> Unit) {
+        val types = PitType.values().toList()
+        val nos   = (PitType.NO_MIN..PitType.NO_MAX).toList()
+        val dlg   = DialogPitSelectBinding.inflate(layoutInflater)
+
+        fun <T> bind(sp: android.widget.Spinner, items: List<T>, label: (T) -> String) {
+            sp.adapter = ArrayAdapter(this, R.layout.item_spinner_large, items.map(label)).apply {
+                setDropDownViewResource(R.layout.item_spinner_dropdown_large)
+            }
         }
-        prefs.edit().putString("display_name", name).apply()
+        bind(dlg.spPitType, types) { it.label }
+        bind(dlg.spPitNo, nos) { "%02d".format(it) }
+
+        // 직전 선택 복원 — 같은 장비를 계속 타는 경우가 대부분이라 확인 1탭으로 끝나게 한다
+        PitType.parse(prefs.getString("display_name", "") ?: "")?.let { (t, n) ->
+            types.indexOf(t).takeIf { it >= 0 }?.let { dlg.spPitType.setSelection(it) }
+            dlg.spPitNo.setSelection(n - PitType.NO_MIN)
+        }
+
+        fun pickedType() = types[dlg.spPitType.selectedItemPosition]
+        fun pickedId()   = PitType.buildId(pickedType(), nos[dlg.spPitNo.selectedItemPosition])
+        fun refresh() {
+            val id = pickedId()
+            dlg.tvPitPreview.text =
+                "역할  ${roleDisplayName(pickedType().category)}\n" +
+                "상대 화면 표시  $id\n경보 로그  ${FirebaseManager.withSite(id)}"
+        }
+        val watcher = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(p: AdapterView<*>?, v: View?, pos: Int, id: Long) = refresh()
+            override fun onNothingSelected(p: AdapterView<*>?) = Unit
+        }
+        dlg.spPitType.onItemSelectedListener = watcher
+        dlg.spPitNo.onItemSelectedListener   = watcher
+        refresh()
+
+        AlertDialog.Builder(this)
+            .setTitle("내 장비 선택")
+            .setView(dlg.root)
+            .setPositiveButton("확인") { _, _ ->
+                val type = pickedType()
+                prefs.edit().putString("display_name", pickedId()).apply()
+                renderDisplayName()
+                onPicked(type)
+            }
+            .setNegativeButton("취소", null)
+            .show()
+    }
+
+    /**
+     * (v1.1.89 SA-1) 장비 작업자 시작 — 고른 장비의 Category 로 시작한다.
+     * 매번 고르게 한다. 교대마다 타는 장비가 바뀌는데 직전 값으로 그냥 시작하면
+     * 경보 로그가 다른 장비를 가리킨다. 직전 선택이 복원돼 있어 확인 1탭이면 끝난다.
+     */
+    private fun startAsPitOperator() {
+        showPitSelectDialog { type -> onRoleSelected("DEVICE", type.category) }
+    }
+
+    /**
+     * (v1.1.89 SA-1) 장비 ID 형식 이행 — 구버전이 저장한 사람 이름을 송출 경로에서 걷어낸다.
+     *
+     * 두 키를 함께 본다. display_name 은 사용자가 입력하던 표시 이름이고,
+     * device_id 는 BleService.saveRunningMode 가 실행 시 그 표시 이름으로 덮어쓰는 값이라
+     * display_name 만 지우면 옛 이름이 자동 ID 자리에 그대로 남아 계속 송출된다.
+     *
+     * 어느 경우에도 경보 동작은 끊지 않는다 — 값을 비우면 myId() 가 자동 ID 를 발급하고,
+     * 시작 경로(startServiceWithCurrentMode)는 그 값을 그대로 싣는다.
+     */
+    private fun migrateDisplayNameToPitId() {
+        val savedName = prefs.getString("display_name", "") ?: ""
+        val savedId   = prefs.getString("device_id", "") ?: ""
+        val editor    = prefs.edit()
+        var notify    = false
+
+        if (savedName.isNotEmpty() && PitType.parse(savedName) == null) {
+            editor.remove("display_name")
+            notify = true
+        }
+        // 장비 ID 도 자동 ID 도 아닌 값 = 구버전이 밀어 넣은 사람 이름 → 자동 ID 로 즉시 교체.
+        //   지우기만 하면 START_STICKY 복원 경로(BleService.onStartCommand)가 "SA-DEFAULT" 를 싣게 되고,
+        //   이행된 기기 전부가 같은 ID 로 송출돼 피어 식별이 무너진다. 그래서 비우지 않고 새로 발급한다.
+        if (savedId.isNotEmpty() && !FirebaseManager.isUsableAdvertisedId(savedId)) {
+            editor.putString("device_id", newAutoId())
+            notify = true
+        }
+        editor.apply()
+        if (!notify) return
+
+        AlertDialog.Builder(this)
+            .setTitle("장비 선택 방식으로 변경")
+            .setMessage(
+                "표시 이름을 직접 입력하지 않고, 장비 종류와 번호를 선택하도록 바뀌었습니다.\n" +
+                "${FirebaseManager.PIT_ID_HINT}\n\n" +
+                "형식에 맞지 않는 기존 이름은 삭제되었습니다. 역할을 선택하면 장비 선택 창이 뜹니다.\n" +
+                "선택 전에는 자동 ID 로 송출되며 경보는 그대로 동작합니다."
+            )
+            .setPositiveButton("확인", null)
+            .show()
     }
 
     /**
@@ -836,7 +955,6 @@ class MainActivity : AppCompatActivity() {
      * 입력 팝업을 띄우고 받기 전에는 onReady 를 호출하지 않는다.
      */
     private fun requireSiteCode(onReady: () -> Unit) {
-        saveDisplayName()
         saveSiteCode()
         if (DevSettings.siteCode.isNotEmpty()) { onReady(); return }
 
@@ -869,10 +987,13 @@ class MainActivity : AppCompatActivity() {
         dialog.show()
     }
 
+    /** (v1.1.89) 자동 발급 ID 생성 — FirebaseManager.AUTO_ID_REGEX 와 같은 형식("SA-" + UUID 8자 대문자) */
+    private fun newAutoId(): String = "SA-" + UUID.randomUUID().toString().take(8).uppercase()
+
     private fun myId(): String {
         val saved = prefs.getString("device_id", null)
         if (saved != null) return saved
-        val newId = "SA-" + UUID.randomUUID().toString().take(8).uppercase()
+        val newId = newAutoId()
         prefs.edit().putString("device_id", newId).apply()
         return newId
     }

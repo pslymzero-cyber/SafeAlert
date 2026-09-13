@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  (v1.1.89 SA-1) 장비 선택 팝업 — 표시 이름 자유 입력을 대체한다.
+  종류와 번호를 고르기만 하고 키보드를 쓰지 않는다. 사람 이름이 들어올 입력 수단이
+  화면에 존재하지 않는 것이 이 변경의 핵심이다.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@color/sa_surface"
+    android:paddingStart="@dimen/sa_space_xl"
+    android:paddingEnd="@dimen/sa_space_xl"
+    android:paddingTop="@dimen/sa_space_lg"
+    android:paddingBottom="@dimen/sa_space_sm">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="장비 종류"
+        android:textSize="@dimen/sa_type_section"
+        android:textColor="@color/sa_text_secondary" />
+
+    <Spinner
+        android:id="@+id/sp_pit_type"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/sa_space_xs"
+        android:background="@color/sa_surface_alt"
+        android:popupBackground="@color/sa_surface" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/sa_space_lg"
+        android:text="장비 번호"
+        android:textSize="@dimen/sa_type_section"
+        android:textColor="@color/sa_text_secondary" />
+
+    <Spinner
+        android:id="@+id/sp_pit_no"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/sa_space_xs"
+        android:background="@color/sa_surface_alt"
+        android:popupBackground="@color/sa_surface" />
+
+    <!-- 선택 결과 미리보기 — 상대 기기 화면에 뜨는 값과 경보 로그에 남는 값을 같이 보여준다 -->
+    <TextView
+        android:id="@+id/tv_pit_preview"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/sa_space_lg"
+        android:paddingStart="@dimen/sa_space_md"
+        android:paddingEnd="@dimen/sa_space_md"
+        android:paddingTop="@dimen/sa_space_sm"
+        android:paddingBottom="@dimen/sa_space_sm"
+        android:background="@color/sa_surface_alt"
+        android:textSize="@dimen/sa_type_value"
+        android:textColor="@color/sa_text_secondary" />
+
+</LinearLayout>

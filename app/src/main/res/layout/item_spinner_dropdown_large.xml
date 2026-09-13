@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- (v1.1.89 SA-1) 장비 선택 드롭다운 — 펼친 목록의 각 줄. 터치 타깃 64dp. -->
+<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:minHeight="64dp"
+    android:gravity="center_vertical"
+    android:paddingStart="@dimen/sa_space_lg"
+    android:paddingEnd="@dimen/sa_space_lg"
+    android:background="@color/sa_surface"
+    android:textSize="@dimen/sa_type_display"
+    android:textColor="@color/sa_text_primary"
+    android:singleLine="true"
+    android:ellipsize="end" />
