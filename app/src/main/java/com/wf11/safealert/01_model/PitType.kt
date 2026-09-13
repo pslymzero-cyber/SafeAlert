@@ -29,7 +29,12 @@ enum class PitType(val code: String, val label: String, val category: Int) {
     WALKIE         ("WK", "워키 (워키 스태커)",    BleConstants.CAT_EPJ);
 
     companion object {
-        /** 장비 번호 범위 — 팝업 드롭다운이 그대로 쓴다 */
+        /**
+         * 장비 번호 범위 — 팝업 드롭다운이 그대로 쓴다.
+         * 상한 99 는 현장 확인을 거친 값이다: 한 센터에 같은 종류가 100대를 넘지 않는다.
+         * 2자리 고정이라 송출 ID 가 5바이트로 맞는다. 3자리로 늘리면 BLE 표기와
+         * 이미 배포된 기기의 파싱이 어긋나므로, 상한 변경은 전 기기 동시 배포가 전제다.
+         */
         const val NO_MIN = 1
         const val NO_MAX = 99
 
