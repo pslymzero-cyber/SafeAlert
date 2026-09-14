@@ -37,6 +37,18 @@
         <item name="android:textColorPrimary">@color/sa_text_primary</item>
         <item name="android:textColorSecondary">@color/sa_text_secondary</item>
         <item name="android:colorAccent">@color/sa_accent</item>
+        <!-- 버튼 글자색을 accent 추론에 맡기면 기기에 따라 어두운 회색으로 떠 바탕에 묻힌다 — 직접 지정 -->
+        <item name="android:buttonBarPositiveButtonStyle">@style/SA.Dialog.Button.Positive</item>
+        <item name="android:buttonBarNegativeButtonStyle">@style/SA.Dialog.Button</item>
+        <item name="android:buttonBarNeutralButtonStyle">@style/SA.Dialog.Button</item>
+    </style>
+
+    <style name="SA.Dialog.Button" parent="android:Widget.Material.Button.Borderless">
+        <item name="android:textColor">@color/sa_text_secondary</item>
+    </style>
+
+    <style name="SA.Dialog.Button.Positive">
+        <item name="android:textColor">@color/sa_accent</item>
     </style>
 
     <!-- PIN 다이얼로그 키패드 버튼 -->
