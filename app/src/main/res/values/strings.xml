@@ -5,5 +5,5 @@
     <string name="hint_id_input">내 ID 입력 (예: DEVICE_001)</string>
     <string name="channel_name">SafeAlert 실행 중</string>
     <!-- 업데이트 후 첫 실행 때 1회 표시. 버전 올릴 때마다 이 문구를 새로 쓴다. -->
-    <string name="whats_new">- 확인 창의 취소·확인 버튼 글자가 바탕에 묻혀 안 보이던 문제를 고쳤습니다.\n- 표시 이름을 직접 입력하지 않습니다. 역할을 고르면 장비 종류와 번호를 선택하는 창이 뜹니다.\n- 장비 종류: CB (Counterbalance) · RT (Reach Truck) · HR (High Reach) · OP (Order Picker) · ST (Stacker) · TT (Tow Tractor) · EP (Electric Pallet Jack) · WK (Walkie Stacker)\n- 번호는 1~99 중에서 고릅니다. 상대 화면에는 CB-01 처럼 표시됩니다.\n- 지게차 카드가 장비 작업자 로 바뀌었습니다. 고른 장비에 맞춰 경보 범위가 정해집니다.\n- 기존에 저장된 이름은 자동으로 삭제됩니다. 선택 전에는 자동 ID 로 송출되며 경보는 그대로 동작합니다.</string>
+    <string name="whats_new">- 거리 표시 기본값이 신호 세기(dBm)로 바뀌었습니다.\n- 후진·하역 같은 특수 경보도 일반 경보와 같은 확인을 거친 뒤 울립니다. 신호 세기 경보보다 먼저 울리던 문제를 고쳤습니다.\n- 이미 경보 중인 장비가 후진으로 바뀌면 특수 경보가 바로 울립니다.\n- 0.3초 이내의 짧은 신호 흔들림은 접근 판정을 끊지 않습니다.</string>
 </resources>

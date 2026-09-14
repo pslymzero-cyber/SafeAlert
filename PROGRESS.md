@@ -1148,3 +1148,25 @@ UpdateManager.kt / BleService.kt / VibrationHelper.kt / UwbRanger.kt / BeaconReg
 - 검증: testDebugUnitTest 16개 스위트 92건 전부 통과
 - 결정 2 확정("울리게 수정하고 푸시해"): isVisitorBeacon 조회 실패 폴백 `?: true` → `?: false`. 목록에 없는 비콘(삭제 직후 등)은 장비 취급해 보행자 모드에서도 울린다. 테스트 unregistered_treatedAsEquipment, BleService 811 주석 갱신. 저장 프로파일 기본값(visitorBeacon=true)은 무변경
 - 남은 순서: CI 릴리스 확인 → 실기 검증(비콘 삭제 직후 보행자 모드 경보 포함, 8자 충돌 실측, nRF 로 접두사 같은 UUID 2개 장비/방문자, MAC, 세 경로 라벨, Firebase deviceId 8자, 회귀)
+
+## 2026-09-14 — 거리 표시 dBm 기본 + 후진·하역 특수경보 확인 (구현·테스트 완료, 미커밋·버전 유지)
+- 확정 스펙(사용자 답변): 표시 기본값 dBm / 특수경보도 일반 경보와 같은 확인 / 문구 그대로 / 짧은 흔들림 무시
+- 수정 파일·함수:
+  - 06_utils/DevSettings.kt: KEY_DISTANCE_DISPLAY_MODE 기본 0(dBm만)
+  - 03_service/AlertStateMachine.kt: 특수경보 첫 감지 시 확인(timeGateWaive, 연속 2프레임, Time-Gate sustained·비측면). 경보 중 기기의 후진 전환은 즉시. evalTimeGate 헬퍼로 게이트 프레임당 1회. APPROACH_STREAK_GRACE_MS=300 + approachLastSeenMap
+  - 테스트 SpecialAlertTimeGateTest 3건 신규
+- 검증: testDebugUnitTest 18개 스위트 96건 전부 통과(골든·LowSpeed 무변경)
+- 측정: 합성 5개 시나리오에서 후진과 IDLE의 첫 경보·첫 DANGER 프레임이 변경 전후 모두 같다. 특수경보가 먼저 뜨는 현상은 합성으로 재현되지 않았다
+- 남은 순서: 실기기 로그로 "후진 알림이 먼저" 체감 원인 확인 → 사용자 요청 시 버전·커밋·태그·푸시
+- 미해결: 체감 원인 후보(경보 중 후진 전환 즉시 DANGER, 라벨 문구 부각, TTC 선발령) 실측 필요. 회전은 판정 미사용. UWB 경로는 이번 변경 대상 아님
+
+## 2026-09-14 — CLAUDE.md 읽기 금지 표 실측 갱신 (Quick 260914-lqs, 커밋 ada5825, 로컬만)
+- 완료: scripts/context-budget.py(origin/master 7b91e04 에만 있음) 출력으로 .claude/CLAUDE.md 표를 15행으로 교체. 임계 10,000 토큰 이상 13개 + ARCHITECTURE.md + .planning 합계 240,439
+- 커밋 범위: 표 부분만. 같은 파일의 graphify 섹션과 v1.1.94 파일은 미커밋 유지
+- 미해결: CLAUDE.md "사실 고정"의 versionCode 128/1.1.72, 227,952 토큰은 낡은 값(이번 범위 밖). 로컬 master 는 origin 보다 4커밋 뒤 + 1커밋 앞, push 안 함
+
+## 2026-09-14 — 미커밋 파일 정리: graphify 문서·설정 커밋 (로컬만)
+- 완료: .claude/CLAUDE.md graphify 조회 절 + 버전 고정값 제거(build.gradle grep 안내로 대체), .planning/config.json graphify auto_update 커밋(3b1912e). 빈 오타 파일 `v1.1.75`` 휴지통 이동
+- 커밋 제외: v1.1.94 묶음(AlertStateMachine·DevSettings·SpecialAlertTimeGateTest·PROGRESS)은 배포 때. Ruflo 도구·.planning/graphs·보안검토 문서·사내 문서는 커밋 금지(저장소 PUBLIC 확인)
+- 남은 순서: .gitignore 후보 반영 여부 사용자 결정 → v1.1.94 "올려" 대기
+- 미해결: CLAUDE.md 227,952 토큰 값은 미검증으로 유지. push 안 함
