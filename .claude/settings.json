@@ -1,5 +1,16 @@
 {
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "cd \"${CLAUDE_PROJECT_DIR:-.}\" 2>/dev/null || exit 0; command -v graphify >/dev/null 2>&1 || { command -v uv >/dev/null 2>&1 && uv tool install -q graphifyy >/dev/null 2>&1; }; command -v graphify >/dev/null 2>&1 && graphify update . >/dev/null 2>&1; exit 0"
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "Bash|Grep",
