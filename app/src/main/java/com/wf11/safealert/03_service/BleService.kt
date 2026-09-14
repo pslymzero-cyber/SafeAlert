@@ -808,7 +808,7 @@ class BleService : LifecycleService() {
 
                             if (myMode == "WALKER"
                                 && deviceId.startsWith(BleConstants.WALKER_PREFIX)
-                                && !(deviceId.contains("BEA_") && !BeaconRegistry.isVisitorBeacon(deviceId))   // (v1.1.90) 장비용 비콘만 walker 게이트 면제 — 방문자용(미등록 포함)은 보행자 취급해 차단
+                                && !(deviceId.contains("BEA_") && !BeaconRegistry.isVisitorBeacon(deviceId))   // (v1.1.91) 방문자용으로 등록된 비콘만 보행자 취급해 차단 — 장비용·미등록은 게이트 면제(울린다)
                                 && !DevSettings.walkerDetectsWalker) return
 
                             // (v1.1.65) 세이프존 전면 억제 — 존 안에서는 '존 비콘 신호만' 받는다.
@@ -1372,12 +1372,7 @@ class BleService : LifecycleService() {
             else -> deviceId
         }
         return when {
-            suffix.startsWith("BEA_") -> {
-                val macKey = suffix.removePrefix("BEA_").chunked(2).take(6).joinToString(":").uppercase()
-                BeaconRegistry.getAll().firstOrNull {
-                    it.uuid.equals(macKey, ignoreCase = true)
-                }?.label ?: suffix
-            }
+            suffix.startsWith("BEA_") -> BeaconRegistry.labelForFullId(deviceId)   // (v1.1.91) UUID·MAC 비콘 모두 type 별 전체 일치
             suffix.isBlank() -> "알 수 없음"
             else -> suffix
         }

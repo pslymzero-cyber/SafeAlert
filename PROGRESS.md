@@ -1136,3 +1136,15 @@ UpdateManager.kt / BleService.kt / VibrationHelper.kt / UwbRanger.kt / BeaconReg
 - 미해결:
   - 로컬 Windows Kotlin 컴파일이 소스를 MS949로 읽는다. 테스트 한글 리터럴은 유니코드 이스케이프로 우회했다. 로컬 빌드 APK는 한글 리터럴이 깨질 수 있으므로 배포는 CI만 한다.
   - R8 실기 이상 여부는 미검증이다(이상이 있으면 1.1.88에서 minifyEnabled false).
+
+## 2026-09-14 — v1.1.91 비콘 fullId 정보 손실 수정 (구현·테스트·커밋·태그·푸시 완료)
+- 완료: B안(fullId 에 전체 키, 표시·로그만 8자). GSD 우회는 사용자 지시("3바로 고쳐").
+- 수정 파일·함수:
+  - 06_utils/BeaconRegistry.kt: findProfileByFullId 전체 일치(type 별 MAC 12hex / UUID 32hex), shortFullId·labelForFullId 신설
+  - 02_ble/BleScanner.kt 202·225: iBeacon·Service UUID fullId 키 전체(대시 제거 32hex). MAC 241·ZONE_ 무변경
+  - 03_service/BleService.kt extractDisplayName BEA_ 분기 → labelForFullId (UUID 비콘 라벨 미표시 수정)
+  - 04_firebase/FirebaseManager.kt saveAlert: deviceId 를 shortFullId 로 8자 저장(결정 1b, v1.1.90 과 동일 항목)
+  - 테스트 BeaconFullIdTest 7건 신규, release.yml MIN_TOTAL 42→49, build.gradle 147 / 1.1.91
+- 검증: testDebugUnitTest 16개 스위트 92건 전부 통과
+- 결정 2 확정("울리게 수정하고 푸시해"): isVisitorBeacon 조회 실패 폴백 `?: true` → `?: false`. 목록에 없는 비콘(삭제 직후 등)은 장비 취급해 보행자 모드에서도 울린다. 테스트 unregistered_treatedAsEquipment, BleService 811 주석 갱신. 저장 프로파일 기본값(visitorBeacon=true)은 무변경
+- 남은 순서: CI 릴리스 확인 → 실기 검증(비콘 삭제 직후 보행자 모드 경보 포함, 8자 충돌 실측, nRF 로 접두사 같은 UUID 2개 장비/방문자, MAC, 세 경로 라벨, Firebase deviceId 8자, 회귀)
