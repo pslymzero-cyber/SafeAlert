@@ -5,16 +5,21 @@
 ### 전체 읽기 금지 파일 (Read 도구 사용 금지)
 | 파일 | 토큰 |
 |---|---|
-| 03_service/AlertStateMachine.kt | 47,948 |
-| 03_service/BleService.kt | 39,801 |
-| res/layout/activity_dev_settings.xml | 16,127 |
-| 06_utils/DevSettings.kt | 15,955 |
-| 05_ui/MainActivity.kt | 14,407 |
-| PROGRESS.md | 14,051 |
-| 02_ble/BleAdvertiser.kt | 12,479 |
-| res/layout/activity_main.xml | 11,436 |
+| 03_service/AlertStateMachine.kt | 49,553 |
+| 03_service/BleService.kt | 41,188 |
+| PROGRESS.md | 33,861 |
+| res/layout/activity_dev_settings.xml | 20,240 |
+| 05_ui/MainActivity.kt | 18,578 |
+| 06_utils/DevSettings.kt | 17,163 |
+| test/ble/LowSpeedApproachRegressionTest.kt | 16,144 |
+| 06_utils/UwbRanger.kt | 14,932 |
+| res/layout/activity_main.xml | 13,308 |
+| 05_ui/DevSettingsActivity.kt | 12,406 |
+| 02_ble/BleAdvertiser.kt | 12,358 |
+| test/ble/AlertCascadeGoldenTest.kt | 12,107 |
+| 02_ble/BleScanner.kt | 10,219 |
 | docs/ARCHITECTURE.md | 4,200 |
-| .planning/** (전체 233,287) | 전량 |
+| .planning/** (전체 240,439) | 전량 |
 
 ### 위 파일 접근 절차 (예외 없음)
 1. `grep -n "함수명|키워드" <file>` 로 위치를 특정한다
