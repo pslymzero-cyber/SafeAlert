@@ -22,14 +22,14 @@ import com.wf11.safealert.ble.BleConstants
  * 새 장비는 아래에 추가만 한다(순서 = 선택 팝업 노출 순서).
  */
 enum class PitType(val code: String, val label: String, val category: Int) {
-    COUNTER_BALANCE("CB", "C/B (카운터밸런스)",   BleConstants.CAT_FORKLIFT),
-    REACH          ("RT", "리치",                BleConstants.CAT_FORKLIFT),
-    HIGH_REACH     ("HR", "하이리치",             BleConstants.CAT_FORKLIFT),
-    ORDER_PICKER   ("OP", "오더피커",             BleConstants.CAT_FORKLIFT),
-    STACKER        ("ST", "스태커",               BleConstants.CAT_FORKLIFT),
-    TOW_TRACTOR    ("TT", "견인차 (토우)",         BleConstants.CAT_FORKLIFT),
-    EPJ            ("EP", "EPJ (전동 파렛트 잭)",  BleConstants.CAT_EPJ),
-    WALKIE         ("WK", "워키 (워키 스태커)",    BleConstants.CAT_EPJ);
+    COUNTER_BALANCE("CB", "Counterbalance", BleConstants.CAT_FORKLIFT),
+    REACH          ("RT", "Reach Truck", BleConstants.CAT_FORKLIFT),
+    HIGH_REACH     ("HR", "High Reach", BleConstants.CAT_FORKLIFT),
+    ORDER_PICKER   ("OP", "Order Picker", BleConstants.CAT_FORKLIFT),
+    STACKER        ("ST", "Stacker", BleConstants.CAT_FORKLIFT),
+    TOW_TRACTOR    ("TT", "Tow Tractor", BleConstants.CAT_FORKLIFT),
+    EPJ            ("EP", "Electric Pallet Jack", BleConstants.CAT_EPJ),
+    WALKIE         ("WK", "Walkie Stacker", BleConstants.CAT_EPJ);
 
     companion object {
         /**

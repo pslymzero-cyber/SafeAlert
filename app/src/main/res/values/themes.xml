@@ -27,6 +27,16 @@
         <item name="android:statusBarColor">@color/sa_bg</item>
         <item name="android:navigationBarColor">@color/sa_bg</item>
         <item name="android:windowLightStatusBar">false</item>
+
+        <!-- 플랫폼 AlertDialog 기본 테마는 회색 판(#424242)이라 setView 본문(sa_surface)과 제목 영역 색이 갈렸다. -->
+        <item name="android:alertDialogTheme">@style/SA.Dialog.Alert</item>
+    </style>
+
+    <style name="SA.Dialog.Alert" parent="android:Theme.Material.Dialog.Alert">
+        <item name="android:colorBackground">@color/sa_surface</item>
+        <item name="android:textColorPrimary">@color/sa_text_primary</item>
+        <item name="android:textColorSecondary">@color/sa_text_secondary</item>
+        <item name="android:colorAccent">@color/sa_accent</item>
     </style>
 
     <!-- PIN 다이얼로그 키패드 버튼 -->
