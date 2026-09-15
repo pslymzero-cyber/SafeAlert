@@ -27,12 +27,21 @@ sz=$(wc -c < "$p" 2>/dev/null) || exit 0
 [ "${sz:-0}" -le "$MAX_BYTES" ] && exit 0
 
 tok=$((sz * 100 / 329))
+base=${p##*/}      # 파일명
+sym=${base%.*}     # 확장자를 뗀 심볼 후보
+
 cat >&2 <<EOF
 차단: $p 는 ${sz}바이트(약 ${tok}토큰)다. 전체 읽기는 컨텍스트 예산을 넘긴다.
 
-다음 중 하나로 바꿔라:
-  grep -n "키워드" "$p"        먼저 위치를 특정한다
-  sed -n 'START,ENDp' "$p"     찾은 구간 앞뒤 60줄만 읽는다
+먼저 그래프로 어디를 볼지 정해라. 파일:줄 번호가 바로 나온다.
+  graphify explain "찾는심볼"            한 심볼의 정의 위치와 호출 관계
+  graphify affected "찾는심볼" --depth 2  이걸 고치면 영향받는 호출처
+  graphify path "A" "B"                  두 심볼 사이 최단 경로
+  graphify explain "$sym"                 이 파일부터 보려면
+
+그다음 나온 줄 번호만 읽어라.
+  sed -n 'START,ENDp' "$p"     찾은 구간 앞뒤 60줄만
+  grep -n "키워드" "$p"        그래프에 없는 심볼일 때만
   Read 를 꼭 쓰려면 offset 과 limit 을 지정한다
 
 기준값은 ${MAX_BYTES}바이트다. CLAUDE_READ_MAX_BYTES 로 바꿀 수 있다.
