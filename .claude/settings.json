@@ -13,6 +13,16 @@
     ],
     "PreToolUse": [
       {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/big-read-guard.sh\""
+          }
+        ]
+      },
+      {
         "matcher": "Bash|Grep",
         "hooks": [
           {
@@ -29,6 +39,16 @@
             "type": "command",
             "shell": "bash",
             "command": "command -v graphify >/dev/null 2>&1 || exit 0; graphify hook-guard read"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/graphify-fresh.sh\""
           }
         ]
       }
