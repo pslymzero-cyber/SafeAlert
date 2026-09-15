@@ -27,7 +27,8 @@
         android:layout_height="wrap_content"
         android:layout_marginTop="@dimen/sa_space_xs"
         android:background="@color/sa_surface_alt"
-        android:popupBackground="@color/sa_surface" />
+        android:popupBackground="@color/sa_surface"
+        android:dropDownWidth="match_parent" />
 
     <TextView
         android:layout_width="wrap_content"
@@ -43,7 +44,8 @@
         android:layout_height="wrap_content"
         android:layout_marginTop="@dimen/sa_space_xs"
         android:background="@color/sa_surface_alt"
-        android:popupBackground="@color/sa_surface" />
+        android:popupBackground="@color/sa_surface"
+        android:dropDownWidth="match_parent" />
 
     <!-- 선택 결과 미리보기 — 상대 기기 화면에 뜨는 값과 경보 로그에 남는 값을 같이 보여준다 -->
     <TextView

@@ -4,6 +4,7 @@ import android.util.Log
 import com.google.firebase.database.DataSnapshot
 import com.google.firebase.database.FirebaseDatabase
 import com.wf11.safealert.BuildConfig
+import com.wf11.safealert.utils.BeaconRegistry
 import com.wf11.safealert.utils.DevSettings
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -26,11 +27,12 @@ object FirebaseManager {
     //   02_ble 에 의존하지 않는다(레이어 규칙). 기본값이 있어 기존 호출은 그대로 컴파일된다.
     fun saveAlert(deviceId: String, walkerId: String, rssi: Int, level: String,
                   myRole: String = "UNKNOWN", peerRole: String = "UNKNOWN") {
+        val logId = BeaconRegistry.shortFullId(deviceId)   // (v1.1.91) 비콘 UUID 키는 8자만 저장(v1.1.90 과 동일 항목)
         val today = SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(Date())
         val alertId = UUID.randomUUID().toString()
         val data = mapOf(
             "timestamp" to System.currentTimeMillis(),
-            "deviceId" to withSite(deviceId),   // (v1.1.90 SA-1) 센터명-장비ID (예: WF11-CB-01)
+            "deviceId" to withSite(logId),   // (v1.1.90 SA-1) 센터명-장비ID (예: WF11-CB-01)
             "walkerId" to withSite(walkerId),
             "rssi" to rssi,
             "alertLevel" to level,
@@ -40,7 +42,7 @@ object FirebaseManager {
         )
         siteNode("alerts").child(today).child(alertId).setValue(data)
             .addOnFailureListener { Log.e(TAG, "경보 저장 실패: ${it.message}") }
-        Log.d(TAG, "경보 저장: $level ${withSite(deviceId)} rssi=$rssi")
+        Log.d(TAG, "경보 저장: $level ${withSite(logId)} rssi=$rssi")
     }
 
     // ── (v1.1.76) UWB 실측 표본 — 성능 사양의 물리 거리 근거 ─────────────

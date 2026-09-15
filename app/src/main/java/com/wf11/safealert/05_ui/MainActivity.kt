@@ -853,7 +853,8 @@ class MainActivity : AppCompatActivity() {
                 setDropDownViewResource(R.layout.item_spinner_dropdown_large)
             }
         }
-        bind(dlg.spPitType, types) { it.label }
+        // 약어는 송출 code 에서 만든다 — 상대 화면(CB-01)과 같고, 새 장비도 빠질 수 없다
+        bind(dlg.spPitType, types) { "${it.code} (${it.label})" }
         bind(dlg.spPitNo, nos) { "%02d".format(it) }
 
         // 직전 선택 복원 — 같은 장비를 계속 타는 경우가 대부분이라 확인 1탭으로 끝나게 한다

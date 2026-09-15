@@ -199,7 +199,7 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
                         return
                     }
                     // [v1.0.25 Req3] 상태줄(tv_ble_status) 오염 방지 — 비콘 정보를 status로 보내지 않는다.
-                    val fullId = BleConstants.WALKER_PREFIX + "BEA_${uuid.take(8)}"
+                    val fullId = BleConstants.WALKER_PREFIX + "BEA_${uuid.replace("-", "")}"   // (v1.1.91) 키 전체(32hex) — 표시·로그만 8자로 자른다
                     val rssi   = result.rssi
                     detectedDevices[fullId] = System.currentTimeMillis()
                     // [v1.0.29] 외부 비콘은 모션 ServiceData 없음 → 0x00(정지)으로 전달
@@ -222,7 +222,7 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
                         scanCallback?.onZoneBeaconSignal("ZONE_${uuidStr.take(8)}", result.rssi, zp.zoneEnterRssi)
                         return
                     }
-                    val fullId = BleConstants.WALKER_PREFIX + "BEA_${uuidStr.take(8)}"
+                    val fullId = BleConstants.WALKER_PREFIX + "BEA_${uuidStr.replace("-", "")}"   // (v1.1.91) 키 전체(32hex) — 표시·로그만 8자로 자른다
                     detectedDevices[fullId] = System.currentTimeMillis()
                     scanCallback?.onDeviceDetected(fullId, result.rssi, calcAlertLevel(result.rssi), BleConstants.MOTION_STATE_STATIONARY)
                     return

@@ -5,16 +5,21 @@
 ### 전체 읽기 금지 파일 (Read 도구 사용 금지)
 | 파일 | 토큰 |
 |---|---|
-| 03_service/AlertStateMachine.kt | 47,948 |
-| 03_service/BleService.kt | 39,801 |
-| res/layout/activity_dev_settings.xml | 16,127 |
-| 06_utils/DevSettings.kt | 15,955 |
-| 05_ui/MainActivity.kt | 14,407 |
-| PROGRESS.md | 14,051 |
-| 02_ble/BleAdvertiser.kt | 12,479 |
-| res/layout/activity_main.xml | 11,436 |
+| 03_service/AlertStateMachine.kt | 49,553 |
+| 03_service/BleService.kt | 41,188 |
+| PROGRESS.md | 33,861 |
+| res/layout/activity_dev_settings.xml | 20,240 |
+| 05_ui/MainActivity.kt | 18,578 |
+| 06_utils/DevSettings.kt | 17,163 |
+| test/ble/LowSpeedApproachRegressionTest.kt | 16,144 |
+| 06_utils/UwbRanger.kt | 14,932 |
+| res/layout/activity_main.xml | 13,308 |
+| 05_ui/DevSettingsActivity.kt | 12,406 |
+| 02_ble/BleAdvertiser.kt | 12,358 |
+| test/ble/AlertCascadeGoldenTest.kt | 12,107 |
+| 02_ble/BleScanner.kt | 10,219 |
 | docs/ARCHITECTURE.md | 4,200 |
-| .planning/** (전체 233,287) | 전량 |
+| .planning/** (전체 240,439) | 전량 |
 
 ### 위 파일 접근 절차 (예외 없음)
 1. `grep -n "함수명|키워드" <file>` 로 위치를 특정한다
@@ -25,9 +30,16 @@
 "어디에 있나 / 어떻게 동작하나" 류 질문은 Explore 서브에이전트로 넘긴다.
 서브에이전트는 격리 컨텍스트에서 읽고 결론만 반환하므로 부모 창을 소모하지 않는다.
 
+### 코드 위치는 그래프를 먼저 본다
+심볼·호출 관계를 찾을 때는 grep 전에 graphify 그래프(`graphify-out/graph.json`, 파일·줄 번호 포함)를 먼저 조회한다.
+- `graphify query "<키워드>" --budget 800` — 관련 노드와 파일:줄
+- `graphify explain "<심볼>"` — 한 심볼의 연결
+- `graphify path "<A>" "<B>"` — 두 심볼 사이 호출 경로(안 나오면 `--undirected`)
+그래프는 master 커밋 때 자동 갱신된다. 커밋 전 변경분은 반영되지 않으므로 결과가 이상하면 `graphify update .` 후 다시 조회하거나 grep으로 확인한다.
+
 ### 사실 고정
 - 빌드 파일은 `app/build.gradle` 이다. build.gradle.kts 아니다.
-- 현재 versionCode 128 / versionName 1.1.72
+- 버전은 여기 적지 않는다(릴리스마다 낡는다). `grep -n "versionCode\|versionName" app/build.gradle` 로 확인한다
 - app/src/main 전체 .kt = 227,952 토큰으로 컨텍스트 창보다 크다. 전수 읽기는 불가능하다.
 
 ### 폴백 가드

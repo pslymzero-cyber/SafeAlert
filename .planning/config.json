@@ -98,6 +98,7 @@
   "mode": "interactive",
   "granularity": "standard",
   "graphify": {
-    "enabled": true
+    "enabled": true,
+    "auto_update": true
   }
 }

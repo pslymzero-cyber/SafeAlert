@@ -179,27 +179,30 @@ object BeaconRegistry {
     /** BleService의 fullId (예: SAFEALERT_WALKER_BEA_AABBCCDDEEFF)에서 rssiOffset 조회 */
     fun getRssiOffsetForFullId(fullId: String): Int = findProfileByFullId(fullId)?.rssiOffset ?: 0
 
-    /** (v1.1.90) fullId 의 비콘이 방문자용인지. 미등록·조회 실패 시 true(안전측 — 보행자 취급) */
-    fun isVisitorBeacon(fullId: String): Boolean = findProfileByFullId(fullId)?.visitorBeacon ?: true
+    /** (v1.1.91) fullId 의 비콘이 방문자용인지. 미등록·조회 실패(삭제 직후 등) 시 false — 장비 취급해 울린다(애매하면 감지) */
+    fun isVisitorBeacon(fullId: String): Boolean = findProfileByFullId(fullId)?.visitorBeacon ?: false
 
-    /** (v1.1.90) fullId(BEA_ 마커) → 등록 프로파일 역조회. 비콘 아님·미등록이면 null */
+    /** (v1.1.91) fullId(BEA_ 마커) → 등록 프로파일 역조회. 키 전체 일치(MAC=12hex, UUID=32hex). 비콘 아님·미등록이면 null */
     fun findProfileByFullId(fullId: String): BeaconProfile? {
         if (!fullId.contains("BEA_")) return null
         val key = fullId.substringAfter("BEA_")
         return getAll().firstOrNull { profile ->
             when (profile.type) {
-                "MAC" -> {
-                    // BEA_AABBCCDDEEFF → AA:BB:CC:DD:EE:FF
-                    val mac = runCatching { key.chunked(2).take(6).joinToString(":").uppercase() }.getOrDefault("")
-                    profile.uuid.equals(mac, ignoreCase = true)
-                }
-                else -> {
-                    // BEA_UUID첫8자
-                    profile.uuid.replace("-", "").startsWith(key.take(8), ignoreCase = true)
-                }
+                "MAC" -> profile.uuid.replace(":", "").equals(key, ignoreCase = true)
+                else  -> profile.uuid.replace("-", "").equals(key, ignoreCase = true)
             }
         }
     }
+
+    /** (v1.1.91) 표시·로그용 — BEA_ 뒤 32hex UUID 키만 앞 8자로 줄인다(v1.1.90 표기). MAC 12hex·비콘 아님은 그대로 */
+    fun shortFullId(fullId: String): String {
+        val key = fullId.substringAfter("BEA_", "")
+        return if (key.length == 32) fullId.removeSuffix(key) + key.take(8) else fullId
+    }
+
+    /** (v1.1.91) 화면 표시용 라벨 — 세 경로(MAC·iBeacon·Service UUID) 공통. 미등록이면 BEA_+짧은 키 */
+    fun labelForFullId(fullId: String): String =
+        findProfileByFullId(fullId)?.label ?: ("BEA_" + shortFullId(fullId).substringAfter("BEA_"))
 
     // iBeacon manufacturer data에서 UUID 추출
     // 형식: [0x02, 0x15, 16-byte UUID, 2-byte major, 2-byte minor, 1-byte power]
