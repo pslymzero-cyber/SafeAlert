@@ -9,7 +9,8 @@
 # 비용: 변경 없으면 약 1.2초, 있으면 약 2.5초. 조회할 때만 낸다.
 
 # 전역 훅(~/.claude/hooks/)이 깔려 있으면 그쪽이 처리한다.
-[ -f "$HOME/.claude/hooks/graphify-fresh.sh" ] && exit 0
+[ -f "$HOME/.claude/hooks/graphify-fresh.sh" ] && \
+  grep -q graphify-fresh "$HOME/.claude/settings.json" 2>/dev/null && exit 0
 
 j=$(tr -d '\n')
 

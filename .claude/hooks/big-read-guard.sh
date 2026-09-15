@@ -10,7 +10,8 @@
 
 # 전역 훅(~/.claude/hooks/)이 깔려 있으면 그쪽이 처리한다. 같은 메시지가
 # 두 번 뜨는 것을 막는다.
-[ -f "$HOME/.claude/hooks/big-read-guard.sh" ] && exit 0
+[ -f "$HOME/.claude/hooks/big-read-guard.sh" ] && \
+  grep -q big-read-guard "$HOME/.claude/settings.json" 2>/dev/null && exit 0
 
 MAX_BYTES=${CLAUDE_READ_MAX_BYTES:-30000}
 
