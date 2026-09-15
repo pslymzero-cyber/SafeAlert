@@ -64,7 +64,7 @@ object BleServiceTestHarness {
         DevSettings.reverseRiseDbm = 6
         DevSettings.reverseStableTolDb = 2
         DevSettings.reverseWindowMs = 1200L
-        DevSettings.rssiWarning = -75
+        DevSettings.rssiWarning = -78
         DevSettings.soundEnabled = false                   // 부작용 무해화 — 소리 재생 차단
         DevSettings.uwbApproachSpeedKmh = 6.0f
         DevSettings.uwbForkliftDangerMeters = 8.0f

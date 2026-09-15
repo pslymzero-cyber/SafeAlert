@@ -514,7 +514,7 @@
                             <Switch android:id="@+id/sw_uwb_probe_upload" android:layout_width="wrap_content" android:layout_height="wrap_content" />
                         </LinearLayout>
                         <TextView style="@style/SA.Hint"
-                            android:text="UWB 실거리(m)와 같은 프레임의 RSSI를 짝지어 서버에 남깁니다 - 경고 -75dBm·위험 -55dBm이 실제 몇 m인지 역산하는 근거입니다. 역할쌍당 1초 1건 · UWB 세션이 붙은 페어에서만 · 경보 거동에는 영향이 없습니다. 실기 측정할 때만 켜고 끝나면 끄십시오. 기본 OFF." />
+                            android:text="UWB 실거리(m)와 같은 프레임의 RSSI를 짝지어 서버에 남깁니다 - 경고 -78dBm·위험 -65dBm이 실제 몇 m인지 역산하는 근거입니다. 역할쌍당 1초 1건 · UWB 세션이 붙은 페어에서만 · 경보 거동에는 영향이 없습니다. 실기 측정할 때만 켜고 끝나면 끄십시오. 기본 OFF." />
 
                         <View style="@style/SA.Divider" />
 

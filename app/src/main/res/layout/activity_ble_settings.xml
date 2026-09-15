@@ -53,7 +53,7 @@
                             <TextView
                                 android:id="@+id/sec_alert_summary"
                                 style="@style/SA.SectionSummary"
-                                android:text="경고 -75 · 위험 -80 dBm · 볼륨 100%" />
+                                android:text="경고 -78 · 위험 -65 dBm · 볼륨 100%" />
                         </LinearLayout>
                         <ImageView
                             android:id="@+id/sec_alert_chevron"
@@ -113,7 +113,7 @@
                                 android:id="@+id/tv_warn_dist"
                                 style="@style/SA.Value"
                                 android:textColor="@color/sa_warning"
-                                android:text="-75 dBm" />
+                                android:text="-78 dBm" />
                         </LinearLayout>
                         <SeekBar
                             android:id="@+id/seek_warn_dist"
@@ -131,7 +131,7 @@
                                 android:id="@+id/tv_dang_dist"
                                 style="@style/SA.Value"
                                 android:textColor="@color/sa_danger"
-                                android:text="-80 dBm" />
+                                android:text="-65 dBm" />
                         </LinearLayout>
                         <SeekBar
                             android:id="@+id/seek_dang_dist"

@@ -206,6 +206,39 @@ class AlertStateMachine(
 
     internal val RECEDING_DBM_DROP: Int get() = DevSettings.recedingDbmDrop
 
+    // (v1.1.95) t3 추세 해제 — median 2s 창 평균(ma)이 피크 대비 2dB 하락 + 기울기<=0 + 진입 대비 피크 상승>=10dB
+    //   가 0.2s 유지되면 즉시 SAFE. 해제 후 ma 가 최저점 +3dB 오르기 전까지 재경보 금지(래치).
+    internal val TREND_WINDOW_MS = 2000L
+    internal val TREND_DROP_DB = 2.0
+    internal val TREND_RISE_DB = 10.0
+    internal val TREND_HOLD_MS = 200L
+    internal val TREND_REARM_DB = 3.0
+    internal val trendBufMap       = mutableMapOf<String, ArrayDeque<Pair<Long, Int>>>()
+    internal val trendEntryMap     = mutableMapOf<String, Double>()
+    internal val trendPeakMap      = mutableMapOf<String, Double>()
+    internal val trendDropStartMap = mutableMapOf<String, Long>()
+    internal val trendTroughMap    = mutableMapOf<String, Double>()
+
+    /** 창 안 median 표본의 (평균 dBm, LSQ 기울기 dB/s). 창이 덜 찼으면 기울기 0. */
+    private fun trendStats(deviceId: String, now: Long): Pair<Double, Double> {
+        val buf = trendBufMap[deviceId] ?: return 0.0 to 0.0
+        if (buf.isEmpty()) return 0.0 to 0.0
+        val from = now - TREND_WINDOW_MS
+        val w = buf.filter { it.first >= from }
+        if (w.isEmpty()) return buf.last().second.toDouble() to 0.0
+        val ma = w.sumOf { it.second.toDouble() } / w.size
+        if (w.size < 2 || buf.first().first > from) return ma to 0.0
+        val tm = w.sumOf { it.first.toDouble() } / w.size
+        var sxy = 0.0; var sxx = 0.0
+        for ((t, v) in w) { val x = (t - tm) / 1000.0; sxy += x * (v - ma); sxx += x * x }
+        return ma to (if (sxx > 0) sxy / sxx else 0.0)
+    }
+
+    private fun clearTrend(deviceId: String) {
+        trendBufMap.remove(deviceId); trendEntryMap.remove(deviceId); trendPeakMap.remove(deviceId)
+        trendDropStartMap.remove(deviceId); trendTroughMap.remove(deviceId)
+    }
+
     // 기기별 마지막 avgRssi 보관 — 플로팅 위젯 최우선 기기 선정·정렬에 사용
     internal val deviceRssiMap     = mutableMapOf<String, Int>()
 
@@ -441,6 +474,11 @@ class AlertStateMachine(
         registry.addImmediate("recedingStartMap", recedingStartMap)
         registry.addImmediate("recedeRefMap", recedeRefMap)
         registry.addImmediate("recedePeakMap", recedePeakMap)
+        registry.addImmediate("trendBufMap", trendBufMap)
+        registry.addImmediate("trendEntryMap", trendEntryMap)
+        registry.addImmediate("trendPeakMap", trendPeakMap)
+        registry.addImmediate("trendDropStartMap", trendDropStartMap)
+        registry.addImmediate("trendTroughMap", trendTroughMap)
         registry.addImmediate("deviceRssiMap", deviceRssiMap)
         registry.addImmediate("approachStreakStartMap", approachStreakStartMap)
         registry.addImmediate("fastApproachStreakMap", fastApproachStreakMap)
@@ -700,6 +738,10 @@ class AlertStateMachine(
         //   파이프라인: Raw → Median(N=3) → 비대칭EMA(D-Boost) → 칼만. 단발 반사 임펄스를 선형
         //   단계 진입 '전'에 순위통계로 제거해 칼만 속도(kfVel) 오염을 차단한다.
         val medianValue = fx.medianFilter.push(deviceId, inputRssi)
+        // (v1.1.95) 추세 해제용 median 시계열 — TREND_WINDOW_MS 창 + 창 경계 직전 표본 1개 유지
+        val trendBuf = trendBufMap.getOrPut(deviceId) { ArrayDeque() }
+        trendBuf.addLast(now to medianValue)
+        while (trendBuf.size > 1 && trendBuf[1].first <= now - TREND_WINDOW_MS) trendBuf.removeFirst()
 
         // ── (v1.1.40) 섀도우 IMU 융합 갱신 — median 스트림 전용, 메인 파이프라인 무접촉 ──
         //   sPrevVel(직전 프레임 섀도우 속도)·sh.tracking(직전 프레임 이탈추적)·prevLevel(직전
@@ -970,6 +1012,7 @@ class AlertStateMachine(
             recedingStartMap.remove(deviceId)    // [v1.1.6 검증 보강] 이탈 판정 상태 누수·stale 피크 재출현 방지
             recedeRefMap.remove(deviceId)        // [v1.1.6 검증 보강] 미추적 기기 중간평활 EMA 정리
             recedePeakMap.remove(deviceId)       // [v1.1.6 검증 보강] 미추적 기기 피크 홀드 정리
+            clearTrend(deviceId)                 // (v1.1.95) 미추적 기기 추세 상태·래치 정리
             fx.clearDwellMute(deviceId)             // (v1.1.61) 경보권 밖 강등 = 존 이탈 — dwell 뮤트 리셋
             // [v1.1.9 R1/R3] pendingDisplayMap 보존 — 경보권 밖 약신호도 목록(SAFE 행)에 계속 노출.
             return
@@ -1298,6 +1341,14 @@ class AlertStateMachine(
             }
         }
 
+        // (v1.1.95) 추세 해제 재경보 래치 — 해제 후 ma 가 최저점 +TREND_REARM_DB 이상 오를 때까지 SAFE 유지
+        trendTroughMap[deviceId]?.let { t0 ->
+            val (ma, _) = trendStats(deviceId, now)
+            val t = minOf(t0, ma)
+            if (ma >= t + TREND_REARM_DB) trendTroughMap.remove(deviceId) else trendTroughMap[deviceId] = t
+        }
+        if (trendTroughMap.containsKey(deviceId) && !alertState.containsKey(deviceId)) stableLevel = BleConstants.LEVEL_SAFE
+
         // (v1.1.62) 항목5 피어 무해 판정 — 상대가 IN_ZONE(존 비콘 접촉·설정 세기 수신) 선언 중이면
         //   레벨을 SAFE 로 클램프(억제 전용 — 격상 방향 오버라이드 없음). 아래 SAFE 처리가 자연 정리.
         if (peerInZoneMap[deviceId] == true && stableLevel > BleConstants.LEVEL_SAFE) {
@@ -1351,6 +1402,9 @@ class AlertStateMachine(
                 recedingStartMap.remove(deviceId)
                 recedeRefMap.remove(deviceId)
                 recedePeakMap.remove(deviceId)
+                trendEntryMap.remove(deviceId)       // (v1.1.95) 추세 해제 진행 상태만 정리 — 래치(buf/trough)는 유지
+                trendPeakMap.remove(deviceId)
+                trendDropStartMap.remove(deviceId)
                 deviceRssiMap.remove(deviceId)
                 mutedDevices.remove(deviceId)
                 suddenLabelMap.remove(deviceId)
@@ -1447,6 +1501,69 @@ class AlertStateMachine(
             recedeRef = avg1sec.toDouble()
             recedePeak = avg1sec.toDouble()
             isReceding = false
+        }
+
+        // ── (v1.1.95) 추세 해제 — 교차 후 피크에서 신호가 꺾이면 히스테리시스 전에 즉시 SAFE ──
+        //   median 2s 창 평균(ma)이 피크 대비 2dB↓ + 기울기≤0 + 진입 대비 피크 상승≥10dB 가 0.2s 유지되면 해제.
+        //   DEPARTING/departingStartMap 은 건드리지 않는다(5s 재진입 쿨다운 미적용). 재경보 래치는 SAFE 게이트 참조.
+        if (alertState.containsKey(deviceId)) {
+            val (ma, slope) = trendStats(deviceId, now)
+            val entry = trendEntryMap.getOrPut(deviceId) { ma }
+            val peak = maxOf(trendPeakMap[deviceId] ?: ma, ma)
+            trendPeakMap[deviceId] = peak
+            if (peak - ma >= TREND_DROP_DB && slope <= 0.0 && peak - entry >= TREND_RISE_DB)
+                trendDropStartMap.putIfAbsent(deviceId, now)
+            else
+                trendDropStartMap.remove(deviceId)
+            val dropMs = now - (trendDropStartMap[deviceId] ?: now)
+            if (trendDropStartMap.containsKey(deviceId) && dropMs >= TREND_HOLD_MS) {
+                alertState.remove(deviceId)
+                fx.rssiPreFilter.clear(deviceId)
+                fx.medianFilter.clear(deviceId)
+                fx.pEmaFilter.clear(deviceId)
+                rushFrameMap.remove(deviceId)
+                dangerContactStreakMap.remove(deviceId)
+                warningContactStreakMap.remove(deviceId)
+                warningMissRefMap.remove(deviceId)
+                kalmanFilters[deviceId]?.let { lastKfVelMap[deviceId] = LastKfVelState(it.estimatedVel, android.os.SystemClock.elapsedRealtime()) }
+                kalmanFilters[deviceId]?.reset()
+                kalmanFilters.remove(deviceId)
+                shadowFusionMap.remove(deviceId)
+                wasStationaryMap.remove(deviceId)
+                recedingStartMap.remove(deviceId)
+                recedeRefMap.remove(deviceId)
+                recedePeakMap.remove(deviceId)
+                crossingStartMap.remove(deviceId)
+                approachStreakStartMap.remove(deviceId)
+                fastApproachStreakMap.remove(deviceId)
+                forwardBiasLatchMap.remove(deviceId)
+                approachLastSeenMap.remove(deviceId)
+                fx.clearDwellMute(deviceId)
+                deviceRssiMap.remove(deviceId)
+                clearFbThrottle(deviceId)
+                pendingDisplayMap.remove(deviceId)
+                trendEntryMap.remove(deviceId)
+                trendPeakMap.remove(deviceId)
+                trendDropStartMap.remove(deviceId)
+                trendTroughMap[deviceId] = ma
+                fx.sendAlertBroadcast(deviceId, BleConstants.LEVEL_SAFE)
+                if (alertState.isEmpty()) {
+                    AlertSoundPlayer.stopSound()
+                    fx.stopVibration()
+                    fx.collapseOverlay()
+                    fx.activeSoundLevel = BleConstants.LEVEL_SAFE
+                } else {
+                    fx.resyncSoundToRemaining()
+                    fx.updateFloatingOverlay()
+                }
+                fx.sendStatusBroadcast("↘ 추세 하강 → 경보 해제: ${fx.extractDisplayName(deviceId)}")
+                Log.d(TAG, "추세 경보 해제: $deviceId (peak=%.1f ma=%.1f entry=%.1f slope=%.2f dB/s, ${dropMs}ms)".format(peak, ma, entry, slope))
+                return
+            }
+        } else {
+            trendEntryMap.remove(deviceId)
+            trendPeakMap.remove(deviceId)
+            trendDropStartMap.remove(deviceId)
         }
 
         if (isReceding) {
@@ -1897,6 +2014,7 @@ class AlertStateMachine(
                 recedingStartMap.remove(deviceId)
                 recedeRefMap.remove(deviceId)
                 recedePeakMap.remove(deviceId)
+                clearTrend(deviceId)   // (v1.1.95) UWB 확증 SAFE — 추세 해제 상태·재경보 래치 전부 정리
                 deviceRssiMap.remove(deviceId)
                 mutedDevices.remove(deviceId)
                 suddenLabelMap.remove(deviceId)

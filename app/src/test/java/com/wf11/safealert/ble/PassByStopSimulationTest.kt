@@ -19,15 +19,15 @@ import java.io.File
 @RunWith(RobolectricTestRunner::class)
 class PassByStopSimulationTest {
     @Test fun s1_hoverAboveWarn() {
-        val hover = intArrayOf(-71, -74, -73, -76, -72, -75, -73, -74)
+        val hover = intArrayOf(-74, -77, -76, -79, -75, -78, -76, -77)
         val rssi = IntArray(100) { i ->
             when {
-                i <= 22 -> -95 + i + n(i)
-                i <= 27 -> -73
+                i <= 22 -> -98 + i + n(i)
+                i <= 27 -> -76
                 else -> hover[(i - 28) % 8]
             }
         }
-        assertEquals(100, rssi.size); assertEquals(-71, rssi[28])
+        assertEquals(100, rssi.size); assertEquals(-74, rssi[28])
         run("s1_hoverAboveWarn", rssi, dtMs = 1000L, peakFrame = 27,
             expectRelease = -1, expectFinalLevel = 1, maxLockFrames = 0)
     }
@@ -35,13 +35,13 @@ class PassByStopSimulationTest {
     @Test fun s2_slowDrift3f() {
         val rssi = IntArray(88) { i ->
             when {
-                i <= 22 -> -95 + i + n(i)
-                i <= 27 -> -73
-                i <= 57 -> -74 - (i - 28) / 3
-                else -> -83 + n(i)
+                i <= 22 -> -98 + i + n(i)
+                i <= 27 -> -76
+                i <= 57 -> -77 - (i - 28) / 3
+                else -> -86 + n(i)
             }
         }
-        assertEquals(88, rssi.size); assertEquals(-83, rssi[57]); assertEquals(-74, rssi[28])
+        assertEquals(88, rssi.size); assertEquals(-86, rssi[57]); assertEquals(-77, rssi[28])
         run("s2_slowDrift3f", rssi, dtMs = 1000L, peakFrame = 27,
             expectRelease = 58, expectFinalLevel = null, maxLockFrames = 9)
     }
@@ -49,14 +49,14 @@ class PassByStopSimulationTest {
     @Test fun s4_minimalStreak2f() {
         val rssi = IntArray(80) { i ->
             when {
-                i <= 20 -> -95 + i + n(i)
-                i == 21 -> -74
-                i <= 23 -> -73
-                i <= 41 -> -74 - (i - 24) / 2
-                else -> -82 + n(i)
+                i <= 20 -> -98 + i + n(i)
+                i == 21 -> -77
+                i <= 23 -> -76
+                i <= 41 -> -77 - (i - 24) / 2
+                else -> -85 + n(i)
             }
         }
-        assertEquals(80, rssi.size); assertEquals(-82, rssi[41]); assertEquals(-74, rssi[21])
+        assertEquals(80, rssi.size); assertEquals(-85, rssi[41]); assertEquals(-77, rssi[21])
         run("s4_minimalStreak2f", rssi, dtMs = 1000L, peakFrame = 23,
             expectRelease = 39, expectFinalLevel = null, maxLockFrames = 1)
     }
@@ -64,13 +64,13 @@ class PassByStopSimulationTest {
     @Test fun s5b_cadence400ms() {
         val rssi = IntArray(268) { i ->
             when {
-                i <= 22 -> -95 + i + n(i)
-                i <= 37 -> -73
-                i <= 167 -> -74 - (i - 38) / 10
-                else -> -86 + n(i)
+                i <= 22 -> -98 + i + n(i)
+                i <= 37 -> -76
+                i <= 167 -> -77 - (i - 38) / 10
+                else -> -89 + n(i)
             }
         }
-        assertEquals(268, rssi.size); assertEquals(-86, rssi[167]); assertEquals(-74, rssi[38])
+        assertEquals(268, rssi.size); assertEquals(-89, rssi[167]); assertEquals(-77, rssi[38])
         run("s5b_cadence400ms", rssi, dtMs = 400L, peakFrame = 37,
             expectRelease = 120, expectFinalLevel = null, maxLockFrames = 12)
     }
@@ -125,7 +125,7 @@ class PassByStopSimulationTest {
                 if (prevLevel != null && level == null && release < 0) release = i
                 if (release >= 0 && prevLevel == null && level != null) reAlerts++
                 bcastAfterPeak += newBcasts.size
-                if (level != null && rssi[i] <= -81) lockFrames++
+                if (level != null && rssi[i] <= -84) lockFrames++
             }
             if (i >= peakFrame && kfVel < minKfVel) { minKfVel = kfVel; minKfVelFrame = i }
             if (track.contains("CROSSING")) crossingFrames++

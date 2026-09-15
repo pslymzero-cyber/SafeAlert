@@ -349,7 +349,7 @@ class UwbSessionGoldenTest {
         val timeline = StringBuilder()
         for (frame in 0..5) {
             val now = T0_MS + FRAME_DT_MS * frame
-            // rssiWarning=-75(골든) 보다 뚜렷이 약한 -90 — 경고 임계에도 못 미치는 약한 신호.
+            // rssiWarning=-78(골든) 보다 뚜렷이 약한 -90 — 경고 임계에도 못 미치는 약한 신호.
             BleServiceTestHarness.callProcessAlert(service, DEVICE_ID, rssi = -90, nowMs = now)
             val level = BleServiceTestHarness.alertLevelOf(service, DEVICE_ID)
             assertTrue(level == null || level < BleConstants.LEVEL_DANGER)

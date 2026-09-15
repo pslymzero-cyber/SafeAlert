@@ -73,6 +73,13 @@ object DevSettings {
             prefs.edit().putFloat(KEY_EMA_ALPHA_FALL, DEFAULT_EMA_ALPHA_FALL.toFloat())
                 .putBoolean(KEY_EMA_FALL_MIGR_V1156, true).apply()
         }
+        // [v1.1.95] 위험 임계 기본 -55→-65 1회 마이그레이션 — 기존 설치는 저장값이 기본값을 가리므로
+        //   마커 1회에 한해 위험 -65 / 경고 -78 로 덮는다(이후 개발자 설정에서 바꾼 값은 존중).
+        if (!prefs.getBoolean(KEY_RSSI_THRESH_MIGR_V1195, false)) {
+            prefs.edit().putInt(KEY_RSSI_DANGER, DEFAULT_RSSI_DANGER_ABS)
+                .putInt(KEY_RSSI_WARNING, DEFAULT_RSSI_WARNING_ABS)
+                .putBoolean(KEY_RSSI_THRESH_MIGR_V1195, true).apply()
+        }
     }
 
     // [v1.0.42 Req5] 설정 라이브 전파 — dev_settings 변경 리스너 등록/해제(앱 재시작 없이 반영).
@@ -87,12 +94,15 @@ object DevSettings {
     //   v1.0.39 에서 거리계산 파생을 폐지하고 절대 고정(-75/-55)했고, v1.0.40 부터는
     //   BLE 설정의 dBm 슬라이더로 직접 저장/조정한다(고정값 모드 절댓값 슬라이더와 통일).
     //   저장은 음수 dBm 그대로. UI 슬라이더는 절댓값(양수 30~100)으로 표시 후 음수화해 저장.
-    //   제약(UI): 위험은 경고보다 가까움 = 덜 음수 = 절댓값이 더 작다 (예 위험 -55 > 경고 -75).
+    //   제약(UI): 위험은 경고보다 가까움 = 덜 음수 = 절댓값이 더 작다 (예 위험 -65 > 경고 -78).
     //   [v1.0.42] 거리계산·교정(calibRssiAt1m/pathLossExp/warningDistM/dangerDistM/거리 교정
     //     마법사) 전면 폐지 → 거리 추정은 칼만 필터(RSSI)만으로 수행. dBm 임계만 직접 조정한다.
     //   prefs 키는 기존 KEY_RSSI_WARNING / KEY_RSSI_DANGER (상단 L11-12) 재사용.
-    const val DEFAULT_RSSI_WARNING_ABS = -75   // 경보(WARNING): RSSI >= -75  (-56~-75 구간)
-    const val DEFAULT_RSSI_DANGER_ABS  = -55   // 위험(DANGER) : RSSI >= -55  (0~-55 구간)
+    //   [v1.1.95] 위험 -55→-65: 현장 관찰 경고 -75 가 15~25m 에서 울림 → -65 는 약 5~10m.
+    //   [v1.1.95] 경고 -75→-78: 경고를 조금 더 멀리서(약 20~35m) 시작.
+    const val DEFAULT_RSSI_WARNING_ABS = -78   // 경보(WARNING): RSSI >= -78  (-66~-78 구간)
+    const val DEFAULT_RSSI_DANGER_ABS  = -65   // 위험(DANGER) : RSSI >= -65  (0~-65 구간)
+    private const val KEY_RSSI_THRESH_MIGR_V1195 = "rssi_thresh_migrated_v1195"
     const val RSSI_THRESH_MIN = -100           // 슬라이더 하한(가장 멂, 절댓값 100)
     const val RSSI_THRESH_MAX = -30            // 슬라이더 상한(가장 가까움, 절댓값 30)
 
@@ -481,7 +491,7 @@ object DevSettings {
     //   원인: RSSI 왕복이 이론상 상호적이나 실제로는 폰 송출세기·수신감도 차로 A→B 와 B→A 경로가 달라,
     //   같은 물리거리에서 한쪽만 경고권(effWarning)에 든다. v1.1.14 협력 격상은 '내' RSSI 도 effWarning
     //   이상일 때만 상대 위험송출(rRisk)을 수용하므로, 약하게 받는 폰은 상대의 DANGER 를 무시하고 침묵한다.
-    //   완화: 협력 '수용' 문턱만 effWarning 에서 이 슬랙만큼 낮춰(예 -75→-83) 살짝 못 미치게 받아도 함께 울린다.
+    //   완화: 협력 '수용' 문턱만 effWarning 에서 이 슬랙만큼 낮춰(예 -78→-86) 살짝 못 미치게 받아도 함께 울린다.
     //   일반 경보 임계(effWarning)는 불변 — 오직 상대송출 수용 게이트만 양보. 진짜 먼 오발(슬랙 밖)은 여전히 차단.
     //   Case B(RSSI) 전용 — Case A(신선 UWB)는 양방향 ToF 대칭이라 비대칭이 없어 개입하지 않는다. 0=v1.1.14 원거동.
     private const val KEY_COOP_SLACK_DB = "coop_slack_db"
@@ -588,7 +598,7 @@ object DevSettings {
         set(v) = prefs.edit().putBoolean(KEY_UWB_CALIB_ENABLED, v).apply()
 
     // (v1.1.76) UWB 실측 표본 업로드 — UWB 실거리(m)와 같은 프레임의 BLE RSSI 를 짝지어
-    //   uwb_probe/<yyyyMMdd> 에 남긴다. 임계(-75/-55dBm)가 실제 몇 m 인지를 재는 유일한 근거라
+    //   uwb_probe/<yyyyMMdd> 에 남긴다. 임계(-78/-65dBm)가 실제 몇 m 인지를 재는 유일한 근거라
     //   실기 측정 세션에서만 켠다. OFF = 업로드 자체가 없음(기본) — 학습(onSample)과는 무관하게
     //   기록만 담당하므로 켜고 끄어도 경보 거동은 완전히 동일하다. 페어당 1초 1건으로 스로틀.
     private const val KEY_UWB_PROBE_UPLOAD = "uwb_probe_upload"

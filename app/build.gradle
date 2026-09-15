@@ -12,8 +12,8 @@ android {
         applicationId "com.wf11.safealert"
         minSdk 26
         targetSdk 34
-        versionCode 150
-        versionName "1.1.94"
+        versionCode 151
+        versionName "1.1.95"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         // (v1.1.90) 설정 PIN — 값은 빌드 시 주입(BuildConfig + CI Secrets). 저장소에 실제 값을 두지 않는다.
         //   우선순위: -PdevPin / ~/.gradle/gradle.properties devPin → 환경변수 SA_DEV_PIN → '000'
