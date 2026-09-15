@@ -8,6 +8,10 @@
 # 목록 대신 파일 크기로 판정한다. 새 파일이 커져도 표를 고칠 필요가 없다.
 # offset 이나 limit 을 지정한 범위 읽기는 통과시킨다.
 
+# 전역 훅(~/.claude/hooks/)이 깔려 있으면 그쪽이 처리한다. 같은 메시지가
+# 두 번 뜨는 것을 막는다.
+[ -f "$HOME/.claude/hooks/big-read-guard.sh" ] && exit 0
+
 MAX_BYTES=${CLAUDE_READ_MAX_BYTES:-30000}
 
 j=$(tr -d '\n')
