@@ -2,51 +2,99 @@
   "rules": {
     ".read": false,
     ".write": false,
-
     "version": {
       ".read": true,
       ".write": false
     },
-
     "echo_calib": {
       ".read": "auth != null",
-      "$id": {
-        ".write": "auth != null"
-      }
+      ".write": false
     },
-
     "$site": {
       "version": {
         ".read": true,
         ".write": false
       },
-
       "alerts": {
-        "$day": {
-          "$alertId": {
-            ".write": "auth != null && !data.exists()"
+        "$a": {
+          "$b": {
+            ".write": "auth != null && !data.exists() && $site.matches(/^[A-Za-z0-9_-]{1,32}$/) && $a.matches(/^[0-9]{8}$/)",
+            "$c": {
+              ".write": "auth != null && !data.exists() && $site.matches(/^[A-Za-z0-9_-]{1,32}$/) && $b.matches(/^[0-9]{8}$/)"
+            }
           }
         }
       },
-
       "beacon_share": {
         ".read": "auth != null",
-        "$key": {
-          ".write": "auth != null"
+        "$sc": {
+          "$key": {
+            ".write": "auth != null && $site.matches(/^[A-Za-z0-9_-]{1,32}$/) && $sc.matches(/^[A-Z0-9_-]{1,12}$/)",
+            ".validate": "newData.hasChildren(['name','profilesJson','count','sender','timestamp'])",
+            "name": {
+              ".validate": "newData.isString() && newData.val().length <= 64"
+            },
+            "profilesJson": {
+              ".validate": "newData.isString() && newData.val().length <= 65536"
+            },
+            "count": {
+              ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 1000"
+            },
+            "sender": {
+              ".validate": "newData.isString() && newData.val().length <= 64"
+            },
+            "timestamp": {
+              ".validate": "newData.isNumber()"
+            },
+            "$other": {
+              ".validate": false
+            }
+          }
         }
       },
-
       "echo_calib": {
         ".read": "auth != null",
         "$id": {
-          ".write": "auth != null"
+          ".write": "auth != null && $site.matches(/^[A-Za-z0-9_-]{1,32}$/)",
+          ".validate": "newData.hasChildren(['model','ver','ts','peers'])",
+          "model": {
+            ".validate": "newData.isString() && newData.val().length <= 64"
+          },
+          "ver": {
+            ".validate": "newData.isString() && newData.val().length <= 16"
+          },
+          "ts": {
+            ".validate": "newData.isNumber()"
+          },
+          "site": {
+            ".validate": "newData.isString() && newData.val().length <= 32"
+          },
+          "peers": {
+            "$peer": {
+              ".validate": "newData.hasChildren(['m','n','iqr'])",
+              "m": {
+                ".validate": "newData.isNumber() && newData.val() >= -40 && newData.val() <= 40"
+              },
+              "n": {
+                ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 500000"
+              },
+              "iqr": {
+                ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 100"
+              },
+              "$other": {
+                ".validate": false
+              }
+            }
+          },
+          "$other": {
+            ".validate": false
+          }
         }
       },
-
       "uwb_probe": {
         "$day": {
           "$probeId": {
-            ".write": "auth != null && !data.exists()"
+            ".write": "auth != null && !data.exists() && $site.matches(/^[A-Za-z0-9_-]{1,32}$/) && $day.matches(/^[0-9]{8}$/)"
           }
         }
       }

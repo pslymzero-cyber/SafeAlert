@@ -47,7 +47,7 @@ object FirebaseManager {
 
     // ── (v1.1.76) UWB 실측 표본 — 성능 사양의 물리 거리 근거 ─────────────
     //   UWB 가 잰 실거리(m)와 같은 프레임의 BLE RSSI 를 한 건으로 남긴다. 이 둘이 있어야
-    //   "경고 -75dBm / 위험 -55dBm 이 실제로 몇 m 인가" 를 역산할 수 있다. 학습값(Δ)은
+    //   "경고 -78dBm / 위험 -65dBm 이 실제로 몇 m 인가" 를 역산할 수 있다. 학습값(Δ)은
     //   기기 안에만 있어 반출되지 않으므로, 집계용으로는 이 원표본이 필요하다.
     //   개발자 설정 스위치(DevSettings.uwbProbeUploadEnabled)가 켜진 동안에만 호출된다 —
     //   상시 수집이 아니라 실기 측정 세션용이라 기본은 꺼져 있다.
@@ -68,8 +68,13 @@ object FirebaseManager {
     }
 
     // ── 기기 간 비콘 공유 (이름붙은 세트) ───────────────────────
-    //   같은 root(firebaseRoot) 아래 beacon_share/<key> 에 선택분을 업로드,
-    //   다른 기기가 목록에서 골라 내려받아 병합한다. (v1.1.17)
+    //   같은 root(firebaseRoot) 아래 beacon_share/<siteCode>/<key> 에 선택분을 업로드,
+    //   같은 사업장 기기가 목록에서 골라 내려받아 병합한다. (v1.1.17)
+    //   사업장 코드가 비면 평면 경로로 폴백하지 않고 실패로 반환한다(규칙이 $sc 하위 쓰기만 허용).
+
+    /** 내 사업장 공유 노드. 사업장 코드 미설정이면 null */
+    private fun beaconShareNode() =
+        DevSettings.siteCode.takeIf { it.isNotEmpty() }?.let { db.child("beacon_share").child(it) }
 
     data class BeaconSetMeta(
         val key: String,        // Firebase 키(정규화됨)
@@ -157,6 +162,7 @@ object FirebaseManager {
 
     /** 선택한 비콘 프로파일(JSON)을 이름붙은 세트로 업로드 */
     fun uploadBeaconSet(setName: String, profilesJson: String, count: Int, sender: String, onResult: (Boolean) -> Unit) {
+        val node = beaconShareNode() ?: return onResult(false)
         val key = sanitizeKey(setName)
         val data = mapOf(
             "name"         to setName.trim().ifEmpty { key },
@@ -165,14 +171,15 @@ object FirebaseManager {
             "sender"       to sender,
             "timestamp"    to System.currentTimeMillis()
         )
-        db.child("beacon_share").child(key).setValue(data)
+        node.child(key).setValue(data)
             .addOnSuccessListener { Log.d(TAG, "비콘 세트 업로드: $key (${count}개)"); onResult(true) }
             .addOnFailureListener { Log.e(TAG, "비콘 세트 업로드 실패: ${it.message}"); onResult(false) }
     }
 
     /** 업로드된 이름붙은 세트 목록 조회 (최신순) */
     fun listBeaconSets(onResult: (List<BeaconSetMeta>) -> Unit) {
-        db.child("beacon_share").get()
+        val node = beaconShareNode() ?: return onResult(emptyList())
+        node.get()
             .addOnSuccessListener { snap ->
                 val sets = snap.children.mapNotNull { c ->
                     val key = c.key ?: return@mapNotNull null
@@ -191,14 +198,16 @@ object FirebaseManager {
 
     /** 특정 세트의 프로파일 JSON 다운로드 (key = BeaconSetMeta.key) */
     fun downloadBeaconSet(key: String, onResult: (String?) -> Unit) {
-        db.child("beacon_share").child(key).child("profilesJson").get()
+        val node = beaconShareNode() ?: return onResult(null)
+        node.child(key).child("profilesJson").get()
             .addOnSuccessListener { onResult(it.getValue(String::class.java)) }
             .addOnFailureListener { Log.e(TAG, "비콘 세트 다운로드 실패: ${it.message}"); onResult(null) }
     }
 
     /** 업로드된 세트를 클라우드에서 삭제 (관리용) */
     fun deleteBeaconSet(key: String, onResult: (Boolean) -> Unit) {
-        db.child("beacon_share").child(key).removeValue()
+        val node = beaconShareNode() ?: return onResult(false)
+        node.child(key).removeValue()
             .addOnSuccessListener { onResult(true) }
             .addOnFailureListener { Log.e(TAG, "비콘 세트 삭제 실패: ${it.message}"); onResult(false) }
     }

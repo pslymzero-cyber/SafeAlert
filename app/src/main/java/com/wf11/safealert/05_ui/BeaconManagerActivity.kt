@@ -31,6 +31,7 @@ import com.wf11.safealert.databinding.ItemBeaconFoundBinding
 import com.wf11.safealert.databinding.ItemBeaconProfileBinding
 import com.wf11.safealert.model.BeaconProfile
 import com.wf11.safealert.utils.BeaconRegistry
+import com.wf11.safealert.utils.DevSettings
 import com.wf11.safealert.firebase.FirebaseManager
 import android.widget.CheckBox
 import android.widget.ScrollView
@@ -226,8 +227,16 @@ class BeaconManagerActivity : AppCompatActivity() {
             .show()
     }
 
+    // 공유 경로는 beacon_share/<사업장코드>/ — 코드 미설정이면 전송·받기·삭제 불가
+    private fun requireSiteCode(): Boolean {
+        if (DevSettings.siteCode.isNotEmpty()) return true
+        Toast.makeText(this, "사업장 코드가 설정되지 않았습니다 (개발자 설정)", Toast.LENGTH_LONG).show()
+        return false
+    }
+
     // ── 기기 간 공유: 선택 후 업로드 ───────────────────────────
     private fun showShareDialog() {
+        if (!requireSiteCode()) return
         val profiles = BeaconRegistry.getAll()
         if (profiles.isEmpty()) {
             Toast.makeText(this, "공유할 비콘이 없습니다", Toast.LENGTH_SHORT).show(); return
@@ -281,13 +290,16 @@ class BeaconManagerActivity : AppCompatActivity() {
                 val json = BeaconRegistry.exportToJson(selected)
                 val sender = getSharedPreferences("safealert_prefs", MODE_PRIVATE)
                     .getString("device_id", "기기") ?: "기기"
-                Toast.makeText(this, "전송 중...", Toast.LENGTH_SHORT).show()
-                FirebaseManager.uploadBeaconSet(name, json, selected.size, sender) { ok ->
-                    runOnUiThread {
-                        Toast.makeText(this,
-                            if (ok) "전송 완료: '$name' (${selected.size}개)"
-                            else "전송 실패 (네트워크 확인)",
-                            Toast.LENGTH_LONG).show()
+                // 전송(같은 이름 덮어쓰기 포함)은 설정 PIN 확인 후
+                showDevPinDialog {
+                    Toast.makeText(this, "전송 중...", Toast.LENGTH_SHORT).show()
+                    FirebaseManager.uploadBeaconSet(name, json, selected.size, sender) { ok ->
+                        runOnUiThread {
+                            Toast.makeText(this,
+                                if (ok) "전송 완료: '$name' (${selected.size}개)"
+                                else "전송 실패 (네트워크 확인)",
+                                Toast.LENGTH_LONG).show()
+                        }
                     }
                 }
             }
@@ -297,6 +309,7 @@ class BeaconManagerActivity : AppCompatActivity() {
 
     // ── 받기: 세트 목록 → 미리보기 → 병합 ──────────────────────
     private fun showReceiveDialog() {
+        if (!requireSiteCode()) return
         Toast.makeText(this, "세트 목록 불러오는 중...", Toast.LENGTH_SHORT).show()
         FirebaseManager.listBeaconSets { sets ->
             runOnUiThread {
@@ -351,9 +364,11 @@ class BeaconManagerActivity : AppCompatActivity() {
                             .setTitle("세트 삭제")
                             .setMessage("'${set.name}' 공유 세트를 클라우드에서 삭제합니다.\n(내 기기에 등록된 비콘은 삭제되지 않습니다)")
                             .setPositiveButton("삭제") { _, _ ->
-                                FirebaseManager.deleteBeaconSet(set.key) { ok ->
-                                    runOnUiThread {
-                                        Toast.makeText(this, if (ok) "삭제됨: ${set.name}" else "삭제 실패", Toast.LENGTH_SHORT).show()
+                                showDevPinDialog {
+                                    FirebaseManager.deleteBeaconSet(set.key) { ok ->
+                                        runOnUiThread {
+                                            Toast.makeText(this, if (ok) "삭제됨: ${set.name}" else "삭제 실패", Toast.LENGTH_SHORT).show()
+                                        }
                                     }
                                 }
                             }

@@ -8,6 +8,7 @@
 
 - 작업 디렉터리: `C:\Users\pslym\Downloads\SafeAlert`
 - 브랜치: `master`, HEAD = `0de98da` (최신 태그 v1.1.88)
+- **비콘 공유 사업장 제한 + PIN (2026-09-15, 미커밋, GSD 우회=사용자 직접 지시)**: FirebaseManager beaconShareNode()=beacon_share/<siteCode>, 코드 빈 값이면 실패 반환(평면 폴백 없음) / MainActivity showPinDialog -> top-level Activity.showDevPinDialog(onSuccess) 공용화 / BeaconManagerActivity requireSiteCode() 로 전송·받기 진입 차단, 전송(덮어쓰기)·삭제는 PIN 확인 후 / database.rules.json = _작업/rules_test/site.rules.json 교체. 에뮬레이터 29/29 PASS. 태그 릴리스 시 release.yml 이 규칙 자동 배포 -> 구버전 앱 비콘 전송 실패(수용). 남은 순서 = 커밋·버전업(요청 시), 실기 확인. 한계: PIN 창 제목 "개발자 설정" 고정, validate 한도 초과 시 "전송 실패 (네트워크 확인)" 표시. 검증: assembleDebug 통과, testDebugUnitTest 123건 중 1건 실패(Sim0914NormalEscalationDepartTest.e_singleSpike :144, e1 spike 경보 expected null but 2520, 미추적 판정 테스트, 원인 미조사·사용자 판단 대기)
 - **v1.1.90 커밋·푸시(master, 2026-09-13)** (debug walker-gate-beacon-exemption, 2026-09-13): 방문자 비콘이 보행자 PDA 에도 울리던 문제 → walker 게이트 비콘 면제를 UUID 프로파일 단위로 전환. BeaconProfile.visitorBeacon(기본 true) / BeaconRegistry 직렬화·findProfileByFullId·isVisitorBeacon(미등록 true) / BleService.onDeviceDetected·onUwbAddressReceived·AlertStateMachine.judgeUwbOnly 게이트 치환 / BeaconManagerActivity 등록 다이얼로그 체크박스·목록 방문자용/장비용 표기 / versionCode 146·1.1.90. assembleDebug 통과. 다음 = 실기 ①보행자+방문자용=무경보 ②지게차+같은비콘=경보 ③보행자+체크해제=경보 ④구버전 프로파일 방문자용 표시
 - **v1.1.90 커밋·푸시(master) — 보안 선조치 2건** (ONESEC SID006037, 2026-09-13): SR-3 설정 PIN 소스 분리(app/build.gradle buildConfigField DEV_PIN = -PdevPin / ~/.gradle/gradle.properties devPin → env SA_DEV_PIN → 000, MainActivity 비교를 BuildConfig.DEV_PIN 으로, release.yml 에 secrets.SA_DEV_PIN, 3자리 유지) / SA-2 사업장 코드 변경 경로 이동(메인 입력칸은 비었을 때만 활성·값 있으면 잠금+"변경은 개발자 설정에서", DevSettingsActivity 에 et_dev_site_code + UwbCalibrator.applySite, 메인 onResume 에서 refresh + CalibrationEngine.applySite, alerts/<사업장>/<날짜>/ 유지). assembleDebug 통과, "368" 0건. 남음: GitHub Secret SA_DEV_PIN 등록(사용자), 실기 2케이스(신규 설치 입력 / 설정 후 메인 잠김·개발자 설정에서만 변경), PIN 3자리 확인
 - **v1.1.88 커밋·태그 완료** (`0de98da`, 태그 `v1.1.88`, quick 260912-32e, 2026-09-12): Phase D 규칙 잠금(database.rules.json, k7r PLAN 181-191 그대로, C4 선행조건은 사용자 지시로 면제) / versionCode 144·1.1.88 / MainActivity.onCreate 첫 실행 변경 사항 창(prefs `last_seen_version_code`, 문구 strings.xml `whats_new`) / UpdateManager 다운로드 완료 수신기 RECEIVER_EXPORTED / UpdateManager.downloadAndInstall 이미 받아 둔 APK 의 SHA-256 이 기대값과 같으면 재다운로드 생략하고 바로 설치 창(불일치면 삭제 후 재다운로드, hashMatches fail-closed 유지). assembleDebug + 단위테스트 통과. 태그 푸시로 release.yml 이 database.rules.json 을 Firebase 에 재적용한다. 다음 = V-1(무인증 PUT 401, /version.json 200)·V-2, 87→88 설치 창 자동 표시 실측. 미해결: ≤1.1.83 기기 서버 기록 중단(BLE 경보는 동작), 1.1.84~86 동작은 미확인. 알려진 한계: 변경 사항 창은 표시 시점에 prefs 를 저장하므로 창이 떠 있는 동안 액티비티가 재생성되면 그 버전 안내는 다시 뜨지 않는다(사용자 지시로 그대로 둠)
@@ -1149,7 +1150,7 @@ UpdateManager.kt / BleService.kt / VibrationHelper.kt / UwbRanger.kt / BeaconReg
 - 결정 2 확정("울리게 수정하고 푸시해"): isVisitorBeacon 조회 실패 폴백 `?: true` → `?: false`. 목록에 없는 비콘(삭제 직후 등)은 장비 취급해 보행자 모드에서도 울린다. 테스트 unregistered_treatedAsEquipment, BleService 811 주석 갱신. 저장 프로파일 기본값(visitorBeacon=true)은 무변경
 - 남은 순서: CI 릴리스 확인 → 실기 검증(비콘 삭제 직후 보행자 모드 경보 포함, 8자 충돌 실측, nRF 로 접두사 같은 UUID 2개 장비/방문자, MAC, 세 경로 라벨, Firebase deviceId 8자, 회귀)
 
-## 2026-09-14 — 거리 표시 dBm 기본 + 후진·하역 특수경보 확인 (구현·테스트 완료, 미커밋·버전 유지)
+## 2026-09-14 — 거리 표시 dBm 기본 + 후진·하역 특수경보 확인 (구현·테스트 완료, v1.1.94 로 배포)
 - 확정 스펙(사용자 답변): 표시 기본값 dBm / 특수경보도 일반 경보와 같은 확인 / 문구 그대로 / 짧은 흔들림 무시
 - 수정 파일·함수:
   - 06_utils/DevSettings.kt: KEY_DISTANCE_DISPLAY_MODE 기본 0(dBm만)
@@ -1170,3 +1171,83 @@ UpdateManager.kt / BleService.kt / VibrationHelper.kt / UwbRanger.kt / BeaconReg
 - 커밋 제외: v1.1.94 묶음(AlertStateMachine·DevSettings·SpecialAlertTimeGateTest·PROGRESS)은 배포 때. Ruflo 도구·.planning/graphs·보안검토 문서·사내 문서는 커밋 금지(저장소 PUBLIC 확인)
 - 남은 순서: .gitignore 후보 반영 여부 사용자 결정 → v1.1.94 "올려" 대기
 - 미해결: CLAUDE.md 227,952 토큰 값은 미검증으로 유지. push 안 함
+
+## 2026-09-14 — v1.1.94 배포 (커밋 b2edcec, 태그 v1.1.94, 푸시 완료)
+- 완료: versionCode 150 / 1.1.94, whats_new 4줄, release.yml MIN_TOTAL 49 -> 52. origin 통합(dfbfb07) 후 로컬 테스트 96건 통과
+- CI run 34818185764 전 단계 success: 단위 테스트·골든 게이트, 릴리스 서명 지문 검증, GitHub Release 업로드(safealert-1.1.94.apk 6,454,900 바이트), Firebase /version·/wf11/version 포인터 갱신, DB 규칙 배포
+- 빌드 주소: https://github.com/pslymzero-cyber/SafeAlert/releases/download/v1.1.94/safealert-1.1.94.apk
+- 커밋 제외 유지: 로컬 Ruflo .claude/settings.json 수정, Ruflo·graphs·보안검토·사내 문서
+- 남은 순서: 실기기에서 업데이트 수신·dBm 표시 확인, 후진 알림 체감 순서 실기기 로그 확인
+- 미해결: .gitignore 후보 반영 여부 사용자 결정. 이 PROGRESS 항목은 미커밋
+
+## 2026-09-14 — SECURITY-ACTIONS.md 상태 코드 동기화 (quick 260914-nad, 미커밋)
+- 완료: [SA-2] 완료(v1.1.90) 표기, 「2. 검토 요청 4건」 표에 상태 열 추가(SR-1·SR-2 미착수/사내 이관, SR-3 v1.1.90, SR-4 v1.1.87), 「5. 진행 기록」에 2026-09-13 SA-2·SR-3, 2026-09-14 v1.1.91~93 행 추가
+- 수정 파일: docs/SECURITY-ACTIONS.md (문서만, 코드 무변경)
+- 근거: activity_dev_settings.xml et_dev_site_code, app/build.gradle:20 DEV_PIN / :53 minifyEnabled, release.yml:103 SA_DEV_PIN
+
+## 2026-09-14 — SA-3 기존 경보 로그 삭제 (quick 260914-n88, 완료 — DB 작업만, 코드 무변경, 미커밋)
+- 조사: 경보 경로 = DB `/wf11/alerts` 아래 두 형태 — 루트 날짜 키 `<yyyyMMdd>/<id>`(옛 형태) 와 `WF11/<yyyyMMdd>/<id>`(v1.1.77 siteNode). 규칙상 앱은 쓰기만(덮어쓰기 불가), 읽기는 관리자 권한으로만 가능
+- ALERTS.md(공개 저장소): 집계값만 있음, 표시 이름·기기 ID 없음 확인 (analyze_alerts.py --no-ids)
+- 접근 방법: 환경 변수(FIREBASE_DB_SECRET) 대신 사용자가 직접 `firebase login` 1회. `~/.config` 는 샌드박스가 아니라 폴더 ACL 이 막고 있어 ACL 은 건드리지 않고 `XDG_CONFIG_HOME=%USERPROFILE%\.firebase-cli` 로 우회
+- 백업: 삭제 전 `/wf11/alerts` 전체를 저장소 밖 로컬 폴더에 JSON 으로 저장 (2.79 MB, 복구 유일 수단 — 저장소에 넣지 않음)
+- 집계: 총 17,790건. 옛 형식(SA-1 이전, 표시 이름 포함) 17,789건 = 루트 49개 날짜 17,788건(2025-02-26 ~ 2026-09-07) + `WF11/20260908`·`WF11/20260909` 각 1건. SA-1 형식 1건 = `WF11/20260914`(이름 없음)
+- 승인 범위: "옛 형식만 삭제" — `database:remove` 51개 노드 실행, 51건 성공·실패 0
+- 검증: 재조회 결과 `/wf11/alerts` = `{"WF11":true}`, `/wf11/alerts/WF11` = `{"20260914":true}`, 남은 기록 1건
+- 기록: docs/SECURITY-ACTIONS.md [SA-3] 완료 표기 + 5. 진행 기록 1행
+- 남은 순서: 현장에서 v1.1.90+ 기기 2대로 근접 경보 1회 발생 -> `firebase database:get /wf11/alerts/WF11/<오늘날짜> --shallow --project safealert-98d7e` 로 새 키 증가 확인 -> 확인되면 로컬 백업 보관·삭제 여부 사용자 결정
+
+## 2026-09-15 — v1.1.94/v1.1.91 변경점 시뮬레이션 (승급·이탈, 미커밋)
+
+- 조사: 16ee857..b2edcec (b2edcec 특수경보 첫 감지 게이트·경보 중 후진 즉시 DANGER·접근 streak 유예 300ms / 87b0a87 비콘 fullId 32hex·미등록 비콘 경보). 에이전트 4개 병렬, 16ee857 과 발령·해제 시각 비교
+- 기준 트리: `C:\Users\pslym\Downloads\_작업\sa-16ee857` (git worktree, 보존). 한글 경로라 AGP 가 Gradle 을 거부 -> subst 드라이브/ASCII 복사본으로 실행
+- 새 테스트(운영 코드 무변경, 미커밋): `app/src/test/java/com/wf11/safealert/ble/` Sim0914SpecialGateTest(7) · Sim0914StreakGraceTest(5) · Sim0914BeaconFullIdTest(3) · Sim0914NormalEscalationDepartTest(12)
+- 검증: 전체 유닛 123건 = 통과 122 · 실패 1 · 에러 0 · 스킵 0. 실패 1건 `e_singleSpike` 는 e1 과경보를 남겨둔 재현 테스트(16ee857 도 동일). 기존 96건 전부 통과, 회귀 7개 스위트 기대값 변화 없음
+- 결과 요약
+  - 일반 승급·이탈: 모든 시나리오 시각이 16ee857 과 동일(정면 W2640->D4680, 빠른 접근 W960/D1200, 콜드 근접 D120, 저속 W82000 등)
+  - 특수경보: 발령 지연 0ms, CPA 이후 첫 발령 없음, 이탈 중 후진 미승급, 경보 중 후진 전환 = 같은 프레임 DANGER, IN_ZONE 차단 유지
+  - 유예: 299/300ms 유지 · 301ms 리셋, 해제 시 approachLastSeenMap·approachStreakStartMap 비움 확인
+  - 비콘: HEAD 에서 16ee857 결함 해소(앞 8자 같은 비콘 합쳐짐, walker 모드 장비·미등록 비콘 미탐지)
+- 미해결(심각도 순, 전부 16ee857 에도 있던 동작)
+  1. 해제 직후 -45dBm 정지 기기 14.4초 미발령(미탐지). seedVel -1.5 재주입(:1058) -> isDepartingNow(:1043) -> fastContact 제외(:1600) -> 첫 감지 hold(:1701) + DEPARTING 탈출 조건 vel>1.5(:600). 재현 `c_d_releaseClearsAndReapproach`
+  2. 특수 라벨 지연·누락(c-WARNING +840ms, 빠른 접근 라벨 없음, vee1 CPA+1.9s). 경보 자체는 제때
+  3. 콜드 단발 스파이크 1프레임 DANGER(e1/e3, 2520ms, 과경보). 재현 `e_singleSpike`
+  4. 후진 쿨다운 중 120ms 간격 재방송(43회, 과경보)
+  5. ZONE_ 키 여전히 take(8) (BleScanner.kt:198/:222), 의도 불명
+- 실기기 필요: 후진 RSSI 기울기, BLE 광고 파싱·MAC 대소문자, UWB SAFE 경로(:1893)
+- 사용자 답변으로 확정된 스펙(09-15)
+  - 이탈 중 DANGER -> 해제(WARNING 단계 없음) = 정상
+  - 이탈 판정 = 알림 해제가 기본. 이탈 중 멈춘 뒤 재접근 = 다시 울려야 함 -> 미해결 1 은 스펙 위반(미탐지 버그)
+  - 특수 라벨은 반드시 떠야 함. 장비 6km/h(1.6m/s), 뛰는 보행자·마주 접근은 더 빠름 -> 미해결 2 는 게이트(:995-1007) 수정 대상
+  - 콜드 단발 스파이크 DANGER = 버그(미해결 3)
+- 코드 확인 결과(09-15)
+  - 미해결 4(재방송 43회)는 로컬 인텐트(BleService sendAlertBroadcast)뿐, 상대 전달과 무관. 상대는 1바이트 광고만 받음: RISK 는 BleAdvertiser.updateRisk 상승 즉시·하강 500ms 제한, REV STATE 비트는 updateState 1초 스로틀+pending 재시도. 실제 수신 지연은 실기기 필요
+  - 미해결 5 확정: 조회는 전체 UUID 일치(BeaconRegistry)라 비존 비콘은 존이 안 됨. 그러나 앞 8자리 같은 등록 존 비콘 2개는 키가 합쳐져 lastSeen 갱신으로 10초 이탈이 막히고 IN_ZONE 고착 -> forceLoseAll + IN_ZONE·RISK=SAFE 광고 = 현장 중간 가짜 세이프존. 87b0a87 에서 ZONE 누락. major/minor 미구분이라 같은 전체 UUID(공장 기본값) 미등록 비콘도 존 처리
+- 특수 게이트 수정안 시뮬레이션(09-15, 운영 코드 무변경. worktree `_작업\sa-gate-ga`·`_작업\sa-gate-na` 에만 패치, ASCII 복사본에서 실행)
+  - (가) TTC·일반 발령 프레임이 특수 후보면 게이트 생략하고 특수 라벨: 123건 중 실패 1(의도된 e_singleSpike). 기준(b2edcec) 대비 값 차이 0. 회귀 없음, 개선도 없음(모든 시나리오에서 첫 경보가 특수 후보보다 먼저라 기존 코드가 이미 확증 처리)
+  - (나) 게이트 제거: 실패 3(신규 b_departingReverseNotPromoted·a_routes_isolated). 값 변화 10건 전부 가짜 라벨·오발령(이탈 중 후진 승급·DANGER 라벨 7건, CROSSING 승급, time-gate 음성 대조 발령 2건). "이탈 판정=알림 해제" 스펙 위반 -> 채택 불가
+  - 두 안 모두 라벨 시각 불변: TTC 후 +2880/+5160ms, c-WARNING 전환 +840ms, vee3/vee5/occlusion/popIn 라벨 없음, vee1 CPA+1920ms
+  - 결론: 라벨 지연·누락 원인은 게이트가 아니라 specialCandidate 조건(:995-999, pEma·avg1sec>=effDanger. avg1sec 는 raw 1초 평균 :757 이라 늦음). 프레임 추적은 미확인(코드 판독+(나) 결과 기반 가설)
+  - 첫 (가)/(나) 실행은 패치 안 된 복사본이라 무효, 재실행 결과만 유효
+- 남은 순서: 수정 승인 대기(ZONE 키 32hex / 해제 후 seedVel / 콜드 스파이크 / 특수 후보 조건 (다)안) -> 승인 항목만 재현 테스트 기대값 반전 후 수정 -> 실기기(광고 수신 지연·현장 존 비콘 UUID)
+
+## 2026-09-15 위험 RSSI 임계 -55 -> -65 dBm (경고 -75 유지) — 미커밋
+- 완료: DevSettings 기본값 -65 + V1195 1회 마이그레이션(-65/-75), BleConstants.DEFAULT_RSSI_DANGER=-65, BLE 설정 화면 표시 -75/-65, 개발자 설정 hint, FirebaseManager 주석
+- 판정 로직(AlertStateMachine) 무변경
+- 테스트: AlertCascadeGoldenTest(ESCALATION/RELEASE)·LowSpeedApproachRegressionTest 골든 render 재동결(kfVel 무변화, 주석에 v1.1.95 재동결 노트), Sim0914NormalEscalationDepartTest a 기대값 3840ms
+- 결과: 123개 중 2 실패 — e_singleSpike(기존 실패), Sim0914SpecialGateTest.e_ttcAndCooldownNotDelayed(-70 입력이 이제 특수 후보 범위, -78 로 교체 제안·승인 대기)
+- 남은 순서: SpecialGate 입력 교체 승인 -> 버전 1.1.95/151 -> 커밋·태그·푸시
+
+## 2026-09-15 경고 -75 -> -78 + 교차 후 추세 해제(t3) — 미커밋, GSD 우회(사용자 직접 지시)
+- 완료: BleConstants.DEFAULT_RSSI_WARNING=-78, BleServiceTestHarness rssiWarning=-78, SpecialGate 테스트 입력 -70 -> -78(승인, 재실행 완료)
+- t3 구현(AlertStateMachine, 컴파일 통과): median 2s 창 평균이 피크 대비 -2dB, LSQ 기울기<=0, 진입 대비 피크 상승>=10dB 가 0.2s 유지되면 즉시 SAFE. 재경보는 해제 후 최저+3dB 까지 억제. 상수 TREND_*, 맵 trend*Map 5개, trendStats/clearTrend, 로그 "추세 하강 -> 경보 해제". UWB 조건 불필요(Case A 가 먼저 실행), DEPARTING 상태 미개입
+- 시뮬(scratchpad fast_release_sim/rearm_sim): 6km/h 교차 후 해제 DT100 2.4s/4.0m, DT250 2.5s/4.2m, 교차 후 경보 2.8s(BASE 30.4s)
+- 테스트(SpecialGate 수정 전): 123 중 10 실패
+  - ① 해제 하한 -83: PassByStop s2/s4/s5b, Sim0914 h2 (정지 노이즈가 -83 아래로 안 내려감, 피크 상승 5dB 라 t3 미동작) -> 승인: 입력 -3dB 이동(lock 조건 -81 -> -84, rssi 단언 갱신)
+  - ② a_h firstWarnMs 2640 -> 2280, h releaseMs 9360 -> 7080 재동결(승인)
+  - ④ AlertCascadeGolden escalation/release frame9, LowSpeed frame28 kfVel 불일치 -> 원인 확정: 경고 -78 로 칼만 소거 경계가 -88 로 이동(t3 무관, 경계 7dB 로 확인). 사용자 결정 A: 기본 밴드 10·-65/-78 에서 escalation/release/lowspeed 골든 기록 그대로 재동결(_작업/golden_freeze.py, contact 무변화 검증), 주석은 실측값만(AlertCascadeGoldenTest :212 v1.1.70 당시 -75 명시, KDoc 2곳, LowSpeed :176-178)
+  - ⑤ e_singleSpike: 기존 의도된 실패(콜드 스파이크 재현). 사용자 승인: 원인 확인만
+- 5클래스 재실행(AlertCascadeGolden/LowSpeed/Sim0914 x2/PassByStop): 32 테스트, 실패 1 = e_singleSpike(의도된 실패, expected null was 2520)
+- AlertStateMachine :179(WARNING_DEPART_RATE 주석) 에 -75 언급 없음. 역사 문구 '(골든 무변화)' :181/:914 만 있어 미수정, 사용자 확인 대기
+- MemPalace: kg_invalidate(경고 -75) -> kg_add(-65/-78, 해제 하한 -83, t3) -> add_drawer -> diary_write 완료
+- 남은 순서: 1.1.95/151 커밋·태그·푸시는 사용자 요청 시만(PassByStopSimulationTest 제외, Co-Authored-By 금지)
+- 알려진 한계: 피크 상승 10dB 미만 통과는 t3 로 해제되지 않고 -83 까지 대기

@@ -2,6 +2,7 @@ package com.wf11.safealert.ui
 
 import android.Manifest
 import android.animation.ObjectAnimator
+import android.app.Activity
 import android.app.AlertDialog
 import android.app.Dialog
 import android.content.BroadcastReceiver
@@ -299,7 +300,7 @@ class MainActivity : AppCompatActivity() {
         binding.cardRoleForklift.setOnClickListener { requireSiteCode { startAsPitOperator() } }
         binding.btnStop.setOnClickListener       { stopServiceImmediately() }
         binding.btnSwitchRole.setOnClickListener { confirmSwitchRole() }   // [v1.1.60] 역할 전환
-        binding.cardSettings.setOnClickListener  { showPinDialog() }
+        binding.cardSettings.setOnClickListener  { showDevPinDialog { startActivity(Intent(this, DevSettingsActivity::class.java)) } }
         binding.cardBleSettings.setOnClickListener {
             startActivity(Intent(this, BleSettingsActivity::class.java))
         }
@@ -1101,64 +1102,66 @@ class MainActivity : AppCompatActivity() {
         updateDialog = builder.setCancelable(!info.forceUpdate).show()
     }
 
-    // ── PIN 다이얼로그 ──────────────────────────────────────────
-    private fun showPinDialog() {
-        val dialog = Dialog(this)
-        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
-        val pb = DialogPinBinding.inflate(layoutInflater)
-        dialog.setContentView(pb.root)
-        dialog.window?.apply {
-            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-            setLayout(
-                (resources.displayMetrics.widthPixels * 0.92).toInt(),
-                WindowManager.LayoutParams.WRAP_CONTENT
+}
+
+// ── PIN 다이얼로그 ──────────────────────────────────────────
+//   설정 진입·비콘 공유 전송/삭제 공용. PIN 일치 시 닫고 onSuccess 실행.
+fun Activity.showDevPinDialog(onSuccess: () -> Unit) {
+    val dialog = Dialog(this)
+    dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+    val pb = DialogPinBinding.inflate(layoutInflater)
+    dialog.setContentView(pb.root)
+    dialog.window?.apply {
+        setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        setLayout(
+            (resources.displayMetrics.widthPixels * 0.92).toInt(),
+            WindowManager.LayoutParams.WRAP_CONTENT
+        )
+    }
+
+    val dots  = listOf(pb.dot1, pb.dot2, pb.dot3)
+    val input = StringBuilder()
+
+    fun updateDots() {
+        dots.forEachIndexed { i, dot ->
+            dot.setBackgroundResource(
+                if (i < input.length) R.drawable.shape_pin_dot_filled
+                else R.drawable.shape_pin_dot_empty
             )
         }
+    }
 
-        val dots  = listOf(pb.dot1, pb.dot2, pb.dot3)
-        val input = StringBuilder()
-
-        fun updateDots() {
-            dots.forEachIndexed { i, dot ->
-                dot.setBackgroundResource(
-                    if (i < input.length) R.drawable.shape_pin_dot_filled
-                    else R.drawable.shape_pin_dot_empty
-                )
+    fun onDigit(d: String) {
+        if (input.length >= 3) return
+        input.append(d)
+        updateDots()
+        pb.tvError.visibility = View.INVISIBLE
+        if (input.length == 3) {
+            // (v1.1.90) 설정 PIN — 값은 빌드 시 주입(BuildConfig + CI Secrets). 3자리 유지(장갑 입력)
+            if (input.toString() == BuildConfig.DEV_PIN) {
+                dialog.dismiss()
+                onSuccess()
+            } else {
+                pb.tvError.visibility = View.VISIBLE
+                input.clear()
+                updateDots()
             }
         }
+    }
 
-        fun onDigit(d: String) {
-            if (input.length >= 3) return
-            input.append(d)
+    mapOf(pb.btn1 to "1", pb.btn2 to "2", pb.btn3 to "3",
+          pb.btn4 to "4", pb.btn5 to "5", pb.btn6 to "6",
+          pb.btn7 to "7", pb.btn8 to "8", pb.btn9 to "9",
+          pb.btn0 to "0").forEach { (btn, digit) ->
+        btn.setOnClickListener { onDigit(digit) }
+    }
+    pb.btnBack.setOnClickListener {
+        if (input.isNotEmpty()) {
+            input.deleteCharAt(input.length - 1)
             updateDots()
             pb.tvError.visibility = View.INVISIBLE
-            if (input.length == 3) {
-                // (v1.1.90) 설정 PIN — 값은 빌드 시 주입(BuildConfig + CI Secrets). 3자리 유지(장갑 입력)
-                if (input.toString() == BuildConfig.DEV_PIN) {
-                    dialog.dismiss()
-                    startActivity(Intent(this, DevSettingsActivity::class.java))
-                } else {
-                    pb.tvError.visibility = View.VISIBLE
-                    input.clear()
-                    updateDots()
-                }
-            }
         }
-
-        mapOf(pb.btn1 to "1", pb.btn2 to "2", pb.btn3 to "3",
-              pb.btn4 to "4", pb.btn5 to "5", pb.btn6 to "6",
-              pb.btn7 to "7", pb.btn8 to "8", pb.btn9 to "9",
-              pb.btn0 to "0").forEach { (btn, digit) ->
-            btn.setOnClickListener { onDigit(digit) }
-        }
-        pb.btnBack.setOnClickListener {
-            if (input.isNotEmpty()) {
-                input.deleteCharAt(input.length - 1)
-                updateDots()
-                pb.tvError.visibility = View.INVISIBLE
-            }
-        }
-
-        dialog.show()
     }
+
+    dialog.show()
 }
