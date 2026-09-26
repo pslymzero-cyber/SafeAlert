@@ -1,9 +1,10 @@
 name: Alert digest
 
 # 경보 이력을 주기적으로 집계해 저장소에 커밋한다.
-#   v1.1.71 의 database.rules.json 이 alerts 읽기를 막아(루트 .read:false 상속)
-#   REST 로는 읽히지 않는다. FIREBASE_DB_SECRET 은 규칙을 우회하는 admin 권한이라
-#   여기서만 읽을 수 있다 — release.yml 의 version PATCH 와 같은 자격이다.
+#   database.rules.json: 루트 ".read":false, {firebaseRoot}/alerts·uwb_probe 에는
+#   .read 규칙 자체가 없어 REST 로 읽을 길이 없다. echo_calib 은 "auth != null" 이지만
+#   CI 에는 사용자 토큰이 없다. FIREBASE_DB_SECRET 은 규칙을 우회하는 admin 자격이라
+#   여기서만 셋 다 읽는다 — release.yml 의 version PATCH 와 같은 자격이다.
 #
 #   결과는 저장소 맨 위 ALERTS.md 한 장이다. GitHub 앱에서 저장소만 열면
 #   파일 목록 위쪽에 바로 보인다 — 경로를 타고 들어갈 필요가 없다.
@@ -128,12 +129,13 @@ jobs:
           fi
 
           if [ -z "${SITES// /}" ]; then
-            printf '## 사업장 노드가 없다\n\n> 데이터베이스 루트에 사업장 노드가 보이지 않는다.\n> 폰 개발자 설정의 `firebaseRoot` 값을 확인할 것.\n\n' >> ALERTS.md
+            printf '## firebaseRoot 노드가 없다\n\n> 데이터베이스 루트에서 version 을 뺀 노드(= 폰 개발자 설정의 firebaseRoot 값)가 하나도 보이지 않는다.\n> 앞 단계(사업장 목록)의 루트 읽기 실패 경고도 확인할 것.\n\n' >> ALERTS.md
             exit 0
           fi
 
           for SITE in $SITES; do
             # orderBy="$key" + startAt 으로 최근 구간만 받는다 (전체를 끌어오지 않는다)
+            # 한계: 숫자만인 사업장 코드는 정수 키로 정렬돼 FROM 보다 작으면 서버 startAt 에서 잘려 빠진다 - 문자 코드는 정수 키 뒤로 정렬돼 전 기간이 내려오고 --from 으로 자른다.
             if curl -fsS --get "${DB%/}/$SITE/alerts.json" \
                  --data-urlencode "auth=$KEY" \
                  --data-urlencode 'orderBy="$key"' \
@@ -165,7 +167,7 @@ jobs:
 
               python3 .github/scripts/analyze_alerts.py "alerts-$SITE.json" \
                 --label "${SITE^^}" --md ALERTS.md --append --no-ids \
-                $ECHO $PROBE ${SINCE:+--from "$SINCE"}
+                --from "$FROM" $ECHO $PROBE
             else
               echo "::warning::$SITE 읽기 실패 — 건너뜀"
               printf '## %s\n\n> 읽기 실패.\n\n' "${SITE^^}" >> ALERTS.md

@@ -9,9 +9,11 @@
     python3 analyze_alerts.py alerts.json [--days 28] [--out summary.json]
     python3 analyze_alerts.py alerts.json --label WF11 --md DIGEST.md [--append] [--no-ids]
 
-받는 모양 (FirebaseManager.kt 의 saveAlert 이 쓰는 그대로):
-    { "20260901": { "<uuid>": {timestamp, deviceId, walkerId, rssi, alertLevel}, ... }, ... }
-    루트가 사업장 노드 전체여도 되고(alerts 를 알아서 찾는다), alerts 노드만이어도 된다.
+받는 모양 (FirebaseManager.kt 의 saveAlert 이 쓰는 그대로) - 둘이 섞여도 된다:
+    날짜 층 (siteCode 빈 값):    { "20260901": { "<uuid>": {timestamp, deviceId, walkerId, rssi, alertLevel}, ... }, ... }
+    사업장 층 (v1.1.77~):        { "<siteCode>": { "20260901": { "<uuid>": {...}, ... }, ... }, ... }
+    두 구조를 키 모양이 아니라 값 구조로 가른다(_flatten) - 숫자만인 사업장 코드(예: "12345678")도
+    날짜로 오인되지 않는다. 루트가 사업장 노드 전체여도 되고(alerts 를 알아서 찾는다), alerts 노드만이어도 된다.
 
 건수의 의미 — 같은 기기에 대해 1분 1회로 스로틀돼 있다 (BleService.kt).
 따라서 1건 = 경보 1회가 아니라 '해당 분(分)에 그 기기와 가까워졌다' 다.
@@ -56,7 +58,34 @@ def load(path):
     return doc or {}
 
 
+def _is_record(d):
+    """레코드 = 비-dict(스칼라) 값을 하나 이상 가진 dict."""
+    return isinstance(d, dict) and any(not isinstance(x, dict) for x in d.values())
+
+
+def _flatten(alerts):
+    """날짜 층·사업장 층을 값 구조로 가려 {yyyyMMdd: {uuid: rec}} 로 편다.
+
+    키 모양(8자리 숫자)이 아니라 값 구조로 판별하므로 숫자만인 사업장 코드가
+    날짜로 오인되지 않는다. 같은 날짜가 루트와 여러 사업장에 걸쳐 있으면 병합된다.
+    """
+    if not isinstance(alerts, dict):
+        return {}
+    out = {}
+    for key, v in alerts.items():
+        if not isinstance(v, dict):
+            continue
+        if any(_is_record(child) for child in v.values()):
+            out.setdefault(key, {}).update(v)          # 날짜 층: key 가 날짜, v 가 {uuid: rec}
+        else:
+            for date, recs in v.items():                # 사업장 층: v 가 {날짜: {uuid: rec}}
+                if isinstance(recs, dict):
+                    out.setdefault(date, {}).update(recs)
+    return out
+
+
 def aggregate(alerts, days=0, since=""):
+    alerts = _flatten(alerts)
     dates = sorted(k for k in alerts if k.isdigit() and len(k) == 8)
     if since:
         dates = [d for d in dates if d >= since]
@@ -136,10 +165,14 @@ def uptime(echo, recorders, now_s=None):
     now = now_s if now_s is not None else datetime.now(KST).timestamp()
     rec = set(recorders or ())
     fresh, week, stale, models = [], [], [], Counter()
+    reg = set()
     for key, node in echo.items():
-        if not isinstance(node, dict):
+        # model 키가 없으면 구버전 echo_calib/<사업장>/<기기ID> 잔존 노드다(앱은 model
+        # 없는 노드를 버린다 - FirebaseManager.kt :244/:266) - registered/models/silent 에서 뺀다.
+        if not isinstance(node, dict) or "model" not in node:
             continue
         dev = _norm(key)
+        reg.add(dev)
         models[str(node.get("model") or "?")] += 1
         ts = node.get("ts")
         age_h = (now - ts / 1000.0) / 3600.0 if isinstance(ts, (int, float)) else None
@@ -149,7 +182,6 @@ def uptime(echo, recorders, now_s=None):
             fresh.append(dev)
         else:
             week.append(dev)
-    reg = {_norm(k) for k in echo}
     silent = sorted(reg - rec)                 # 등록돼 있는데 기간 중 기록이 하나도 없는 기기
     return {
         "registered": len(reg),
