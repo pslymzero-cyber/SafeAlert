@@ -312,73 +312,81 @@ class BeaconManagerActivity : AppCompatActivity() {
         if (!requireSiteCode()) return
         Toast.makeText(this, "세트 목록 불러오는 중...", Toast.LENGTH_SHORT).show()
         FirebaseManager.listBeaconSets { sets ->
-            runOnUiThread {
-                if (sets.isEmpty()) {
-                    Toast.makeText(this, "공유된 세트가 없습니다", Toast.LENGTH_SHORT).show()
-                    return@runOnUiThread
-                }
-                val fmt = SimpleDateFormat("MM/dd HH:mm", Locale.getDefault())
-                val labels = sets.map { s ->
-                    "${s.name}  (${s.count}개)\n${s.sender} · ${fmt.format(Date(s.timestamp))}"
-                }.toTypedArray()
-                AlertDialog.Builder(this)
-                    .setTitle("받을 세트 선택")
-                    .setItems(labels) { _, which -> showReceivePreview(sets[which]) }
-                    .setNegativeButton("취소", null)
-                    .show()
-            }
+            runOnUiThread { onBeaconSetsLoaded(sets) }
         }
+    }
+
+    // Firebase 비동기 콜백 — 화면이 이미 닫혔거나 재생성됐으면 다이얼로그를 띄우지 않는다(BadTokenException → 같은 프로세스 BleService 동반 사망 방지)
+    internal fun onBeaconSetsLoaded(sets: List<FirebaseManager.BeaconSetMeta>) {
+        if (isFinishing || isDestroyed) return
+        if (sets.isEmpty()) {
+            Toast.makeText(this, "공유된 세트가 없습니다", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val fmt = SimpleDateFormat("MM/dd HH:mm", Locale.getDefault())
+        val labels = sets.map { s ->
+            "${s.name}  (${s.count}개)\n${s.sender} · ${fmt.format(Date(s.timestamp))}"
+        }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle("받을 세트 선택")
+            .setItems(labels) { _, which -> showReceivePreview(sets[which]) }
+            .setNegativeButton("취소", null)
+            .show()
     }
 
     private fun showReceivePreview(set: FirebaseManager.BeaconSetMeta) {
         FirebaseManager.downloadBeaconSet(set.key) { json ->
-            runOnUiThread {
-                if (json == null) {
-                    Toast.makeText(this, "세트를 불러오지 못했습니다", Toast.LENGTH_SHORT).show()
-                    return@runOnUiThread
-                }
-                val incoming = BeaconRegistry.parseProfiles(json)
-                if (incoming.isEmpty()) {
-                    Toast.makeText(this, "세트가 비어 있습니다", Toast.LENGTH_SHORT).show()
-                    return@runOnUiThread
-                }
-                val existing = BeaconRegistry.getAll().map { it.uuid.uppercase() }.toSet()
-                val newCnt = incoming.count { it.uuid.uppercase() !in existing }
-                val updCnt = incoming.size - newCnt
-                val msg = "세트: ${set.name}\n보낸 기기: ${set.sender}\n" +
-                          "비콘 ${incoming.size}개 (신규 $newCnt · 갱신 $updCnt)\n\n" +
-                          "받으면 같은 UUID는 받은 값으로 갱신되고, 신규는 추가됩니다. 내 기기에만 있는 비콘은 그대로 유지됩니다."
+            runOnUiThread { onBeaconSetDownloaded(set, json) }
+        }
+    }
+
+    // Firebase 비동기 콜백 — 화면이 이미 닫혔거나 재생성됐으면 다이얼로그를 띄우지 않는다(BadTokenException → 같은 프로세스 BleService 동반 사망 방지)
+    internal fun onBeaconSetDownloaded(set: FirebaseManager.BeaconSetMeta, json: String?) {
+        if (isFinishing || isDestroyed) return
+        if (json == null) {
+            Toast.makeText(this, "세트를 불러오지 못했습니다", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val incoming = BeaconRegistry.parseProfiles(json)
+        if (incoming.isEmpty()) {
+            Toast.makeText(this, "세트가 비어 있습니다", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val existing = BeaconRegistry.getAll().map { it.uuid.uppercase() }.toSet()
+        val newCnt = incoming.count { it.uuid.uppercase() !in existing }
+        val updCnt = incoming.size - newCnt
+        val msg = "세트: ${set.name}\n보낸 기기: ${set.sender}\n" +
+                  "비콘 ${incoming.size}개 (신규 $newCnt · 갱신 $updCnt)\n\n" +
+                  "받으면 같은 UUID는 받은 값으로 갱신되고, 신규는 추가됩니다. 내 기기에만 있는 비콘은 그대로 유지됩니다."
+        AlertDialog.Builder(this)
+            .setTitle("받기 확인")
+            .setMessage(msg)
+            .setPositiveButton("받기") { _, _ ->
+                val r = BeaconRegistry.mergeProfiles(incoming)
+                refreshProfiles()
+                Toast.makeText(this,
+                    "병합 완료 — 추가 ${r.added} · 갱신 ${r.updated}" +
+                    (if (r.skipped > 0) " · 한도초과 ${r.skipped}" else ""),
+                    Toast.LENGTH_LONG).show()
+            }
+            .setNeutralButton("이 세트 삭제") { _, _ ->
                 AlertDialog.Builder(this)
-                    .setTitle("받기 확인")
-                    .setMessage(msg)
-                    .setPositiveButton("받기") { _, _ ->
-                        val r = BeaconRegistry.mergeProfiles(incoming)
-                        refreshProfiles()
-                        Toast.makeText(this,
-                            "병합 완료 — 추가 ${r.added} · 갱신 ${r.updated}" +
-                            (if (r.skipped > 0) " · 한도초과 ${r.skipped}" else ""),
-                            Toast.LENGTH_LONG).show()
-                    }
-                    .setNeutralButton("이 세트 삭제") { _, _ ->
-                        AlertDialog.Builder(this)
-                            .setTitle("세트 삭제")
-                            .setMessage("'${set.name}' 공유 세트를 클라우드에서 삭제합니다.\n(내 기기에 등록된 비콘은 삭제되지 않습니다)")
-                            .setPositiveButton("삭제") { _, _ ->
-                                showDevPinDialog {
-                                    FirebaseManager.deleteBeaconSet(set.key) { ok ->
-                                        runOnUiThread {
-                                            Toast.makeText(this, if (ok) "삭제됨: ${set.name}" else "삭제 실패", Toast.LENGTH_SHORT).show()
-                                        }
-                                    }
+                    .setTitle("세트 삭제")
+                    .setMessage("'${set.name}' 공유 세트를 클라우드에서 삭제합니다.\n(내 기기에 등록된 비콘은 삭제되지 않습니다)")
+                    .setPositiveButton("삭제") { _, _ ->
+                        showDevPinDialog {
+                            FirebaseManager.deleteBeaconSet(set.key) { ok ->
+                                runOnUiThread {
+                                    Toast.makeText(this, if (ok) "삭제됨: ${set.name}" else "삭제 실패", Toast.LENGTH_SHORT).show()
                                 }
                             }
-                            .setNegativeButton("취소", null)
-                            .show()
+                        }
                     }
                     .setNegativeButton("취소", null)
                     .show()
             }
-        }
+            .setNegativeButton("취소", null)
+            .show()
     }
 
     // ── BLE 스캔으로 비콘 발견 ──────────────────────────────────
