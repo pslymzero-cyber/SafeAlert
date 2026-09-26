@@ -155,9 +155,13 @@ object DevSettings {
         set(v) = prefs.edit().putBoolean(KEY_SOUND_ENABLED, v).apply()
 
     // Firebase 설정
+    /** Firebase child() 가 . # $ [ ] 에서 DatabaseException → 서비스 시작 크래시 루프 차단용. */
+    private fun normalizeFirebaseRoot(raw: String?): String =
+        if (raw == null || raw.isBlank() || raw.any { it in ".#\$[]" }) "wf11" else raw.trim()
+
     var firebaseRoot: String
-        get() = prefs.getString(KEY_FIREBASE_ROOT, "wf11") ?: "wf11"
-        set(v) = prefs.edit().putString(KEY_FIREBASE_ROOT, v).apply()
+        get() = normalizeFirebaseRoot(prefs.getString(KEY_FIREBASE_ROOT, "wf11"))
+        set(v) = prefs.edit().putString(KEY_FIREBASE_ROOT, normalizeFirebaseRoot(v)).apply()
 
     var autoSaveAlerts: Boolean
         get() = prefs.getBoolean(KEY_AUTO_SAVE_ALERTS, true)
