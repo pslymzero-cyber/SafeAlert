@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-08-23)
 Phase: 03 (BleService 분해) — COMPLETE
 Plan: 1 of 1
 Status: Phase 04 계획 대기
-Last activity: 2026-09-26 — Completed quick task 260925-r3l: 경고음 1초 해제 타이머를 stopSound 가 취소하게 (커밋 23d1380)
+Last activity: 2026-09-26 — Completed quick task 260926-p6u: firebaseRoot 금지 문자 가드 (커밋 6a2fd69)
 
 Progress: [██████░░░░] 60%
 
@@ -114,6 +114,7 @@ None yet.
 | 2026-09-12 | 260912-32e — v1.1.88 규칙 잠금(Phase D) + 첫 실행 변경 사항 창 + 다운로드 완료 수신기 EXPORTED + 캐시 APK 재사용 (0de98da, 태그 v1.1.88) | complete |
 | 2026-09-14 | 260914-lqs — context-budget 실측으로 CLAUDE.md 읽기 금지 표 갱신 (ada5825) | complete |
 | 2026-09-26 | 260925-r3l — AlertSoundPlayer 경고음 1초 해제 타이머를 stopSound 가 취소하게 (23d1380) | complete |
+| 2026-09-26 | 260926-p6u — firebaseRoot 금지 문자(. # $ [ ])·빈 값 가드 (6a2fd69) | complete |
 
 ## Deferred Items
 
