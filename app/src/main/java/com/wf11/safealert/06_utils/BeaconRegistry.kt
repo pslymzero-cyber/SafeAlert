@@ -2,6 +2,7 @@ package com.wf11.safealert.utils
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.util.Log
 import com.wf11.safealert.model.BeaconProfile
 import org.json.JSONArray
 import org.json.JSONObject
@@ -40,11 +41,14 @@ object BeaconRegistry {
                "${hex.substring(16, 20)}-${hex.substring(20)}"
     }
 
+    // (quick-260927-bn9 결정 1) 항목 하나 손상으로 전체 목록(존 비콘 포함)이 비던 문제 — 배열 파싱만 실패 시 빈 목록,
+    // 항목 단위는 개별 복구. ponytail: 손상 항목이 남아 있으면 호출마다 Log.w 1줄 — 손상 자체가 드물어 수용,
+    // 로그가 잦아지면 prefs 재기록으로 정리하는 쪽을 검토한다.
     fun getAll(): List<BeaconProfile> {
         val json = prefs.getString(KEY_LIST, "[]") ?: "[]"
-        return runCatching {
-            val arr = JSONArray(json)
-            (0 until arr.length()).map { i ->
+        val arr = runCatching { JSONArray(json) }.getOrNull() ?: return emptyList()
+        val result = (0 until arr.length()).mapNotNull { i ->
+            runCatching {
                 val obj = arr.getJSONObject(i)
                 BeaconProfile(
                     uuid          = normUuid(obj.getString("uuid")),
@@ -56,8 +60,12 @@ object BeaconRegistry {
                     zoneEnterRssi = obj.optInt("zoneEnterRssi", -80),
                     visitorBeacon = obj.optBoolean("visitorBeacon", true)
                 )
-            }
-        }.getOrDefault(emptyList())
+            }.getOrNull()
+        }
+        if (result.size < arr.length()) {
+            Log.w("BeaconRegistry", "손상 비콘 항목 ${arr.length() - result.size}개 건너뜀")
+        }
+        return result
     }
 
     fun containsUuid(uuid: String): Boolean =

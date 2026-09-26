@@ -96,4 +96,18 @@ class BeaconFullIdTest {
         assertFalse(BeaconRegistry.isVisitorBeacon(unknown))
         assertEquals("BEA_FDA50693", BeaconRegistry.labelForFullId(unknown))
     }
+
+    // (quick-260927-bn9 결정 1) 항목 하나(label 누락)가 손상돼도 나머지 항목(존 비콘 포함)은 살아남는다
+    @Test
+    fun getAll_corruptedItemSkipped_othersSurvive() {
+        val raw = """[{"uuid":"FDA50693-A4E2-4FB1-AFCF-C6EB07647825","label":"앞"},{"uuid":"11111111-1111-1111-1111-111111111111"},{"uuid":"AA:BB:CC:DD:EE:FF","label":"뒤","type":"MAC","zoneMute":true}]"""
+        val app = RuntimeEnvironment.getApplication()
+        app.getSharedPreferences(DevSettings.sitePrefName("beacon_registry"), Context.MODE_PRIVATE)
+            .edit().putString("beacon_profiles", raw).commit()
+
+        val all = BeaconRegistry.getAll()
+        assertEquals(2, all.size)
+        assertEquals(listOf("앞", "뒤"), all.map { it.label })
+        assertTrue(all[1].zoneMute)
+    }
 }

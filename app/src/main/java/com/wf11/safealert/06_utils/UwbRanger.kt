@@ -99,10 +99,15 @@ class UwbRanger(
             private set
         @Volatile var liveSessionCount: Int = 0        // 현재 UWB 실측 거리를 수신 중인 피어 수
             private set
-        // (v1.1.39) 마지막 초기화 실패 사유 — 성공 시 null. stop() 은 지우지 않는다(재시도 루프가
+        // (v1.1.39) 마지막 초기화·재구성 실패 사유 — 성공 시 null. stop() 은 지우지 않는다(재시도 루프가
         //   도는 동안 진단 패널이 '왜 안 열리는지'를 계속 보여줘야 한다).
         @Volatile var liveInitError: String? = null
             private set
+
+        /** (quick-260927-bn9 결정 2) renewAndStart 재구성 결과를 진단 사유에 반영. stage=null → 성공(해제). */
+        internal fun noteRebuild(stage: String?, e: Exception? = null) {
+            liveInitError = if (stage == null) null else "재구성 실패($stage): ${e?.message}"
+        }
     }
 
     private enum class Role { NONE, CONTROLLER, CONTROLEE }
@@ -545,6 +550,7 @@ class UwbRanger(
                     val s = sessionScope
                     if (s != null && s !is UwbControllerSessionScope) {
                         role = Role.NONE
+                        noteRebuild(null)
                         publishDiag()
                         true
                     } else false
@@ -554,6 +560,7 @@ class UwbRanger(
                     mgr.controleeSessionScope()
                 } catch (e: Exception) {
                     Log.w(TAG, "UWB 대기 스코프 생성 실패(백오프 재시도): ${e.message}")
+                    noteRebuild("대기 스코프", e)
                     synchronized(this) { scheduleRestartLocked(RESTART_BACKOFF_MS) }
                     return
                 }
@@ -566,6 +573,7 @@ class UwbRanger(
                     scopePrepared = false   // 세션 미시작 — 다음 재구성이 재사용 가능
                     localAddress = sc.localAddress.address.copyOf()
                     role = Role.NONE
+                    noteRebuild(null)
                     publishDiag()
                 }
                 onLocalAddressChanged?.invoke(payload)
@@ -576,6 +584,7 @@ class UwbRanger(
                     mgr.controllerSessionScope()
                 } catch (e: Exception) {
                     Log.w(TAG, "UWB 컨트롤러 스코프 생성 실패(백오프 재시도): ${e.message}")
+                    noteRebuild("컨트롤러 스코프", e)
                     synchronized(this) { scheduleRestartLocked(RESTART_BACKOFF_MS) }
                     return
                 }
@@ -597,6 +606,7 @@ class UwbRanger(
                         servedControlees[id] = addr
                         servedAddrToId[addr.toHex()] = id
                     }
+                    noteRebuild(null)
                     publishDiag()
                 }
                 onLocalAddressChanged?.invoke(payload)
@@ -626,6 +636,7 @@ class UwbRanger(
                     mgr.controleeSessionScope()
                 } catch (e: Exception) {
                     Log.w(TAG, "UWB 컨트롤리 스코프 생성 실패(백오프 재시도): ${e.message}")
+                    noteRebuild("컨트롤리 스코프", e)
                     synchronized(this) { scheduleRestartLocked(RESTART_BACKOFF_MS) }
                     return
                 }
@@ -642,6 +653,7 @@ class UwbRanger(
                     activeControllerPayload = cpayload
                     activeControllerAddrHex = cpayload.copyOf(2).toHex()
                     lastActiveControllerId = cid
+                    noteRebuild(null)
                     publishDiag()
                 }
                 if (reused == null) onLocalAddressChanged?.invoke(payload)   // 새 주소일 때만 재광고

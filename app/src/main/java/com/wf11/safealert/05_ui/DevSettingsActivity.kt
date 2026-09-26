@@ -417,11 +417,15 @@ class DevSettingsActivity : AppCompatActivity() {
     // ── [Phase 4 T2] STATE-03 기기 상태 계기 — 읽기 전용. 판정에 일절 관여하지 않는다.
     private fun refreshStateDiag() {
         val reg = DeviceStateRegistry.live
-        binding.tvStateDiag.text = if (reg == null) {
-            "서비스 정지 — 계기 없음"
+        if (reg == null) {
+            binding.tvStateDiag.text = "서비스 정지 — 계기 없음"
+            binding.secStateSummary.text = "서비스 정지"
         } else {
             val tracked = reg.sizeOf("alertState")?.toString() ?: "?"
-            "추적 ${tracked}대 · 엔트리 ${reg.entryCount()}개 / 슬롯 ${reg.slotCount()}개 · 정리 ${reg.purgeCount}회"
+            val entries = reg.entryCount()
+            val purges = reg.purgeCount
+            binding.tvStateDiag.text = "추적 ${tracked}대 · 엔트리 ${entries}개 / 슬롯 ${reg.slotCount()}개 · 정리 ${purges}회"
+            binding.secStateSummary.text = "추적 ${tracked}대 · 엔트리 ${entries} · 정리 ${purges}회"
         }
     }
 
@@ -448,14 +452,17 @@ class DevSettingsActivity : AppCompatActivity() {
         val active = UwbRanger.liveActive
         val role   = UwbRanger.liveRole
         val sess   = UwbRanger.liveSessionCount
+        val err    = UwbRanger.liveInitError
         val line1  = "HW ${mk(hw)}    권한 ${mk(perm)}    시스템 $sysMark"
         val line2  = "세션 ${if (active) "가동" else "정지"} · 역할 $role · 실측 ${sess}대"
+        // (quick-260927-bn9 결정 2) liveActive 는 isSupported 라 초기화 성공 뒤 재구성만 실패해도
+        // true 로 남는다 — 가동 중이라도 err 가 있으면 그 사유를 보여야 조용한 실패가 안 된다.
         val hint = when {
             !hw          -> "→ 이 기기는 UWB 하드웨어가 없습니다(BLE 신호만 사용)."
             !perm        -> "→ UWB 권한 없음. BLE 설정 화면에서 권한을 허용하세요."
             sys == false -> "→ 기기 UWB가 꺼져 있습니다. 시스템 설정에서 켜세요."
-            !active && UwbRanger.liveInitError != null ->
-                "→ 초기화 실패: ${UwbRanger.liveInitError} (자동 재시도 중)"
+            err != null  -> if (active) "→ $err (자동 재시도 중)"
+                            else "→ 초기화 실패: $err (자동 재시도 중)"
             !active      -> if (DevSettings.uwbForce) "→ 강제 ON. 상대 UWB 기기가 잡히면 세션이 열립니다."
                             else "→ 대기 중. 상대가 근접(시작 게이트 통과)하면 세션이 열립니다."
             else         -> "→ UWB 실측 중 — 목록 거리가 m로 표시됩니다."
