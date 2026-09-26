@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-08-23)
 Phase: 03 (BleService 분해) — COMPLETE
 Plan: 1 of 1
 Status: Phase 04 계획 대기
-Last activity: 2026-09-27 — Completed quick task 260927-b1s: 진동 설정(경고 펄스 길이·위험 반복 횟수)을 실제 진동에 연결 (커밋 8ef0d83)
+Last activity: 2026-09-27 — Completed quick task 260927-bbc: 익명 로그인 헬스체크 재시도·BLE 설정 되읽기 저장 차단 (커밋 ff5088e)
 
 Progress: [██████░░░░] 60%
 
@@ -120,6 +120,7 @@ None yet.
 | 2026-09-26 | 260926-wpd — CalibrationEngine 사업장 전환 시 에코 통계를 떠나는 사업장 파일에 저장(echoPrefs=activeSite 기준) (af2fd58) | complete |
 | 2026-09-27 | 260927-aol — 에코 보정 전역화: 사업장별 echo 파일 분리·applySite 제거, 현재 사업장 파일 1회 인계, 테스트 교체(af2fd58 대체) (1ddaf00) | complete |
 | 2026-09-27 | 260927-b1s — 진동 설정 연결: 경고 2회·펄스=vibrationWarningMs(100~1000 제한), 위험 150ms×vibrationDangerCount(1~5 제한), 테스트 경보도 위험 패턴, vibrateOnce·vibrateRepeat 삭제 (8ef0d83) | complete |
+| 2026-09-27 | 260927-bbc — FirebaseConfig.ensureSignedIn(진행 중 플래그)+BleService 15초 헬스체크 재호출, BleSettings seek fromUser 가드·잠긴 사업장 칸 저장 리스너 삭제·onResume 요약 갱신 (ff5088e) | complete |
 
 ## Deferred Items
 
