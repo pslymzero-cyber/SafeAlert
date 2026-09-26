@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-08-23)
 Phase: 03 (BleService 분해) — COMPLETE
 Plan: 1 of 1
 Status: Phase 04 계획 대기
-Last activity: 2026-09-27 — Completed quick task 260927-bn9: 비콘 목록 항목 단위 복구·UWB 재구성 실패 표시·상태 요약 채우기 (커밋 e150965)
+Last activity: 2026-09-27 — Completed quick task 260927-bzr: 죽은 코드·낡은 주석 정리(calcAlertLevel·offsetDbFor·AppMode 등) (커밋 deb14a9)
 
 Progress: [██████░░░░] 60%
 
@@ -122,6 +122,7 @@ None yet.
 | 2026-09-27 | 260927-b1s — 진동 설정 연결: 경고 2회·펄스=vibrationWarningMs(100~1000 제한), 위험 150ms×vibrationDangerCount(1~5 제한), 테스트 경보도 위험 패턴, vibrateOnce·vibrateRepeat 삭제 (8ef0d83) | complete |
 | 2026-09-27 | 260927-bbc — FirebaseConfig.ensureSignedIn(진행 중 플래그)+BleService 15초 헬스체크 재호출, BleSettings seek fromUser 가드·잠긴 사업장 칸 저장 리스너 삭제·onResume 요약 갱신 (ff5088e) | complete |
 | 2026-09-27 | 260927-bn9 — BeaconRegistry.getAll 항목 단위 복구, UwbRanger.noteRebuild 로 renewAndStart 실패·성공을 liveInitError 에 반영(진단 힌트는 가동 중에도 표시), sec_state_summary 채움 (e150965) | complete |
+| 2026-09-27 | 260927-bzr — 죽은 코드·낡은 주석 정리: calcAlertLevel·onDeviceDetected alertLevel 인자, offsetDbFor·CLAMP·uwbCalibEnabled, debugString, AppMode, item_beacon_nearby/registered, echoFbFetchedAt, txRisk, txFaultReason private, FirebaseManager 주석 (deb14a9) | complete |
 
 ## Deferred Items
 
