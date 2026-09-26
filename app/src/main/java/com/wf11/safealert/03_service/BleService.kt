@@ -1329,7 +1329,7 @@ class BleService : LifecycleService() {
             override fun run() {
                 if (isMuted) { testHandler.postDelayed(this, 3000); return }
                 forceAlarmVolume()
-                if (DevSettings.vibrationEnabled) VibrationHelper.vibrateRepeat(this@BleService, DevSettings.vibrationDangerCount)
+                if (DevSettings.vibrationEnabled) VibrationHelper.vibrateDanger(this@BleService)
                 if (DevSettings.soundEnabled)     AlertSoundPlayer.playDanger(this@BleService)
                 testHandler.postDelayed(this, 3000)
             }
