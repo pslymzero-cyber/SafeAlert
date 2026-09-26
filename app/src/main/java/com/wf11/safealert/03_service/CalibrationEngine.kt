@@ -143,9 +143,10 @@ object CalibrationEngine {
     //   상대 에코는 계속 파싱된다(판정 끄고 관찰만 하는 운용 가능). 단 debugMode(시뮬 RSSI 대입)
     //   틱은 호출부에서 제외 — 가짜 RSSI 가 누적 히스토그램을 오염시키면 안 된다.
 
-    // (v1.1.77) 사업장별 에코편차 통계 분리 — 파일명이 현재 사업장을 따라간다.
+    // 파일명은 activeSite(applySite 가 저장 뒤 교체) 기준 — siteCode setter 가 먼저 바뀌어도
+    //   떠나는 사업장 통계는 떠나는 사업장 파일로(2026-09-24 검토 ⑤).
     private fun echoPrefs() =
-        appContext.getSharedPreferences(DevSettings.sitePrefName(ECHO_PREFS), Context.MODE_PRIVATE)
+        appContext.getSharedPreferences(DevSettings.sitePrefName(ECHO_PREFS, activeSite), Context.MODE_PRIVATE)
 
     @Volatile private var activeSite: String = ""
 

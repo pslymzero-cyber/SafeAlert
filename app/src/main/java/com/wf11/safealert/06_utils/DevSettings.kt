@@ -771,9 +771,11 @@ object DevSettings {
     /**
      * 사업장별 SharedPreferences 파일명 — 코드가 없으면 구버전과 동일한 공용 파일을 그대로 쓴다.
      * siteCode 가 이미 [A-Z0-9_-] 로 정규화돼 있어 파일명 이스케이프가 필요 없다.
+     * site 기본값은 현재 siteCode — CalibrationEngine 은 applySite 전환 전까지 activeSite 를
+     * 넘긴다(setter 가 먼저 바뀌어도 떠나는 사업장 파일에 저장).
      */
-    fun sitePrefName(base: String): String =
-        if (siteCode.isEmpty()) base else base + "_" + siteCode
+    fun sitePrefName(base: String, site: String = siteCode): String =
+        if (site.isEmpty()) base else base + "_" + site
 
     // (v1.1.40) 섀도우 IMU 융합 — 정지(IMU)+상대 FORWARD 페이로드일 때 median 스트림 전용 섀도우
     //   칼만으로 접근을 병렬 추적, DANGER 이탈 프레임의 EMA 하강 알파 부스트(0.4)와 TTC 예비
