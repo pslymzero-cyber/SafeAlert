@@ -13,14 +13,12 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.uwb.UwbManager
-import androidx.core.widget.doAfterTextChanged
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 import com.wf11.safealert.databinding.ActivityBleSettingsBinding
 import com.wf11.safealert.service.BleService
 import com.wf11.safealert.service.CalibrationEngine
 import com.wf11.safealert.utils.DevSettings
-import com.wf11.safealert.utils.UwbCalibrator
 import com.wf11.safealert.utils.UwbRanger
 
 // [v1.1.8 ①②] 감지 방식(칼만/1초평균 고정값) 선택·모드 혼합(blend) 전면 제거 → 칼만 단일화.
@@ -84,7 +82,7 @@ class BleSettingsActivity : AppCompatActivity() {
             }
         )
 
-        loadDevManagedValues()   // (v1.1.77) 개발자 설정·메인 화면이 정하는 값 — 여기서는 표시만
+        loadDevManagedValues()   // (v1.1.77) 개발자 설정·메인 화면이 정하는 값 — 표시만, 저장은 사용자 조작일 때만
 
         // 비콘 수신 강도(%) — 슬라이더 progress = percent/10 (0~30 → 0~300%)
         binding.seekBeaconGain.progress = (DevSettings.beaconGainPercent / 10).coerceIn(0, 30)
@@ -133,6 +131,9 @@ class BleSettingsActivity : AppCompatActivity() {
      * (v1.1.77) 개발자 설정에서 정하는 값 + 메인 화면의 사업장 코드를 화면에 반영.
      * 대상 위젯은 전부 lockDevManaged() 로 잠겨 있어 되읽어 덮어써도 사용자 입력을 잃지 않는다.
      * onResume 에서도 부르는 이유 — 개발자 설정·메인 화면에서 바꾼 값이 복귀 시 보여야 한다.
+     * 프로그램 setProgress/setText 는 저장·applySite 를 부르지 않는다(seek() 가 사용자 조작만
+     * 통과, 사업장 칸에는 저장 리스너가 없음). 사업장 코드 입력처는 메인 화면·개발자 설정
+     * (둘 다 applySite 까지 직접 처리). 헤더 요약은 onResume 이 따로 갱신한다.
      */
     private fun loadDevManagedValues() {
         // RSSI 임계 (dBm) — 슬라이더 progress=절댓값(30~100), 저장은 음수 dBm
@@ -152,7 +153,7 @@ class BleSettingsActivity : AppCompatActivity() {
         binding.etEchoClamp.setText(DevSettings.echoCalClampDb.toString())
         refreshEchoDiag()
 
-        // (v1.1.34→v1.1.77) 사업장 코드 = 전역 분리 키. 입력처는 메인 화면으로 옮겼고 여기는 표시만.
+        // (v1.1.34→v1.1.77) 사업장 코드 = 전역 분리 키. 입력처는 메인 화면·개발자 설정, 여기는 표시만(저장 리스너 없음).
         binding.etUwbSite.setText(DevSettings.siteCode)
     }
 
@@ -267,14 +268,6 @@ class BleSettingsActivity : AppCompatActivity() {
                 binding.rbDistUwbM.id -> 1
                 else                  -> 2
             }
-        }
-
-        // (v1.1.34) 사업장 코드 — 입력 즉시 저장 + applySite 직접 호출(서비스 미가동 시에도 즉시 전환) —
-        //   BleService applyLiveSettings 경유 호출은 무변경 no-op 이라 이중 호출 무해. 타이핑
-        //   중간값 프로파일은 파일이 생기지 않는다(persist dirty 게이트).
-        binding.etUwbSite.doAfterTextChanged {
-            DevSettings.siteCode = it?.toString() ?: ""
-            UwbCalibrator.applySite()
         }
 
         // [v1.1.46] UWB 판정 반경 — progress/2 = 미터(0.5m 스텝) 저장(라이브 반영: judgeUwbOnly 가
@@ -486,7 +479,8 @@ class BleSettingsActivity : AppCompatActivity() {
         if (v == v.toInt().toFloat()) "${v.toInt()}m" else "%.1fm".format(v)
 
     private fun seek(onChange: () -> Unit) = object : android.widget.SeekBar.OnSeekBarChangeListener {
-        override fun onProgressChanged(sb: android.widget.SeekBar, v: Int, b: Boolean) = onChange()
+        // 프로그램 setProgress(onResume 되읽기·역전 보정 재진입)는 저장하지 않는다 — 사용자 조작만 저장
+        override fun onProgressChanged(sb: android.widget.SeekBar, v: Int, fromUser: Boolean) { if (fromUser) onChange() }
         override fun onStartTrackingTouch(sb: android.widget.SeekBar) {}
         override fun onStopTrackingTouch(sb: android.widget.SeekBar) {}
     }
@@ -504,6 +498,7 @@ class BleSettingsActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         loadDevManagedValues()   // (v1.1.77) 개발자 설정·메인 화면에서 바꾼 값 재반영
+        updateSectionSummaries() // 가드로 되읽기가 onChange 를 안 타므로 헤더 요약을 여기서 갱신
         echoDiagHandler.removeCallbacks(echoDiagPoller)
         echoDiagHandler.post(echoDiagPoller)
     }

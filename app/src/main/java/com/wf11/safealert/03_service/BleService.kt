@@ -1314,6 +1314,8 @@ class BleService : LifecycleService() {
                     bleScanner?.restartScan()
                     lastScanResultMs = System.currentTimeMillis()
                 }
+                // (2026-09-27) 익명 로그인 끊김 복구 — 미로그인이면 재시도, 진행 중이면 건너뜀. 새 타이머 없이 이 15초 주기에 얹음
+                com.wf11.safealert.firebase.FirebaseConfig.ensureSignedIn()
                 // (v1.1.64 패치3-4) 권한 회수는 콜백이 없다 — 주기적으로 직접 확인하는 수밖에 없다.
                 checkSystemHealth()
                 if (isRunning) healthCheckHandler.postDelayed(this, SCAN_HEALTH_CHECK_MS)
