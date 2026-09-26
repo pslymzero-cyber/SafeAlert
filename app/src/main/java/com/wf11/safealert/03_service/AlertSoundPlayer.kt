@@ -16,6 +16,11 @@ object AlertSoundPlayer {
     private var repeatRunnable: Runnable? = null
     private var isPlaying = false
 
+    // (v1.1.96 코드검토) 경고음 1초 해제 타이머 — stopSound 가 지울 수 있게 필드로 둔다.
+    //   익명 postDelayed 는 못 지워, WARNING 뒤 1초 안에 DANGER 로 오르면 반복이 끊겼다.
+    private var warnHandler: Handler? = null
+    private val warnReset = Runnable { isPlaying = false }
+
     // (v1.1.64 패치3-6) ALARM 스트림 생성이 실패해 MUSIC 스트림으로 폴백한 상태인지.
     //   BleService.forceAlarmVolume() 의 음량 하한 보정은 STREAM_ALARM 전용이라,
     //   폴백 중에는 미디어 음량이 0 이어도 "재생은 성공"으로 보이는 무성 실패가 된다.
@@ -98,10 +103,8 @@ object AlertSoundPlayer {
             if (tg == null) { isPlaying = false; return }
             enforceFallbackVolume(context)
             tg.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 800)
-            Handler(Looper.getMainLooper()).postDelayed({
-                isPlaying = false
-                // ToneGenerator 유지 (재사용) — stopSound에서만 해제
-            }, 1000)
+            // ToneGenerator 유지 (재사용) — stopSound에서만 해제
+            warnHandler = Handler(Looper.getMainLooper()).apply { postDelayed(warnReset, 1000) }
         } catch (e: Exception) {
             Log.e(TAG, "경고음 실패: ${e.message}")
             isPlaying = false
@@ -154,6 +157,8 @@ object AlertSoundPlayer {
         repeatRunnable?.let { repeatHandler?.removeCallbacks(it) }
         repeatHandler = null
         repeatRunnable = null
+        warnHandler?.removeCallbacks(warnReset)
+        warnHandler = null
         runCatching { toneGenerator?.release() }
         toneGenerator = null  // 정지 시에만 해제
         usingMusicFallback = false
