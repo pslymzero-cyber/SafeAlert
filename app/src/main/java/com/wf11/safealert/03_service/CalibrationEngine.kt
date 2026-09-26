@@ -20,7 +20,7 @@ object CalibrationEngine {
 
     fun init(context: Context) {
         appContext = context.applicationContext
-        activeSite = DevSettings.siteCode   // SafeAlertApp 이 DevSettings.init 이후에 부른다
+        migrateSiteEchoFile()   // SafeAlertApp 이 DevSettings.init 이후에 부른다(인계가 siteCode 를 읽는다)
     }
 
     // [v1.1.54 에코편차 집계] 상호RSSI 에코(0xE0C0) 텔레메트리 — 수집 자체는 판정 결과 미사용.
@@ -143,24 +143,44 @@ object CalibrationEngine {
     //   상대 에코는 계속 파싱된다(판정 끄고 관찰만 하는 운용 가능). 단 debugMode(시뮬 RSSI 대입)
     //   틱은 호출부에서 제외 — 가짜 RSSI 가 누적 히스토그램을 오염시키면 안 된다.
 
-    // 파일명은 activeSite(applySite 가 저장 뒤 교체) 기준 — siteCode setter 가 먼저 바뀌어도
-    //   떠나는 사업장 통계는 떠나는 사업장 파일로(2026-09-24 검토 ⑤).
+    // (2026-09-27) 에코 보정은 기기·기종 속성(같은 순간 같은 경로의 양방향 차라 경로손실
+    //   상쇄) — 사업장 무관 전역 파일 하나. Firebase echo_calib 전역 경로(v1.1.85)와 같은 원칙.
+    //   fb_* 캐시·업로드 스탬프도 이 파일에 함께 있다.
     private fun echoPrefs() =
-        appContext.getSharedPreferences(DevSettings.sitePrefName(ECHO_PREFS, activeSite), Context.MODE_PRIVATE)
-
-    @Volatile private var activeSite: String = ""
+        appContext.getSharedPreferences(ECHO_PREFS, Context.MODE_PRIVATE)
 
     /**
-     * (v1.1.77) 사업장 코드 변경 반영 — 설정 라이브 반영 경로에서 무조건 호출(무변경 = no-op).
-     * 떠나는 사업장의 누적치를 먼저 저장한 뒤 라이브 맵을 비운다. 비우지 않으면 이전 사업장의
-     * 히스토그램이 다음 사업장 파일로 흘러들어간다(persistEchoAll 이 라이브를 그대로 덮어씀).
+     * (2026-09-27) 기동 시 현재 사업장 에코 파일을 전역 파일로 1회 인계한다(결정 1).
+     * 같은 기기는 사업장 파일 값 우선(공용 스냅숏 + 그 뒤 학습이라 상위집합), 전역 전용
+     * 기기는 보존. fb_* 캐시·스탬프도 함께 복사. 전역 commit() 성공 후에만 사업장 파일을
+     * 비운다 — 실패 시 비우면 다음 기동마다 낡은 사업장 값이 최신 전역 값을 덮는다.
+     * 사업장 파일이 비면(이미 인계됨) no-op → 재호출 멱등.
+     * ponytail: 현재 사업장 파일만 인계하고 과거에 거친 사업장 파일은 남는다 — 그 피어는
+     *   재접촉 시 재학습(n 게이트), 그 사이 Firebase 전역 기종 프라이어가 보정한다.
      */
-    fun applySite(myId: String) {
-        val newSite = DevSettings.siteCode
-        if (newSite == activeSite) return
-        persistEchoAll(myId)      // 비어 있으면 no-op
-        echoDiffLive.clear()
-        activeSite = newSite
+    private fun migrateSiteEchoFile() {
+        val site = DevSettings.siteCode
+        if (site.isEmpty()) return
+        val src = appContext.getSharedPreferences(ECHO_PREFS + "_" + site, Context.MODE_PRIVATE)
+        if (src.all.isEmpty()) return
+        val dst = echoPrefs()
+        val merged = parseEchoBlob(dst.getString(ECHO_KEY, "") ?: "")
+        merged.putAll(parseEchoBlob(src.getString(ECHO_KEY, "") ?: ""))
+        val e = dst.edit().putString(ECHO_KEY, serializeEchoBlob(merged))
+        src.all.forEach { (k, v) ->
+            if (k == ECHO_KEY) return@forEach
+            when (v) {
+                is String -> e.putString(k, v)
+                is Long   -> e.putLong(k, v)
+            }
+        }
+        if (!e.commit()) {
+            Log.w(TAG, "에코 사업장 인계 실패 — 전역 commit 실패, 사업장 파일 보존")
+            return
+        }
+        val migratedCount = src.all.size
+        src.edit().clear().apply()
+        Log.i(TAG, "에코 사업장 인계 완료: ${migratedCount}건 -> 전역")
     }
 
     /** 라이브 전체를 저장분과 병합 저장 — 라이브 항목은 첫 틱에 저장분을 시드한 총 누적치라 단순 덮어쓰기. */

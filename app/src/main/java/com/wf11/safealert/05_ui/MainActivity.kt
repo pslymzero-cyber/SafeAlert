@@ -51,7 +51,6 @@ import com.wf11.safealert.databinding.DialogPinBinding
 import com.wf11.safealert.databinding.DialogPitSelectBinding
 import com.wf11.safealert.firebase.FirebaseManager
 import com.wf11.safealert.service.BleService
-import com.wf11.safealert.service.CalibrationEngine
 import com.wf11.safealert.utils.UwbCalibrator
 import com.wf11.safealert.utils.UpdateManager
 import com.wf11.safealert.utils.UwbRanger
@@ -342,9 +341,8 @@ class MainActivity : AppCompatActivity() {
         //   백그라운드 감시는 BleService 단독 책임이라 Activity 폴링은 순수 전력 낭비였다.
         statusHandler.removeCallbacks(statusRunnable)
         statusHandler.post(statusRunnable)
-        // (v1.1.90) 개발자 설정에서 사업장 코드를 바꾸고 돌아온 경우 반영 — applySite 는 값이 같으면 no-op
+        // (v1.1.90) 개발자 설정에서 사업장 코드를 바꾸고 돌아온 경우 입력칸 반영
         refreshSiteCodeField()
-        CalibrationEngine.applySite(myId())
         // BLE 설정 요약 업데이트 — [v1.1.8] 칼만 단일화(고정값·혼합 제거)
         binding.tvBleModeSummary.text =
             "칼만 필터 · 위험 ${DevSettings.rssiDanger}dBm / 경고 ${DevSettings.rssiWarning}dBm"
@@ -946,15 +944,14 @@ class MainActivity : AppCompatActivity() {
 
     /**
      * (v1.1.77) 사업장 코드 저장 — setter 가 대문자·[A-Z0-9_-] 로 정규화하므로 소문자 입력도 그대로 받는다.
-     * 두 applySite 는 코드가 안 바뀌면 no-op. 서비스가 꺼져 있으면 BleService 의 라이브 반영 경로가
-     * 돌지 않아 이전 사업장 프로파일이 남으므로 여기서 직접 전환한다.
+     * UwbCalibrator.applySite 는 코드가 안 바뀌면 no-op. 서비스가 꺼져 있으면 BleService 의 라이브
+     * 반영 경로가 돌지 않아 이전 사업장 프로파일이 남으므로 여기서 직접 전환한다.
      */
     private fun saveSiteCode() {
         // (v1.1.90) 잠긴 입력칸(값 있음)은 저장하지 않는다 — 옛 표시값이 개발자 설정에서 바꾼 값을 덮는 것 방지
         if (!binding.etSiteCode.isEnabled) return
         DevSettings.siteCode = binding.etSiteCode.text?.toString() ?: ""
         UwbCalibrator.applySite()
-        CalibrationEngine.applySite(myId())
         refreshSiteCodeField()
     }
 

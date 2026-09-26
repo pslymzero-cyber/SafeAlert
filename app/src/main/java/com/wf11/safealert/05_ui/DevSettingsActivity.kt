@@ -238,8 +238,8 @@ class DevSettingsActivity : AppCompatActivity() {
         bindIntField(binding.etDevEchoClamp,    { DevSettings.echoCalClampDb },  { DevSettings.echoCalClampDb = it })
         binding.btnDevEchoReset.setOnClickListener {
             CalibrationEngine.echoDiffLive.clear()
-            // 현재 사업장 파일만 비운다 — 다른 사업장 학습값은 건드리지 않는다
-            getSharedPreferences(DevSettings.sitePrefName(CalibrationEngine.ECHO_PREFS), MODE_PRIVATE)
+            // 에코 보정은 사업장 무관 전역 파일 하나 — 통째로 비운다(fb 프라이어 캐시 포함, 다음 기동 시 재수신)
+            getSharedPreferences(CalibrationEngine.ECHO_PREFS, MODE_PRIVATE)
                 .edit().clear().apply()
             Toast.makeText(this, "에코편차 통계 초기화 완료", Toast.LENGTH_SHORT).show()
         }

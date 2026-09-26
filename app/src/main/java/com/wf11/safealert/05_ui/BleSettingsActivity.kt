@@ -232,7 +232,7 @@ class BleSettingsActivity : AppCompatActivity() {
         bindIntField(binding.etEchoClamp,    { DevSettings.echoCalClampDb },  { DevSettings.echoCalClampDb = it })
         binding.btnEchoReset.setOnClickListener {
             CalibrationEngine.echoDiffLive.clear()
-            getSharedPreferences(DevSettings.sitePrefName(CalibrationEngine.ECHO_PREFS), MODE_PRIVATE).edit().clear().apply()
+            getSharedPreferences(CalibrationEngine.ECHO_PREFS, MODE_PRIVATE).edit().clear().apply()
             refreshEchoDiag()
             Toast.makeText(this, "에코편차 통계 초기화 완료", Toast.LENGTH_SHORT).show()
         }
@@ -411,7 +411,7 @@ class BleSettingsActivity : AppCompatActivity() {
     //   1줄=통계(중앙값·산포·에코%·n), 2줄=Level 2 보정 상태(후보/적용중/게이트 사유). 말미에 FB 프라이어 요약.
     private fun refreshEchoDiag() {
         val saved = CalibrationEngine.parseEchoBlob(
-            getSharedPreferences(DevSettings.sitePrefName(CalibrationEngine.ECHO_PREFS), MODE_PRIVATE).getString(CalibrationEngine.ECHO_KEY, "") ?: "")
+            getSharedPreferences(CalibrationEngine.ECHO_PREFS, MODE_PRIVATE).getString(CalibrationEngine.ECHO_KEY, "") ?: "")
         saved.putAll(CalibrationEngine.echoDiffLive)
         val on = DevSettings.echoAutoCalibEnabled
         val minT = DevSettings.echoCalMinTicks

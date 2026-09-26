@@ -713,11 +713,13 @@ object DevSettings {
         get() = prefs.getFloat(KEY_UWB_APPROACH_SPEED_KMH, DEFAULT_UWB_APPROACH_SPEED_KMH).coerceIn(1f, 30f)
         set(v) = prefs.edit().putFloat(KEY_UWB_APPROACH_SPEED_KMH, v.coerceIn(1f, 30f)).apply()
 
-    // (v1.1.77) 사업장 코드 — 알림·보정 데이터 전역 분리 네임스페이스(예: "WF11"). 빈 값=공용.
+    // (v1.1.77) 사업장 코드 — 알림·비콘 등록 목록·UWB Δ보정(UwbCalibrator, 사업장별 프로파일 유지)을
+    //   가르는 네임스페이스(예: "WF11"). 빈 값=공용.
     //   (v1.1.90) 메인화면은 비어 있을 때 최초 입력만, 이후 변경은 개발자 설정(PIN 뒤)에서만. BLE 설정 UWB 섹션은 읽기전용 표시. 대소문자 무관(대문자 정규화)이며
     //   [A-Z0-9_-] 외 문자는 버려 Firebase 경로·SharedPreferences 파일명에 그대로 쓸 수 있게 한다.
-    //   소비자(BeaconRegistry/CalibrationEngine)는 매 접근마다 sitePrefName() 으로 현재 센터 파일을
-    //   열고, 최초로 코드가 붙는 순간 adoptCommonPrefs() 가 공용 파일 내용을 그 센터로 1회 인계한다.
+    //   sitePrefName() 소비자는 BeaconRegistry 하나 — 최초로 코드가 붙는 순간 adoptCommonPrefs() 가
+    //   공용 파일 내용을 그 센터로 1회 인계한다. 에코 보정은 기기 속성이라 사업장 무관 전역
+    //   파일(CalibrationEngine.ECHO_PREFS) 하나(2026-09-27).
     private const val KEY_UWB_SITE_CODE = "uwb_site_code"   // 키는 v1.1.34 그대로(마이그레이션 불필요)
     const val SITE_CODE_MAX_LEN = 12
     var siteCode: String
@@ -730,13 +732,13 @@ object DevSettings {
         }
 
     // 사업장 분리 대상 저장소(공용 파일명). 코드가 붙으면 base_CODE 로 갈라진다.
-    private val SITE_PREF_BASES = listOf("beacon_registry", "echo_diff_stats")
+    private val SITE_PREF_BASES = listOf("beacon_registry")
 
     /**
-     * 최초로 센터명이 붙을 때 공용 파일의 기존 학습·등록 정보를 그 센터 파일로 1회 인계한다.
-     * 인계 없이 전환하면 등록 비콘 목록(존 비콘 포함)과 에코 보정이 통째로 빈 상태가 되어
+     * 최초로 센터명이 붙을 때 공용 파일의 기존 등록 정보를 그 센터 파일로 1회 인계한다.
+     * 인계 없이 전환하면 등록 비콘 목록(존 비콘 포함)이 통째로 빈 상태가 되어
      * 안전구역 무음화가 조용히 죽는다. 대상 파일이 이미 비어 있지 않으면 손대지 않는다
-     * (그 센터의 학습값이 우선 — 사업장 간 왕복 전환에서도 덮어쓰지 않는다).
+     * (그 센터의 등록값이 우선 — 사업장 간 왕복 전환에서도 덮어쓰지 않는다).
      */
     private fun adoptCommonPrefs(site: String) {
         val ctx = appCtx ?: return
@@ -771,11 +773,9 @@ object DevSettings {
     /**
      * 사업장별 SharedPreferences 파일명 — 코드가 없으면 구버전과 동일한 공용 파일을 그대로 쓴다.
      * siteCode 가 이미 [A-Z0-9_-] 로 정규화돼 있어 파일명 이스케이프가 필요 없다.
-     * site 기본값은 현재 siteCode — CalibrationEngine 은 applySite 전환 전까지 activeSite 를
-     * 넘긴다(setter 가 먼저 바뀌어도 떠나는 사업장 파일에 저장).
      */
-    fun sitePrefName(base: String, site: String = siteCode): String =
-        if (site.isEmpty()) base else base + "_" + site
+    fun sitePrefName(base: String): String =
+        if (siteCode.isEmpty()) base else base + "_" + siteCode
 
     // (v1.1.40) 섀도우 IMU 융합 — 정지(IMU)+상대 FORWARD 페이로드일 때 median 스트림 전용 섀도우
     //   칼만으로 접근을 병렬 추적, DANGER 이탈 프레임의 EMA 하강 알파 부스트(0.4)와 TTC 예비
