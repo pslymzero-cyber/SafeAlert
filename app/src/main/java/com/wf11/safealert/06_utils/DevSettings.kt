@@ -594,13 +594,6 @@ object DevSettings {
         get() = prefs.getBoolean(KEY_UWB_FORCE, false)
         set(v) = prefs.edit().putBoolean(KEY_UWB_FORCE, v).apply()
 
-    // (v1.1.31) UWB 델타 보정 학습 — UWB 실거리로 페어별 RSSI 편차(Δ)를 학습해 경보 임계에
-    //   보정(조기 +10dB / 지연 −3dB 비대칭 클램프 + 24h 감쇠)으로 반영. OFF = 보정 항상 0(기본 ON).
-    private const val KEY_UWB_CALIB_ENABLED = "uwb_calib_enabled"
-    var uwbCalibEnabled: Boolean
-        get() = prefs.getBoolean(KEY_UWB_CALIB_ENABLED, true)
-        set(v) = prefs.edit().putBoolean(KEY_UWB_CALIB_ENABLED, v).apply()
-
     // (v1.1.76) UWB 실측 표본 업로드 — UWB 실거리(m)와 같은 프레임의 BLE RSSI 를 짝지어
     //   uwb_probe/<yyyyMMdd> 에 남긴다. 임계(-78/-65dBm)가 실제 몇 m 인지를 재는 유일한 근거라
     //   실기 측정 세션에서만 켠다. OFF = 업로드 자체가 없음(기본) — 학습(onSample)과는 무관하게
@@ -626,7 +619,7 @@ object DevSettings {
     //   RSSI 판정 복귀). 역할쌍 차등 임계(지게차 낀 쌍=uwbForkliftWarn/Danger, 그 외=uwbPairWarn/Danger)
     //   와 접근속도 임계(uwbApproachSpeedKmh)를 재사용한다.
     //   ★ UWB 거리 학습(UwbCalibrator)은 이 스위치와 무관하게 활성 세션의 UWB 실측 기준으로 계속
-    //     누적 학습(offsetDbFor)한다. [v1.1.49] 단, 학습된 보정은 RSSI 판정(totalOffset)에서 분리돼
+    //     누적 학습한다(AlertStateMachine 이 UwbCalibrator.onSample 호출). [v1.1.49] 단, 학습된 보정은 RSSI 판정(totalOffset)에서 분리돼
     //     화면 거리 표시에만 반영된다 — RSSI 폴백 임계는 UWB 도입 이전의 순수 RSSI 로 판정한다.
     //   기본 ON — 사용자 요청. 끄면 RSSI 주도 + 아래 promote-only(옵트인)로 복귀.
     private const val KEY_UWB_PRIMARY_AUTHORITY_ENABLED = "uwb_primary_authority_enabled"

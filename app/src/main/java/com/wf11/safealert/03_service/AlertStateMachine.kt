@@ -866,7 +866,7 @@ class AlertStateMachine(
             //   환산하려면 그 바깥 구간의 표본이 오히려 필요하다. 기록 전용이라 판정에는 무관.
             uploadUwbProbe(uwbPairKey, medianValue, it, System.currentTimeMillis())
         }
-        // [v1.1.49] 학습(onSample)은 유지하되 그 출력(offsetDbFor)은 RSSI 판정에서 완전 분리한다.
+        // [v1.1.49] 학습(onSample)은 유지하되 그 출력은 RSSI 판정에서 완전 분리한다(보정 출력 함수는 이후 삭제 — 학습치는 거리 표시 전용).
         //   역할쌍 키 uwbCalibOffset(최대 +10dB)이 NLOS 잔차로 +클램프까지 표류하면 effDanger 가 밀려
         //   올라가 'RSSI 판정이면 신호 세기와 무관하게 상시 위험'이 되던 회귀(UWB 도입 v1.1.31 이후)를
         //   차단. 학습된 Δ 는 화면 거리 표시(distanceTextFor)에만 남기고 totalOffset 에서 뺀다

@@ -293,8 +293,4 @@ object ImuFusion {
             turnRateDegPerSec <= -TURN_DETECT_THRESHOLD -> TURN_LEFT
             else                                        -> TURN_STRAIGHT
         }
-
-    fun debugString(): String =
-        "score=%.2f isStationary=$isStationary Q×=%.1f turn=%.0f°/s dir=%d".format(
-            motionScore, adaptiveQFactor, turnRateDegPerSec, turnDirection)
 }

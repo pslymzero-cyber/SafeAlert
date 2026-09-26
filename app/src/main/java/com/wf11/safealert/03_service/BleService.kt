@@ -803,7 +803,7 @@ class BleService : LifecycleService() {
                     //   정상 소실(27개 상태맵 정리 포함) — 유예는 '연기'일 뿐 경로 자체는 불변.
                     s.uwbMeasuringCheck = { id -> uwbDist.freshUwbDistM(id) != null }
                     s.startScanning(object : BleScanCallback {
-                        override fun onDeviceDetected(deviceId: String, rssi: Int, alertLevel: Int, remoteState: Int, remoteTurn: Int, payloadPresent: Boolean, peerEchoRssi: Int, peerInZone: Boolean) {
+                        override fun onDeviceDetected(deviceId: String, rssi: Int, remoteState: Int, remoteTurn: Int, payloadPresent: Boolean, peerEchoRssi: Int, peerInZone: Boolean) {
                             lastScanResultMs = System.currentTimeMillis()
 
                             if (myMode == "WALKER"

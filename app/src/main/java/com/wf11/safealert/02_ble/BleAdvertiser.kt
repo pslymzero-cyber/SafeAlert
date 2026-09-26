@@ -71,9 +71,9 @@ class BleAdvertiser(
     @Volatile private var retryScheduled = false
 
     // (v1.1.64 패치3-1) 내 신호를 못 보내고 있는 사유. 정상이면 null.
-    //   BleService 가 이 값을 상시 알림으로 승격해 '송신이 죽은 줄 모르는' 무성 실패를 없앤다.
-    @Volatile var txFaultReason: String? = null
-        private set
+    //   setFault 가 onTxFault 콜백으로 BleService(txFault)에 넘겨 상시 알림으로 승격한다.
+    //   이 필드 자체는 같은 사유의 중복 통지를 막는 용도(외부 참조 없음).
+    @Volatile private var txFaultReason: String? = null
 
     /** 송신 이상/복구 통지 콜백. 인자가 null 이면 복구. */
     var onTxFault: ((String?) -> Unit)? = null
@@ -240,7 +240,6 @@ class BleAdvertiser(
     val txCategory: Int  get() = category
     val txState: Int     get() = currentState
     val txTurnDir: Int   get() = currentTurnDir
-    val txRisk: Int      get() = currentRisk      // [v1.1.14] 현재 송출 중인 위험상태(LEVEL_*)
 
     /**
      * @param uwbLocalAddress 이 기기의 UWB 주소 2바이트 (null = UWB 미지원/미초기화)

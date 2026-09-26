@@ -6,17 +6,13 @@ import android.util.Log
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.log10
 import kotlin.math.pow
-import kotlin.math.roundToInt
 
 // (v1.1.31) UWB 델타 보정 학습기 — UWB 실거리(d)와 같은 프레임의 BLE RSSI(median)를 짝지어
 //   역할쌍(pairKey)별 채널 편차 Δ = EMA(실측RSSI − 기대RSSI(d)) 를 학습한다.
 //   · 기대RSSI(d) = A − 10n·log10(d)  (A = 1m 기준 −59dBm, n = 2.0 실내 자유공간 근사)
-//   · Δ > 0 = 이 페어는 모델보다 세게 들림(안테나 이득 등) → 임계를 늦춰도 됨(−측, 최대 −3dB)
-//   · Δ < 0 = 모델보다 약하게 들림(주머니/케이스 차폐) → 임계를 앞당김(+측, 최대 +10dB)
-//   안전 불변식: 보정은 비대칭 클램프(−3 .. +10) — 조기경보 방향은 넓게, 지연 방향은 3dB 로 제한.
-//   마지막 학습 후 24h 에 걸쳐 선형 감쇠로 0 수렴(환경이 바뀐 낡은 보정이 임계를 계속 흔들지 않게).
-//   UWB 미지원/세션 없음/학습 부족(5샘플 미만)/킬스위치 OFF 면 항상 0 = 기존 거동과 완전 동일.
-//   경보는 여전히 100% RSSI 구동 — UWB 는 임계를 '보정'만 하므로 UWB 가 끊겨도 이음새가 없다.
+//   학습된 Δ 는 v1.1.49 부터 경보 판정(totalOffset)에 쓰지 않고 거리 표시(distanceTextFor →
+//   estimateDistanceM)에만 쓴다. 마지막 학습 후 24h 선형 감쇠(공용은 0 수렴, 사업장은 기준선 수렴).
+//   UWB 미지원/학습 부족(5샘플 미만)이면 Δ=0 으로 순수 RSSI 역산.
 //
 // (v1.1.34) 사업장 보정 프로파일 — 학습 저장소를 사업장 코드(DevSettings.siteCode)로
 //   네임스페이스(SharedPreferences uwb_calib_<사업장>)해 사업장별로 영속·전환한다.
@@ -24,7 +20,7 @@ import kotlin.math.roundToInt
 //   · 사업장 지정 시 2성분 모델: 기준선 baseline(느린 EMA, 감쇠·GC 없음 = 사업장 장기 특성)
 //     + 당일 미세조정 delta(기존 빠른 EMA). 24h 감쇠는 delta→baseline 수렴으로만 작동해
 //     '감쇠는 당일 미세조정만' — 주말이 지나도 기준선은 남고, 24h 단절 후에도 기준선에서
-//     이어간다(samples 누적 유지 → 재방문 첫 샘플부터 보정 활성). 안전 클램프(−3..+10)는 동일.
+//     이어간다(samples 누적 유지 → 재방문 첫 샘플부터 보정 활성).
 //   · 사업장 전환(applySite) = 현재 프로파일 저장 → 새 프로파일 로드(각 사업장 학습 보존).
 //
 // (v1.1.37) 역할쌍 세분 — 학습 키를 개별 기기(deviceId)에서 역할쌍(pairKey)으로 바꾼다.
@@ -40,7 +36,7 @@ object UwbCalibrator {
     private const val PREF_NAME = "uwb_calib"
 
     // [v1.1.46→v1.1.49] 프로파일 스키마 — 학습 조건이 바뀌면 구버전 저장값을 1회 폐기하고 재학습한다.
-    //   v3(v1.1.49): 판정 분리(offsetDbFor 를 totalOffset 에서 제거) + RSSI -80dBm 시작 게이트 재도입으로
+    //   v3(v1.1.49): 판정 분리(학습 출력을 totalOffset 에서 제거) + RSSI -80dBm 시작 게이트 재도입으로
     //   학습 모집단 자체가 바뀜 — 게이트 상시 페어(v1.1.45) 시절 누적된 NLOS 오염 Δ 를 여기서 1회 초기화한다.
     private const val KEY_SCHEMA = "_schema"
     private const val SCHEMA_VER = 3
@@ -59,8 +55,6 @@ object UwbCalibrator {
     private const val BASE_ALPHA = 0.05            // (v1.1.34) 사업장 기준선(장기 EMA) 계수 — delta 의 1/4 속도
     private const val STALE_MS = 24L * 60 * 60 * 1000        // 24h 선형 감쇠 창
     private const val GC_MS = 7L * 24 * 60 * 60 * 1000       // 7일 지난 학습치는 로드 시 폐기(공용 프로파일만)
-    private const val CLAMP_MIN_DB = -3.0          // 지연(경보 늦춤) 방향 한계 — 안전 불변식
-    private const val CLAMP_MAX_DB = 10.0          // 조기(경보 앞당김) 방향 한계
     private const val PERSIST_THROTTLE_MS = 5000L  // 디스크 기록 스로틀(프로세스 사망 시 최대 5초 손실 허용)
 
     // baseline = 사업장 장기 기준선(감쇠 없음). 공용 프로파일에서는 계산에 안 쓰고 저장만 동행.
@@ -154,22 +148,6 @@ object UwbCalibrator {
         map[pairKey] = next
         dirty = true
         maybePersist(now)
-    }
-
-    // 경보 임계 보정(dB) — BleService totalOffset 에 가산(+ = 더 먼 거리에서 조기 경보 = fail-safe 방향).
-    fun offsetDbFor(pairKey: String): Int {
-        if (!DevSettings.uwbCalibEnabled) return 0
-        val c = map[pairKey] ?: return 0
-        if (c.samples < MIN_SAMPLES) return 0
-        if (!c.delta.isFinite() || !c.baseline.isFinite()) return 0   // [v1.1.37 ①] NaN 오염 시 무보정 — coerceIn(NaN).roundToInt() 예외 방지
-        val decay = (1.0 - (System.currentTimeMillis() - c.updatedAt).toDouble() / STALE_MS).coerceIn(0.0, 1.0)
-        return if (activeSite.isEmpty()) {
-            // 공용: 종전 공식 그대로(24h 후 0 수렴)
-            ((-c.delta).coerceIn(CLAMP_MIN_DB, CLAMP_MAX_DB) * decay).roundToInt()
-        } else {
-            // 사업장: 감쇠는 당일 미세조정(delta)만 — 0 이 아니라 사업장 기준선으로 수렴
-            (-(c.baseline + (c.delta - c.baseline) * decay)).coerceIn(CLAMP_MIN_DB, CLAMP_MAX_DB).roundToInt()
-        }
     }
 
     // 목록/플로팅용 거리 문자열. 빈 문자열 = 호출측이 기존 dBm 표기로 폴백.

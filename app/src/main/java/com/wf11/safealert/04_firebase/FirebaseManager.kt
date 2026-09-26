@@ -17,7 +17,9 @@ object FirebaseManager {
     private val db get() = FirebaseDatabase.getInstance().reference.child(DevSettings.firebaseRoot)
 
     /**
-     * (v1.1.77) 사업장별 노드 — 경보 로그·에코보정을 사업장 단위로 가른다.
+     * (v1.1.77) 사업장별 노드 — siteNode 로 경로를 사업장 단위로 가르는 것은 경보 로그(alerts)뿐.
+     * 에코보정(echo_calib)은 v1.1.85 부터 평면 전역 경로에 site 라벨만 남기고, 에코 로컬 통계
+     * (CalibrationEngine)도 사업장과 무관한 전역이다.
      * 코드가 비면 구버전과 같은 경로를 그대로 쓴다(기존 데이터 접근 유지).
      */
     private fun siteNode(name: String) =
@@ -228,7 +230,8 @@ object FirebaseManager {
             //   서버에서 구버전 잔존 기기를 한눈에 식별하는 용도(규칙 잠금 롤아웃 검증).
             "ver"   to BuildConfig.VERSION_NAME,
             "ts"    to System.currentTimeMillis(),
-            // (v1.1.85) 사업장 코드는 경로가 아니라 라벨로만 남긴다(saveAlert 와 동일).
+            // (v1.1.85) 사업장 코드는 경로가 아니라 라벨로만 남긴다. saveAlert 는 경로(siteNode)도
+            //   사업장별이고 라벨도 남기지만, 이 에코 업로드는 경로가 평면이고 라벨만 남는다.
             "site"  to DevSettings.siteCode,
             "peers" to peers.mapValues { (_, v) -> mapOf("m" to v.first, "n" to v.second, "iqr" to v.third) }
         )

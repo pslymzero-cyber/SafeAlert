@@ -72,7 +72,6 @@ object CalibrationEngine {
     private const val ECHO_DECAY_TICKS = 30_000   // 초과 시 전 버킷 반감(망각) — 시정수 ~1.5만 틱, 고정 상수
     private const val ECHO_FB_MODELS_KEY  = "fb_models"     // 캐시: "기기ID(sanitize)|모델" 라인
     private const val ECHO_FB_PRIORS_KEY  = "fb_priors"     // 캐시: "상대모델|중앙값|Σn" 라인(내 모델 기준 fold)
-    private const val ECHO_FB_FETCHED_AT  = "fb_fetched_at"
     private const val ECHO_FB_UPLOADED_AT = "fb_uploaded_at"
     private const val ECHO_FB_UPLOAD_INTERVAL_MS = 3_600_000L   // 업로드 1h 스로틀(persistEchoAll 편승)
     // Firebase 모델쌍 프라이어 — 기동 시 캐시 즉시 복원+비동기 갱신(loadEchoPriors), 판정·표시는
@@ -80,7 +79,6 @@ object CalibrationEngine {
     //   메인스레드 전용 맵(별도 동기화 불요).
     val echoFbPriorByModel = mutableMapOf<String, Pair<Double, Int>>()   // 상대모델 → (fold 중앙값 dB, Σn)
     val echoFbModelById    = mutableMapOf<String, String>()              // sanitize 기기ID → 모델명
-    @Volatile var echoFbFetchedAt = 0L
 
     /** 버킷 히스토그램 분위수(dB) — 버킷 내 균등분포 가정 선형 보간(버킷 중심 근사보다 정밀).
      *  total = echoTicks(버킷 총합), q ∈ (0,1]. total≤0 이면 0.0. */
@@ -265,7 +263,6 @@ object CalibrationEngine {
                 if (m != null && n != null) echoFbPriorByModel[f[0]] = m to n
             }
         }
-        echoFbFetchedAt = p.getLong(ECHO_FB_FETCHED_AT, 0L)
         FirebaseManager.downloadEchoCalibAll { nodes ->
             if (nodes.isEmpty()) return@downloadEchoCalibAll
             val models = nodes.associate { it.id to it.model }
@@ -275,13 +272,11 @@ object CalibrationEngine {
             echoFbModelById.putAll(models)
             echoFbPriorByModel.clear()
             echoFbPriorByModel.putAll(priors)
-            echoFbFetchedAt = System.currentTimeMillis()
             p.edit()
                 .putString(ECHO_FB_MODELS_KEY,
                     models.entries.joinToString("\n") { "${it.key}|${it.value}" })
                 .putString(ECHO_FB_PRIORS_KEY,
                     priors.entries.joinToString("\n") { "${it.key}|${it.value.first}|${it.value.second}" })
-                .putLong(ECHO_FB_FETCHED_AT, echoFbFetchedAt)
                 .apply()
             Log.d(TAG, "에코 프라이어 갱신: 노드 ${nodes.size} · 내 모델(${Build.MODEL}) 기준 ${priors.size}종")
         }

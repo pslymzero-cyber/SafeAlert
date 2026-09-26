@@ -46,7 +46,7 @@ class BeaconRegistryChangeSimulationTest {
 
     private val cb = object : BleScanCallback {
         override fun onDeviceDetected(
-            deviceId: String, rssi: Int, alertLevel: Int, remoteState: Int,
+            deviceId: String, rssi: Int, remoteState: Int,
             remoteTurn: Int, payloadPresent: Boolean, peerEchoRssi: Int, peerInZone: Boolean
         ) = Unit
 

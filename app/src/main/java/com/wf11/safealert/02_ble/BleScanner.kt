@@ -149,7 +149,6 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
                 val deviceId   = String(idBytes, Charsets.UTF_8)
                 val fullId     = prefix + deviceId
                 val rssi       = result.rssi
-                val alertLevel = calcAlertLevel(rssi)
 
                 // [v1.1.7 #1 1바이트 페이로드] 상대 ServiceData 1바이트 → Category/State/Turn 해독.
                 //   기존 Speed 4비트(bits 3:0) 폐기 → Turn 2비트(bits 3:2)로 상대 회전 방향 수신.
@@ -175,7 +174,7 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
 
                 BleService.safeAlertFound++
                 detectedDevices[fullId] = System.currentTimeMillis()
-                scanCallback?.onDeviceDetected(fullId, rssi, alertLevel, remoteState, remoteTurn, payloadPresent, peerEchoRssi, peerInZone)
+                scanCallback?.onDeviceDetected(fullId, rssi, remoteState, remoteTurn, payloadPresent, peerEchoRssi, peerInZone)
 
                 // UWB 주소 스캔 응답 파싱 (지원 기기 한정)
                 // (v1.1.30) DEVICE(컨트롤러)=4바이트(주소+채널+프리앰블), WALKER(컨트롤리)=2바이트 — 있는 만큼 전달
@@ -203,7 +202,7 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
                     val rssi   = result.rssi
                     detectedDevices[fullId] = System.currentTimeMillis()
                     // [v1.0.29] 외부 비콘은 모션 ServiceData 없음 → 0x00(정지)으로 전달
-                    scanCallback?.onDeviceDetected(fullId, rssi, calcAlertLevel(rssi), BleConstants.MOTION_STATE_STATIONARY)
+                    scanCallback?.onDeviceDetected(fullId, rssi, BleConstants.MOTION_STATE_STATIONARY)
                     return
                 }
             }
@@ -224,7 +223,7 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
                     }
                     val fullId = BleConstants.WALKER_PREFIX + "BEA_${uuidStr.replace("-", "")}"   // (v1.1.91) 키 전체(32hex) — 표시·로그만 8자로 자른다
                     detectedDevices[fullId] = System.currentTimeMillis()
-                    scanCallback?.onDeviceDetected(fullId, result.rssi, calcAlertLevel(result.rssi), BleConstants.MOTION_STATE_STATIONARY)
+                    scanCallback?.onDeviceDetected(fullId, result.rssi, BleConstants.MOTION_STATE_STATIONARY)
                     return
                 }
             }
@@ -240,7 +239,7 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
                 }
                 val fullId = BleConstants.WALKER_PREFIX + "BEA_${mac.replace(":", "")}"
                 detectedDevices[fullId] = System.currentTimeMillis()
-                scanCallback?.onDeviceDetected(fullId, result.rssi, calcAlertLevel(result.rssi), BleConstants.MOTION_STATE_STATIONARY)
+                scanCallback?.onDeviceDetected(fullId, result.rssi, BleConstants.MOTION_STATE_STATIONARY)
             }
         }
 
@@ -509,10 +508,5 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
         BeaconRegistry.onChanged = null
         liveRestart = null
         // [v1.0.26 Req1] 'RX 스캔 중지' 상태 송출 제거.
-    }
-
-    private fun calcAlertLevel(rssi: Int): Int = when {
-        rssi >= BleConstants.rssiWarning -> BleConstants.LEVEL_WARNING
-        else                             -> BleConstants.LEVEL_SAFE
     }
 }
