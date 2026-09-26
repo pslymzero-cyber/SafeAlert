@@ -1,18 +1,18 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.1.70
-current_phase: 03
-current_phase_name: BleService 분해
-status: complete
-stopped_at: Completed 03-refactor-01-PLAN.md
-last_updated: "2026-08-31T00:00:00.000Z"
-last_activity: 2026-08-31
-last_activity_desc: Phase 03 완료 - 커밋 849eb05
+current_phase: 04
+current_phase_name: 기기 상태 단일화
+status: planned
+stopped_at: 04-state-01-PLAN.md 수립 완료 (STATE-01 미착수)
+last_updated: "2026-09-26T00:00:00.000Z"
+last_activity: 2026-09-26
+last_activity_desc: Phase 04 계획 수립 - STATE-01 규모 실측 620 사이트, 실행 시점 2경로 제시
 state_head: 849eb05dd72da6d40551d15d11b5d1b0861b77fe
 progress:
   total_phases: 5
   completed_phases: 3
-  total_plans: 7
+  total_plans: 8
   completed_plans: 7
 ---
 
@@ -23,16 +23,26 @@ progress:
 See: .planning/PROJECT.md (updated 2026-08-23)
 
 **Core value:** BLE RSSI 근접 판정이 같은 상황에서 같은 결과를 낸다. 경보가 떠야 할 때 뜨고, 꺼져야 할 때 꺼지며, 한 번 고친 증상이 다시 돌아오지 않는다.
-**Current focus:** Phase 03 완료 — 다음은 Phase 04 (기기 상태 단일화)
+**Current focus:** Phase 04 T1~T3 완료(STATE-02·STATE-03·BUG-01 = Complete). 잔여 = STATE-01 1건 — 04-01-PLAN.md 수립됨, 실행 시점 사용자 판단 대기
 
 ## Current Position
 
-Phase: 03 (BleService 분해) — COMPLETE
-Plan: 1 of 1
-Status: Phase 04 계획 대기
-Last activity: 2026-08-31 — Phase 03 커밋 849eb05 완료
+Phase: 04 (기기 상태 단일화) — PARTIAL (요구사항 3/4 Complete)
+Plan: 04-01-PLAN.md 수립 완료, 미실행
+Status: STATE-01 실행 시점 사용자 판단 대기 (경로 A = Phase 5 흡수 권장 / 경로 B = 독립 완료)
+Last activity: 2026-09-26 — Phase 04 계획 수립, STATE-01 규모 실측
 
-Progress: [██████░░░░] 60%
+**STATE-01 실측 (이전 추정 ~250 사이트는 오류):**
+
+| 구분 | Map | 접근 사이트 |
+|---|---|---|
+| AlertStateMachine.kt | 29 | 464 |
+| BleService.kt | 5 | 32 |
+| UwbDistanceManager.kt | 3 | 41 |
+| 테스트 (골든 3파일 52 포함) | — | 83 |
+| **합계** | **37** | **620** |
+
+Progress: [███████░░░] 70%
 
 ## Performance Metrics
 
