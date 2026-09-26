@@ -11,7 +11,6 @@ import android.os.ParcelUuid
 import android.util.Log
 import com.wf11.safealert.service.BleService
 import com.wf11.safealert.utils.BeaconRegistry
-import com.wf11.safealert.utils.DevSettings
 import java.util.UUID
 
 class BleScanner(private val scanner: BluetoothLeScanner) {
@@ -57,6 +56,20 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
 
         // [v1.0.29] 상대 모션 상태 ServiceData 디코드용 (송신측 addServiceData 와 동일 UUID)
         private val SERVICE_DATA_UUID = ParcelUuid(UUID.fromString(BleConstants.SERVICE_UUID))
+
+        // [v1.1.74] 발견 스캔(비콘 관리 15초) 중에는 HW 필터를 풀어 미등록 UUID 도 잡히게 한다.
+        //   같은 BluetoothLeScanner 를 공유하는 스캔 클라이언트의 필터는 스택/컨트롤러 레벨에서
+        //   병합되므로, 등록 UUID 필터가 걸려 있으면 무필터 발견 스캔에도 미등록 광고가 도달하지
+        //   못한다(레지스트리에 없는 비콘은 영원히 발견 불가인 순환 구조).
+        @Volatile private var discoveryMode = false
+        @Volatile private var liveRestart: (() -> Unit)? = null
+
+        /** 발견 스캔(비콘 관리 15초) 중에는 HW 필터를 풀어 미등록 UUID 도 잡히게 한다. */
+        fun setDiscoveryMode(on: Boolean) {
+            if (discoveryMode == on) return
+            discoveryMode = on
+            liveRestart?.invoke()
+        }
     }
 
     private var scanCallback: BleScanCallback? = null
@@ -186,7 +199,7 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
                         return
                     }
                     // [v1.0.25 Req3] 상태줄(tv_ble_status) 오염 방지 — 비콘 정보를 status로 보내지 않는다.
-                    val fullId = BleConstants.WALKER_PREFIX + "BEA_${uuid.take(8)}"
+                    val fullId = BleConstants.WALKER_PREFIX + "BEA_${uuid.replace("-", "")}"   // (v1.1.91) 키 전체(32hex) — 표시·로그만 8자로 자른다
                     val rssi   = result.rssi
                     detectedDevices[fullId] = System.currentTimeMillis()
                     // [v1.0.29] 외부 비콘은 모션 ServiceData 없음 → 0x00(정지)으로 전달
@@ -196,7 +209,11 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
             }
 
             // Service UUID 비콘 감지
-            record.serviceUuids?.forEach { parcelUuid ->
+            // (v1.1.79) serviceUuids(AD 0x02/0x03/0x06/0x07) 와 serviceData(AD 0x16) 는 광고 패킷에서
+            //   서로 독립된 필드다. 16비트 SIG UUID 계열 비콘(0000FDA5-… 등)은 서비스데이터로만
+            //   광고해 serviceUuids 가 비어 있는 경우가 흔하다 — 그동안 이 분기에 영영 도달하지
+            //   못했고, 그래서 존 비콘으로 등록해도 onZoneBeaconSignal 이 한 번도 불리지 않았다.
+            ((record.serviceUuids ?: emptyList()) + (record.serviceData?.keys ?: emptySet())).forEach { parcelUuid ->
                 val uuidStr = parcelUuid.uuid.toString().uppercase()
                 if (BeaconRegistry.containsUuid(uuidStr)) {
                     // (v1.1.62) 존 비콘 분기 — iBeacon 경로와 동일
@@ -205,7 +222,7 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
                         scanCallback?.onZoneBeaconSignal("ZONE_${uuidStr.take(8)}", result.rssi, zp.zoneEnterRssi)
                         return
                     }
-                    val fullId = BleConstants.WALKER_PREFIX + "BEA_${uuidStr.take(8)}"
+                    val fullId = BleConstants.WALKER_PREFIX + "BEA_${uuidStr.replace("-", "")}"   // (v1.1.91) 키 전체(32hex) — 표시·로그만 8자로 자른다
                     detectedDevices[fullId] = System.currentTimeMillis()
                     scanCallback?.onDeviceDetected(fullId, result.rssi, calcAlertLevel(result.rssi), BleConstants.MOTION_STATE_STATIONARY)
                     return
@@ -301,6 +318,10 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
     // 메인 CPU 를 깨우지 않고 칩셋 단에서 즉시 폐기된다(화면 꺼짐·절전 모드 배터리 절감 핵심).
     // ※ BleAdvertiser 가 동일 SERVICE_UUID 를 광고하므로 우리 기기는 이 필터를 정상 통과한다.
     private fun buildFilters(): List<ScanFilter> {
+        // [v1.1.74] 위 'emptyList() 금지' 원칙의 한정 예외 — 사용자 개시·포그라운드·15초 발견 스캔 동안만.
+        // 스캔 자체는 계속 돌므로 경보 파이프라인은 살아 있고, 발견 스캔 종료 시
+        // setDiscoveryMode(false) → restartScan 으로 필터가 즉시 복원된다.
+        if (discoveryMode) return emptyList()
         val filters = mutableListOf<ScanFilter>()
         filters.add(ScanFilter.Builder()
             .setServiceUuid(ParcelUuid(UUID.fromString(BleConstants.SERVICE_UUID)))
@@ -308,13 +329,20 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
         runCatching {
             BeaconRegistry.getAll().filter { it.type == "SERVICE_UUID" }.forEach { profile ->
                 runCatching {
-                    filters.add(ScanFilter.Builder()
-                        .setServiceUuid(ParcelUuid(java.util.UUID.fromString(profile.uuid)))
-                        .build())
-                }
+                    val pu = ParcelUuid(java.util.UUID.fromString(profile.uuid))
+                    filters.add(ScanFilter.Builder().setServiceUuid(pu).build())
+                    // (v1.1.79) 서비스데이터(AD 0x16) 로만 광고하는 비콘 대응.
+                    //   위 setServiceUuid 필터는 AD 0x02/0x03/0x06/0x07(Service UUID List) 만 매칭한다.
+                    //   0000FDA5-… 같은 16비트 SIG UUID 계열 비콘은 서비스데이터로만 광고하는 경우가
+                    //   흔해, 등록해도 칩셋 단에서 폐기돼 콜백조차 오지 않았다
+                    //   (= 존 비콘으로 등록해도 onZoneBeaconSignal 이 한 번도 안 불린 원인).
+                    //   빈 배열 필수 — AOSP matchesPartialData 는 data==null 에서 NPE 를 낸다.
+                    filters.add(ScanFilter.Builder().setServiceData(pu, byteArrayOf()).build())
+                }.onFailure { Log.w(TAG, "스캔 필터 생성 실패(SERVICE_UUID) ${profile.uuid}: ${it.message} — 이 기기는 칩셋 단에서 폐기되어 미감지") }
             }
             BeaconRegistry.getAll().filter { it.type == "MAC" }.forEach { profile ->
                 runCatching { filters.add(ScanFilter.Builder().setDeviceAddress(profile.uuid).build()) }
+                    .onFailure { Log.w(TAG, "스캔 필터 생성 실패(MAC) ${profile.uuid}: ${it.message} — 이 기기는 칩셋 단에서 폐기되어 미감지") }
             }
             // [v1.1.14] iBeacon 등록 비콘 — 제조사데이터(0x004C) 패턴 필터.
             //   iBeacon 은 SERVICE_UUID·MAC 을 광고하지 않으므로 위 두 필터로는 칩셋 단에서
@@ -331,9 +359,9 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
                     filters.add(ScanFilter.Builder()
                         .setManufacturerData(0x004C, pattern, mask)
                         .build())
-                }
+                }.onFailure { Log.w(TAG, "스캔 필터 생성 실패(IBEACON) ${profile.uuid}: ${it.message} — 이 기기는 칩셋 단에서 폐기되어 미감지") }
             }
-        }
+        }.onFailure { Log.w(TAG, "등록 비콘 스캔 필터 일괄 생성 실패: ${it.message} — 기본 SERVICE_UUID 필터만 적용됨") }
         return filters
     }
 
@@ -356,6 +384,10 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
         handler.post(timeoutChecker)
         handler.postDelayed(antiThrottleRunnable, SCAN_RESTART_MS)
         // [v1.0.26 Req1] 'RX 스캔 시작' 상태 송출 제거 — tv_ble_status 는 감지 기기 목록 전용.
+        // 비콘 등록·삭제 즉시 반영. HW 필터는 startScan 시점 스냅샷이라 재시작해야 갱신되고,
+        // 삭제된 기기는 표본이 끊겨 상태전이 기반 정리가 돌지 않는다(TTL 스윕도 UWB 실측 중이면 유예).
+        BeaconRegistry.onChanged = { handler.post { forceLoseAll(); restartScan() } }
+        liveRestart = { handler.post { restartScan() } }
     }
 
     private fun startScanInternal() {
@@ -474,6 +506,8 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
         try { scanner.stopScan(bleScanCallback) } catch (_: Exception) {}
         detectedDevices.clear()
         scanCallback = null
+        BeaconRegistry.onChanged = null
+        liveRestart = null
         // [v1.0.26 Req1] 'RX 스캔 중지' 상태 송출 제거.
     }
 

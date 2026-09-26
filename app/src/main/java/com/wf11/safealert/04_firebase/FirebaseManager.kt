@@ -1,7 +1,10 @@
 ﻿package com.wf11.safealert.firebase
 
 import android.util.Log
+import com.google.firebase.database.DataSnapshot
 import com.google.firebase.database.FirebaseDatabase
+import com.wf11.safealert.BuildConfig
+import com.wf11.safealert.utils.BeaconRegistry
 import com.wf11.safealert.utils.DevSettings
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -13,24 +16,65 @@ object FirebaseManager {
     private const val TAG = "FirebaseManager"
     private val db get() = FirebaseDatabase.getInstance().reference.child(DevSettings.firebaseRoot)
 
-    fun saveAlert(deviceId: String, walkerId: String, rssi: Int, level: String) {
+    /**
+     * (v1.1.77) 사업장별 노드 — 경보 로그·에코보정을 사업장 단위로 가른다.
+     * 코드가 비면 구버전과 같은 경로를 그대로 쓴다(기존 데이터 접근 유지).
+     */
+    private fun siteNode(name: String) =
+        DevSettings.siteCode.let { if (it.isEmpty()) db.child(name) else db.child(name).child(it) }
+
+    // 역할(myRole/peerRole)은 03_service 에서 이름으로 변환해 넘긴다 — 04_firebase 는
+    //   02_ble 에 의존하지 않는다(레이어 규칙). 기본값이 있어 기존 호출은 그대로 컴파일된다.
+    fun saveAlert(deviceId: String, walkerId: String, rssi: Int, level: String,
+                  myRole: String = "UNKNOWN", peerRole: String = "UNKNOWN") {
+        val logId = BeaconRegistry.shortFullId(deviceId)   // (v1.1.91) 비콘 UUID 키는 8자만 저장(v1.1.90 과 동일 항목)
         val today = SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(Date())
         val alertId = UUID.randomUUID().toString()
         val data = mapOf(
             "timestamp" to System.currentTimeMillis(),
-            "deviceId" to deviceId,
-            "walkerId" to walkerId,
+            "deviceId" to withSite(logId),   // (v1.1.90 SA-1) 센터명-장비ID (예: WF11-CB-01)
+            "walkerId" to withSite(walkerId),
             "rssi" to rssi,
-            "alertLevel" to level
+            "alertLevel" to level,
+            "myRole" to myRole,
+            "peerRole" to peerRole,
+            "site" to DevSettings.siteCode
         )
-        db.child("alerts").child(today).child(alertId).setValue(data)
+        siteNode("alerts").child(today).child(alertId).setValue(data)
             .addOnFailureListener { Log.e(TAG, "경보 저장 실패: ${it.message}") }
-        Log.d(TAG, "경보 저장: $level $deviceId rssi=$rssi")
+        Log.d(TAG, "경보 저장: $level ${withSite(logId)} rssi=$rssi")
+    }
+
+    // ── (v1.1.76) UWB 실측 표본 — 성능 사양의 물리 거리 근거 ─────────────
+    //   UWB 가 잰 실거리(m)와 같은 프레임의 BLE RSSI 를 한 건으로 남긴다. 이 둘이 있어야
+    //   "경고 -78dBm / 위험 -65dBm 이 실제로 몇 m 인가" 를 역산할 수 있다. 학습값(Δ)은
+    //   기기 안에만 있어 반출되지 않으므로, 집계용으로는 이 원표본이 필요하다.
+    //   개발자 설정 스위치(DevSettings.uwbProbeUploadEnabled)가 켜진 동안에만 호출된다 —
+    //   상시 수집이 아니라 실기 측정 세션용이라 기본은 꺼져 있다.
+    fun saveUwbProbe(myId: String, model: String, site: String,
+                     pairKey: String, distM: Float, rssi: Int) {
+        val today = SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(Date())
+        val data = mapOf(
+            "timestamp" to System.currentTimeMillis(),
+            "walkerId"  to myId,
+            "model"     to model,
+            "site"      to site,
+            "pairKey"   to pairKey,
+            "distM"     to distM,
+            "rssi"      to rssi
+        )
+        db.child("uwb_probe").child(today).child(UUID.randomUUID().toString()).setValue(data)
+            .addOnFailureListener { Log.e(TAG, "UWB 표본 저장 실패: ${it.message}") }
     }
 
     // ── 기기 간 비콘 공유 (이름붙은 세트) ───────────────────────
-    //   같은 root(firebaseRoot) 아래 beacon_share/<key> 에 선택분을 업로드,
-    //   다른 기기가 목록에서 골라 내려받아 병합한다. (v1.1.17)
+    //   같은 root(firebaseRoot) 아래 beacon_share/<siteCode>/<key> 에 선택분을 업로드,
+    //   같은 사업장 기기가 목록에서 골라 내려받아 병합한다. (v1.1.17)
+    //   사업장 코드가 비면 평면 경로로 폴백하지 않고 실패로 반환한다(규칙이 $sc 하위 쓰기만 허용).
+
+    /** 내 사업장 공유 노드. 사업장 코드 미설정이면 null */
+    private fun beaconShareNode() =
+        DevSettings.siteCode.takeIf { it.isNotEmpty() }?.let { db.child("beacon_share").child(it) }
 
     data class BeaconSetMeta(
         val key: String,        // Firebase 키(정규화됨)
@@ -44,8 +88,81 @@ object FirebaseManager {
     fun sanitizeKey(s: String): String =
         s.trim().replace(Regex("[.#$\\[\\]/]"), "_").ifEmpty { "set" }
 
+    // (v1.1.87) 표시 이름 = BLE 송출 ID 상한. UTF-8 15바이트 = 한글 5자·영문 15자 (BleAdvertiser 절단 폭과 동일)
+    const val DEVICE_ID_MAX_BYTES = 15
+
+    /**
+     * (v1.1.90 SA-1) 표시 이름 = PIT 장비 ID. `종류코드-번호` 두 토큰이다 — `CB-01`, `RT-07`.
+     *
+     * 자유 입력을 없애고 선택식(종류 드롭다운 + 번호 드롭다운)으로 바꿨으므로,
+     * 사람 이름·닉네임이 들어올 경로가 구조적으로 존재하지 않는다. 이 검증은 구버전이
+     * 남긴 값과 외부에서 들어온 값을 거르는 2차 방어선이다.
+     *
+     * 종류코드가 실제 등록된 장비인지는 여기서 보지 않는다 — 04_firebase 는 01_model 에
+     * 의존하지 않는다(레이어 규칙). 코드 유효성은 선택 UI 의 PitType.parse 가 판정한다.
+     *
+     * 5바이트 고정이라 BLE 송출 상한(15바이트) 대비 10바이트가 남는다. 센터명은 싣지 않는다.
+     */
+    val PIT_ID_REGEX = Regex("^[A-Z]{2}-[0-9]{2}$")
+
+    /** (v1.1.90) 입력 안내 문구 — UI 힌트·마이그레이션 안내가 같은 문장을 쓴다 */
+    const val PIT_ID_HINT = "장비 종류와 번호를 선택하세요 (예: CB-01)"
+
+    /** (v1.1.90) 입력 정규화 — 사업장 코드와 같은 규칙: 앞뒤 공백 제거 후 대문자화 */
+    fun normalizeDeviceId(s: String): String = s.trim().uppercase(Locale.ROOT)
+
+    /** (v1.1.90 SA-1) 표시 이름 검증 — 빈 값은 허용(자동 ID 사용), 그 외는 장비 ID 형식만 허용. */
+    fun isValidDeviceId(s: String): Boolean {
+        val t = normalizeDeviceId(s)
+        if (t.isEmpty()) return true
+        return PIT_ID_REGEX.matches(t)
+    }
+
+    /**
+     * (v1.1.90) 자동 발급 ID 형식 — MainActivity.newAutoId() 생성규칙("SA-" + UUID 8자 대문자).
+     * 보행자처럼 장비 ID 가 없는 기기가 쓴다.
+     */
+    val AUTO_ID_REGEX = Regex("^SA-[0-9A-F]{8}$")
+
+    /**
+     * (v1.1.90 SA-1) 송출 ID 로 그대로 써도 되는 값인가 — 장비 ID 또는 자동 발급 ID(빈 값은 불가).
+     * 구버전이 device_id 에 써 넣은 사람 이름을 걸러내는 데 쓴다.
+     */
+    fun isUsableAdvertisedId(s: String): Boolean {
+        val t = normalizeDeviceId(s)
+        if (t.isEmpty()) return false
+        return AUTO_ID_REGEX.matches(t) || PIT_ID_REGEX.matches(t)
+    }
+
+    /**
+     * (v1.1.90 SA-1) 경보 로그용 전체 식별자 — `센터명-장비ID`. `WF11-CB-01` 로 남는다.
+     *
+     * BLE 에는 센터명을 싣지 않는다(예산·중복). 대신 저장 시점에 붙인다. BLE 로 만난
+     * 상대는 물리적으로 같은 센터 안에 있으므로 내 센터 코드를 그대로 적용한다 —
+     * 경로(`alerts/{site}/...`)와 `site` 필드가 이미 같은 전제 위에 서 있다.
+     */
+    fun withSite(id: String): String {
+        val site = DevSettings.siteCode
+        return if (site.isEmpty() || id.isEmpty()) id else "$site-$id"
+    }
+
+    /** (v1.1.87) s 의 앞에서부터 UTF-8 maxBytes 안에 드는 문자 수(서로게이트 쌍은 쪼개지 않음). 입력 필터용 */
+    fun utf8PrefixLen(s: CharSequence, maxBytes: Int): Int {
+        var bytes = 0
+        var i = 0
+        while (i < s.length) {
+            val cp = Character.codePointAt(s, i)
+            val n = when { cp < 0x80 -> 1; cp < 0x800 -> 2; cp < 0x10000 -> 3; else -> 4 }
+            if (bytes + n > maxBytes) break
+            bytes += n
+            i += Character.charCount(cp)
+        }
+        return i
+    }
+
     /** 선택한 비콘 프로파일(JSON)을 이름붙은 세트로 업로드 */
     fun uploadBeaconSet(setName: String, profilesJson: String, count: Int, sender: String, onResult: (Boolean) -> Unit) {
+        val node = beaconShareNode() ?: return onResult(false)
         val key = sanitizeKey(setName)
         val data = mapOf(
             "name"         to setName.trim().ifEmpty { key },
@@ -54,14 +171,15 @@ object FirebaseManager {
             "sender"       to sender,
             "timestamp"    to System.currentTimeMillis()
         )
-        db.child("beacon_share").child(key).setValue(data)
+        node.child(key).setValue(data)
             .addOnSuccessListener { Log.d(TAG, "비콘 세트 업로드: $key (${count}개)"); onResult(true) }
             .addOnFailureListener { Log.e(TAG, "비콘 세트 업로드 실패: ${it.message}"); onResult(false) }
     }
 
     /** 업로드된 이름붙은 세트 목록 조회 (최신순) */
     fun listBeaconSets(onResult: (List<BeaconSetMeta>) -> Unit) {
-        db.child("beacon_share").get()
+        val node = beaconShareNode() ?: return onResult(emptyList())
+        node.get()
             .addOnSuccessListener { snap ->
                 val sets = snap.children.mapNotNull { c ->
                     val key = c.key ?: return@mapNotNull null
@@ -80,14 +198,16 @@ object FirebaseManager {
 
     /** 특정 세트의 프로파일 JSON 다운로드 (key = BeaconSetMeta.key) */
     fun downloadBeaconSet(key: String, onResult: (String?) -> Unit) {
-        db.child("beacon_share").child(key).child("profilesJson").get()
+        val node = beaconShareNode() ?: return onResult(null)
+        node.child(key).child("profilesJson").get()
             .addOnSuccessListener { onResult(it.getValue(String::class.java)) }
             .addOnFailureListener { Log.e(TAG, "비콘 세트 다운로드 실패: ${it.message}"); onResult(null) }
     }
 
     /** 업로드된 세트를 클라우드에서 삭제 (관리용) */
     fun deleteBeaconSet(key: String, onResult: (Boolean) -> Unit) {
-        db.child("beacon_share").child(key).removeValue()
+        val node = beaconShareNode() ?: return onResult(false)
+        node.child(key).removeValue()
             .addOnSuccessListener { onResult(true) }
             .addOnFailureListener { Log.e(TAG, "비콘 세트 삭제 실패: ${it.message}"); onResult(false) }
     }
@@ -104,7 +224,12 @@ object FirebaseManager {
     fun uploadEchoCalib(myId: String, model: String, peers: Map<String, Triple<Double, Int, Double>>, onResult: (Boolean) -> Unit) {
         val data = mapOf(
             "model" to model,
+            // (v1.1.84) 앱 버전 — echo_calib 은 1시간마다 전체 덮어쓰기라 항상 현재값이다.
+            //   서버에서 구버전 잔존 기기를 한눈에 식별하는 용도(규칙 잠금 롤아웃 검증).
+            "ver"   to BuildConfig.VERSION_NAME,
             "ts"    to System.currentTimeMillis(),
+            // (v1.1.85) 사업장 코드는 경로가 아니라 라벨로만 남긴다(saveAlert 와 동일).
+            "site"  to DevSettings.siteCode,
             "peers" to peers.mapValues { (_, v) -> mapOf("m" to v.first, "n" to v.second, "iqr" to v.third) }
         )
         db.child("echo_calib").child(sanitizeKey(myId)).setValue(data)
@@ -116,21 +241,37 @@ object FirebaseManager {
     fun downloadEchoCalibAll(onResult: (List<EchoCalibNode>) -> Unit) {
         db.child("echo_calib").get()
             .addOnSuccessListener { snap ->
-                val nodes = snap.children.mapNotNull { c ->
-                    val id = c.key ?: return@mapNotNull null
-                    val model = c.child("model").getValue(String::class.java) ?: return@mapNotNull null
-                    val peers = c.child("peers").children.mapNotNull { pc ->
-                        val k = pc.key ?: return@mapNotNull null
-                        val m = pc.child("m").getValue(Double::class.java) ?: return@mapNotNull null
-                        val n = (pc.child("n").getValue(Long::class.java) ?: 0L).toInt()
-                        val iqr = pc.child("iqr").getValue(Double::class.java) ?: 0.0
-                        k to EchoPeerStat(m, n, iqr)
-                    }.toMap()
-                    EchoCalibNode(id, model, peers)
+                // (v1.1.85) model 이 없는 자식은 구버전이 쓴 echo_calib/<사업장>/<기기ID> 의
+                //   사업장 세그먼트다 — 한 단계 내려가 손자를 기기 노드로 읽는다(롤아웃 중 흡수).
+                val current = mutableListOf<EchoCalibNode>()
+                val legacy = mutableListOf<EchoCalibNode>()
+                for (c in snap.children) {
+                    val node = parseEchoNode(c)
+                    if (node != null) current += node else c.children.mapNotNullTo(legacy, ::parseEchoNode)
                 }
-                onResult(nodes)
+                onResult(mergeEchoNodes(legacy, current))
             }
             .addOnFailureListener { Log.e(TAG, "에코보정 노드 조회 실패: ${it.message}"); onResult(emptyList()) }
+    }
+
+    /** (v1.1.86) 구·신 경로 혼재 흡수: 같은 기기ID 는 한 번만 남기고 current(신 경로)가 이긴다.
+     *  구 경로 echo_calib/<사업장>/<기기ID> 는 업그레이드해도 삭제되지 않고 잔존하므로, 걸러내지
+     *  않으면 같은 기기 표본이 두 번 세어져 Σn 이 배가 되고(신뢰도 과대), 옛 중앙값이 현재값과
+     *  n 가중 평균돼 영구히 절반 지분을 갖는다. */
+    fun mergeEchoNodes(legacy: List<EchoCalibNode>, current: List<EchoCalibNode>): List<EchoCalibNode> =
+        (legacy + current).associateBy { it.id }.values.toList()
+
+    private fun parseEchoNode(c: DataSnapshot): EchoCalibNode? {
+        val id = c.key ?: return null
+        val model = c.child("model").getValue(String::class.java) ?: return null
+        val peers = c.child("peers").children.mapNotNull { pc ->
+            val k = pc.key ?: return@mapNotNull null
+            val m = pc.child("m").getValue(Double::class.java) ?: return@mapNotNull null
+            val n = (pc.child("n").getValue(Long::class.java) ?: 0L).toInt()
+            val iqr = pc.child("iqr").getValue(Double::class.java) ?: 0.0
+            k to EchoPeerStat(m, n, iqr)
+        }.toMap()
+        return EchoCalibNode(id, model, peers)
     }
 
     /** 순수 집계: 방향성 모델쌍(내모델→상대모델) 프라이어 — 상대모델 → (fold 중앙값 dB, Σn).

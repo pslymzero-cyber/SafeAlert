@@ -31,10 +31,10 @@ object BleConstants {
     // 경고: 더 멀리서(더 음수), 위험: 더 가까이서(덜 음수)
     // [v1.0.48 #6] (구) txPower=-38/n=2.53 거리 환산 주석 폐기 — v1.0.39 에서 거리계산 파생을
     //   걷어내고 v1.0.40 부터 dBm 슬라이더 직접 저장이라 환산식은 더 이상 사실이 아니었다.
-    //   임계 기본값의 단일 출처는 DevSettings.DEFAULT_RSSI_*_ABS(-75/-55)이며, 아래 상수는
+    //   임계 기본값의 단일 출처는 DevSettings.DEFAULT_RSSI_*_ABS(-78/-65)이며, 아래 상수는
     //   DevSettings 초기화 전 runCatching 폴백 전용이라 같은 값으로 정렬한다(불일치 해소).
-    const val DEFAULT_RSSI_WARNING       = -75
-    const val DEFAULT_RSSI_DANGER        = -55
+    const val DEFAULT_RSSI_WARNING       = -78   // [v1.1.95] -75→-78
+    const val DEFAULT_RSSI_DANGER        = -65   // [v1.1.95] -55→-65
     // [v1.1.7 #3] 3000ms→1000ms: BleScanner.mapScanMode 가 ≤1000ms 를 LOW_LATENCY(연속 스캔)로
     //   매핑 → 감지 blind window 제거(알람 지연/누락 방지). DevSettings.scanPeriodMs 기본값과 일치.
     const val DEFAULT_SCAN_PERIOD_MS     = 1000L
@@ -59,7 +59,7 @@ object BleConstants {
     const val MOTION_STATE_SUDDEN     = 0x02
 
     // [v1.0.42] 특수상태(후진 PSTATE_REVERSE / 하역 PSTATE_LOADING) 즉시 DANGER 격상 임계를
-    //   위험(rssiDanger=-55)으로 통일. 상대 STATE 가 후진·하역이고 정제 RSSI가 rssiDanger 이상
+    //   위험(rssiDanger, 기본 -65)으로 통일. 상대 STATE 가 후진·하역이고 정제 RSSI가 rssiDanger 이상
     //   (가까움)이면 TTC·속도·방향 조건을 모두 무시하고 즉시 최고 DANGER로 격상한다.
     //   사용처(BleService 특수경보 분기)에서 BleConstants.rssiDanger 를 직접 참조한다.
 
@@ -140,6 +140,14 @@ object BleConstants {
 
     /** 패킹된 1바이트에서 Category(bits 7:6) 추출. */
     fun decodeCategory(payload: Int): Int = ((payload and 0xFF) shr CAT_SHIFT) and CAT_MASK
+
+    /** 역할 코드를 집계용 이름으로. 미상(널·범위 밖)은 UNKNOWN — 경보 기록의 역할 필드에 쓴다. */
+    fun categoryName(cat: Int?): String = when (cat) {
+        CAT_WALKER   -> "WALKER"
+        CAT_EPJ      -> "EPJ"
+        CAT_FORKLIFT -> "FORKLIFT"
+        else         -> "UNKNOWN"
+    }
 
     /** 패킹된 1바이트에서 State(bits 5:4) 추출. */
     fun decodeState(payload: Int): Int = ((payload and 0xFF) shr STATE_SHIFT) and STATE_MASK
@@ -230,7 +238,8 @@ object BleConstants {
 data class LocalState(
     val category: Int  = BleConstants.CAT_WALKER,       // 내 역할 (CAT_*)
     val state: Int     = BleConstants.PSTATE_IDLE,       // 내 동적 상태 (PSTATE_*)
-    val turnDir: Int   = BleConstants.TURN_STRAIGHT      // 내 송출 회전 방향 (TURN_*)
+    val turnDir: Int   = BleConstants.TURN_STRAIGHT,     // 내 송출 회전 방향 (TURN_*)
+    val inZone: Boolean = false                          // 세이프존 진입 여부 (기본 false = 구포맷 하위호환)
 ) {
     val categoryLabel: String get() = BleConstants.categoryLabel(category)
     val stateLabel: String    get() = BleConstants.stateLabel(state)

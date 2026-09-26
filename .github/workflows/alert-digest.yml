@@ -18,6 +18,10 @@ on:
         description: '집계할 최근 일수'
         required: false
         default: '28'
+      from:
+        description: '시작일 고정 (YYYYMMDD). 넣으면 days 를 무시한다 - 발표 자료용'
+        required: false
+        default: ''
 
 concurrency:
   group: alert-digest
@@ -81,16 +85,22 @@ jobs:
           DB: ${{ secrets.FIREBASE_DB_URL }}
           KEY: ${{ secrets.FIREBASE_DB_SECRET }}
           DAYS: ${{ github.event.inputs.days || '28' }}
+          SINCE: ${{ github.event.inputs.from || '' }}
           MISSING: ${{ steps.creds.outputs.missing }}
           SITES: ${{ steps.sites.outputs.list }}
         run: |
           set -euo pipefail
-          FROM=$(date -u -d "-${DAYS} days" +%Y%m%d)
+          # SINCE 가 있으면 기간을 못박는다 - 재실행해도 발표 숫자가 움직이지 않는다.
+          FROM=${SINCE:-$(date -u -d "-${DAYS} days" +%Y%m%d)}
           NOW=$(TZ=Asia/Seoul date '+%Y-%m-%d %H:%M KST')
           {
             echo "# 경보 이력 집계"
             echo
-            echo "> 자동 생성 — $NOW · 최근 ${DAYS}일 (${FROM} 이후)"
+            if [ -n "$SINCE" ]; then
+              echo "> 자동 생성 — $NOW · 기간 고정 (${FROM} 이후)"
+            else
+              echo "> 자동 생성 — $NOW · 최근 ${DAYS}일 (${FROM} 이후)"
+            fi
             echo ">"
             echo "> \`.github/workflows/alert-digest.yml\` 이 매주 갱신한다."
             echo "> 원본 기록은 공개 저장소에 올리지 않는다 — 집계값만 남긴다."
@@ -129,13 +139,38 @@ jobs:
                  --data-urlencode 'orderBy="$key"' \
                  --data-urlencode "startAt=\"$FROM\"" \
                  -o "alerts-$SITE.json"; then
-              python3 docs/presentation/cousolve/analyze_alerts.py "alerts-$SITE.json" \
-                --label "${SITE^^}" --md ALERTS.md --append --no-ids
+
+              # echo_calib = 기기별 마지막 생존 스탬프(1시간마다 덮어쓰기). 실동률의 분모다.
+              #   기기 수만큼의 작은 노드라 통째로 받는다. 없으면 그 섹션만 빠진다.
+              ECHO=""
+              if curl -fsS --get "${DB%/}/$SITE/echo_calib.json" \
+                   --data-urlencode "auth=$KEY" -o "echo-$SITE.json"; then
+                ECHO="--echo echo-$SITE.json"
+              else
+                echo "::notice::$SITE echo_calib 없음 — 단말 가동 섹션 생략"
+              fi
+
+              # uwb_probe = UWB 실거리 × RSSI 원표본. 개발자 설정 스위치를 켠 세션에만 쌓인다.
+              #   alerts 와 같은 일자 키라 같은 방식으로 기간을 자른다.
+              PROBE=""
+              if curl -fsS --get "${DB%/}/$SITE/uwb_probe.json" \
+                   --data-urlencode "auth=$KEY" \
+                   --data-urlencode 'orderBy="$key"' \
+                   --data-urlencode "startAt=\"$FROM\"" \
+                   -o "probe-$SITE.json"; then
+                PROBE="--probe probe-$SITE.json"
+              else
+                echo "::notice::$SITE uwb_probe 없음 — 거리 환산 섹션 생략"
+              fi
+
+              python3 .github/scripts/analyze_alerts.py "alerts-$SITE.json" \
+                --label "${SITE^^}" --md ALERTS.md --append --no-ids \
+                $ECHO $PROBE ${SINCE:+--from "$SINCE"}
             else
               echo "::warning::$SITE 읽기 실패 — 건너뜀"
               printf '## %s\n\n> 읽기 실패.\n\n' "${SITE^^}" >> ALERTS.md
             fi
-            rm -f "alerts-$SITE.json"
+            rm -f "alerts-$SITE.json" "echo-$SITE.json" "probe-$SITE.json"
           done
 
       - name: 변경분 커밋

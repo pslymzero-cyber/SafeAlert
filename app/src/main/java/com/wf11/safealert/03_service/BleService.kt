@@ -26,7 +26,6 @@ import com.wf11.safealert.ble.BleScanCallback
 import com.wf11.safealert.ble.KalmanFilter
 import com.wf11.safealert.ble.MedianFilter
 import com.wf11.safealert.ble.RssiPreFilter
-import com.wf11.safealert.firebase.FirebaseManager
 import com.wf11.safealert.utils.BeaconRegistry
 import com.wf11.safealert.ui.MainActivity
 import com.wf11.safealert.utils.DevSettings
@@ -110,14 +109,31 @@ class BleService : LifecycleService() {
     //   하드코드 상수 — 옵션 UI 는 사용자가 '추후'로 보류(임의 설정 노출 금지).
     private val DWELL_MUTE_MS = 5_000L
     // (v1.1.62) 항목5: 존 비콘(안전구역) 상태 머신 상수.
-    //   진입=enterRssi 이상 연속 ZONE_MIN_SAMPLES 표본(순간 스파이크 오진입 방지),
+    //   진입=enterRssi 이상 연속 ZONE_MIN_SAMPLES 표본,
     //   이탈=enterRssi−ZONE_EXIT_HYST_DB 미만 즉시(히스테리시스 데드밴드로 경계 플랩 방지)
     //        또는 신호 두절 ZONE_LOST_GRACE_MS 초과,
     //   엔트리 폐기=ZONE_SIGNAL_STALE_MS 초과(맵 누수 방지). 존 판정은 raw RSSI(게인 미적용).
-    private val ZONE_MIN_SAMPLES     = 3
+    // (v1.1.82) 진입 표본 3 -> 1. 존 비콘 광고를 '받는 동안'은 안전 모드여야 한다는 요구.
+    //   3표본은 광고 주기가 느리거나 스캔 공백이 낀 현장에서 연속성이 끊겨 영구 미진입을 만들었다.
+    //   대가: 단발 스파이크 1회로도 진입한다 - 다음 표본의 세기 미달 분기가 즉시 되돌린다.
+    private val ZONE_MIN_SAMPLES     = 1
     private val ZONE_EXIT_HYST_DB    = 5
-    private val ZONE_LOST_GRACE_MS   = 3_000L
-    private val ZONE_SIGNAL_STALE_MS = 4_000L
+    // (v1.1.83) 이탈도 연속 표본을 요구한다. 진입이 1표본이 된 뒤에도 이탈은 1표본이라,
+    //   경계에서 RSSI 가 한 번만 처지면 억제가 즉시 풀렸다가 다음 표본에 되돌아왔다
+    //   (= '세이프존이 중간에 한번씩 끊긴다'). 실제로 존을 벗어나면 세기가 계속 낮게 유지되므로
+    //   연속 표본을 요구하면 노이즈와 실이탈이 갈린다.
+    //   3 인 이유: 경계 체류(수신 -80~-78dBm)에서 2 는 시간당 5~21회 오탈출이 남고 3 이면 0.6~5회다.
+    //   대가는 이탈 확정이 광고 2주기(약 10초) 늦는 것인데, 현장에서 10초는 작업 복귀나
+    //   장비 승차에 못 미치는 시간이라 억제가 남아도 위험하지 않다(pslym 판단).
+    private val ZONE_EXIT_SAMPLES    = 3
+    // (v1.1.82) 신호 두절 유예 3초 -> 10초. 3초는 광고 주기가 5초인 비콘에서 표본 사이마다
+    //   폴링이 inside 를 내리고 zoneSampleMap 을 0으로 밀어, 표본이 계속 들어와도 영구 미진입
+    //   /플랩을 만들었다(= '첫 신호만 받는' 증상). 정상 이탈은 세기 미달 즉시 분기가 처리하고,
+    //   이 유예는 신호 완전 두절에만 걸린다 - 대가는 블랙아웃 시 억제가 최대 10초 늦게 풀린다.
+    private val ZONE_LOST_GRACE_MS   = 10_000L
+    // 엔트리 폐기는 맵 누수 방지 전용 — 이탈 판정은 위 GRACE 가 이미 끝냈다. 4초는 광고 주기가 느린
+    // 비콘·45초 스캔 재시작 공백에서 진입 표본이 모이기 전에 카운터를 통째로 지워 영구 미진입을 만들었다.
+    private val ZONE_SIGNAL_STALE_MS = 30_000L
     private val muteHandler = android.os.Handler(android.os.Looper.getMainLooper())
     // [v1.0.46 #11] forceAlarmVolume 의 ignoringVolumeChange 해제(300ms) 전용 핸들러.
     //   muteHandler 공용이던 시절, muteTemporarily()의 removeCallbacksAndMessages(null)가 해제
@@ -268,6 +284,12 @@ class BleService : LifecycleService() {
     @Volatile private var txFault:      String? = null   // BleAdvertiser.onTxFault
     @Volatile private var soundFault:   String? = null   // AlertSoundPlayer.onSoundFault
     @Volatile private var overlayFault: String? = null   // OverlayManager.onOverlayFault
+    // [치명] setStreamVolume 은 방해금지·기기정책에 막혀도 예외를 던지지 않는다(조용히 무시).
+    //   catch 는 실행되지 않으므로 되읽기로만 잡힌다. 잡지 못하면 '볼륨 0인 채 경보음 재생'
+    //   = sound/vibration/overlay 3중 독립 채널로도 걸러지지 않는 유일한 완전 무음 경로.
+    //   systemFault(checkSystemHealth 가 주기적으로 null 덮어씀)·soundFault(AlertSoundPlayer
+    //   콜백이 덮어씀)를 재사용할 수 없어 전용 슬롯을 둔다.
+    @Volatile private var volumeFault:  String? = null   // forceAlarmVolume 되읽기 검증
     @Volatile private var faultBeeped   = false          // 이상 진입 시 1회만 경고음
 
     @Volatile private var lastScanResultMs = 0L
@@ -361,6 +383,8 @@ class BleService : LifecycleService() {
     //   BleScanner.onZoneBeaconSignal 별도 경로로만 흐른다. beaconKey="ZONE_"+uuid8/MAC.
     //   myZoneInside=내가 존 안(어느 존이든 1개 이상 inside) → 자기 소리·진동 억제+광고 IN_ZONE 비트.
     //   peerInZoneMap=상대의 IN_ZONE 선언 수신 캐시 → 그 기기를 무해(SAFE) 판정(억제 전용).
+    //   [미착수-낮음4] 아래 4맵은 키가 deviceId 가 아니라 beaconKey 이므로 DeviceStateRegistry 에
+    //   일부러 등록하지 않는다. 정리는 reevaluateZones() TTL 하드 제거 + stopAll() 수동 clear 로 이중 커버.
     private val zoneSampleMap    = mutableMapOf<String, Int>()     // beaconKey → 진입 연속 표본 수
     private val zoneEnterRssiMap = mutableMapOf<String, Int>()     // beaconKey → 프로파일 진입 임계(dBm)
     private val zoneLastSeenMap  = mutableMapOf<String, Long>()    // beaconKey → 마지막 수신 시각(ms)
@@ -440,23 +464,14 @@ class BleService : LifecycleService() {
     }, uwbDist)
 
     // [Phase 3 T3] 판정 상태는 AlertStateMachine 소유 - 아래는 동일 인스턴스 별칭(리플렉션 테스트/잔여 호출부용)
-    private val wasStationaryMap = asm.wasStationaryMap
     private val alertState = asm.alertState
     private val kalmanFilters = asm.kalmanFilters
-    private val lastKfVelMap = asm.lastKfVelMap
     private val filterPreserveMap = asm.filterPreserveMap
     private val timeGateWaiveSet = asm.timeGateWaiveSet
-    private val shadowFusionMap = asm.shadowFusionMap
-    private val rushFrameMap = asm.rushFrameMap
     private val dangerContactStreakMap = asm.dangerContactStreakMap
     private val warningContactStreakMap = asm.warningContactStreakMap
-    private val warningMissRefMap = asm.warningMissRefMap
     private val trackingStateMap = asm.trackingStateMap
-    private val crossingStartMap = asm.crossingStartMap
-    private val departingStartMap = asm.departingStartMap
     private val recedingStartMap = asm.recedingStartMap
-    private val recedeRefMap = asm.recedeRefMap
-    private val recedePeakMap = asm.recedePeakMap
     private val deviceRssiMap = asm.deviceRssiMap
     private val mutedDevices = asm.mutedDevices
     private val peerInZoneMap = asm.peerInZoneMap
@@ -466,11 +481,9 @@ class BleService : LifecycleService() {
     private val deviceTurnMap = asm.deviceTurnMap
     private val reverseRssiHist = asm.reverseRssiHist
     private val reversePrepUntil = asm.reversePrepUntil
-    private val firebaseLastSaveMap = asm.firebaseLastSaveMap
     private val pendingDisplayMap = asm.pendingDisplayMap
     private val approachStreakStartMap = asm.approachStreakStartMap
     private val fastApproachStreakMap = asm.fastApproachStreakMap
-    private val forwardBiasLatchMap = asm.forwardBiasLatchMap
     private val KF_VEL_SEED_TTL_MS get() = asm.KF_VEL_SEED_TTL_MS
 
     // 아래 3개는 별칭 — 소유는 UwbDistanceManager 이고 같은 인스턴스를 가리킨다(호출부 diff 0 +
@@ -780,7 +793,8 @@ class BleService : LifecycleService() {
                     //   상대는 이 해시로 태그된 '상대가 측정한 나의 RSSI'를 에코에 실어 되돌려준다.
                     //   BleAdvertiser 가 광고 시 id 를 UTF-8 14바이트로 절단하므로(BleAdvertiser:196) 여기서도
                     //   동일 절단해야 상대 스캐너가 만든 fullId 와 해시가 일치한다(ASCII·14자 이하면 그대로).
-                    val myWireId = String(myId.toByteArray(Charsets.UTF_8).take(14).toByteArray(), Charsets.UTF_8)
+                    //   (v1.1.87) 절단 폭 14→15B — BleAdvertiser 와 반드시 같은 값.
+                    val myWireId = String(myId.toByteArray(Charsets.UTF_8).take(15).toByteArray(), Charsets.UTF_8)
                     val myPrefix = if (myMode == "DEVICE") BleConstants.DEVICE_PREFIX else BleConstants.WALKER_PREFIX
                     s.myEchoHash = BleConstants.shortHash(myPrefix + myWireId)
                     // [v1.1.47] BLE 신호 타임아웃(전투 2s/휴식 6s)이어도 신선한 UWB 실측(≤1s)이
@@ -794,7 +808,7 @@ class BleService : LifecycleService() {
 
                             if (myMode == "WALKER"
                                 && deviceId.startsWith(BleConstants.WALKER_PREFIX)
-                                && !deviceId.contains("BEA_")   // [v1.1.58 fix1] 비콘(BEA_)은 walker 게이트 면제 — 보행자도 비콘 경보 수신(기존: 100% 차단)
+                                && !(deviceId.contains("BEA_") && !BeaconRegistry.isVisitorBeacon(deviceId))   // (v1.1.91) 방문자용으로 등록된 비콘만 보행자 취급해 차단 — 장비용·미등록은 게이트 면제(울린다)
                                 && !DevSettings.walkerDetectsWalker) return
 
                             // (v1.1.65) 세이프존 전면 억제 — 존 안에서는 '존 비콘 신호만' 받는다.
@@ -861,12 +875,16 @@ class BleService : LifecycleService() {
                             // (v1.1.62 버그A) walker 게이트 미러 — 판정(onDeviceDetected)이 거른 보행자끼리
                             //   UWB 세션만 열리면 judgeUwbOnly 가 걸러진 기기를 되살린다. 세션 개설 자체를 차단.
                             if (myMode == "WALKER" && deviceId.startsWith(BleConstants.WALKER_PREFIX)
-                                && !deviceId.contains("BEA_") && !DevSettings.walkerDetectsWalker) return
+                                && !(deviceId.contains("BEA_") && !BeaconRegistry.isVisitorBeacon(deviceId)) && !DevSettings.walkerDetectsWalker) return
                             // [v1.1.43] 0x9ABC 관측 기록(진단용 — 판정 불사용) + 주소 전달 = 세션 (재)개설 경로
                             peerUwbSeenMap[deviceId] = System.currentTimeMillis()
                             uwbRanger?.onPeerUwbAddressReceived(deviceId, uwbAddress)
                         }
                         override fun onZoneBeaconSignal(beaconKey: String, rssi: Int, enterRssi: Int) {
+                            // (v1.1.82) 존 비콘도 엄연한 스캔 결과다. 여기서 갱신하지 않으면 주변에
+                            //   기기 없이 존 비콘만 있는 현장에서 헬스체크가 15초마다 RX 스캔을
+                            //   재시작해 표본이 계속 끊긴다(= '첫 신호만 받는' 증상).
+                            lastScanResultMs = System.currentTimeMillis()
                             // (v1.1.62) 존 비콘 신호 → 서비스 존 상태 머신으로 배선(인터페이스 디폴트=no-op라 명시 필수)
                             this@BleService.onZoneBeaconSignal(beaconKey, rssi, enterRssi)
                         }
@@ -905,6 +923,12 @@ class BleService : LifecycleService() {
     private fun onUwbSampleReceived(deviceId: String, distM: Float) {
         val now = System.currentTimeMillis()
         uwbSampleAtMsMap[deviceId] = now
+        // (v1.1.81) 세이프존 전면 억제 — RSSI 경로(processAlert 진입 return)와 같은 강도로 UWB 도 막는다.
+        //   이 콜백은 UwbRanger 가 직결 호출해 processAlert 의 존 게이트를 거치지 않으므로, 여기서
+        //   막지 않으면 존 안에서도 판정이 완주해 목록·오버레이에 계속 남는다(가청만 억제되던 비대칭).
+        //   표본 시각은 위에서 이미 기록했으므로 존 이탈 시 다음 표본에서 Case A 신선도가 즉시 복구된다.
+        //   진입 시점의 잔존 기기는 refreshMyZoneInside 의 forceLoseAll → onDeviceLost 가 정리한다.
+        if (myZoneInside) return
         if (!uwbJudgeModeExclusive(deviceId, now)) return
         acquireDetectionWakeLock(0)   // 0(강한 값) — 화면 꺼짐이면 항상 획득: UWB 실측 자체가 근접 증거
         try {
@@ -1000,8 +1024,17 @@ class BleService : LifecycleService() {
             val maxVol = am.getStreamMaxVolume(AudioManager.STREAM_ALARM)
             val target = (maxVol * DevSettings.alarmVolume / 100f).toInt().coerceIn(0, maxVol)
             am.setStreamVolume(AudioManager.STREAM_ALARM, target, 0)
-            Log.d(TAG, "알람 볼륨: $target/$maxVol (${DevSettings.alarmVolume}%)")
-        } catch (e: Exception) { Log.w(TAG, "볼륨 강제 설정 실패: ${e.message}") }
+            val actual = am.getStreamVolume(AudioManager.STREAM_ALARM)   // 실제 반영 여부 되읽기
+            Log.d(TAG, "알람 볼륨: $actual/$maxVol (요청 $target, ${DevSettings.alarmVolume}%)")
+            // target == 0 은 사용자가 알람 볼륨 0% 로 설정한 의도된 상태이므로 이상 아님.
+            if (target > 0 && actual == 0)
+                setVolumeFault("알람 볼륨 0 — 방해금지·기기정책에 막힘, 경보음이 들리지 않을 수 있음")
+            else
+                setVolumeFault(null)
+        } catch (e: Exception) {
+            Log.w(TAG, "볼륨 강제 설정 실패: ${e.message}")
+            setVolumeFault("알람 볼륨 설정 실패 — 경보음이 들리지 않을 수 있음")
+        }
         volumeGuardHandler.removeCallbacksAndMessages(null)   // [v1.0.46 #11] 연속 호출 시 직전 해제 예약 갱신
         volumeGuardHandler.postDelayed({ ignoringVolumeChange = false }, 300)
     }
@@ -1133,9 +1166,14 @@ class BleService : LifecycleService() {
     private fun onZoneBeaconSignal(beaconKey: String, rssi: Int, enterRssi: Int) {
         zoneLastSeenMap[beaconKey] = System.currentTimeMillis()
         zoneEnterRssiMap[beaconKey] = enterRssi
+        // 존 표본 원신호 — "비콘이 아예 안 잡힘"과 "잡히는데 임계 미달"을 현장에서 구분할 유일한 수단.
+        Log.d(TAG, "존 표본: ${beaconKey} rssi=${rssi} 임계=${enterRssi} " +
+                   "n=${zoneSampleMap[beaconKey] ?: 0} inside=${zoneInsideMap[beaconKey]}")
+        // (v1.1.83) zoneSampleMap 은 부호 있는 연속 카운터다 — 양수=임계 이상 연속(진입용),
+        //   음수=데드밴드 아래 연속(이탈용). 맵을 하나 더 두지 않으려는 것 외에 다른 뜻은 없다.
         when {
             rssi >= enterRssi -> {
-                val n = (zoneSampleMap[beaconKey] ?: 0) + 1
+                val n = (zoneSampleMap[beaconKey] ?: 0).coerceAtLeast(0) + 1
                 zoneSampleMap[beaconKey] = n
                 if (n >= ZONE_MIN_SAMPLES && zoneInsideMap[beaconKey] != true) {
                     zoneInsideMap[beaconKey] = true
@@ -1143,13 +1181,17 @@ class BleService : LifecycleService() {
                 }
             }
             rssi < enterRssi - ZONE_EXIT_HYST_DB -> {
-                zoneSampleMap[beaconKey] = 0
-                if (zoneInsideMap[beaconKey] == true) {
+                val n = (zoneSampleMap[beaconKey] ?: 0).coerceAtMost(0) - 1
+                zoneSampleMap[beaconKey] = n
+                if (-n >= ZONE_EXIT_SAMPLES && zoneInsideMap[beaconKey] == true) {
                     zoneInsideMap[beaconKey] = false
-                    Log.i(TAG, "(v1.1.62) 존 이탈(세기 미달): $beaconKey rssi=$rssi < ${enterRssi - ZONE_EXIT_HYST_DB}")
+                    Log.i(TAG, "(v1.1.62) 존 이탈(세기 미달): $beaconKey rssi=$rssi < ${enterRssi - ZONE_EXIT_HYST_DB} (${-n}표본)")
                 }
             }
-            else -> zoneSampleMap[beaconKey] = 0   // 데드밴드 — 상태 유지, 진입 연속성만 끊음
+            // 데드밴드(enterRssi-5 <= rssi < enterRssi) — 상태·표본 모두 유지.
+            // 여기서 카운터를 0으로 밀면 실환경의 정상 RSSI 요동(±5~10dB)이 경계 부근에서
+            // 매번 연속성을 끊어, 임계를 넘나드는 동안 3표본이 영원히 모이지 않는다.
+            else -> Unit
         }
         refreshMyZoneInside()
     }
@@ -1199,6 +1241,7 @@ class BleService : LifecycleService() {
         bleAdvertiser?.updateInZone(inside)
         bleAdvertiser?.updateRisk(getCurrentMaxLevel())   // 진입=SAFE 송출, 이탈=실제 레벨 복귀
         broadcastDeviceList(force = true)
+        broadcastLocalState()      // 존 전이를 내 상태 스냅샷에도 반영(값 변화 감지가 중복을 걸러낸다)
         sendStatusBroadcast(if (inside) "세이프존 — 경보 억제 중(존 비콘 접촉)" else "존 이탈 — 경보 복원")
         refreshNotification()
         Log.i(TAG, "(v1.1.65) myZoneInside=$inside (세이프존 전면 억제)")
@@ -1329,30 +1372,10 @@ class BleService : LifecycleService() {
             else -> deviceId
         }
         return when {
-            suffix.startsWith("BEA_") -> {
-                val macKey = suffix.removePrefix("BEA_").chunked(2).take(6).joinToString(":").uppercase()
-                BeaconRegistry.getAll().firstOrNull {
-                    it.uuid.equals(macKey, ignoreCase = true)
-                }?.label ?: suffix
-            }
+            suffix.startsWith("BEA_") -> BeaconRegistry.labelForFullId(deviceId)   // (v1.1.91) UUID·MAC 비콘 모두 type 별 전체 일치
             suffix.isBlank() -> "알 수 없음"
             else -> suffix
         }
-    }
-
-    /**
-     * v1.0.29 0x02 특수경보용 표시문자열 생성.
-     * 예) "Ian이 급정거 또는 급회전 중입니다."
-     * 한글 이름은 받침 유무로 조사(이/가)를 고르고, 영문·숫자는 예시에 맞춰 "이"를 쓴다.
-     */
-    private fun makeSuddenLabel(name: String): String {
-        val last = name.trim().lastOrNull()
-        val josa = when {
-            last == null -> "이"
-            last.code in 0xAC00..0xD7A3 -> if ((last.code - 0xAC00) % 28 != 0) "이" else "가"
-            else -> "이"
-        }
-        return "$name$josa 급정거 또는 급회전 중입니다."
     }
 
     /** v1.0.34 Category(CAT_*) -> 표시용 역할명. */
@@ -1506,7 +1529,7 @@ class BleService : LifecycleService() {
         val cat = adv?.txCategory ?: myCategory
         val st  = adv?.txState   ?: BleConstants.PSTATE_IDLE
         val turn = adv?.txTurnDir ?: BleConstants.TURN_STRAIGHT
-        val snap = "$cat${31.toChar()}$st${31.toChar()}$turn"
+        val snap = "$cat${31.toChar()}$st${31.toChar()}$turn${31.toChar()}${if (myZoneInside) 1 else 0}"
         localSnapshot = snap
         if (snap == lastLocalSnapshot) return
         lastLocalSnapshot = snap
@@ -1637,6 +1660,7 @@ class BleService : LifecycleService() {
         bleAdvertiser?.refreshAdvertiseMode()
         applyUwbLiveState()   // (v1.1.30) UWB 토글 라이브 반영
         UwbCalibrator.applySite()   // (v1.1.34) 사업장 코드 변경 → Δ보정 프로파일 전환(무변경 no-op)
+        CalibrationEngine.applySite(myId)   // (v1.1.77) 에코편차 통계도 같은 시점에 전환(무변경 no-op)
         Log.d(TAG, "[Req5] 설정 라이브 반영(key=$changedKey): KF프리셋=$preset 위험=${BleConstants.rssiDanger}dBm 경고=${BleConstants.rssiWarning}dBm TimeGate=${DevSettings.timeGateMs}ms 스캔주기=${BleConstants.scanPeriodMs}ms 광고간격=${BleConstants.advertiseInterval}ms")
         sendStatusBroadcast("설정 라이브 반영됨")
     }
@@ -1749,6 +1773,7 @@ class BleService : LifecycleService() {
         AlertSoundPlayer.stopSound()
         VibrationHelper.stopVibration(this)
         releaseAlertWakeLock()   // [v1.1.9] 알림 종료 → WakeLock 즉시 해제(timeout 대기 없이)
+        releaseDetectionWakeLock()   // [미착수-낮음3] bounded(500ms) 라도 alertWakeLock 과 해제 규칙 일치
         alertState.clear()
         suddenLabelMap.clear()
         deviceCategoryMap.clear()
@@ -1785,6 +1810,7 @@ class BleService : LifecycleService() {
         txFault      = null
         soundFault   = null
         overlayFault = null
+        volumeFault  = null
         faultBeeped  = false
         isRunning  = false
         lastStatus = ""
@@ -1801,6 +1827,7 @@ class BleService : LifecycleService() {
         DevSettings.unregisterOnChange(devPrefsListener)   // [v1.0.42 Req5] 설정 라이브 전파 해제
         if (isRunning) stopAll()
         releaseAlertWakeLock()   // [v1.1.9] !isRunning 경로 등 stopAll 미경유 시에도 확실히 해제
+        releaseDetectionWakeLock()   // [미착수-낮음3] 위와 동일
         super.onDestroy()
     }
 
@@ -1874,7 +1901,7 @@ class BleService : LifecycleService() {
 
     /** 현재 살아 있는 이상 사유를 한 줄로 합친다. 모두 정상이면 null. */
     private fun faultSummary(): String? =
-        listOfNotNull(systemFault, txFault, soundFault, overlayFault)
+        listOfNotNull(systemFault, txFault, soundFault, overlayFault, volumeFault)
             .joinToString(" · ")
             .ifEmpty { null }
 
@@ -1916,6 +1943,7 @@ class BleService : LifecycleService() {
             if (!faultBeeped) {
                 faultBeeped = true
                 runCatching { AlertSoundPlayer.playWarning(this) }
+                    .onFailure { Log.w(TAG, "결함 경고음 실패: ${it.message}") }
             }
         } else {
             faultBeeped = false
@@ -1931,6 +1959,14 @@ class BleService : LifecycleService() {
         if (systemFault == reason) return
         systemFault = reason
         if (reason != null) Log.w(TAG, "시스템 이상: $reason") else Log.i(TAG, "시스템 이상 해소")
+        refreshNotification()
+    }
+
+    /** 알람 볼륨 이상. forceAlarmVolume() 의 되읽기 검증 결과만 이 슬롯을 쓴다. */
+    private fun setVolumeFault(reason: String?) {
+        if (volumeFault == reason) return
+        volumeFault = reason
+        if (reason != null) Log.w(TAG, "볼륨 이상: $reason") else Log.i(TAG, "볼륨 이상 해소")
         refreshNotification()
     }
 

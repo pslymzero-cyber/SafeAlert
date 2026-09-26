@@ -7,8 +7,8 @@ status: planned
 stopped_at: 04-state-01-PLAN.md 수립 완료 (STATE-01 미착수)
 last_updated: "2026-09-26T00:00:00.000Z"
 last_activity: 2026-09-26
-last_activity_desc: Phase 04 계획 수립 - STATE-01 규모 실측 620 사이트, 실행 시점 2경로 제시
-state_head: 849eb05dd72da6d40551d15d11b5d1b0861b77fe
+last_activity_desc: Phase 04 계획 수립 - STATE-01 규모 v1.1.96 기준 685 사이트 실측, 실행 시점 2경로 제시
+state_head: 0de98dade218467c210f18b6181619f2cb574ff6
 progress:
   total_phases: 5
   completed_phases: 3
@@ -31,16 +31,23 @@ Phase: 04 (기기 상태 단일화) — PARTIAL (요구사항 3/4 Complete)
 Plan: 04-01-PLAN.md 수립 완료, 미실행
 Status: STATE-01 실행 시점 사용자 판단 대기 (경로 A = Phase 5 흡수 권장 / 경로 B = 독립 완료)
 Last activity: 2026-09-26 — Phase 04 계획 수립, STATE-01 규모 실측
+Prior activity: 2026-09-14 — quick 260914-lqs: context-budget 실측으로 CLAUDE.md 읽기 금지 표 갱신 (커밋 ada5825)
 
-**STATE-01 실측 (이전 추정 ~250 사이트는 오류):**
+**STATE-01 실측 (v1.1.96 / versionCode 152 기준, 2026-09-26):**
 
 | 구분 | Map | 접근 사이트 |
 |---|---|---|
-| AlertStateMachine.kt | 29 | 464 |
-| BleService.kt | 5 | 32 |
-| UwbDistanceManager.kt | 3 | 41 |
-| 테스트 (골든 3파일 52 포함) | — | 83 |
-| **합계** | **37** | **620** |
+| AlertStateMachine.kt | 37 | 447 |
+| BleService.kt | 5 | 153 |
+| UwbDistanceManager.kt | 3 | 5 |
+| 기타 main | — | 9 |
+| 테스트 (골든·회귀 5파일 60 포함) | — | 71 |
+| **합계** | **45** | **685** |
+
+v1.1.72 시점 실측(37 Map / 620)과 비교하면 24개 버전 동안 Map 6개(`trend*` 5 + `approachLastSeenMap`)가 늘었다.
+**등록 누락은 0건** — 신규 Map 전부가 `DeviceStateRegistry` 슬롯에 등록됐고, 슬롯은 43 → 49 로 따라 늘었다.
+`uwbProbeLastSaveMap` 1건만 미등록이나 키가 `pairKey`(역할쌍, 유한 카디널리티)라 좀비 대상이 아니다.
+현 체계가 규율을 유지하고 있다는 실증이며, STATE-01 의 컴파일 타임 강제는 여전히 이론적 이득이다.
 
 Progress: [███████░░░] 70%
 
@@ -113,6 +120,16 @@ None yet.
 - **BLE 페이로드 호환성**: 1바이트 비트팩 레이아웃은 현장 배포된 구버전 기기와 통신해야 하므로 변경 불가
 - 01-ci-02 Task 2 체크포인트(gate=blocking-human) 정지 중: 프로덕션 diff(KalmanFilter.kt 단일 시임, 945c729..HEAD 기준 1파일/9삽입/6삭제) 사람 승인 대기. 승인 시 Task 3(실제 태그 push 종단 실증)로 진행 가능
 - 01-ci-02 Task 3 (checkpoint:human-verify gate=blocking-human): CI-01/CI-02 종단 실증 증거(그린 run 32700966688, 레드 run 32701255911) 수집 완료, 사람의 '승인' 입력 대기 중. 승인 전까지 01-ci 는 완료 처리되지 않음. 상세는 .planning/phases/01-ci/01-02-SUMMARY.md CHECKPOINT REACHED 섹션
+
+## Quick Tasks Completed
+
+| Date | Task | Status |
+|------|------|--------|
+| 2026-09-10 | 260910-se6 — v1.1.84 익명 로그인 도입 + echo_calib 앱 버전 필드 (DB 규칙 잠금 1단계) | complete |
+| 2026-09-10 | 260910-vw5 — v1.1.85 echo_calib 전역 경로 이동 (사업장 분할 해제) | complete |
+| 2026-09-11 | 260911-k7r — v1.1.87 릴리스 서명 + 업데이트 APK 해시 + 표시 이름 15바이트 (Phase B, abd158a) | complete |
+| 2026-09-12 | 260912-32e — v1.1.88 규칙 잠금(Phase D) + 첫 실행 변경 사항 창 + 다운로드 완료 수신기 EXPORTED + 캐시 APK 재사용 (0de98da, 태그 v1.1.88) | complete |
+| 2026-09-14 | 260914-lqs — context-budget 실측으로 CLAUDE.md 읽기 금지 표 갱신 (ada5825) | complete |
 
 ## Deferred Items
 

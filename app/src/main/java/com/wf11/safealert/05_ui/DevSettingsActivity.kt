@@ -15,9 +15,10 @@ import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 import com.wf11.safealert.BuildConfig
 import com.wf11.safealert.service.BleService
+import com.wf11.safealert.service.CalibrationEngine
 import com.wf11.safealert.service.DeviceStateRegistry
-import com.wf11.safealert.utils.BeaconRegistry
 import com.wf11.safealert.utils.DevSettings
+import com.wf11.safealert.utils.UwbCalibrator
 import com.wf11.safealert.utils.UwbRanger
 import com.wf11.safealert.databinding.ActivityDevSettingsBinding
 
@@ -63,8 +64,18 @@ class DevSettingsActivity : AppCompatActivity() {
         binding.spinnerVibWarning.setSelection(vibWarningIndex(DevSettings.vibrationWarningMs))
         binding.spinnerVibCount.setSelection(vibCountIndex(DevSettings.vibrationDangerCount))
         binding.switchSound.isChecked = DevSettings.soundEnabled
+        // (v1.1.77) BLE 감지 설정에서 이관된 원본 항목 — 같은 dev_settings prefs 라 값은 자동 연동된다
+        binding.seekDevAlarmVolume.progress = DevSettings.alarmVolume.coerceIn(50, 100)
+        binding.seekDevWarnRssi.progress    = (-DevSettings.rssiWarning).coerceIn(30, 100)
+        binding.seekDevDangRssi.progress    = (-DevSettings.rssiDanger ).coerceIn(30, 100)
+        updateDevAlarmLabels()
+        binding.swDevEchoAutoCalib.isChecked = DevSettings.echoAutoCalibEnabled
+        binding.etDevEchoMinTicks.setText(DevSettings.echoCalMinTicks.toString())
+        binding.etDevEchoMaxIqr.setText(DevSettings.echoCalMaxIqrDb.toString())
+        binding.etDevEchoClamp.setText(DevSettings.echoCalClampDb.toString())
         // Firebase
         binding.etFirebaseRoot.setText(DevSettings.firebaseRoot)
+        binding.etDevSiteCode.setText(DevSettings.siteCode)   // (v1.1.90) 사업장 코드 변경 경로
         binding.switchAutoSave.isChecked = DevSettings.autoSaveAlerts
         // 디버그
         binding.switchDebug.isChecked = DevSettings.debugMode
@@ -118,6 +129,8 @@ class DevSettingsActivity : AppCompatActivity() {
         updateReversePrepEnabled()
         // (v1.1.38 B·C) UWB 강제 스위치 상태 복원 + 진단 라인 초기 갱신
         binding.swUwbForce.isChecked = DevSettings.uwbForce
+        // (v1.1.76) UWB 실측 표본 업로드 — 기본 OFF. 하드웨어 미지원이면 켤 이유가 없어 비활성.
+        binding.swUwbProbeUpload.isChecked = DevSettings.uwbProbeUploadEnabled
         refreshUwbDiag()
         // (v1.1.63) [협력·교환] — BLE 감지 설정에서 이관: 상호 RSSI 교환 + 협력 수용 완화(0~20 dB)
         binding.swReciprocalRssi.isChecked = DevSettings.reciprocalRssiEnabled
@@ -128,10 +141,29 @@ class DevSettingsActivity : AppCompatActivity() {
         binding.swUwbPromote.isChecked    = DevSettings.uwbPromoteEnabled
         binding.swUwbVelPromote.isChecked = DevSettings.uwbVelPromoteEnabled
         binding.swUwbVelRelease.isChecked = DevSettings.uwbVelReleaseEnabled
+        // (v1.1.79) 거리 표시 방식·UWB 판정 반경 — BLE 감지 설정에서 이관(그쪽은 읽기전용 표시).
+        //   0=dBm만 / 1=UWB만 m / 2=전부 m(비UWB는 역산 추정), 반경 progress = 미터 × 2(0.5m 스텝).
+        binding.rgDevDistMode.check(
+            when (DevSettings.distanceDisplayMode) {
+                0    -> binding.rbDevDistDbm.id
+                1    -> binding.rbDevDistUwbM.id
+                else -> binding.rbDevDistAllM.id
+            }
+        )
+        binding.seekDevUwbFkWarn.progress     = (DevSettings.uwbForkliftWarnMeters   * 2).toInt().coerceIn(2, 80)
+        binding.seekDevUwbFkDanger.progress   = (DevSettings.uwbForkliftDangerMeters * 2).toInt().coerceIn(1, 60)
+        binding.seekDevUwbPairWarn.progress   = (DevSettings.uwbPairWarnMeters       * 2).toInt().coerceIn(2, 40)
+        binding.seekDevUwbPairDanger.progress = (DevSettings.uwbPairDangerMeters     * 2).toInt().coerceIn(1, 30)
+        updateDevUwbRadiusLabels()
         if (!UwbRanger.isHardwareSupported(this)) {
+            binding.swUwbProbeUpload.isEnabled = false
             binding.swUwbPromote.isEnabled    = false
             binding.swUwbVelPromote.isEnabled = false
             binding.swUwbVelRelease.isEnabled = false
+            binding.seekDevUwbFkWarn.isEnabled     = false
+            binding.seekDevUwbFkDanger.isEnabled   = false
+            binding.seekDevUwbPairWarn.isEnabled   = false
+            binding.seekDevUwbPairDanger.isEnabled = false
         }
         // [v1.1.55→v1.1.63] Level 2 에코 자동보정(스위치·튜너블 3종·진단·초기화)은 BLE 감지 설정으로 이관.
     }
@@ -190,6 +222,27 @@ class DevSettingsActivity : AppCompatActivity() {
         binding.switchWalkerRx.setOnCheckedChangeListener { _, c -> DevSettings.walkerRx = c }
         binding.switchVibration.setOnCheckedChangeListener { _, c -> DevSettings.vibrationEnabled = c; updateSectionSummaries() }
         binding.switchSound.setOnCheckedChangeListener { _, c -> DevSettings.soundEnabled = c; updateSectionSummaries() }
+        // (v1.1.77) 이관된 원본 항목 — BLE 감지 설정은 이 값을 잠긴 채 보여주기만 한다
+        binding.seekDevAlarmVolume.setOnSeekBarChangeListener(seekListener { v ->
+            DevSettings.alarmVolume = v.coerceIn(50, 100); updateDevAlarmLabels()
+        })
+        binding.seekDevWarnRssi.setOnSeekBarChangeListener(seekListener { v ->
+            DevSettings.rssiWarning = -v.coerceIn(30, 100); updateDevAlarmLabels()
+        })
+        binding.seekDevDangRssi.setOnSeekBarChangeListener(seekListener { v ->
+            DevSettings.rssiDanger = -v.coerceIn(30, 100); updateDevAlarmLabels()
+        })
+        binding.swDevEchoAutoCalib.setOnCheckedChangeListener { _, c -> DevSettings.echoAutoCalibEnabled = c }
+        bindIntField(binding.etDevEchoMinTicks, { DevSettings.echoCalMinTicks }, { DevSettings.echoCalMinTicks = it })
+        bindIntField(binding.etDevEchoMaxIqr,   { DevSettings.echoCalMaxIqrDb }, { DevSettings.echoCalMaxIqrDb = it })
+        bindIntField(binding.etDevEchoClamp,    { DevSettings.echoCalClampDb },  { DevSettings.echoCalClampDb = it })
+        binding.btnDevEchoReset.setOnClickListener {
+            CalibrationEngine.echoDiffLive.clear()
+            // 현재 사업장 파일만 비운다 — 다른 사업장 학습값은 건드리지 않는다
+            getSharedPreferences(DevSettings.sitePrefName(CalibrationEngine.ECHO_PREFS), MODE_PRIVATE)
+                .edit().clear().apply()
+            Toast.makeText(this, "에코편차 통계 초기화 완료", Toast.LENGTH_SHORT).show()
+        }
         binding.switchAutoSave.setOnCheckedChangeListener { _, c -> DevSettings.autoSaveAlerts = c }
         binding.switchVerbose.setOnCheckedChangeListener { _, c -> DevSettings.logVerbose = c }
         binding.switchDebug.setOnCheckedChangeListener { _, c ->
@@ -230,6 +283,13 @@ class DevSettingsActivity : AppCompatActivity() {
             editCommitters += commit
             et.setOnFocusChangeListener { _, hasFocus -> if (!hasFocus) { commit(); et.setText(DevSettings.firebaseRoot) } }
         }
+        // (v1.1.90) 사업장 코드 — 저장 시 UwbCalibrator 프로파일 전환. 경보 로그 경로 alerts/<사업장>/<날짜>/ 는 그대로
+        run {
+            val et = binding.etDevSiteCode
+            val commit: () -> Unit = { DevSettings.siteCode = et.text.toString(); UwbCalibrator.applySite() }
+            editCommitters += commit
+            et.setOnFocusChangeListener { _, hasFocus -> if (!hasFocus) { commit(); et.setText(DevSettings.siteCode) } }
+        }
         bindLongField(binding.etTimegateMs,          { DevSettings.timeGateMs },             { DevSettings.timeGateMs = it })
         bindLongField(binding.etTimegateCornering,   { DevSettings.corneringTimeGateMs },    { DevSettings.corneringTimeGateMs = it })
         bindLongField(binding.etWarningCooldown,     { DevSettings.warningCooldownMs },      { DevSettings.warningCooldownMs = it })
@@ -258,9 +318,38 @@ class DevSettingsActivity : AppCompatActivity() {
             updateSectionSummaries()
         })
         // (v1.1.63) [UWB 고급] — BLE 감지 설정에서 이관. 스위치 3종 즉시 기록(BleService 가 라이브 read).
+        binding.swUwbProbeUpload.setOnCheckedChangeListener { _, c -> DevSettings.uwbProbeUploadEnabled = c; updateSectionSummaries() }
         binding.swUwbPromote.setOnCheckedChangeListener    { _, c -> DevSettings.uwbPromoteEnabled    = c; updateSectionSummaries() }
         binding.swUwbVelPromote.setOnCheckedChangeListener { _, c -> DevSettings.uwbVelPromoteEnabled = c; updateSectionSummaries() }
         binding.swUwbVelRelease.setOnCheckedChangeListener { _, c -> DevSettings.uwbVelReleaseEnabled = c; updateSectionSummaries() }
+
+        // (v1.1.79) 거리 표시 방식 — 즉시 라이브 반영(다음 목록 브로드캐스트부터 적용)
+        binding.rgDevDistMode.setOnCheckedChangeListener { _, checkedId ->
+            DevSettings.distanceDisplayMode = when (checkedId) {
+                binding.rbDevDistDbm.id  -> 0
+                binding.rbDevDistUwbM.id -> 1
+                else                     -> 2
+            }
+        }
+        // (v1.1.79) UWB 판정 반경 — progress/2 = 미터(0.5m 스텝). judgeUwbOnly 가 매 판정마다
+        //   DevSettings 를 직독하므로 별도 서비스 통지 불필요. 경고<위험 역설정은 자동 보정하지
+        //   않는다 — 위험 분기가 먼저 평가돼 위험 반경이 우선(무해).
+        binding.seekDevUwbFkWarn.setOnSeekBarChangeListener(seekListener { v ->
+            DevSettings.uwbForkliftWarnMeters = v / 2f
+            updateDevUwbRadiusLabels(); updateSectionSummaries()
+        })
+        binding.seekDevUwbFkDanger.setOnSeekBarChangeListener(seekListener { v ->
+            DevSettings.uwbForkliftDangerMeters = v / 2f
+            updateDevUwbRadiusLabels(); updateSectionSummaries()
+        })
+        binding.seekDevUwbPairWarn.setOnSeekBarChangeListener(seekListener { v ->
+            DevSettings.uwbPairWarnMeters = v / 2f
+            updateDevUwbRadiusLabels(); updateSectionSummaries()
+        })
+        binding.seekDevUwbPairDanger.setOnSeekBarChangeListener(seekListener { v ->
+            DevSettings.uwbPairDangerMeters = v / 2f
+            updateDevUwbRadiusLabels(); updateSectionSummaries()
+        })
 
         binding.btnReset.setOnClickListener { resetValues() }
 
@@ -418,7 +507,12 @@ class DevSettingsActivity : AppCompatActivity() {
             "상호 RSSI ${onOff(binding.swReciprocalRssi.isChecked)} · 완화 +${binding.seekCoopSlack.progress} dB"
         binding.secUwbadvSummary.text =
             "강제 ${onOff(binding.swUwbForce.isChecked)} · 승격 ${onOff(binding.swUwbPromote.isChecked)}/" +
-            "${onOff(binding.swUwbVelPromote.isChecked)}/${onOff(binding.swUwbVelRelease.isChecked)}"
+            "${onOff(binding.swUwbVelPromote.isChecked)}/${onOff(binding.swUwbVelRelease.isChecked)}" +
+            // 켠 채로 잊으면 계속 올라가므로 접힌 요약에서도 보이게 한다.
+            (if (binding.swUwbProbeUpload.isChecked) " · 표본업로드 ON" else "") +
+            // (v1.1.79) 반경은 접힌 상태에서도 확인 — 지게차쌍 경고/위험 · 그 외 경고/위험
+            " · 반경 ${binding.tvDevUwbFkWarn.text}/${binding.tvDevUwbFkDanger.text}" +
+            "·${binding.tvDevUwbPairWarn.text}/${binding.tvDevUwbPairDanger.text}"
         binding.secAppinfoSummary.text = "v${BuildConfig.VERSION_NAME}"
     }
 
@@ -474,6 +568,24 @@ class DevSettingsActivity : AppCompatActivity() {
     // 저장값과 가장 가까운 프리셋 단계 선택 (프리셋 외 값이 저장돼 있어도 안전). 폴백=중심 index4.
     private fun presetIndex(presets: DoubleArray, v: Double) =
         presets.indices.minByOrNull { kotlin.math.abs(presets[it] - v) } ?: 4
+
+    /** (v1.1.77) 이관 항목 값 라벨 — 슬라이더 progress 는 절댓값, 저장은 음수 dBm */
+    private fun updateDevAlarmLabels() {
+        binding.tvDevAlarmVolumeVal.text = "${DevSettings.alarmVolume}%"
+        binding.tvDevWarnRssiVal.text    = "${DevSettings.rssiWarning} dBm"
+        binding.tvDevDangRssiVal.text    = "${DevSettings.rssiDanger} dBm"
+    }
+
+    // (v1.1.79) UWB 판정 반경 라벨 — progress/2 = 미터. 정수 값은 "15m", 반미터는 "7.5m".
+    private fun updateDevUwbRadiusLabels() {
+        binding.tvDevUwbFkWarn.text     = fmtMeters(binding.seekDevUwbFkWarn.progress / 2f)
+        binding.tvDevUwbFkDanger.text   = fmtMeters(binding.seekDevUwbFkDanger.progress / 2f)
+        binding.tvDevUwbPairWarn.text   = fmtMeters(binding.seekDevUwbPairWarn.progress / 2f)
+        binding.tvDevUwbPairDanger.text = fmtMeters(binding.seekDevUwbPairDanger.progress / 2f)
+    }
+
+    private fun fmtMeters(v: Float): String =
+        if (v == v.toInt().toFloat()) "${v.toInt()}m" else "%.1fm".format(v)
 
     private fun seekListener(onChange: (Int) -> Unit) = object : android.widget.SeekBar.OnSeekBarChangeListener {
         override fun onProgressChanged(sb: android.widget.SeekBar, v: Int, b: Boolean) = onChange(v)

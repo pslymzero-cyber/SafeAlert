@@ -79,7 +79,7 @@ validated: 2026-08-24 (phase-close 소급 확정 — /gsd-validate-phase 실행�
 |----------|------|------|
 | CI blocks APK release when a test fails | **완료** | 레드 태그 `v0.0.1-citest2` → run `32701255911` failure. `Run unit tests` 에서 정지 후 `Extract version`/`Build debug APK`/`Rename APK`/`Create GitHub Release & Upload APK`/`Update Firebase Realtime DB` 5스텝 skipped. `gh release view v0.0.1-citest2` → `release not found` |
 | CI artifacts alone identify which test broke at which expected value | **완료** | 레드 런 아티팩트 `TEST-com.wf11.safealert.ble.RssiCascadeTest.xml` 원문에서 `approach/coldStart frame=10 stage=kalman expected:<-83.44452761835483> but was:<-83.44452861835482>` — 시나리오·시작상태·프레임·스테이지 4요소 실기 없이 판독 |
-| Shipped APK behaves identically to v1.1.70 | **미완 (human_needed)** | ADB 연결 기기 0대로 수행 불가. 코드 근거만 확정 — `KalmanFilter.kt:27-30` 기본 인자 = `System.currentTimeMillis()`, 호출부 `BleService.kt:450`·`:1454` 변경 0곳(런타임 동작 불변). 사람이 직접 설치 검증해야 함 |
+| Shipped APK behaves identically to v1.1.70 | **미완 (human_needed)** | 역할이 서로 다른 실기 2대 미확보로 수행 불가. 코드 근거만 확정 — `KalmanFilter.kt:27-30` 기본 인자 = `System.currentTimeMillis()`, 호출부 `BleService.kt:450`·`:1454` 변경 0곳(런타임 동작 불변). 절차·판정 기준은 `01-UAT.md` 참조 |
 
 *SC(Success Criteria) 4건은 이 미완 1건과 무관하게 전부 달성 — 실기 스모크는 ROADMAP 이 별도 배정한 현장 검증 항목이다.*
 

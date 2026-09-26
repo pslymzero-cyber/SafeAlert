@@ -15,6 +15,8 @@ package com.wf11.safealert.ble
  *
  * [부분버퍼] 콜드스타트(윈도우 미충전) 구간은 '가용 표본의 중앙값'을 반환한다(표본 1개=raw 통과).
  *   이 구간의 오염은 BleService 워밍업 가드(윈도우 충전 전 발령 보류)가 차단한다.
+ *   표본이 짝수(2개)면 평균이 아니라 약한 쪽(더 음수)을 낸다(v1.1.96). 평균이면 단발 스파이크
+ *   [-50,-90] 이 -70 으로 경고선을 넘어 fastContact 경로로 워밍업 가드를 우회했다(e_singleSpike).
  */
 class MedianFilter(private val windowSize: Int = DEFAULT_WINDOW) {
 
@@ -30,7 +32,7 @@ class MedianFilter(private val windowSize: Int = DEFAULT_WINDOW) {
      *
      * @param deviceId 기기 식별자 (기기별 독립 윈도우)
      * @param rssi     원시 RSSI (dBm, 음수)
-     * @return 윈도우 중앙값(임펄스 제거된 RSSI). 짝수 표본은 중앙 2개의 정수평균.
+     * @return 윈도우 중앙값(임펄스 제거된 RSSI). 짝수 표본은 중앙 2개 중 약한 쪽(더 음수).
      */
     fun push(deviceId: String, rssi: Int): Int {
         val buf = buffers.getOrPut(deviceId) { ArrayDeque() }
@@ -40,7 +42,7 @@ class MedianFilter(private val windowSize: Int = DEFAULT_WINDOW) {
         val sorted = buf.sorted()
         val n = sorted.size
         return if (n % 2 == 1) sorted[n / 2]
-               else (sorted[n / 2 - 1] + sorted[n / 2]) / 2   // 부분버퍼 짝수: 중앙 2개 정수평균
+               else sorted[n / 2 - 1]   // 부분버퍼 짝수: 약한 쪽(더 음수) 표본
     }
 
     /** 윈도우가 가득 찼는지 여부. false면 콜드스타트(워밍업) 구간 → 발령 보류 판정에 사용. */

@@ -12,9 +12,12 @@ android {
         applicationId "com.wf11.safealert"
         minSdk 26
         targetSdk 34
-        versionCode 128
-        versionName "1.1.72"
+        versionCode 152
+        versionName "1.1.96"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        // (v1.1.90) 설정 PIN — 값은 빌드 시 주입(BuildConfig + CI Secrets). 저장소에 실제 값을 두지 않는다.
+        //   우선순위: -PdevPin / ~/.gradle/gradle.properties devPin → 환경변수 SA_DEV_PIN → '000'
+        buildConfigField "String", "DEV_PIN", "\"${project.findProperty('devPin') ?: System.getenv('SA_DEV_PIN') ?: '000'}\""
     }
 
     // 디버그 keystore 경로 명시 — CI 러너가 자동 생성한 임의 키 대신 ~/.android/debug.keystore 를
@@ -26,6 +29,17 @@ android {
             keyAlias "androiddebugkey"
             keyPassword "android"
         }
+        // (v1.1.87) 릴리스 키 — 값은 환경변수로만 받는다(저장소·로그에 비밀값 금지). CI 는 Secret → step env.
+        release {
+            def ks = System.getenv("SA_RELEASE_KEYSTORE")
+            if (ks) {
+                storeFile file(ks)
+                storeType "pkcs12"
+                storePassword System.getenv("SA_RELEASE_STORE_PASSWORD")
+                keyAlias System.getenv("SA_RELEASE_KEY_ALIAS")
+                keyPassword System.getenv("SA_RELEASE_KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
@@ -33,7 +47,10 @@ android {
             signingConfig signingConfigs.debug
         }
         release {
-            minifyEnabled false
+            // 환경변수 없는 로컬 빌드는 unsigned 산출(app-release-unsigned.apk)
+            if (System.getenv("SA_RELEASE_KEYSTORE")) signingConfig signingConfigs.release
+            // (v1.1.87) R8 난독화. shrinkResources 는 넣지 않는다. 실기 이상 시 1.1.88 에서 false 로 되돌림
+            minifyEnabled true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
@@ -80,6 +97,8 @@ dependencies {
     implementation platform('com.google.firebase:firebase-bom:32.7.2')
     implementation 'com.google.firebase:firebase-database-ktx'
     implementation 'com.google.firebase:firebase-analytics-ktx'
+    // (v1.1.84) 익명 인증 — DB 규칙 auth != null 잠금 사전 작업. 버전은 BOM 관리.
+    implementation 'com.google.firebase:firebase-auth-ktx'
 
     testImplementation 'junit:junit:4.13.2'
     // Robolectric 4.15.1 — 02-01 Task 1 체크포인트 승인 좌표(testImplementation 한정, T-02-SC 완화)

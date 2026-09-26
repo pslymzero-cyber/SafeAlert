@@ -20,6 +20,7 @@ object CalibrationEngine {
 
     fun init(context: Context) {
         appContext = context.applicationContext
+        activeSite = DevSettings.siteCode   // SafeAlertApp 이 DevSettings.init 이후에 부른다
     }
 
     // [v1.1.54 에코편차 집계] 상호RSSI 에코(0xE0C0) 텔레메트리 — 수집 자체는 판정 결과 미사용.
@@ -142,7 +143,24 @@ object CalibrationEngine {
     //   상대 에코는 계속 파싱된다(판정 끄고 관찰만 하는 운용 가능). 단 debugMode(시뮬 RSSI 대입)
     //   틱은 호출부에서 제외 — 가짜 RSSI 가 누적 히스토그램을 오염시키면 안 된다.
 
-    private fun echoPrefs() = appContext.getSharedPreferences(ECHO_PREFS, Context.MODE_PRIVATE)
+    // (v1.1.77) 사업장별 에코편차 통계 분리 — 파일명이 현재 사업장을 따라간다.
+    private fun echoPrefs() =
+        appContext.getSharedPreferences(DevSettings.sitePrefName(ECHO_PREFS), Context.MODE_PRIVATE)
+
+    @Volatile private var activeSite: String = ""
+
+    /**
+     * (v1.1.77) 사업장 코드 변경 반영 — 설정 라이브 반영 경로에서 무조건 호출(무변경 = no-op).
+     * 떠나는 사업장의 누적치를 먼저 저장한 뒤 라이브 맵을 비운다. 비우지 않으면 이전 사업장의
+     * 히스토그램이 다음 사업장 파일로 흘러들어간다(persistEchoAll 이 라이브를 그대로 덮어씀).
+     */
+    fun applySite(myId: String) {
+        val newSite = DevSettings.siteCode
+        if (newSite == activeSite) return
+        persistEchoAll(myId)      // 비어 있으면 no-op
+        echoDiffLive.clear()
+        activeSite = newSite
+    }
 
     /** 라이브 전체를 저장분과 병합 저장 — 라이브 항목은 첫 틱에 저장분을 시드한 총 누적치라 단순 덮어쓰기. */
     fun persistEchoAll(myId: String) {

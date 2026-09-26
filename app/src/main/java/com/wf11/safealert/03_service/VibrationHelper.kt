@@ -17,7 +17,7 @@ object VibrationHelper {
         else
             @Suppress("DEPRECATION")
             context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
-    }.getOrNull()
+    }.onFailure { Log.w(TAG, "Vibrator 획득 실패: ${it.message}") }.getOrNull()
 
     /** 경고 패턴: 중간 진동 2회 (탐∙탐) — "주의" 느낌 */
     fun vibrateWarning(context: Context) {

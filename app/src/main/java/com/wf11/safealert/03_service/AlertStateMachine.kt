@@ -1,42 +1,18 @@
 package com.wf11.safealert.service
 
-import android.Manifest
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.bluetooth.BluetoothAdapter
-import android.bluetooth.BluetoothManager
-import android.content.BroadcastReceiver
-import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
-import android.content.pm.PackageManager
-import android.location.LocationManager
-import android.media.AudioManager
 import android.os.Build
-import android.os.IBinder
-import android.os.PowerManager
 import android.util.Log
-import androidx.core.app.NotificationCompat
-import androidx.core.content.ContextCompat
-import androidx.lifecycle.LifecycleService
-import com.wf11.safealert.ble.BleAdvertiser
 import com.wf11.safealert.ble.BleConstants
 import com.wf11.safealert.ble.BleScanner
-import com.wf11.safealert.ble.BleScanCallback
 import com.wf11.safealert.ble.KalmanFilter
 import com.wf11.safealert.ble.MedianFilter
 import com.wf11.safealert.ble.RssiPreFilter
 import com.wf11.safealert.firebase.FirebaseManager
 import com.wf11.safealert.utils.BeaconRegistry
-import com.wf11.safealert.ui.MainActivity
 import com.wf11.safealert.utils.DevSettings
 import com.wf11.safealert.utils.ImuFusion
-import com.wf11.safealert.utils.OverlayManager
 import com.wf11.safealert.utils.UwbCalibrator
 import com.wf11.safealert.utils.UwbRanger
-import androidx.lifecycle.lifecycleScope
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 
 /**
  * 경보 상태 기계 - processAlert / judgeUwbOnly 판정 경로 (Phase 3 T3, REFACTOR-01).
@@ -230,6 +206,39 @@ class AlertStateMachine(
 
     internal val RECEDING_DBM_DROP: Int get() = DevSettings.recedingDbmDrop
 
+    // (v1.1.95) t3 추세 해제 — median 2s 창 평균(ma)이 피크 대비 2dB 하락 + 기울기<=0 + 진입 대비 피크 상승>=10dB
+    //   가 0.2s 유지되면 즉시 SAFE. 해제 후 ma 가 최저점 +3dB 오르기 전까지 재경보 금지(래치).
+    internal val TREND_WINDOW_MS = 2000L
+    internal val TREND_DROP_DB = 2.0
+    internal val TREND_RISE_DB = 10.0
+    internal val TREND_HOLD_MS = 200L
+    internal val TREND_REARM_DB = 3.0
+    internal val trendBufMap       = mutableMapOf<String, ArrayDeque<Pair<Long, Int>>>()
+    internal val trendEntryMap     = mutableMapOf<String, Double>()
+    internal val trendPeakMap      = mutableMapOf<String, Double>()
+    internal val trendDropStartMap = mutableMapOf<String, Long>()
+    internal val trendTroughMap    = mutableMapOf<String, Double>()
+
+    /** 창 안 median 표본의 (평균 dBm, LSQ 기울기 dB/s). 창이 덜 찼으면 기울기 0. */
+    private fun trendStats(deviceId: String, now: Long): Pair<Double, Double> {
+        val buf = trendBufMap[deviceId] ?: return 0.0 to 0.0
+        if (buf.isEmpty()) return 0.0 to 0.0
+        val from = now - TREND_WINDOW_MS
+        val w = buf.filter { it.first >= from }
+        if (w.isEmpty()) return buf.last().second.toDouble() to 0.0
+        val ma = w.sumOf { it.second.toDouble() } / w.size
+        if (w.size < 2 || buf.first().first > from) return ma to 0.0
+        val tm = w.sumOf { it.first.toDouble() } / w.size
+        var sxy = 0.0; var sxx = 0.0
+        for ((t, v) in w) { val x = (t - tm) / 1000.0; sxy += x * (v - ma); sxx += x * x }
+        return ma to (if (sxx > 0) sxy / sxx else 0.0)
+    }
+
+    private fun clearTrend(deviceId: String) {
+        trendBufMap.remove(deviceId); trendEntryMap.remove(deviceId); trendPeakMap.remove(deviceId)
+        trendDropStartMap.remove(deviceId); trendTroughMap.remove(deviceId)
+    }
+
     // 기기별 마지막 avgRssi 보관 — 플로팅 위젯 최우선 기기 선정·정렬에 사용
     internal val deviceRssiMap     = mutableMapOf<String, Int>()
 
@@ -267,6 +276,30 @@ class AlertStateMachine(
     //   같은 기기에 대해 FIREBASE_SAVE_THROTTLE_MS(1분) 안에는 재업로드하지 않는다.
     internal val firebaseLastSaveMap = mutableMapOf<String, Long>()
 
+    // [쓰로틀 등급 분리] 종전에는 키가 deviceId 하나뿐이라 WARNING 을 저장한 뒤 1분 안에
+    //   DANGER 로 올라가면 그 DANGER 가 통째로 버려졌다. 경고→위험 격상은 가장 중요한 기록인데
+    //   그것만 빠지는 구조였다. 키에 등급을 붙여 등급마다 따로 센다.
+    private fun fbKey(deviceId: String, level: String) = "$deviceId|$level"
+
+    /** 기기 이탈·정리 시 그 기기의 등급별 쓰로틀을 모두 지운다(구버전 deviceId 단독 키 포함). */
+    private fun clearFbThrottle(deviceId: String) {
+        firebaseLastSaveMap.keys.removeAll { it == deviceId || it.startsWith("$deviceId|") }
+    }
+
+    // (v1.1.76) UWB 실측 표본 업로드 스로틀 — 역할쌍별 마지막 업로드 시각(ms).
+    //   판정은 ~120ms 주기라 그대로 올리면 초당 8건이 된다. 거리·RSSI 분포를 보는 데는
+    //   초당 1건이면 충분하고, 실기 측정 세션(수 분)에서도 총량이 수백 건에 머문다.
+    private val uwbProbeLastSaveMap = mutableMapOf<String, Long>()
+    private val UWB_PROBE_THROTTLE_MS = 1_000L
+
+    /** UWB 실거리 표본을 남긴다. 개발자 설정 스위치가 꺼져 있으면 아무 일도 하지 않는다. */
+    private fun uploadUwbProbe(pairKey: String, rssi: Int, distM: Float, now: Long) {
+        if (!DevSettings.uwbProbeUploadEnabled) return
+        if (now - (uwbProbeLastSaveMap[pairKey] ?: 0L) < UWB_PROBE_THROTTLE_MS) return
+        uwbProbeLastSaveMap[pairKey] = now
+        FirebaseManager.saveUwbProbe(fx.myId, Build.MODEL, DevSettings.siteCode, pairKey, distM, rssi)
+    }
+
     // [판정 파라미터] DevSettings 라이브 읽기(기본 60_000L/5 = 기존값)
     internal val FIREBASE_SAVE_THROTTLE_MS: Long get() = DevSettings.firebaseThrottleMs
 
@@ -275,8 +308,9 @@ class AlertStateMachine(
     // ── [v1.0.35 민감도 지연(Time-Gate)] + [v1.0.36 코너링 연장 · 충돌 기하학 필터] ──────────
     // Time-Gate: 위험권 진입 후에도 2D 칼만 미분(kfVel, dBm/s)이 APPROACH_TIMEGATE_VEL_DBM 이상
     //   '가까워짐'을 APPROACH_TIMEGATE_MS(0.5초) 연속 유지할 때만 신규/격상 경보를 발령한다.
-    //   → 전파 튐(single-frame spike)으로 인한 즉각 오알람을 차단. 쿨다운 재알람·0x02 특수경보·
-    //     TTC 선발령에는 적용하지 않는다(끊김 방지/즉각 안전 — 각 경로가 위에서 먼저 return).
+    //   → 전파 튐(single-frame spike)으로 인한 즉각 오알람을 차단. 쿨다운 재알람·TTC 선발령에는
+    //     적용하지 않는다(끊김 방지/즉각 안전 — 각 경로가 위에서 먼저 return).
+    //   (v1.1.94) 0x02 특수경보(후진·하역)는 첫 감지일 때 같은 판정을 먼저 거친다. 추적 중 전환은 즉시.
     // [v1.0.42 Req5] Time-Gate 지연 시간 — DevSettings 에서 라이브로 읽는다(앱 재시작 없이 반영,
     //   기본 500L=기존값 그대로). 게이트 판정 로직(아래 processAlert)은 일절 손대지 않고 '값의 출처'만
     //   상수→설정으로 옮긴다 → 칼만/3중 하드게이트/기하학 판정 보존.
@@ -287,6 +321,9 @@ class AlertStateMachine(
     // [v1.0.36] 코너링 중 Time-Gate 연장 — 내 장비가 급회전 중이면 전파가 일시 출렁이므로
     //   오작동 방지를 위해 0.5초 → 1.0초로 일시 연장한다(ImuFusion.isCornering 으로 판정).
     internal val APPROACH_TIMEGATE_CORNERING_MS: Long get() = DevSettings.corneringTimeGateMs
+    // (v1.1.94) 접근 streak 유예 — 비접근 프레임이 이 시간 이내로 짧게 끼면 streak 을 끊지 않는다.
+    //   RSSI 흔들림 한두 프레임 때문에 확인 시간이 처음부터 다시 쌓이는 것을 막는다.
+    internal val APPROACH_STREAK_GRACE_MS = 300L
 
     // [v1.0.36] 충돌 기하학 필터(Collision Geometry) 파라미터.
     //   합산 접근속도(내속도+상대속도, km/h)를 RSSI 변화율(dBm/s)로 환산해 실제 kfVel 과 대조한다.
@@ -323,6 +360,8 @@ class AlertStateMachine(
     internal val approachStreakStartMap    = mutableMapOf<String, Long>()  // 연속 접근 시작 시각(ms)
 
     internal val fastApproachStreakMap     = mutableMapOf<String, Int>()   // [v1.1.21] 빠른 정면접근 연속 프레임 수(2프레임 확증)
+
+    internal val approachLastSeenMap       = mutableMapOf<String, Long>()  // (v1.1.94) 마지막 접근 프레임 시각(ms) — 짧은 끊김 유예
 
     // [v1.1.11 C1] 전진-접근 가산(forwardApproachBias) 히스테리시스 래치 — deviceId별 ON/OFF 상태.
     //   kfVel 이 APPROACH_TIMEGATE_VEL_DBM 근처를 떨릴 때 payloadOffset(±3dB)이 프레임마다 토글되어
@@ -435,9 +474,15 @@ class AlertStateMachine(
         registry.addImmediate("recedingStartMap", recedingStartMap)
         registry.addImmediate("recedeRefMap", recedeRefMap)
         registry.addImmediate("recedePeakMap", recedePeakMap)
+        registry.addImmediate("trendBufMap", trendBufMap)
+        registry.addImmediate("trendEntryMap", trendEntryMap)
+        registry.addImmediate("trendPeakMap", trendPeakMap)
+        registry.addImmediate("trendDropStartMap", trendDropStartMap)
+        registry.addImmediate("trendTroughMap", trendTroughMap)
         registry.addImmediate("deviceRssiMap", deviceRssiMap)
         registry.addImmediate("approachStreakStartMap", approachStreakStartMap)
         registry.addImmediate("fastApproachStreakMap", fastApproachStreakMap)
+        registry.addImmediate("approachLastSeenMap", approachLastSeenMap)
         registry.addImmediate("forwardBiasLatchMap", forwardBiasLatchMap)
         registry.addImmediate("mutedDevices", mutedDevices)
         registry.addImmediate("peerInZoneMap", peerInZoneMap)
@@ -486,6 +531,63 @@ class AlertStateMachine(
             Log.d(TAG, "TTC: kfRssi=%.1f rssiDanger=%d vel=%.2fdBm/s TTC=%.1fs"
                 .format(kfRssi, BleConstants.rssiDanger, kfVel, ttc))
         return ttc
+    }
+
+    /** (v1.1.94) Time-Gate 판정 결과 — 특수경보 사전 확인과 일반 첫 감지 게이트가 공유. */
+    private data class TimeGate(val ms: Long, val streakMs: Long, val fastFrames: Int, val sustained: Boolean, val side: Boolean)
+
+    /**
+     * (v1.1.94) Time-Gate 접근지속 판정. streak·fast 프레임 맵을 갱신하므로 프레임당 한 번만 호출한다.
+     * 비접근 프레임이 APPROACH_STREAK_GRACE_MS 이내로 짧게 끼면 streak 을 유지한다(흔들림 무시).
+     */
+    private fun evalTimeGate(deviceId: String, kfVel: Double, now: Long, kfUpdates: Int): TimeGate {
+        val timeGateMs = if (ImuFusion.isCornering) APPROACH_TIMEGATE_CORNERING_MS else APPROACH_TIMEGATE_MS
+        val kfApproaching = kfVel >= APPROACH_TIMEGATE_VEL_DBM
+        val inGrace = !kfApproaching && approachStreakStartMap.containsKey(deviceId) &&
+                      now - (approachLastSeenMap[deviceId] ?: 0L) <= APPROACH_STREAK_GRACE_MS
+        if (kfApproaching) {
+            approachStreakStartMap.putIfAbsent(deviceId, now)
+            approachLastSeenMap[deviceId] = now
+        } else if (!inGrace) {
+            approachStreakStartMap.remove(deviceId)   // 접근 끊김(유예 초과) → streak 리셋
+            approachLastSeenMap.remove(deviceId)
+        }
+        val approaching = kfApproaching || inGrace
+        val approachStreakMs = if (approaching) now - (approachStreakStartMap[deviceId] ?: now) else 0L
+
+        // [v1.0.36→v1.1.7 #1] 충돌 기하학 — 속도 비트 제거로 합산 접근속도를 산출할 수 없다.
+        //   closingSpeedKmh=0 → geometryValid=false → 기하학 필터 자동 비활성, 순수 Time-Gate 동작.
+        //   (회전 2비트는 방향 표시용일 뿐 접근속도 추정엔 쓰지 않는다.)
+        val closingSpeedKmh = 0.0                                             // 예상 최대 접근속도(km/h) — 미산출
+        val expectedKfVel   = closingSpeedKmh * CLOSING_KMH_TO_DBMS            // → 예상 RSSI 접근속도(dBm/s)
+        val closingRatio    = if (expectedKfVel > 0.01) kfVel / expectedKfVel else 0.0
+        val geometryValid   = closingSpeedKmh >= COLLISION_MIN_CLOSING_KMH     // 양쪽 거의 정지면 판정 불가
+        // 정면충돌 코스: 실제 접근이 예상의 60% 이상 → Time-Gate 즉시 통과(강한 발령).
+        val headOnCourse    = geometryValid && closingRatio >= COLLISION_HEAD_ON_RATIO
+        // 측면/나란히: 실제 접근이 예상의 30% 이하 + 절대 접근속도도 느림(<2.0) → 보류(경계 격하).
+        // [v1.0.49 #1] 콜드 칼만 유예 — update 횟수 미달이면 vel 이 초기값(0.0) 부근이라 ratio≈0 으로
+        //   돌진 기기도 측면으로 오판된다. 칼만이 웜업되기 전엔 측면판정을 무효화한다(headOn 즉시통과·
+        //   Time-Gate 는 영향 없음 — 콜드 ratio≈0 이면 headOn 은 어차피 false, 보수 방향 그대로).
+        val kalmanWarm      = kfUpdates >= KALMAN_GEOMETRY_MIN_UPDATES
+        val sideCourse      = kalmanWarm && geometryValid && closingRatio <= COLLISION_SIDE_RATIO &&
+                              kfVel < COLLISION_ABS_SAFE_VEL_DBM
+
+        // [v1.1.21] 빠른 정면접근 → Time-Gate 즉시통과. closingSpeedKmh(km/h)를 1바이트 페이로드로
+        //   못 구해 headOnCourse 가 영구 false 였던 공백을 칼만 접근속도(kfVel)로 메운다. kfVel 은
+        //   Median→EMA→칼만 다단 평활된 위상선행값이라 거리(pEma)·1초평균보다 먼저 접근을 포착 →
+        //   '빠르게 다가오는 지게차'가 Time-Gate(0.5초) + 평활 lag 에 막혀 CPA(최근접점)를 지난 뒤에야
+        //   울리던 지연을 제거한다. 단발 raw spike 방어: 임계를 '2프레임 연속' 넘어야 확증(다단 평활이라
+        //   1프레임 튐으론 임계까지 못 오르며, 추가 확증으로 오발을 한 겹 더 막는다). 측면/나란히 교차는
+        //   kfVel 이 낮아 안 걸려 과경보는 거의 안 는다. 임계=DevSettings.fastApproachBypassVelDbm 라이브.
+        val fastApproachFrames = if (kfVel >= FAST_APPROACH_BYPASS_VEL_DBM)
+                                     (fastApproachStreakMap[deviceId] ?: 0) + 1 else 0
+        fastApproachStreakMap[deviceId] = fastApproachFrames
+        val fastApproach = fastApproachFrames >= 2
+
+        // headOn(합산 km/h 미산출 → 영구 false) 또는 빠른 정면접근(kfVel 2프레임 확증)이면 Time-Gate
+        //   즉시 통과, 아니면 평상/코너링 Time-Gate 충족 필요.
+        val approachSustained = headOnCourse || fastApproach || (approaching && approachStreakMs >= timeGateMs)
+        return TimeGate(timeGateMs, approachStreakMs, fastApproachFrames, approachSustained, sideCourse)
     }
 
     /**
@@ -636,6 +738,10 @@ class AlertStateMachine(
         //   파이프라인: Raw → Median(N=3) → 비대칭EMA(D-Boost) → 칼만. 단발 반사 임펄스를 선형
         //   단계 진입 '전'에 순위통계로 제거해 칼만 속도(kfVel) 오염을 차단한다.
         val medianValue = fx.medianFilter.push(deviceId, inputRssi)
+        // (v1.1.95) 추세 해제용 median 시계열 — TREND_WINDOW_MS 창 + 창 경계 직전 표본 1개 유지
+        val trendBuf = trendBufMap.getOrPut(deviceId) { ArrayDeque() }
+        trendBuf.addLast(now to medianValue)
+        while (trendBuf.size > 1 && trendBuf[1].first <= now - TREND_WINDOW_MS) trendBuf.removeFirst()
 
         // ── (v1.1.40) 섀도우 IMU 융합 갱신 — median 스트림 전용, 메인 파이프라인 무접촉 ──
         //   sPrevVel(직전 프레임 섀도우 속도)·sh.tracking(직전 프레임 이탈추적)·prevLevel(직전
@@ -753,7 +859,13 @@ class AlertStateMachine(
         val uwbPairKey = fx.uwbPairKeyFor(deviceId)   // [v1.1.37 ③] 개별 기기 대신 역할쌍 세그먼트로 학습·조회
         // [v1.1.46] 학습 입력=신선한 실측만 — 마지막 표본이 오래된 UWB 거리에 '현재' RSSI 를 짝지으면
         //   Δ 가 오염돼 임계가 영구히 앞당겨진다(즉시 DANGER 증상의 한 축). 거리 표시도 같은 게이트.
-        uwbDist.freshUwbDistM(deviceId)?.let { UwbCalibrator.onSample(uwbPairKey, medianValue, it) }
+        uwbDist.freshUwbDistM(deviceId)?.let {
+            UwbCalibrator.onSample(uwbPairKey, medianValue, it)
+            // (v1.1.76) 같은 신선도 게이트로 실거리·RSSI 원표본을 집계용으로 남긴다(기본 OFF).
+            //   학습(onSample)의 0.3~8m 품질 게이트는 여기 걸지 않는다 — 경고 반경 15m 까지
+            //   환산하려면 그 바깥 구간의 표본이 오히려 필요하다. 기록 전용이라 판정에는 무관.
+            uploadUwbProbe(uwbPairKey, medianValue, it, System.currentTimeMillis())
+        }
         // [v1.1.49] 학습(onSample)은 유지하되 그 출력(offsetDbFor)은 RSSI 판정에서 완전 분리한다.
         //   역할쌍 키 uwbCalibOffset(최대 +10dB)이 NLOS 잔차로 +클램프까지 표류하면 effDanger 가 밀려
         //   올라가 'RSSI 판정이면 신호 세기와 무관하게 상시 위험'이 되던 회귀(UWB 도입 v1.1.31 이후)를
@@ -885,7 +997,7 @@ class AlertStateMachine(
             suddenLabelMap.remove(deviceId)
             deviceCategoryMap.remove(deviceId)
             deviceTurnMap.remove(deviceId); reverseRssiHist.remove(deviceId); reversePrepUntil.remove(deviceId)   // [v1.1.7 #1/#2]
-            firebaseLastSaveMap.remove(deviceId)
+            clearFbThrottle(deviceId)
             timeGateWaiveSet.remove(deviceId) // [v1.1.58 fix4] 미추적 강등 — 미소비 TimeGate 면제권 회수
             fx.rssiPreFilter.clear(deviceId)     // [v1.0.38 클린업] 미추적 기기 EMA 전처리 상태 정리
             fx.medianFilter.clear(deviceId)      // [v1.0.45] Median 윈도우 정리(워밍업 상태 리셋)
@@ -900,6 +1012,7 @@ class AlertStateMachine(
             recedingStartMap.remove(deviceId)    // [v1.1.6 검증 보강] 이탈 판정 상태 누수·stale 피크 재출현 방지
             recedeRefMap.remove(deviceId)        // [v1.1.6 검증 보강] 미추적 기기 중간평활 EMA 정리
             recedePeakMap.remove(deviceId)       // [v1.1.6 검증 보강] 미추적 기기 피크 홀드 정리
+            clearTrend(deviceId)                 // (v1.1.95) 미추적 기기 추세 상태·래치 정리
             fx.clearDwellMute(deviceId)             // (v1.1.61) 경보권 밖 강등 = 존 이탈 — dwell 뮤트 리셋
             // [v1.1.9 R1/R3] pendingDisplayMap 보존 — 경보권 밖 약신호도 목록(SAFE 행)에 계속 노출.
             return
@@ -919,11 +1032,24 @@ class AlertStateMachine(
         //     P-D 분리 일관성 — 거리(P)는 평활 P-EMA 로 판정, 속도(D=kfVel)는 별도 우회. avg1sec(raw)
         //     하이브리드 교차검증은 유지(이탈 시 잔상 차단). warmingUp(Median 미충전) 구간은 발령 보류.
         // 표시문자열을 fx.makeStateLabel(후진·하역 경보 문구)로 덮어써 오버레이·목록에 출력.
-        if ((rState == BleConstants.PSTATE_REVERSE || rState == BleConstants.PSTATE_LOADING)
+        //   ★ v1.1.94: 첫 감지(alertState 미등록)는 일반 경보와 같은 확인을 거친다 — 면제권, 2프레임 근접 확증
+        //     (이탈 중 제외), 또는 Time-Gate 접근지속. 미확증이면 특수 라벨 없이 일반 경로로 넘어간다.
+        //     이미 경보 중인 기기가 후진·하역으로 바뀌면 기존대로 즉시 DANGER.
+        val specialCandidate = (rState == BleConstants.PSTATE_REVERSE || rState == BleConstants.PSTATE_LOADING)
             && !warmingUp                                   // [v1.0.45] 콜드스타트 임펄스 발령 보류
             && pEma    >= effDanger                          // [v1.0.45/v1.1.10] 거리판정: P-EMA, effDanger(페이로드 시프트)
             && avg1sec >= effDanger
-            && peerInZoneMap[deviceId] != true) {            // (v1.1.62) 상대 IN_ZONE 선언=무해 — 특수경보 진입 자체 차단
+            && peerInZoneMap[deviceId] != true               // (v1.1.62) 상대 IN_ZONE 선언=무해 — 특수경보 진입 자체 차단
+        var preGate: TimeGate? = null
+        var specialConfirmed = specialCandidate && alertState[deviceId] != null
+        if (specialCandidate && !specialConfirmed) {
+            val waived = timeGateWaiveSet.remove(deviceId)
+            val g = evalTimeGate(deviceId, kfVel, now, kf.updateCount)
+            preGate = g
+            val departing = kfVel < -CPA_VEL_THRESHOLD || trackingStateMap[deviceId] == TrackingState.DEPARTING
+            specialConfirmed = waived || (!departing && (dangerStreak >= 2 || warningStreak >= 2)) || (g.sustained && !g.side)
+        }
+        if (specialConfirmed) {
             deviceRssiMap[deviceId]  = kalmanRssi
             suddenLabelMap[deviceId] = fx.makeStateLabel(fx.extractDisplayName(deviceId), rCategory, rState)
             alertState[deviceId]     = Pair(BleConstants.LEVEL_DANGER, now)
@@ -1215,6 +1341,14 @@ class AlertStateMachine(
             }
         }
 
+        // (v1.1.95) 추세 해제 재경보 래치 — 해제 후 ma 가 최저점 +TREND_REARM_DB 이상 오를 때까지 SAFE 유지
+        trendTroughMap[deviceId]?.let { t0 ->
+            val (ma, _) = trendStats(deviceId, now)
+            val t = minOf(t0, ma)
+            if (ma >= t + TREND_REARM_DB) trendTroughMap.remove(deviceId) else trendTroughMap[deviceId] = t
+        }
+        if (trendTroughMap.containsKey(deviceId) && !alertState.containsKey(deviceId)) stableLevel = BleConstants.LEVEL_SAFE
+
         // (v1.1.62) 항목5 피어 무해 판정 — 상대가 IN_ZONE(존 비콘 접촉·설정 세기 수신) 선언 중이면
         //   레벨을 SAFE 로 클램프(억제 전용 — 격상 방향 오버라이드 없음). 아래 SAFE 처리가 자연 정리.
         if (peerInZoneMap[deviceId] == true && stableLevel > BleConstants.LEVEL_SAFE) {
@@ -1261,19 +1395,23 @@ class AlertStateMachine(
                 approachStreakStartMap.remove(deviceId)   // [v1.0.46 #4] stale 시작시각 → 재접근 시 Time-Gate 즉시통과 방지
                 fastApproachStreakMap.remove(deviceId)    // [v1.1.21] stale 카운터 → 재접근 시 1프레임에 즉시통과 방지
                 forwardBiasLatchMap.remove(deviceId)      // [v1.1.11 C1] SAFE 강등 → 래치 리셋(재접근 시 fresh)
+                approachLastSeenMap.remove(deviceId)      // (v1.1.94) stale 유예 시각 → 재접근 시 끊김 유예 오적용 방지
                 fx.clearDwellMute(deviceId)                  // (v1.1.61) SAFE 확정 = 존 이탈 — dwell 뮤트 리셋(재진입=정상 발령)
                 peerInZoneMap.remove(deviceId)            // (v1.1.62) SAFE 정리 — 다음 광고 표본이 재선언(스테일 캐시 방지)
                 wasStationaryMap.remove(deviceId)
                 recedingStartMap.remove(deviceId)
                 recedeRefMap.remove(deviceId)
                 recedePeakMap.remove(deviceId)
+                trendEntryMap.remove(deviceId)       // (v1.1.95) 추세 해제 진행 상태만 정리 — 래치(buf/trough)는 유지
+                trendPeakMap.remove(deviceId)
+                trendDropStartMap.remove(deviceId)
                 deviceRssiMap.remove(deviceId)
                 mutedDevices.remove(deviceId)
                 suddenLabelMap.remove(deviceId)
                 deviceCategoryMap.remove(deviceId)
                 deviceStateMap.remove(deviceId)
                 deviceTurnMap.remove(deviceId); reverseRssiHist.remove(deviceId); reversePrepUntil.remove(deviceId)   // [v1.1.7 #1/#2]
-                firebaseLastSaveMap.remove(deviceId)
+                clearFbThrottle(deviceId)
                 pendingDisplayMap.remove(deviceId)   // [v1.0.49 #3]
                 fx.sendAlertBroadcast(deviceId, BleConstants.LEVEL_SAFE)
                 if (alertState.isEmpty()) {
@@ -1365,6 +1503,69 @@ class AlertStateMachine(
             isReceding = false
         }
 
+        // ── (v1.1.95) 추세 해제 — 교차 후 피크에서 신호가 꺾이면 히스테리시스 전에 즉시 SAFE ──
+        //   median 2s 창 평균(ma)이 피크 대비 2dB↓ + 기울기≤0 + 진입 대비 피크 상승≥10dB 가 0.2s 유지되면 해제.
+        //   DEPARTING/departingStartMap 은 건드리지 않는다(5s 재진입 쿨다운 미적용). 재경보 래치는 SAFE 게이트 참조.
+        if (alertState.containsKey(deviceId)) {
+            val (ma, slope) = trendStats(deviceId, now)
+            val entry = trendEntryMap.getOrPut(deviceId) { ma }
+            val peak = maxOf(trendPeakMap[deviceId] ?: ma, ma)
+            trendPeakMap[deviceId] = peak
+            if (peak - ma >= TREND_DROP_DB && slope <= 0.0 && peak - entry >= TREND_RISE_DB)
+                trendDropStartMap.putIfAbsent(deviceId, now)
+            else
+                trendDropStartMap.remove(deviceId)
+            val dropMs = now - (trendDropStartMap[deviceId] ?: now)
+            if (trendDropStartMap.containsKey(deviceId) && dropMs >= TREND_HOLD_MS) {
+                alertState.remove(deviceId)
+                fx.rssiPreFilter.clear(deviceId)
+                fx.medianFilter.clear(deviceId)
+                fx.pEmaFilter.clear(deviceId)
+                rushFrameMap.remove(deviceId)
+                dangerContactStreakMap.remove(deviceId)
+                warningContactStreakMap.remove(deviceId)
+                warningMissRefMap.remove(deviceId)
+                kalmanFilters[deviceId]?.let { lastKfVelMap[deviceId] = LastKfVelState(it.estimatedVel, android.os.SystemClock.elapsedRealtime()) }
+                kalmanFilters[deviceId]?.reset()
+                kalmanFilters.remove(deviceId)
+                shadowFusionMap.remove(deviceId)
+                wasStationaryMap.remove(deviceId)
+                recedingStartMap.remove(deviceId)
+                recedeRefMap.remove(deviceId)
+                recedePeakMap.remove(deviceId)
+                crossingStartMap.remove(deviceId)
+                approachStreakStartMap.remove(deviceId)
+                fastApproachStreakMap.remove(deviceId)
+                forwardBiasLatchMap.remove(deviceId)
+                approachLastSeenMap.remove(deviceId)
+                fx.clearDwellMute(deviceId)
+                deviceRssiMap.remove(deviceId)
+                clearFbThrottle(deviceId)
+                pendingDisplayMap.remove(deviceId)
+                trendEntryMap.remove(deviceId)
+                trendPeakMap.remove(deviceId)
+                trendDropStartMap.remove(deviceId)
+                trendTroughMap[deviceId] = ma
+                fx.sendAlertBroadcast(deviceId, BleConstants.LEVEL_SAFE)
+                if (alertState.isEmpty()) {
+                    AlertSoundPlayer.stopSound()
+                    fx.stopVibration()
+                    fx.collapseOverlay()
+                    fx.activeSoundLevel = BleConstants.LEVEL_SAFE
+                } else {
+                    fx.resyncSoundToRemaining()
+                    fx.updateFloatingOverlay()
+                }
+                fx.sendStatusBroadcast("↘ 추세 하강 → 경보 해제: ${fx.extractDisplayName(deviceId)}")
+                Log.d(TAG, "추세 경보 해제: $deviceId (peak=%.1f ma=%.1f entry=%.1f slope=%.2f dB/s, ${dropMs}ms)".format(peak, ma, entry, slope))
+                return
+            }
+        } else {
+            trendEntryMap.remove(deviceId)
+            trendPeakMap.remove(deviceId)
+            trendDropStartMap.remove(deviceId)
+        }
+
         if (isReceding) {
             val justStartedReceding = !recedingStartMap.containsKey(deviceId)
             if (justStartedReceding) {
@@ -1409,9 +1610,10 @@ class AlertStateMachine(
                 approachStreakStartMap.remove(deviceId)   // [v1.0.46 #4]
                 fastApproachStreakMap.remove(deviceId)    // [v1.1.21]
                 forwardBiasLatchMap.remove(deviceId)      // [v1.1.11 C1] 이탈 정리 → 래치 리셋
+                approachLastSeenMap.remove(deviceId)      // (v1.1.94)
                 fx.clearDwellMute(deviceId)                  // (v1.1.61) 이탈 확정 = 존 이탈 — dwell 뮤트 리셋
                 deviceRssiMap.remove(deviceId)
-                firebaseLastSaveMap.remove(deviceId)
+                clearFbThrottle(deviceId)
                 pendingDisplayMap.remove(deviceId)   // [v1.0.49 #3]
                 fx.sendAlertBroadcast(deviceId, BleConstants.LEVEL_SAFE)
                 if (alertState.isEmpty()) {
@@ -1428,7 +1630,10 @@ class AlertStateMachine(
                 return
             }
         } else {
-            recedingStartMap.remove(deviceId)
+            // [v1.1.76 결함C] 이탈 누적을 '접근이 확인된 프레임'에서만 리셋한다. 종전엔 비-이탈 프레임
+            //   1개마다 무조건 remove 해서, RSSI 노이즈로 isReceding 이 한 프레임만 꺾여도 누적이 0이 되고
+            //   RECEDING_CLEAR_MS 에 영영 도달하지 못했다(= '이탈 확인 → 경보 해제'(L1432) 사망).
+            if (kfVel > CPA_VEL_THRESHOLD) recedingStartMap.remove(deviceId)
             // [v1.1.6 검증 보강] fail-loud 무음 복구는 아래 shouldAlert 게이트(!shouldAlert 분기)로 이동.
             //   여기서 즉시 재발령하면 같은 프레임에 격상(levelEscalated)·쿨다운경과로 canonical 발령이 또
             //   playDanger 를 호출(비멱등 → 사이렌 끊김 stutter)할 수 있어, 발령을 건너뛰는 프레임에 한해
@@ -1533,13 +1738,15 @@ class AlertStateMachine(
             //   playDanger 중복호출(비멱등 stutter) 없음.
             //   [v1.1.6 DS-1/3] 판정 기준을 raw avg1sec → 평활 stableLevel 로 통일. (a) canonical 과 동일한
             //   거리 권위값(pEma 기반 stableLevel)을 써, '평활은 DANGER 인데 raw 노이즈 dip 으로 무음'이던
-            //   불일치(DS-3)를 제거한다. (b) isReceding 가드도 stableLevel<DANGER(L1085)라, 이탈 프레임은
-            //   여기 stableLevel>=DANGER 와 정확한 여집합으로 상호배타 → 진짜 이탈 즉시정지는 유지되고,
-            //   genuine 이탈로 stableLevel 이 이미 위험권 밖이면 복구가 되살리지 않아 ghost-danger 과알람도 없다.
+            //   불일치(DS-3)를 제거한다. (b) [v1.1.76 결함C 정정] 종전 주석은 'isReceding 가드가
+            //   stableLevel<DANGER 라 이 블록과 상호배타'라고 했으나, v1.1.22 가 isReceding 정의에
+            //   || isDepartingNow 를 넣으면서(L1365) 그 불변식은 깨졌다 — 위험권(stableLevel>=DANGER)
+            //   에서 멀어지는 중에도 isReceding=true 가 성립한다. 그래서 L1382 가 끈 사이렌을 같은
+            //   프레임에 이 복구가 되살렸다(= '이탈 중에도 알림 지속'). !isReceding 을 명시 가드한다.
             if (!fx.isMuted && !fx.isDeviceMuted(deviceId) && alertState.containsKey(deviceId) &&
                 !fx.isDwellMuted(deviceId, stableLevel) &&   // (v1.1.61) dwell 뮤트 존중 — 의도된 무음은 '복구'하지 않는다
                 !fx.myZoneInside &&                          // (v1.1.62) 존 안=가청 억제 — fail-loud 복구도 되살리지 않는다
-                stableLevel >= BleConstants.LEVEL_DANGER && !isDepartingNow &&   // [v1.1.22 B] 이탈측 무음복구 재발령 금지
+                stableLevel >= BleConstants.LEVEL_DANGER && !isDepartingNow && !isReceding &&   // [v1.1.22 B / v1.1.76 C] 이탈측 무음복구 재발령 금지
                 fx.activeSoundLevel < BleConstants.LEVEL_DANGER) {
                 fx.forceAlarmVolume()
                 fx.activeSoundLevel = BleConstants.LEVEL_DANGER
@@ -1593,51 +1800,13 @@ class AlertStateMachine(
         //       합산속도가 미미(<1km/h, 양쪽 거의 정지)하면 기하 판정을 건너뛰고 순수 Time-Gate 로 폴백.
         // ※ 신규 기기는 통과 전까지 alertState 에 등록되지 않으므로(아래 Pair 할당이 이 블록 뒤),
         //   매 프레임 isFirstDetection=true 로 재평가되며 approachStreak 이 자연히 누적된다.
-        // ※ 0x02 특수경보·TTC 선발령은 위에서 이미 즉시 발령·return → 본 게이트 영향을 받지 않는다.
+        // ※ TTC 선발령은 위에서 이미 즉시 발령·return → 본 게이트 영향을 받지 않는다.
+        //   (v1.1.94) 후진·하역 특수경보는 첫 감지면 같은 확인(evalTimeGate)을 먼저 거친다. 추적 중 전환은 즉시.
         // ※ 쿨다운 재알람(추적중·동급)·격상(levelEscalated)은 면제 — 게이트는 첫 감지에만 적용.
         // ※ 3중 하드게이트(min(칼만,raw,EMA))는 위에서 이미 통과 — 본 필터는 그와 독립적으로
         //   '신규 격상'의 발령 타이밍만 조정할 뿐, 경보 레벨은 오직 RSSI 게이트가 결정한다.
-        val timeGateMs = if (ImuFusion.isCornering) APPROACH_TIMEGATE_CORNERING_MS else APPROACH_TIMEGATE_MS
-        val kfApproaching = kfVel >= APPROACH_TIMEGATE_VEL_DBM
-        if (kfApproaching) {
-            approachStreakStartMap.putIfAbsent(deviceId, now)
-        } else {
-            approachStreakStartMap.remove(deviceId)   // 접근 끊김 → streak 리셋
-        }
-        val approachStreakMs = if (kfApproaching) now - (approachStreakStartMap[deviceId] ?: now) else 0L
-
-        // [v1.0.36→v1.1.7 #1] 충돌 기하학 — 속도 비트 제거로 합산 접근속도를 산출할 수 없다.
-        //   closingSpeedKmh=0 → geometryValid=false → 기하학 필터 자동 비활성, 순수 Time-Gate 동작.
-        //   (회전 2비트는 방향 표시용일 뿐 접근속도 추정엔 쓰지 않는다.)
-        val closingSpeedKmh = 0.0                                             // 예상 최대 접근속도(km/h) — 미산출
-        val expectedKfVel   = closingSpeedKmh * CLOSING_KMH_TO_DBMS            // → 예상 RSSI 접근속도(dBm/s)
-        val closingRatio    = if (expectedKfVel > 0.01) kfVel / expectedKfVel else 0.0
-        val geometryValid   = closingSpeedKmh >= COLLISION_MIN_CLOSING_KMH     // 양쪽 거의 정지면 판정 불가
-        // 정면충돌 코스: 실제 접근이 예상의 60% 이상 → Time-Gate 즉시 통과(강한 발령).
-        val headOnCourse    = geometryValid && closingRatio >= COLLISION_HEAD_ON_RATIO
-        // 측면/나란히: 실제 접근이 예상의 30% 이하 + 절대 접근속도도 느림(<2.0) → 보류(경계 격하).
-        // [v1.0.49 #1] 콜드 칼만 유예 — update 횟수 미달이면 vel 이 초기값(0.0) 부근이라 ratio≈0 으로
-        //   돌진 기기도 측면으로 오판된다. 칼만이 웜업되기 전엔 측면판정을 무효화한다(headOn 즉시통과·
-        //   Time-Gate 는 영향 없음 — 콜드 ratio≈0 이면 headOn 은 어차피 false, 보수 방향 그대로).
-        val kalmanWarm      = kf.updateCount >= KALMAN_GEOMETRY_MIN_UPDATES
-        val sideCourse      = kalmanWarm && geometryValid && closingRatio <= COLLISION_SIDE_RATIO &&
-                              kfVel < COLLISION_ABS_SAFE_VEL_DBM
-
-        // [v1.1.21] 빠른 정면접근 → Time-Gate 즉시통과. closingSpeedKmh(km/h)를 1바이트 페이로드로
-        //   못 구해 headOnCourse 가 영구 false 였던 공백을 칼만 접근속도(kfVel)로 메운다. kfVel 은
-        //   Median→EMA→칼만 다단 평활된 위상선행값이라 거리(pEma)·1초평균보다 먼저 접근을 포착 →
-        //   '빠르게 다가오는 지게차'가 Time-Gate(0.5초) + 평활 lag 에 막혀 CPA(최근접점)를 지난 뒤에야
-        //   울리던 지연을 제거한다. 단발 raw spike 방어: 임계를 '2프레임 연속' 넘어야 확증(다단 평활이라
-        //   1프레임 튐으론 임계까지 못 오르며, 추가 확증으로 오발을 한 겹 더 막는다). 측면/나란히 교차는
-        //   kfVel 이 낮아 안 걸려 과경보는 거의 안 는다. 임계=DevSettings.fastApproachBypassVelDbm 라이브.
-        val fastApproachFrames = if (kfVel >= FAST_APPROACH_BYPASS_VEL_DBM)
-                                     (fastApproachStreakMap[deviceId] ?: 0) + 1 else 0
-        fastApproachStreakMap[deviceId] = fastApproachFrames
-        val fastApproach = fastApproachFrames >= 2
-
-        // headOn(합산 km/h 미산출 → 영구 false) 또는 빠른 정면접근(kfVel 2프레임 확증)이면 Time-Gate
-        //   즉시 통과, 아니면 평상/코너링 Time-Gate 충족 필요.
-        val approachSustained = headOnCourse || fastApproach || (kfApproaching && approachStreakMs >= timeGateMs)
+        // (v1.1.94) 판정은 evalTimeGate 로 이동. 특수경보 사전 확인에서 이미 계산했으면 재사용(프레임당 1회 갱신).
+        val gate = preGate ?: evalTimeGate(deviceId, kfVel, now, kf.updateCount)
 
         // [v1.0.47 #3] 게이트 적용을 '신규(첫 감지)'로 축소 — 격상(levelEscalated)은 면제.
         //   이미 게이트를 통과해 WARNING 경보 중인 기기의 DANGER 승급에까지 kfVel≥0.5 연속을 요구하면,
@@ -1646,9 +1815,9 @@ class AlertStateMachine(
         //   3중 하드게이트, raw 2차 방어선이 이미 막으므로 격상까지 게이트하는 것은 중복 보수였다.
         // [v1.1.58 fix4] lost→재발견 복원 기기는 TimeGate 1회 면제 — 면제권은 도달 즉시 무조건 소비(잔존 방지)
         val timeGateWaived = timeGateWaiveSet.remove(deviceId)
-        if (isFirstDetection && !fastContact && !timeGateWaived && (sideCourse || !approachSustained)) {   // [v1.1.18] 2프레임 확증 WARNING/DANGER 첫접촉은 접근속도 게이트 면제(정지 근접 즉시 발령)
+        if (isFirstDetection && !fastContact && !timeGateWaived && (gate.side || !gate.sustained)) {   // [v1.1.18] 2프레임 확증 WARNING/DANGER 첫접촉은 접근속도 게이트 면제(정지 근접 즉시 발령)
             pendingDisplayMap[deviceId] = now   // [v1.0.49 #3] 보류 중에도 목록엔 '감지됨' 노출
-            Log.d(TAG, "[v1.0.36] 경보 보류 ${fx.extractDisplayName(deviceId)}: side=$sideCourse 접근지속=${approachStreakMs}ms(<${timeGateMs}) fast=${fastApproachFrames}/2 vel=%.2f".format(kfVel))
+            Log.d(TAG, "[v1.0.36] 경보 보류 ${fx.extractDisplayName(deviceId)}: side=${gate.side} 접근지속=${gate.streakMs}ms(<${gate.ms}) fast=${gate.fastFrames}/2 vel=%.2f".format(kfVel))
             return   // 소리/화면 경보 보류 — 다음 프레임 재평가(접근지속 충족 또는 정면충돌 코스 시 발령)
         }
 
@@ -1662,7 +1831,10 @@ class AlertStateMachine(
         //   urgentBypass 의 속도항)은 뮤트 무시. median>=effDanger 항까지 쓰면 위험권에 '정지'한
         //   기기가 매 프레임 바이패스돼 영원히 안 뮤트("위험 거리도 동일하게" 스펙 무력화)라 속도항만.
         // (v1.1.62) || fx.myZoneInside — 존 비콘 접촉 중엔 무조건 가청 억제(urgentBypass 의 속도항도 안 뚫음).
-        val dwellSuppressed = (fx.isDwellMuted(deviceId, stableLevel) && kfVel < 2.0) || fx.myZoneInside
+        // [v1.1.76 결함C] || isReceding || isDepartingNow — 멀어지는 중엔 가청 억제. 이 한 줄이 아래
+        //   DANGER(vibrateDanger/playDanger)·WARNING 발령의 소리·진동을 한꺼번에 덮는다. 표시·브로드캐스트는 유지.
+        val dwellSuppressed = (fx.isDwellMuted(deviceId, stableLevel) && kfVel < 2.0) || fx.myZoneInside ||
+            isReceding || isDepartingNow
         if (!dwellSuppressed) fx.forceAlarmVolume()
         val globalMax = fx.getAudibleMaxLevel()   // (v1.1.61) 뮤트 기기 제외 — 무음 기기가 신규 경보를 못 막게
         if (stableLevel < globalMax) {
@@ -1693,10 +1865,12 @@ class AlertStateMachine(
                 if (DevSettings.soundEnabled && !dwellSuppressed)
                     fx.playDanger()
                 if (DevSettings.autoSaveAlerts) {
-                    val lastFbSave = firebaseLastSaveMap[deviceId] ?: 0L
+                    val fbk = fbKey(deviceId, "DANGER")
+                    val lastFbSave = firebaseLastSaveMap[fbk] ?: 0L
                     if (now - lastFbSave >= FIREBASE_SAVE_THROTTLE_MS) {
-                        firebaseLastSaveMap[deviceId] = now
-                        FirebaseManager.saveAlert(deviceId, fx.myId, avgRssi, "DANGER")
+                        firebaseLastSaveMap[fbk] = now
+                        FirebaseManager.saveAlert(deviceId, fx.myId, avgRssi, "DANGER",
+                            BleConstants.categoryName(fx.myCategory), BleConstants.categoryName(rCategory))
                     }
                 }
                 val name = fx.extractDisplayName(deviceId)
@@ -1715,10 +1889,12 @@ class AlertStateMachine(
                     fx.playWarning()
                 // [v1.0.30 Req3] Firebase 경보 저장 쓰로틀 — 같은 기기 1분 1회로 제한(모바일데이터 방어)
                 if (DevSettings.autoSaveAlerts) {
-                    val lastFbSave = firebaseLastSaveMap[deviceId] ?: 0L
+                    val fbk = fbKey(deviceId, "WARNING")
+                    val lastFbSave = firebaseLastSaveMap[fbk] ?: 0L
                     if (now - lastFbSave >= FIREBASE_SAVE_THROTTLE_MS) {
-                        firebaseLastSaveMap[deviceId] = now
-                        FirebaseManager.saveAlert(deviceId, fx.myId, avgRssi, "WARNING")
+                        firebaseLastSaveMap[fbk] = now
+                        FirebaseManager.saveAlert(deviceId, fx.myId, avgRssi, "WARNING",
+                            BleConstants.categoryName(fx.myCategory), BleConstants.categoryName(rCategory))
                     }
                 }
                 val name = fx.extractDisplayName(deviceId)
@@ -1733,7 +1909,7 @@ class AlertStateMachine(
         // (v1.1.62 버그A) walker 게이트 이중 안전 — 세션 개설 차단(onUwbAddressReceived)이 1차지만,
         //   이미 열린 세션의 잔여 표본이 이 경로로 들어와도 걸러진 기기를 되살리지 않는다.
         if (fx.myMode == "WALKER" && deviceId.startsWith(BleConstants.WALKER_PREFIX)
-            && !deviceId.contains("BEA_") && !DevSettings.walkerDetectsWalker) return
+            && !(deviceId.contains("BEA_") && !BeaconRegistry.isVisitorBeacon(deviceId)) && !DevSettings.walkerDetectsWalker) return
         val rCategory = deviceCategoryMap[deviceId]
         val rState    = deviceStateMap[deviceId]
         val forkliftPair = fx.myCategory == BleConstants.CAT_FORKLIFT ||
@@ -1831,19 +2007,21 @@ class AlertStateMachine(
                 approachStreakStartMap.remove(deviceId)
                 fastApproachStreakMap.remove(deviceId)
                 forwardBiasLatchMap.remove(deviceId)
+                approachLastSeenMap.remove(deviceId)
                 fx.clearDwellMute(deviceId)   // (v1.1.61) UWB 확증 SAFE = 존 이탈 — dwell 뮤트 리셋
                 peerInZoneMap.remove(deviceId)   // (v1.1.62) SAFE 정리 — 다음 광고 표본이 재선언(스테일 캐시 방지)
                 wasStationaryMap.remove(deviceId)
                 recedingStartMap.remove(deviceId)
                 recedeRefMap.remove(deviceId)
                 recedePeakMap.remove(deviceId)
+                clearTrend(deviceId)   // (v1.1.95) UWB 확증 SAFE — 추세 해제 상태·재경보 래치 전부 정리
                 deviceRssiMap.remove(deviceId)
                 mutedDevices.remove(deviceId)
                 suddenLabelMap.remove(deviceId)
                 deviceCategoryMap.remove(deviceId)
                 deviceStateMap.remove(deviceId)
                 deviceTurnMap.remove(deviceId); reverseRssiHist.remove(deviceId); reversePrepUntil.remove(deviceId)
-                firebaseLastSaveMap.remove(deviceId)
+                clearFbThrottle(deviceId)
                 pendingDisplayMap.remove(deviceId)
                 // ★ uwbSampleAtMsMap 은 보존 — Case A 신선도 근거(지우면 다음 표본까지 순간 RSSI 폴백). peerUwbSeenMap 은 진단용 보존
                 fx.sendAlertBroadcast(deviceId, BleConstants.LEVEL_SAFE)
@@ -1928,10 +2106,12 @@ class AlertStateMachine(
                 if (DevSettings.vibrationEnabled && !dwellSuppressed) fx.vibrateDanger()
                 if (DevSettings.soundEnabled && !dwellSuppressed)     fx.playDanger()
                 if (DevSettings.autoSaveAlerts) {
-                    val lastFbSave = firebaseLastSaveMap[deviceId] ?: 0L
+                    val fbk = fbKey(deviceId, "DANGER")
+                    val lastFbSave = firebaseLastSaveMap[fbk] ?: 0L
                     if (now - lastFbSave >= FIREBASE_SAVE_THROTTLE_MS) {
-                        firebaseLastSaveMap[deviceId] = now
-                        FirebaseManager.saveAlert(deviceId, fx.myId, deviceRssiMap[deviceId] ?: 0, "DANGER")
+                        firebaseLastSaveMap[fbk] = now
+                        FirebaseManager.saveAlert(deviceId, fx.myId, deviceRssiMap[deviceId] ?: 0, "DANGER",
+                            BleConstants.categoryName(fx.myCategory), BleConstants.categoryName(rCategory))
                     }
                 }
                 fx.updateFloatingOverlay()
@@ -1942,10 +2122,12 @@ class AlertStateMachine(
                 if (DevSettings.vibrationEnabled && !idleIdleQuiet && !dwellSuppressed) fx.vibrateWarning()
                 if (DevSettings.soundEnabled && !idleIdleQuiet && !dwellSuppressed)     fx.playWarning()
                 if (DevSettings.autoSaveAlerts) {
-                    val lastFbSave = firebaseLastSaveMap[deviceId] ?: 0L
+                    val fbk = fbKey(deviceId, "WARNING")
+                    val lastFbSave = firebaseLastSaveMap[fbk] ?: 0L
                     if (now - lastFbSave >= FIREBASE_SAVE_THROTTLE_MS) {
-                        firebaseLastSaveMap[deviceId] = now
-                        FirebaseManager.saveAlert(deviceId, fx.myId, deviceRssiMap[deviceId] ?: 0, "WARNING")
+                        firebaseLastSaveMap[fbk] = now
+                        FirebaseManager.saveAlert(deviceId, fx.myId, deviceRssiMap[deviceId] ?: 0, "WARNING",
+                            BleConstants.categoryName(fx.myCategory), BleConstants.categoryName(rCategory))
                     }
                 }
                 fx.updateFloatingOverlay()

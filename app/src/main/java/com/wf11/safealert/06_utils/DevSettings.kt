@@ -61,8 +61,10 @@ object DevSettings {
     private const val KEY_LOG_VERBOSE           = "log_verbose"
 
     private lateinit var prefs: SharedPreferences
+    private var appCtx: Context? = null
 
     fun init(context: Context) {
+        appCtx = context.applicationContext
         prefs = context.applicationContext.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
         // (v1.1.56 U4a) EMA 하강 알파 기본 0.05→0.12 1회 마이그레이션 — 스피너 초기 programmatic
         //   선택도 putFloat 로 저장되므로 DEFAULT 변경만으론 기존 설치에 미반영. 마커 1회에 한해
@@ -70,6 +72,13 @@ object DevSettings {
         if (!prefs.getBoolean(KEY_EMA_FALL_MIGR_V1156, false)) {
             prefs.edit().putFloat(KEY_EMA_ALPHA_FALL, DEFAULT_EMA_ALPHA_FALL.toFloat())
                 .putBoolean(KEY_EMA_FALL_MIGR_V1156, true).apply()
+        }
+        // [v1.1.95] 위험 임계 기본 -55→-65 1회 마이그레이션 — 기존 설치는 저장값이 기본값을 가리므로
+        //   마커 1회에 한해 위험 -65 / 경고 -78 로 덮는다(이후 개발자 설정에서 바꾼 값은 존중).
+        if (!prefs.getBoolean(KEY_RSSI_THRESH_MIGR_V1195, false)) {
+            prefs.edit().putInt(KEY_RSSI_DANGER, DEFAULT_RSSI_DANGER_ABS)
+                .putInt(KEY_RSSI_WARNING, DEFAULT_RSSI_WARNING_ABS)
+                .putBoolean(KEY_RSSI_THRESH_MIGR_V1195, true).apply()
         }
     }
 
@@ -85,12 +94,15 @@ object DevSettings {
     //   v1.0.39 에서 거리계산 파생을 폐지하고 절대 고정(-75/-55)했고, v1.0.40 부터는
     //   BLE 설정의 dBm 슬라이더로 직접 저장/조정한다(고정값 모드 절댓값 슬라이더와 통일).
     //   저장은 음수 dBm 그대로. UI 슬라이더는 절댓값(양수 30~100)으로 표시 후 음수화해 저장.
-    //   제약(UI): 위험은 경고보다 가까움 = 덜 음수 = 절댓값이 더 작다 (예 위험 -55 > 경고 -75).
+    //   제약(UI): 위험은 경고보다 가까움 = 덜 음수 = 절댓값이 더 작다 (예 위험 -65 > 경고 -78).
     //   [v1.0.42] 거리계산·교정(calibRssiAt1m/pathLossExp/warningDistM/dangerDistM/거리 교정
     //     마법사) 전면 폐지 → 거리 추정은 칼만 필터(RSSI)만으로 수행. dBm 임계만 직접 조정한다.
     //   prefs 키는 기존 KEY_RSSI_WARNING / KEY_RSSI_DANGER (상단 L11-12) 재사용.
-    const val DEFAULT_RSSI_WARNING_ABS = -75   // 경보(WARNING): RSSI >= -75  (-56~-75 구간)
-    const val DEFAULT_RSSI_DANGER_ABS  = -55   // 위험(DANGER) : RSSI >= -55  (0~-55 구간)
+    //   [v1.1.95] 위험 -55→-65: 현장 관찰 경고 -75 가 15~25m 에서 울림 → -65 는 약 5~10m.
+    //   [v1.1.95] 경고 -75→-78: 경고를 조금 더 멀리서(약 20~35m) 시작.
+    const val DEFAULT_RSSI_WARNING_ABS = -78   // 경보(WARNING): RSSI >= -78  (-66~-78 구간)
+    const val DEFAULT_RSSI_DANGER_ABS  = -65   // 위험(DANGER) : RSSI >= -65  (0~-65 구간)
+    private const val KEY_RSSI_THRESH_MIGR_V1195 = "rssi_thresh_migrated_v1195"
     const val RSSI_THRESH_MIN = -100           // 슬라이더 하한(가장 멂, 절댓값 100)
     const val RSSI_THRESH_MAX = -30            // 슬라이더 상한(가장 가까움, 절댓값 30)
 
@@ -479,7 +491,7 @@ object DevSettings {
     //   원인: RSSI 왕복이 이론상 상호적이나 실제로는 폰 송출세기·수신감도 차로 A→B 와 B→A 경로가 달라,
     //   같은 물리거리에서 한쪽만 경고권(effWarning)에 든다. v1.1.14 협력 격상은 '내' RSSI 도 effWarning
     //   이상일 때만 상대 위험송출(rRisk)을 수용하므로, 약하게 받는 폰은 상대의 DANGER 를 무시하고 침묵한다.
-    //   완화: 협력 '수용' 문턱만 effWarning 에서 이 슬랙만큼 낮춰(예 -75→-83) 살짝 못 미치게 받아도 함께 울린다.
+    //   완화: 협력 '수용' 문턱만 effWarning 에서 이 슬랙만큼 낮춰(예 -78→-86) 살짝 못 미치게 받아도 함께 울린다.
     //   일반 경보 임계(effWarning)는 불변 — 오직 상대송출 수용 게이트만 양보. 진짜 먼 오발(슬랙 밖)은 여전히 차단.
     //   Case B(RSSI) 전용 — Case A(신선 UWB)는 양방향 ToF 대칭이라 비대칭이 없어 개입하지 않는다. 0=v1.1.14 원거동.
     private const val KEY_COOP_SLACK_DB = "coop_slack_db"
@@ -585,12 +597,22 @@ object DevSettings {
         get() = prefs.getBoolean(KEY_UWB_CALIB_ENABLED, true)
         set(v) = prefs.edit().putBoolean(KEY_UWB_CALIB_ENABLED, v).apply()
 
+    // (v1.1.76) UWB 실측 표본 업로드 — UWB 실거리(m)와 같은 프레임의 BLE RSSI 를 짝지어
+    //   uwb_probe/<yyyyMMdd> 에 남긴다. 임계(-78/-65dBm)가 실제 몇 m 인지를 재는 유일한 근거라
+    //   실기 측정 세션에서만 켠다. OFF = 업로드 자체가 없음(기본) — 학습(onSample)과는 무관하게
+    //   기록만 담당하므로 켜고 끄어도 경보 거동은 완전히 동일하다. 페어당 1초 1건으로 스로틀.
+    private const val KEY_UWB_PROBE_UPLOAD = "uwb_probe_upload"
+    var uwbProbeUploadEnabled: Boolean
+        get() = prefs.getBoolean(KEY_UWB_PROBE_UPLOAD, false)
+        set(v) = prefs.edit().putBoolean(KEY_UWB_PROBE_UPLOAD, v).apply()
+
     // (v1.1.31) 거리 표시 방식 — 감지 목록·플로팅 위젯의 신호 표기.
-    //   0 = dBm만 / 1 = UWB 실측 페어만 미터 / 2 = 전부 미터(비UWB 는 RSSI 역산 '약 X m', 기본).
+    //   0 = dBm만(기본, v1.1.94) / 1 = UWB 실측 페어만 미터 / 2 = 전부 미터(비UWB 는 RSSI 역산 '약 X m').
     //   경보 임계 슬라이더는 dBm 그대로 — 표시 전용 설정이라 경보 로직에 영향 없음.
+    //   이미 저장된 값이 있으면 그 값을 따른다(기본값만 변경).
     private const val KEY_DISTANCE_DISPLAY_MODE = "distance_display_mode"
     var distanceDisplayMode: Int
-        get() = prefs.getInt(KEY_DISTANCE_DISPLAY_MODE, 2).coerceIn(0, 2)
+        get() = prefs.getInt(KEY_DISTANCE_DISPLAY_MODE, 0).coerceIn(0, 2)
         set(v) = prefs.edit().putInt(KEY_DISTANCE_DISPLAY_MODE, v.coerceIn(0, 2)).apply()
 
     // (v1.1.36) UWB 주 경보 권위 — 활성 UWB 세션이 있는 페어는 UWB 실측 거리로 경보 레벨(안전/경고/
@@ -687,13 +709,67 @@ object DevSettings {
         get() = prefs.getFloat(KEY_UWB_APPROACH_SPEED_KMH, DEFAULT_UWB_APPROACH_SPEED_KMH).coerceIn(1f, 30f)
         set(v) = prefs.edit().putFloat(KEY_UWB_APPROACH_SPEED_KMH, v.coerceIn(1f, 30f)).apply()
 
-    // (v1.1.34) 사업장 코드 — UWB Δ보정 학습 프로파일 네임스페이스 키(예: "WF11"). 빈 값=공용
-    //   (현행과 완전 동일). 변경 즉시 UwbCalibrator.applySite 가 현재 프로파일을 저장하고 해당
-    //   사업장 프로파일로 전환한다(각 사업장 학습 보존 — 지워지지 않음).
-    private const val KEY_UWB_SITE_CODE = "uwb_site_code"
-    var uwbSiteCode: String
-        get() = prefs.getString(KEY_UWB_SITE_CODE, "")?.trim() ?: ""
-        set(v) = prefs.edit().putString(KEY_UWB_SITE_CODE, v.trim()).apply()
+    // (v1.1.77) 사업장 코드 — 알림·보정 데이터 전역 분리 네임스페이스(예: "WF11"). 빈 값=공용.
+    //   (v1.1.90) 메인화면은 비어 있을 때 최초 입력만, 이후 변경은 개발자 설정(PIN 뒤)에서만. BLE 설정 UWB 섹션은 읽기전용 표시. 대소문자 무관(대문자 정규화)이며
+    //   [A-Z0-9_-] 외 문자는 버려 Firebase 경로·SharedPreferences 파일명에 그대로 쓸 수 있게 한다.
+    //   소비자(BeaconRegistry/CalibrationEngine)는 매 접근마다 sitePrefName() 으로 현재 센터 파일을
+    //   열고, 최초로 코드가 붙는 순간 adoptCommonPrefs() 가 공용 파일 내용을 그 센터로 1회 인계한다.
+    private const val KEY_UWB_SITE_CODE = "uwb_site_code"   // 키는 v1.1.34 그대로(마이그레이션 불필요)
+    const val SITE_CODE_MAX_LEN = 12
+    var siteCode: String
+        get() = normalizeSite(prefs.getString(KEY_UWB_SITE_CODE, "") ?: "")
+        set(v) {
+            val next = normalizeSite(v)
+            if (next == siteCode) return
+            prefs.edit().putString(KEY_UWB_SITE_CODE, next).apply()
+            adoptCommonPrefs(next)
+        }
+
+    // 사업장 분리 대상 저장소(공용 파일명). 코드가 붙으면 base_CODE 로 갈라진다.
+    private val SITE_PREF_BASES = listOf("beacon_registry", "echo_diff_stats")
+
+    /**
+     * 최초로 센터명이 붙을 때 공용 파일의 기존 학습·등록 정보를 그 센터 파일로 1회 인계한다.
+     * 인계 없이 전환하면 등록 비콘 목록(존 비콘 포함)과 에코 보정이 통째로 빈 상태가 되어
+     * 안전구역 무음화가 조용히 죽는다. 대상 파일이 이미 비어 있지 않으면 손대지 않는다
+     * (그 센터의 학습값이 우선 — 사업장 간 왕복 전환에서도 덮어쓰지 않는다).
+     */
+    private fun adoptCommonPrefs(site: String) {
+        val ctx = appCtx ?: return
+        if (site.isEmpty()) return
+        SITE_PREF_BASES.forEach { base ->
+            val dst = ctx.getSharedPreferences(base + "_" + site, Context.MODE_PRIVATE)
+            if (dst.all.isNotEmpty()) return@forEach
+            val src = ctx.getSharedPreferences(base, Context.MODE_PRIVATE)
+            if (src.all.isEmpty()) return@forEach
+            val e = dst.edit()
+            src.all.forEach { (k, v) ->
+                when (v) {
+                    is String  -> e.putString(k, v)
+                    is Int     -> e.putInt(k, v)
+                    is Long    -> e.putLong(k, v)
+                    is Float   -> e.putFloat(k, v)
+                    is Boolean -> e.putBoolean(k, v)
+                    is Set<*>  -> @Suppress("UNCHECKED_CAST") e.putStringSet(k, v as Set<String>)
+                }
+            }
+            e.apply()
+            android.util.Log.i("DevSettings", "센터 전환 인계: ${base} -> ${base}_${site} (${src.all.size}건)")
+        }
+    }
+
+    /** 입력 문자열을 사업장 코드 표준형으로 — 대문자화 후 [A-Z0-9_-] 만 남기고 최대 12자. */
+    fun normalizeSite(raw: String): String =
+        raw.trim().uppercase()
+            .filter { it in 'A'..'Z' || it in '0'..'9' || it == '_' || it == '-' }
+            .take(SITE_CODE_MAX_LEN)
+
+    /**
+     * 사업장별 SharedPreferences 파일명 — 코드가 없으면 구버전과 동일한 공용 파일을 그대로 쓴다.
+     * siteCode 가 이미 [A-Z0-9_-] 로 정규화돼 있어 파일명 이스케이프가 필요 없다.
+     */
+    fun sitePrefName(base: String): String =
+        if (siteCode.isEmpty()) base else base + "_" + siteCode
 
     // (v1.1.40) 섀도우 IMU 융합 — 정지(IMU)+상대 FORWARD 페이로드일 때 median 스트림 전용 섀도우
     //   칼만으로 접근을 병렬 추적, DANGER 이탈 프레임의 EMA 하강 알파 부스트(0.4)와 TTC 예비
