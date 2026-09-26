@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-08-23)
 Phase: 03 (BleService 분해) — COMPLETE
 Plan: 1 of 1
 Status: Phase 04 계획 대기
-Last activity: 2026-09-26 — Completed quick task 260926-wpd: CalibrationEngine 사업장 전환 시 에코 통계를 떠나는 사업장 파일에 저장 (커밋 af2fd58)
+Last activity: 2026-09-27 — Completed quick task 260927-aol: 에코 보정을 사업장 분리 없이 전역 파일 하나로 (커밋 1ddaf00)
 
 Progress: [██████░░░░] 60%
 
@@ -118,6 +118,7 @@ None yet.
 | 2026-09-26 | 260926-uc5 — BeaconManager Firebase 비동기 콜백 다이얼로그 수명 가드(isFinishing·isDestroyed) (80bc4f9) | complete |
 | 2026-09-26 | 260926-ut8 — alert digest 사업장 층 평탄화·--from 상시 전달·uptime model 가드(숫자 사업장코드 서버 컷=알려진 한계) (51d1230) | complete |
 | 2026-09-26 | 260926-wpd — CalibrationEngine 사업장 전환 시 에코 통계를 떠나는 사업장 파일에 저장(echoPrefs=activeSite 기준) (af2fd58) | complete |
+| 2026-09-27 | 260927-aol — 에코 보정 전역화: 사업장별 echo 파일 분리·applySite 제거, 현재 사업장 파일 1회 인계, 테스트 교체(af2fd58 대체) (1ddaf00) | complete |
 
 ## Deferred Items
 
