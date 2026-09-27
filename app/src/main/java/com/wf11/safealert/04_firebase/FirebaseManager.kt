@@ -47,14 +47,11 @@ object FirebaseManager {
     private fun flushPendingAlerts(uid: String) {
         val items = pending?.drain().orEmpty()
         if (items.isEmpty()) return
-        val database = FirebaseDatabase.getInstance()
         for ((url, data) in items) {
-            runCatching { database.getReferenceFromUrl(url) }
-                .onSuccess { ref ->
-                    ref.setValue(data + ("uid" to uid))
-                        .addOnFailureListener { Log.e(TAG, "보류 경보 저장 실패: ${it.message}") }
-                }
-                .onFailure { Log.e(TAG, "보류 경보 주소 오류: ${it.message}") }
+            runCatching {
+                FirebaseDatabase.getInstance().getReferenceFromUrl(url).setValue(data + ("uid" to uid))
+                    .addOnFailureListener { Log.e(TAG, "보류 경보 저장 실패: ${it.message}") }
+            }.onFailure { Log.e(TAG, "보류 경보 전송 오류: ${it.message}") }
         }
         Log.d(TAG, "보류 경보 ${items.size}건 저장")
     }
