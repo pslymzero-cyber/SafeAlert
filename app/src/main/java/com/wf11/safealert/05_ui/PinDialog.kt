@@ -95,20 +95,23 @@ fun Activity.showDevPinDialog(onSuccess: () -> Unit) {
 // (v1.1.97) PIN 잠금 상태는 설정(dev_settings)과 분리된 파일에 둔다 — 설정 초기화와 무관하게 유지.
 private const val PIN_LOCKOUT_PREFS = "pin_lockout"
 
-//   commit(동기) — 입력 직후 앱을 닫아도 횟수가 남게. 값 4개짜리 파일이라 부담이 없다.
+//   한 번의 commit(동기)으로 쓴다 — 입력 직후 앱을 닫아도 횟수가 남고 필드끼리 어긋나지 않는다.
 private class PrefsPinStore(private val p: SharedPreferences) : PinLockout.Store {
-    override var fails: Int
-        get() = p.getInt("fails", 0)
-        set(v) { p.edit().putInt("fails", v).commit() }
-    override var lockWallUntil: Long
-        get() = p.getLong("lock_wall_until", 0L)
-        set(v) { p.edit().putLong("lock_wall_until", v).commit() }
-    override var lockElapsedUntil: Long
-        get() = p.getLong("lock_elapsed_until", 0L)
-        set(v) { p.edit().putLong("lock_elapsed_until", v).commit() }
-    override var lockBoot: Int
-        get() = p.getInt("lock_boot", 0)
-        set(v) { p.edit().putInt("lock_boot", v).commit() }
+    override fun load() = PinLockout.State(
+        fails = p.getInt("fails", 0),
+        lockWallUntil = p.getLong("lock_wall_until", 0L),
+        lockElapsedUntil = p.getLong("lock_elapsed_until", 0L),
+        lockBoot = p.getInt("lock_boot", 0)
+    )
+
+    override fun save(s: PinLockout.State) {
+        p.edit()
+            .putInt("fails", s.fails)
+            .putLong("lock_wall_until", s.lockWallUntil)
+            .putLong("lock_elapsed_until", s.lockElapsedUntil)
+            .putInt("lock_boot", s.lockBoot)
+            .commit()
+    }
 }
 
 private fun Context.pinNow() = PinLockout.Now(

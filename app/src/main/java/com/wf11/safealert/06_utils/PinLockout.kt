@@ -12,11 +12,17 @@ package com.wf11.safealert.utils
  */
 class PinLockout(private val store: Store) {
 
+    /** 저장 단위 — 한 번에 읽고 한 번에 쓴다(중간에 앱이 꺼져도 필드끼리 어긋나지 않게). */
+    data class State(
+        val fails: Int = 0,
+        val lockWallUntil: Long = 0L,      // 0 = 잠금 없음
+        val lockElapsedUntil: Long = 0L,
+        val lockBoot: Int = 0
+    )
+
     interface Store {
-        var fails: Int
-        var lockWallUntil: Long      // 0 = 잠금 없음
-        var lockElapsedUntil: Long
-        var lockBoot: Int
+        fun load(): State
+        fun save(s: State)
     }
 
     data class Now(val wallMs: Long, val elapsedMs: Long, val bootCount: Int)
@@ -27,36 +33,32 @@ class PinLockout(private val store: Store) {
         data class Locked(val remainingMs: Long) : Result
     }
 
-    fun remainingLockMs(now: Now): Long {
-        if (store.lockWallUntil == 0L) return 0L
-        val sameBoot = now.bootCount == store.lockBoot &&
-            now.elapsedMs >= store.lockElapsedUntil - LOCK_MS   // 경과 시간이 잠근 시점보다 작으면 재부팅
-        val left = if (sameBoot) store.lockElapsedUntil - now.elapsedMs
-                   else store.lockWallUntil - now.wallMs
-        return left.coerceIn(0L, LOCK_MS)
-    }
+    fun remainingLockMs(now: Now): Long = remaining(store.load(), now)
 
     fun submit(correct: Boolean, now: Now): Result {
-        val left = remainingLockMs(now)
+        val s = store.load()
+        val left = remaining(s, now)
         if (left > 0L) return Result.Locked(left)
-        if (store.lockWallUntil != 0L) {   // 끝난 잠금 정리
-            store.lockWallUntil = 0L
-            store.lockElapsedUntil = 0L
-        }
         if (correct) {
-            store.fails = 0
+            if (s != State()) store.save(State())   // 실패 횟수·끝난 잠금 정리
             return Result.Ok
         }
-        val fails = store.fails + 1
+        val fails = s.fails + 1
         if (fails >= MAX_FAILS) {
-            store.fails = 0
-            store.lockWallUntil = now.wallMs + LOCK_MS
-            store.lockElapsedUntil = now.elapsedMs + LOCK_MS
-            store.lockBoot = now.bootCount
+            store.save(State(0, now.wallMs + LOCK_MS, now.elapsedMs + LOCK_MS, now.bootCount))
             return Result.Locked(LOCK_MS)
         }
-        store.fails = fails
+        store.save(State(fails = fails))   // 끝난 잠금은 여기서 함께 지워진다
         return Result.Wrong(MAX_FAILS - fails)
+    }
+
+    private fun remaining(s: State, now: Now): Long {
+        if (s.lockWallUntil == 0L) return 0L
+        val sameBoot = now.bootCount == s.lockBoot &&
+            now.elapsedMs >= s.lockElapsedUntil - LOCK_MS   // 경과 시간이 잠근 시점보다 작으면 재부팅
+        val left = if (sameBoot) s.lockElapsedUntil - now.elapsedMs
+                   else s.lockWallUntil - now.wallMs
+        return left.coerceIn(0L, LOCK_MS)
     }
 
     companion object {

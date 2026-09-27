@@ -10,10 +10,10 @@ import org.junit.Test
 class PinLockoutTest {
 
     private class MemStore : PinLockout.Store {
-        override var fails = 0
-        override var lockWallUntil = 0L
-        override var lockElapsedUntil = 0L
-        override var lockBoot = 0
+        var s = PinLockout.State()
+        var saves = 0
+        override fun load() = s
+        override fun save(s: PinLockout.State) { this.s = s; saves++ }
     }
 
     private val store = MemStore()
@@ -33,6 +33,7 @@ class PinLockoutTest {
         assertEquals(Result.Wrong(1), failTimes(4, t0))
         assertEquals(Result.Locked(LOCK_MS), lockout.submit(false, t0))
         assertEquals(LOCK_MS, lockout.remainingLockMs(t0))
+        assertEquals("제출 한 번에 저장은 한 번(잠금 포함)", 5, store.saves)
     }
 
     @Test
@@ -40,7 +41,7 @@ class PinLockoutTest {
         failTimes(5, t0)
         val mid = t0.plus(60_000L)
         assertEquals(Result.Locked(LOCK_MS - 60_000L), lockout.submit(true, mid))
-        assertEquals("잠금 중 입력이 실패로 쌓이지 않는다", 0, store.fails)
+        assertEquals("잠금 중 입력이 실패로 쌓이지 않는다", 0, store.s.fails)
         assertEquals(LOCK_MS - 60_000L, lockout.remainingLockMs(mid))
     }
 
@@ -57,7 +58,7 @@ class PinLockoutTest {
     fun 맞히면_실패_횟수가_초기화된다() {
         failTimes(3, t0)
         assertEquals(Result.Ok, lockout.submit(true, t0))
-        assertEquals(0, store.fails)
+        assertEquals(0, store.s.fails)
         assertEquals("초기화 뒤에는 4번 틀려도 잠기지 않는다", Result.Wrong(1), failTimes(4, t0))
     }
 
