@@ -1,6 +1,8 @@
 package com.wf11.safealert.ui
 
+import android.view.MotionEvent
 import android.view.View
+import com.wf11.safealert.BuildConfig
 import com.wf11.safealert.R
 import com.wf11.safealert.utils.DevSettings
 import org.junit.Assert.assertEquals
@@ -44,5 +46,30 @@ class BleSettingsPinGateTest {
             activity.findViewById<View>(id).performClick()
             assertTrue("PIN 창이 떠야 한다", ShadowDialog.getLatestDialog()?.isShowing == true)
         }
+    }
+
+    /** (v1.1.98) 잠긴 컨트롤이 터치를 먹지 않아야 부모(묶음·행)가 받아 PIN 창을 띄운다. */
+    @Test
+    fun `잠긴 슬라이더와 스위치는 터치를 먹지 않는다`() {
+        val activity = Robolectric.buildActivity(BleSettingsActivity::class.java).setup().get()
+        val down = MotionEvent.obtain(0L, 0L, MotionEvent.ACTION_DOWN, 1f, 1f, 0)
+        for (id in listOf(R.id.seek_beacon_gain, R.id.sw_uwb)) {
+            assertFalse("잠긴 컨트롤은 터치를 부모로 넘긴다", activity.findViewById<View>(id).onTouchEvent(down))
+        }
+        down.recycle()
+    }
+
+    /** (v1.1.98) PIN 을 맞히면 풀리고, 풀린 뒤 행은 누를 수 있는 항목으로 안내되지 않는다. */
+    @Test
+    fun `PIN 을 맞히면 풀리고 행은 더 이상 클릭 대상이 아니다`() {
+        val activity = Robolectric.buildActivity(BleSettingsActivity::class.java).setup().get()
+        activity.findViewById<View>(R.id.group_beacon_gain).performClick()
+        val dialog = ShadowDialog.getLatestDialog()
+        val keys = listOf(R.id.btn0, R.id.btn1, R.id.btn2, R.id.btn3, R.id.btn4,
+                          R.id.btn5, R.id.btn6, R.id.btn7, R.id.btn8, R.id.btn9)
+        BuildConfig.DEV_PIN.forEach { dialog.findViewById<View>(keys[it - '0']).performClick() }
+        assertTrue("수신 강도가 풀린다", activity.findViewById<View>(R.id.seek_beacon_gain).isEnabled)
+        assertFalse(activity.findViewById<View>(R.id.group_beacon_gain).isClickable)
+        assertFalse(activity.findViewById<View>(R.id.row_uwb).isClickable)
     }
 }

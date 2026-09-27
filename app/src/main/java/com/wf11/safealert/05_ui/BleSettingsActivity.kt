@@ -70,12 +70,12 @@ class BleSettingsActivity : AppCompatActivity() {
         setupAccordion()
         updateSectionSummaries()
         lockDevManaged()   // (v1.1.77) 리스너 배선 뒤에 잠근다 — 순서가 바뀌어도 결과는 같지만 의도를 남긴다
-        applyPinGate()
         listOf(binding.groupBeaconGain, binding.rowUwb).forEach { row ->
             row.setOnClickListener {
                 if (!pinUnlocked) showDevPinDialog { pinUnlocked = true; applyPinGate() }
             }
         }
+        applyPinGate()   // 리스너 뒤 — setOnClickListener 가 켠 clickable 을 잠금 상태에 맞춘다
     }
 
     // (v1.1.97) 비콘 수신 강도·UWB 사용은 기본 잠금 — 행이나 잠긴 컨트롤을 눌러 PIN 을 확인하면
@@ -88,6 +88,9 @@ class BleSettingsActivity : AppCompatActivity() {
         binding.seekBeaconGain.isEnabled = pinUnlocked
         binding.swUwb.isEnabled = pinUnlocked && UwbRanger.isHardwareSupported(this)   // 미지원 기기는 계속 비활성
         binding.swUwb.isClickable = pinUnlocked
+        // (v1.1.98) 풀린 뒤에는 행이 누를 수 있는 항목으로 안내되지 않게(화면 읽기 기능)
+        binding.groupBeaconGain.isClickable = !pinUnlocked
+        binding.rowUwb.isClickable = !pinUnlocked
         val a = if (pinUnlocked) 1f else 0.4f
         binding.seekBeaconGain.alpha = a
         binding.swUwb.alpha = a
