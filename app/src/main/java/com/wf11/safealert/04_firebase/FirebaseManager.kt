@@ -41,7 +41,8 @@ object FirebaseManager {
             "timestamp" to System.currentTimeMillis(),
             "deviceId" to withSite(logId),   // (v1.1.90 SA-1) 센터명-장비ID (예: WF11-CB-01)
             "walkerId" to withSite(walkerId),
-            "rssi" to rssi.coerceIn(-150, 20),   // (v1.1.97) 저장 규칙 범위 — 밖이면 기록 전체가 거부된다
+            // (v1.1.97) 저장 규칙 범위(−150~20) 밖의 값은 0 = 값 없음(UWB 경로가 RSSI 없을 때 쓰는 표기)
+            "rssi" to (rssi.takeIf { it in -150..20 } ?: 0),
             "alertLevel" to level,
             "myRole" to myRole,
             "peerRole" to peerRole,
