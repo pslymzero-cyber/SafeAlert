@@ -8,7 +8,7 @@ on:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04   # ubuntu-latest 는 2026-10-19 부터 Ubuntu 26 으로 바뀐다(릴리스 재현성 위해 고정)
     permissions:
       contents: write   # GitHub Release 생성·업로드 권한
 
