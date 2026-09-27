@@ -349,7 +349,7 @@ class BeaconManagerActivity : AppCompatActivity() {
         }
         // (v1.1.97) 읽을 수 없는 항목이나 범위 밖 항목이 하나라도 있으면 세트 전체를 받지 않는다
         val incoming = BeaconRegistry.parseProfiles(json)
-            ?: return showRejectedSet(set, "읽을 수 없는 항목이 있습니다(형식 오류)")
+            .getOrElse { return showRejectedSet(set, it.message ?: "읽을 수 없는 항목이 있습니다") }
         if (incoming.isEmpty()) {
             Toast.makeText(this, "세트가 비어 있습니다", Toast.LENGTH_SHORT).show()
             return

@@ -139,15 +139,19 @@ object BeaconRegistry {
     /**
      * 공유받은 JSON 배열 문자열을 BeaconProfile 목록으로 파싱.
      * (v1.1.97) 읽을 수 없는 항목(객체 아님·UUID 없음·알려진 필드의 타입 오류)이 하나라도 있거나
-     * JSON 자체가 깨지면 null — 세트 전체를 받지 않는다. 빈 배열은 빈 목록.
+     * JSON 자체가 깨지면 실패 — 세트 전체를 받지 않는다. 빈 배열은 빈 목록.
+     * (v1.1.98) 실패 사유에 몇 번째 항목의 어느 필드인지 담는다(보낸 기기에서 고칠 수 있게).
      */
-    fun parseProfiles(json: String): List<BeaconProfile>? = runCatching {
-        val arr = JSONArray(json)
-        (0 until arr.length()).map { i ->
-            val obj = arr.optJSONObject(i) ?: return null
+    fun parseProfiles(json: String): Result<List<BeaconProfile>> {
+        val arr = runCatching { JSONArray(json) }.getOrElse { return parseFail("JSON 형식이 깨졌습니다") }
+        val out = ArrayList<BeaconProfile>(arr.length())
+        for (i in 0 until arr.length()) {
+            val no = i + 1
+            val obj = arr.optJSONObject(i) ?: return parseFail("${no}번째 항목이 비콘 정보 형식이 아닙니다")
+            wrongTypeField(obj)?.let { return parseFail("${no}번째 항목의 $it 값 형식이 틀렸습니다") }
             val uuid = normUuid(obj.optString("uuid", ""))
-            if (uuid.isEmpty() || hasWrongType(obj)) return null
-            BeaconProfile(
+            if (uuid.isEmpty()) return parseFail("${no}번째 항목에 UUID 가 없습니다")
+            out += BeaconProfile(
                 uuid          = uuid,
                 label         = obj.optString("label", uuid),
                 type          = obj.optString("type", "IBEACON"),
@@ -158,13 +162,16 @@ object BeaconRegistry {
                 visitorBeacon = obj.optBoolean("visitorBeacon", true)
             )
         }
-    }.getOrNull()
+        return Result.success(out)
+    }
 
-    // 값이 있으면 타입이 맞아야 한다 — opt*() 는 타입이 틀린 값을 조용히 기본값으로 바꾼다
-    private fun hasWrongType(o: JSONObject): Boolean =
-        listOf("uuid", "label", "type").any { o.has(it) && o.opt(it) !is String } ||
-        listOf("addedAt", "rssiOffset", "zoneEnterRssi").any { o.has(it) && o.opt(it) !is Number } ||
-        listOf("zoneMute", "visitorBeacon").any { o.has(it) && o.opt(it) !is Boolean }
+    private fun parseFail(reason: String) = Result.failure<List<BeaconProfile>>(IllegalArgumentException(reason))
+
+    // 값이 있으면 타입이 맞아야 한다 — opt*() 는 타입이 틀린 값을 조용히 기본값으로 바꾼다. 틀린 필드 이름, 없으면 null
+    private fun wrongTypeField(o: JSONObject): String? =
+        listOf("uuid", "label", "type").firstOrNull { o.has(it) && o.opt(it) !is String }
+            ?: listOf("addedAt", "rssiOffset", "zoneEnterRssi").firstOrNull { o.has(it) && o.opt(it) !is Number }
+            ?: listOf("zoneMute", "visitorBeacon").firstOrNull { o.has(it) && o.opt(it) !is Boolean }
 
     /** 공유 병합 결과 (추가·갱신·한도초과 건수) */
     data class MergeResult(val added: Int, val updated: Int, val skipped: Int)
