@@ -287,6 +287,7 @@
                         style="@style/SA.SectionBody">
 
                         <LinearLayout
+                            android:id="@+id/row_beacon_gain"
                             style="@style/SA.Row"
                             android:layout_marginTop="0dp">
                             <TextView
@@ -305,7 +306,7 @@
                             android:max="30" />
                         <TextView
                             style="@style/SA.Hint"
-                            android:text="등록된 모든 비콘의 감지 범위를 비율로 일괄 조절 · 100% = 기본" />
+                            android:text="등록된 모든 비콘의 감지 범위를 비율로 일괄 조절 · 100% = 기본 · 바꾸려면 '비콘 수신 강도' 행을 눌러 PIN 확인" />
 
                         <!-- [v1.1.60] EPJ 비하인드 — 3요소 gone(핸들러·저장 로직 보존, 부활 시 visibility 만 제거) -->
                         <LinearLayout
@@ -381,7 +382,9 @@
                             android:layout_marginTop="0dp"
                             android:text="지원 기기끼리 실거리(m)를 측정 · UWB 신호가 오는 상대는 실측 거리로, 그 외는 BLE 신호로 경보 판정" />
 
-                        <LinearLayout style="@style/SA.Row">
+                        <LinearLayout
+                            android:id="@+id/row_uwb"
+                            style="@style/SA.Row">
                             <TextView
                                 style="@style/SA.RowLabel"
                                 android:text="UWB 사용" />
@@ -394,7 +397,7 @@
                             android:id="@+id/tv_uwb_hint"
                             style="@style/SA.Hint"
                             android:layout_marginTop="@dimen/sa_space_hairline"
-                            android:text="기본 켜짐 · UWB 신호가 오는 동안은 실측 거리로만 경고/위험 판정 · 신호가 없으면 BLE 신호로 판정" />
+                            android:text="기본 켜짐 · UWB 신호가 오는 동안은 실측 거리로만 경고/위험 판정 · 신호가 없으면 BLE 신호로 판정 · 바꾸려면 'UWB 사용' 행을 눌러 PIN 확인" />
 
                         <Button
                             android:id="@+id/btn_uwb_permission"

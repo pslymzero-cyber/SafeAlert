@@ -306,8 +306,9 @@ class MainActivity : AppCompatActivity() {
         binding.cardBleSettings.setOnClickListener {
             startActivity(Intent(this, BleSettingsActivity::class.java))
         }
+        // (v1.1.97) 비콘 관리(등록·안전구역·삭제·검색·공유 받기)는 PIN 확인 후 진입
         binding.cardBeacon.setOnClickListener    {
-            startActivity(Intent(this, BeaconManagerActivity::class.java))
+            showDevPinDialog { startActivity(Intent(this, BeaconManagerActivity::class.java)) }
         }
         binding.btnTestAlert.setOnClickListener  { toggleTestAlert() }
         binding.tvMutedIndicator.setOnClickListener {

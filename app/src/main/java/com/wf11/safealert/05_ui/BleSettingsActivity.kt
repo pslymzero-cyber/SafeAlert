@@ -70,6 +70,24 @@ class BleSettingsActivity : AppCompatActivity() {
         setupAccordion()
         updateSectionSummaries()
         lockDevManaged()   // (v1.1.77) 리스너 배선 뒤에 잠근다 — 순서가 바뀌어도 결과는 같지만 의도를 남긴다
+        applyPinGate()
+        listOf(binding.rowBeaconGain, binding.rowUwb).forEach { row ->
+            row.setOnClickListener {
+                if (!pinUnlocked) showDevPinDialog { pinUnlocked = true; applyPinGate() }
+            }
+        }
+    }
+
+    // (v1.1.97) 비콘 수신 강도·UWB 사용은 기본 잠금 — 해당 행을 눌러 PIN 을 확인하면
+    //   이 화면이 열려 있는 동안만 풀린다(재생성·재진입 시 다시 잠금). 표시는 lockDevManaged 와 같다.
+    private var pinUnlocked = false
+
+    private fun applyPinGate() {
+        binding.seekBeaconGain.isEnabled = pinUnlocked
+        binding.swUwb.isEnabled = pinUnlocked && UwbRanger.isHardwareSupported(this)   // 미지원 기기는 계속 비활성
+        val a = if (pinUnlocked) 1f else 0.4f
+        binding.seekBeaconGain.alpha = a
+        binding.swUwb.alpha = a
     }
 
     private fun loadValues() {
@@ -161,7 +179,7 @@ class BleSettingsActivity : AppCompatActivity() {
      * (v1.1.77→v1.1.79) 개발자 설정 전용 항목 잠금 — 값은 보여주되 이 화면에서는 못 바꾼다.
      * UWB 섹션에서 남는 조작은 사용 여부 스위치(swUwb)와 권한 진입점(btnUwbPermission) 둘뿐이다.
      * 권한 버튼은 옵션이 아니라 시스템 권한 진입점이라 잠그면 스위치 자체가 무의미해진다.
-     * 필터 강도(rgKalmanPreset)·비콘 게인은 그대로 편집 가능.
+     * 필터 강도(rgKalmanPreset)는 그대로 편집 가능. 비콘 게인·UWB 스위치는 applyPinGate(PIN 확인 후 해제).
      * 에코 상세 펼침 행(rowEchoAutoCalib)은 잠그지 않는다 — 진단값을 봐야 하기 때문.
      * RadioGroup 은 isEnabled 가 자식에 전파되지 않아 라디오 3개를 개별로 잠근다.
      */
