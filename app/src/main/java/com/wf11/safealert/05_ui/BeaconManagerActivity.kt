@@ -352,12 +352,27 @@ class BeaconManagerActivity : AppCompatActivity() {
             Toast.makeText(this, "세트가 비어 있습니다", Toast.LENGTH_SHORT).show()
             return
         }
-        val existing = BeaconRegistry.getAll().map { it.uuid.uppercase() }.toSet()
-        val newCnt = incoming.count { it.uuid.uppercase() !in existing }
-        val updCnt = incoming.size - newCnt
-        val msg = "세트: ${set.name}\n보낸 기기: ${set.sender}\n" +
-                  "비콘 ${incoming.size}개 (신규 $newCnt · 갱신 $updCnt)\n\n" +
-                  "받으면 같은 UUID는 받은 값으로 갱신되고, 신규는 추가됩니다. 내 기기에만 있는 비콘은 그대로 유지됩니다."
+        // (v1.1.97) 범위 밖 항목이 하나라도 있으면 세트 전체를 받지 않는다(클라우드 삭제는 할 수 있다)
+        BeaconRegistry.validateShared(incoming)?.let { reason ->
+            AlertDialog.Builder(this)
+                .setTitle("받을 수 없는 세트")
+                .setMessage("세트: ${set.name}\n보낸 기기: ${set.sender}\n\n$reason\n\n이 세트는 받지 않습니다.")
+                .setPositiveButton("확인", null)
+                .setNeutralButton("이 세트 삭제") { _, _ -> confirmDeleteSet(set) }
+                .show()
+            return
+        }
+        // (v1.1.97) 받으면 바뀌는 내역 — 안전구역·방문자용처럼 경보에 영향을 주는 변경을 미리 보여 준다
+        val c = BeaconRegistry.summarizeChanges(BeaconRegistry.getAll(), incoming)
+        val msg = buildString {
+            append("세트: ${set.name}\n보낸 기기: ${set.sender}\n비콘 ${incoming.size}개\n\n")
+            append("· 새로 추가 ${c.added}개 · 갱신 ${incoming.size - c.added}개\n")
+            append("· 감지 범위 보정값 변경 ${c.offsetChanged}개\n")
+            append("· 안전구역 지정 ${c.zoneOn}개 · 해제 ${c.zoneOff}개\n")
+            if (c.zoneWidened > 0) append("· 안전구역 반경 넓어짐 ${c.zoneWidened}개\n")
+            if (c.visitorChanged > 0) append("· 방문자용 설정 변경 ${c.visitorChanged}개\n")
+            append("\n받으면 같은 UUID는 받은 값으로 갱신되고, 신규는 추가됩니다. 내 기기에만 있는 비콘은 그대로 유지됩니다.")
+        }
         AlertDialog.Builder(this)
             .setTitle("받기 확인")
             .setMessage(msg)
@@ -369,21 +384,23 @@ class BeaconManagerActivity : AppCompatActivity() {
                     (if (r.skipped > 0) " · 한도초과 ${r.skipped}" else ""),
                     Toast.LENGTH_LONG).show()
             }
-            .setNeutralButton("이 세트 삭제") { _, _ ->
-                AlertDialog.Builder(this)
-                    .setTitle("세트 삭제")
-                    .setMessage("'${set.name}' 공유 세트를 클라우드에서 삭제합니다.\n(내 기기에 등록된 비콘은 삭제되지 않습니다)")
-                    .setPositiveButton("삭제") { _, _ ->
-                        showDevPinDialog {
-                            FirebaseManager.deleteBeaconSet(set.key) { ok ->
-                                runOnUiThread {
-                                    Toast.makeText(this, if (ok) "삭제됨: ${set.name}" else "삭제 실패", Toast.LENGTH_SHORT).show()
-                                }
-                            }
+            .setNeutralButton("이 세트 삭제") { _, _ -> confirmDeleteSet(set) }
+            .setNegativeButton("취소", null)
+            .show()
+    }
+
+    private fun confirmDeleteSet(set: FirebaseManager.BeaconSetMeta) {
+        AlertDialog.Builder(this)
+            .setTitle("세트 삭제")
+            .setMessage("'${set.name}' 공유 세트를 클라우드에서 삭제합니다.\n(내 기기에 등록된 비콘은 삭제되지 않습니다)")
+            .setPositiveButton("삭제") { _, _ ->
+                showDevPinDialog {
+                    FirebaseManager.deleteBeaconSet(set.key) { ok ->
+                        runOnUiThread {
+                            Toast.makeText(this, if (ok) "삭제됨: ${set.name}" else "삭제 실패", Toast.LENGTH_SHORT).show()
                         }
                     }
-                    .setNegativeButton("취소", null)
-                    .show()
+                }
             }
             .setNegativeButton("취소", null)
             .show()

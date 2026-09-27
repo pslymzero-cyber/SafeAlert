@@ -181,6 +181,49 @@ object BeaconRegistry {
         return MergeResult(added, updated, skipped)
     }
 
+    /**
+     * (v1.1.97) 받은 세트 검증 — 하나라도 어긋나면 세트 전체를 받지 않는다. 통과면 null, 아니면 안내 문구.
+     * 범위는 등록 화면의 입력 범위와 같다(감지 범위 보정 0~20, 존 진입 기준 −100~−30dBm).
+     */
+    fun validateShared(incoming: List<BeaconProfile>): String? {
+        val seen = HashSet<String>()
+        for (p in incoming) {
+            val name = p.label.ifBlank { p.uuid }
+            if (!seen.add(normUuid(p.uuid))) return "같은 비콘이 두 번 들어 있습니다: $name"
+            if (p.rssiOffset !in 0..20) return "$name: 감지 범위 보정값 ${p.rssiOffset} (허용 0~20)"
+            if (p.zoneEnterRssi !in -100..-30) return "$name: 존 진입 기준 ${p.zoneEnterRssi}dBm (허용 −100~−30)"
+        }
+        return null
+    }
+
+    /** (v1.1.97) 받기 전 변경 내역 건수 */
+    data class ChangeSummary(
+        val added: Int, val offsetChanged: Int, val zoneOn: Int, val zoneOff: Int,
+        val zoneWidened: Int, val visitorChanged: Int
+    )
+
+    /** (v1.1.97) 받으면 무엇이 바뀌는지 센다 — UUID 대조는 mergeProfiles 와 같다(로컬 대문자 = 받은 값 normUuid). */
+    fun summarizeChanges(local: List<BeaconProfile>, incoming: List<BeaconProfile>): ChangeSummary {
+        val byUuid = local.associateBy { it.uuid.uppercase() }
+        var added = 0; var offset = 0; var zoneOn = 0; var zoneOff = 0; var widened = 0; var visitor = 0
+        for (p in incoming) {
+            val old = byUuid[normUuid(p.uuid)]
+            if (old == null) {
+                added++
+                if (p.zoneMute) zoneOn++
+                continue
+            }
+            if (p.rssiOffset != old.rssiOffset) offset++
+            when {
+                p.zoneMute && !old.zoneMute -> zoneOn++
+                !p.zoneMute && old.zoneMute -> zoneOff++
+                p.zoneMute && p.zoneEnterRssi < old.zoneEnterRssi -> widened++   // 더 약한 신호에서도 존 진입 = 반경 넓어짐
+            }
+            if (p.visitorBeacon != old.visitorBeacon) visitor++
+        }
+        return ChangeSummary(added, offset, zoneOn, zoneOff, widened, visitor)
+    }
+
     /** 이 fullId 가 비콘인지(BEA_ 마커 포함). 전역 비콘 수신 강도(게인)를 비콘에만 적용하기 위함. */
     fun isBeaconFullId(fullId: String): Boolean = fullId.contains("BEA_")
 
