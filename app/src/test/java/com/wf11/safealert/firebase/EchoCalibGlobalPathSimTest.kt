@@ -95,17 +95,27 @@ class EchoCalibGlobalPathSimTest {
         assertTrue("노이즈 표본은 제외", r.isEmpty())
     }
 
-    /** S5. (v1.1.97) 표본 비중 상한 — n=500000 극단값 노드 1개 + 정상 노드 3개(n=상한).
-     *  상한이 없으면 (2×9000 + 40×500000)/509000 ≈ 39.3dB 로 극단값이 평균을 가져간다.
-     *  상한이 있으면 극단값은 정상 노드 1개 몫만 반영된다: 2 + (40−2)/4 = 11.5dB. */
+    /** S5. (v1.1.97) n=500000 극단값 노드 1개 + 정상 노드 3개(n=상한).
+     *  n 가중 평균이면 (2×9000 + 40×500000)/509000 ≈ 39.3dB 로 극단값이 결과를 가져간다.
+     *  비중 상한 + 가중 중앙값이면 극단값 1개는 결과를 움직이지 못한다. */
     @Test
-    fun s5_극단값_노드는_정상_노드_하나만큼만_반영된다() {
+    fun s5_극단값_노드_하나는_결과를_끌지_못한다() {
         val normal = (1..3).map { node("A$it", MY, "B" to stat(2.0, CAP)) }
         val extreme = node("X", MY, "B" to stat(40.0, 500_000))
         val r = FirebaseManager.aggregateEchoPriors(normal + extreme + node("B", PEER), MY, IQR_GATE, CAP)
         val (m, n) = r[PEER]!!
-        assertEquals("극단값은 정상 노드 1개 몫(1/4)까지만", 2.0 + (40.0 - 2.0) / 4, m, 1e-9)
-        assertEquals("Σn 도 같은 상한으로 센다(게이트 3000 통과)", 4 * CAP, n)
+        assertEquals("정상 노드 값 그대로", 2.0, m, 1e-9)
+        assertEquals("Σn 은 같은 비중의 합(게이트 3000 통과)", 4 * CAP, n)
+    }
+
+    /** S7. (v1.1.97) 비중이 같은 표본 2개면 두 값의 가운데 — 평균과 같다. */
+    @Test
+    fun s7_표본_2개면_두_값의_가운데() {
+        val r = FirebaseManager.aggregateEchoPriors(listOf(
+            node("A1", MY, "B" to stat(2.0, CAP)),
+            node("A2", MY, "B" to stat(4.0, CAP)),
+            node("B", PEER)), MY, IQR_GATE, CAP)
+        assertEquals(3.0, r[PEER]!!.first, 1e-9)
     }
 
     /** S6. (v1.1.97) 상한 = 게이트면 게이트 통과 여부는 그대로 — 큰 n 노드 1개도 Σn=상한으로 통과, 작은 n 은 그대로. */

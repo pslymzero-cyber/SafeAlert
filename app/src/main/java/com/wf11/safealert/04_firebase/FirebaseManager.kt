@@ -284,31 +284,40 @@ object FirebaseManager {
 
     /** 순수 집계: 방향성 모델쌍(내모델→상대모델) 프라이어 — 상대모델 → (fold 중앙값 dB, Σn).
      *  fold 규칙: 내 모델 노드가 상대모델을 잰 표본은 +m, 상대모델 노드가 내 모델을 잰 표본은 −m
-     *  (편차는 반대칭: A가 본 A−B = −(B가 본 B−A)). n 가중 평균. 동일 모델쌍(M×M)은 양방향이
+     *  (편차는 반대칭: A가 본 A−B = −(B가 본 B−A)). 동일 모델쌍(M×M)은 양방향이
      *  자연히 ±상쇄돼 0 근방으로 수렴한다(대칭 하드웨어의 기대값). per-sample 산포 게이트로
      *  노이즈 표본(iqr>maxIqrDb) 제외, 모델 미상 피어(자기 노드 없음) 제외. Σn 유효성은 호출부가 판단.
-     *  (v1.1.97) 표본 하나의 반영 비중은 min(n, capN) — 가중치와 Σn 을 같은 값으로 누적한다.
-     *  capN 을 Σn 게이트(echoCalMinTicks)와 같게 주면 게이트 통과 여부는 상한이 없을 때와 같다. */
+     *  (v1.1.97) 표본 비중 min(n, capN) 의 가중 중앙값 — 동떨어진 표본 하나가 결과를 끌지 못한다.
+     *  Σn 은 같은 비중의 합이라 capN 을 Σn 게이트(echoCalMinTicks)와 같게 주면 게이트 통과 여부는
+     *  상한이 없을 때와 같다. */
     fun aggregateEchoPriors(nodes: List<EchoCalibNode>, myModel: String, maxIqrDb: Double, capN: Int): Map<String, Pair<Double, Int>> {
         val modelById = nodes.associate { it.id to it.model }
-        val sum = mutableMapOf<String, Double>()
-        val cnt = mutableMapOf<String, Int>()
+        val samples = mutableMapOf<String, MutableList<Pair<Double, Int>>>()   // 상대모델 → (fold 값, 비중)
         for (node in nodes) for ((peerId, st) in node.peers) {
             val peerModel = modelById[peerId] ?: continue
             if (st.n <= 0 || st.iqr > maxIqrDb) continue
             val w = minOf(st.n, capN)
             when {
-                node.model == myModel -> {   // 직접: 내 모델이 상대모델을 잰 중앙값(+)
-                    sum[peerModel] = (sum[peerModel] ?: 0.0) + st.m * w
-                    cnt[peerModel] = (cnt[peerModel] ?: 0) + w
-                }
-                peerModel == myModel -> {    // 역방향: 상대모델 노드가 내 모델을 잰 중앙값(−로 fold)
-                    sum[node.model] = (sum[node.model] ?: 0.0) - st.m * w
-                    cnt[node.model] = (cnt[node.model] ?: 0) + w
-                }
+                node.model == myModel ->     // 직접: 내 모델이 상대모델을 잰 중앙값(+)
+                    samples.getOrPut(peerModel) { mutableListOf() } += st.m to w
+                peerModel == myModel ->      // 역방향: 상대모델 노드가 내 모델을 잰 중앙값(−로 fold)
+                    samples.getOrPut(node.model) { mutableListOf() } += -st.m to w
             }
         }
-        return cnt.mapValues { (k, n) -> Pair((sum[k] ?: 0.0) / n, n) }
+        return samples.mapValues { (_, s) -> weightedMedian(s) to s.sumOf { it.second } }
+    }
+
+    /** 가중 중앙값 — 누적 비중이 절반을 넘는 첫 값. 정확히 절반에서 끊기면 양쪽 값의 평균(표본 2개 = 평균). */
+    private fun weightedMedian(samples: List<Pair<Double, Int>>): Double {
+        val sorted = samples.sortedBy { it.first }
+        val total = sorted.sumOf { it.second.toLong() }
+        var acc = 0L
+        for ((i, s) in sorted.withIndex()) {
+            acc += s.second
+            if (acc * 2 > total) return s.first
+            if (acc * 2 == total) return (s.first + sorted[i + 1].first) / 2
+        }
+        return sorted.last().first
     }
 
 }
