@@ -1,6 +1,7 @@
 ﻿package com.wf11.safealert.firebase
 
 import android.util.Log
+import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.database.DataSnapshot
 import com.google.firebase.database.FirebaseDatabase
 import com.wf11.safealert.BuildConfig
@@ -25,6 +26,10 @@ object FirebaseManager {
     private fun siteNode(name: String) =
         DevSettings.siteCode.let { if (it.isEmpty()) db.child(name) else db.child(name).child(it) }
 
+    /** (v1.1.97) 쓰기 데이터에 작성 단말의 로그인 uid 를 붙인다. 로그인 전(null)이면 필드를 생략한다(기록만, 읽기·강제 없음). */
+    private fun Map<String, Any>.withUid(): Map<String, Any> =
+        FirebaseAuth.getInstance().currentUser?.uid?.let { this + ("uid" to it) } ?: this
+
     // 역할(myRole/peerRole)은 03_service 에서 이름으로 변환해 넘긴다 — 04_firebase 는
     //   02_ble 에 의존하지 않는다(레이어 규칙). 기본값이 있어 기존 호출은 그대로 컴파일된다.
     fun saveAlert(deviceId: String, walkerId: String, rssi: Int, level: String,
@@ -36,12 +41,12 @@ object FirebaseManager {
             "timestamp" to System.currentTimeMillis(),
             "deviceId" to withSite(logId),   // (v1.1.90 SA-1) 센터명-장비ID (예: WF11-CB-01)
             "walkerId" to withSite(walkerId),
-            "rssi" to rssi,
+            "rssi" to rssi.coerceIn(-150, 20),   // (v1.1.97) 저장 규칙 범위 — 밖이면 기록 전체가 거부된다
             "alertLevel" to level,
             "myRole" to myRole,
             "peerRole" to peerRole,
             "site" to DevSettings.siteCode
-        )
+        ).withUid()
         siteNode("alerts").child(today).child(alertId).setValue(data)
             .addOnFailureListener { Log.e(TAG, "경보 저장 실패: ${it.message}") }
         Log.d(TAG, "경보 저장: $level ${withSite(logId)} rssi=$rssi")
@@ -172,7 +177,7 @@ object FirebaseManager {
             "count"        to count,
             "sender"       to sender,
             "timestamp"    to System.currentTimeMillis()
-        )
+        ).withUid()
         node.child(key).setValue(data)
             .addOnSuccessListener { Log.d(TAG, "비콘 세트 업로드: $key (${count}개)"); onResult(true) }
             .addOnFailureListener { Log.e(TAG, "비콘 세트 업로드 실패: ${it.message}"); onResult(false) }
@@ -234,7 +239,7 @@ object FirebaseManager {
             //   사업장별이고 라벨도 남기지만, 이 에코 업로드는 경로가 평면이고 라벨만 남는다.
             "site"  to DevSettings.siteCode,
             "peers" to peers.mapValues { (_, v) -> mapOf("m" to v.first, "n" to v.second, "iqr" to v.third) }
-        )
+        ).withUid()
         db.child("echo_calib").child(sanitizeKey(myId)).setValue(data)
             .addOnSuccessListener { Log.d(TAG, "에코보정 업로드: $myId (피어 ${peers.size})"); onResult(true) }
             .addOnFailureListener { Log.e(TAG, "에코보정 업로드 실패: ${it.message}"); onResult(false) }
