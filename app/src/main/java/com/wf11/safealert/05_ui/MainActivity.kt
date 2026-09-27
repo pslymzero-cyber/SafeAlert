@@ -9,6 +9,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.graphics.Color
@@ -25,6 +26,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
+import android.os.SystemClock
 import android.provider.Settings
 import android.view.View
 import android.view.Window
@@ -46,6 +48,7 @@ import com.wf11.safealert.model.PitType
 import com.wf11.safealert.utils.BeaconRegistry
 import com.wf11.safealert.utils.DevSettings
 import com.wf11.safealert.utils.OverlayManager
+import com.wf11.safealert.utils.PinLockout
 import com.wf11.safealert.databinding.ActivityMainBinding
 import com.wf11.safealert.databinding.DialogPinBinding
 import com.wf11.safealert.databinding.DialogPitSelectBinding
@@ -1103,7 +1106,12 @@ class MainActivity : AppCompatActivity() {
 
 // ── PIN 다이얼로그 ──────────────────────────────────────────
 //   설정 진입·비콘 공유 전송/삭제 공용. PIN 일치 시 닫고 onSuccess 실행.
+//   (v1.1.97) 연속 오류 잠금(PinLockout) — 잠금 중에는 입력 창 대신 남은 시간을 안내한다.
 fun Activity.showDevPinDialog(onSuccess: () -> Unit) {
+    val lockout = PinLockout(PrefsPinStore(getSharedPreferences(PIN_LOCKOUT_PREFS, Context.MODE_PRIVATE)))
+    val lockedMs = lockout.remainingLockMs(pinNow())
+    if (lockedMs > 0L) return showPinLockedNotice(lockedMs)
+
     val dialog = Dialog(this)
     dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
     val pb = DialogPinBinding.inflate(layoutInflater)
@@ -1135,13 +1143,21 @@ fun Activity.showDevPinDialog(onSuccess: () -> Unit) {
         pb.tvError.visibility = View.INVISIBLE
         if (input.length == 3) {
             // (v1.1.90) 설정 PIN — 값은 빌드 시 주입(BuildConfig + CI Secrets). 3자리 유지(장갑 입력)
-            if (input.toString() == BuildConfig.DEV_PIN) {
-                dialog.dismiss()
-                onSuccess()
-            } else {
-                pb.tvError.visibility = View.VISIBLE
-                input.clear()
-                updateDots()
+            when (val r = lockout.submit(input.toString() == BuildConfig.DEV_PIN, pinNow())) {
+                PinLockout.Result.Ok -> {
+                    dialog.dismiss()
+                    onSuccess()
+                }
+                is PinLockout.Result.Wrong -> {
+                    pb.tvError.text = "PIN이 올바르지 않습니다 (남은 시도 ${r.triesLeft}회)"
+                    pb.tvError.visibility = View.VISIBLE
+                    input.clear()
+                    updateDots()
+                }
+                is PinLockout.Result.Locked -> {
+                    dialog.dismiss()
+                    showPinLockedNotice(r.remainingMs)
+                }
             }
         }
     }
@@ -1161,4 +1177,39 @@ fun Activity.showDevPinDialog(onSuccess: () -> Unit) {
     }
 
     dialog.show()
+}
+
+// (v1.1.97) PIN 잠금 상태는 설정(dev_settings)과 분리된 파일에 둔다 — 설정 초기화와 무관하게 유지.
+private const val PIN_LOCKOUT_PREFS = "pin_lockout"
+
+//   commit(동기) — 입력 직후 앱을 닫아도 횟수가 남게. 값 4개짜리 파일이라 부담이 없다.
+private class PrefsPinStore(private val p: SharedPreferences) : PinLockout.Store {
+    override var fails: Int
+        get() = p.getInt("fails", 0)
+        set(v) { p.edit().putInt("fails", v).commit() }
+    override var lockWallUntil: Long
+        get() = p.getLong("lock_wall_until", 0L)
+        set(v) { p.edit().putLong("lock_wall_until", v).commit() }
+    override var lockElapsedUntil: Long
+        get() = p.getLong("lock_elapsed_until", 0L)
+        set(v) { p.edit().putLong("lock_elapsed_until", v).commit() }
+    override var lockBoot: Int
+        get() = p.getInt("lock_boot", 0)
+        set(v) { p.edit().putInt("lock_boot", v).commit() }
+}
+
+private fun Context.pinNow() = PinLockout.Now(
+    wallMs = System.currentTimeMillis(),
+    elapsedMs = SystemClock.elapsedRealtime(),
+    bootCount = Settings.Global.getInt(contentResolver, Settings.Global.BOOT_COUNT, 0)
+)
+
+private fun Activity.showPinLockedNotice(remainingMs: Long) {
+    val sec = (remainingMs + 999L) / 1000L
+    AlertDialog.Builder(this)
+        .setTitle("PIN 입력 잠김")
+        .setMessage("PIN을 ${PinLockout.MAX_FAILS}회 연속 틀려 입력이 잠겼습니다.\n" +
+            "${sec / 60}분 ${sec % 60}초 후 다시 시도하세요.")
+        .setPositiveButton("확인", null)
+        .show()
 }
