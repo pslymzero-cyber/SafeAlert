@@ -1,5 +1,6 @@
 ﻿package com.wf11.safealert.firebase
 
+import android.content.Context
 import android.util.Log
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.database.DataSnapshot
@@ -26,9 +27,37 @@ object FirebaseManager {
     private fun siteNode(name: String) =
         DevSettings.siteCode.let { if (it.isEmpty()) db.child(name) else db.child(name).child(it) }
 
-    /** (v1.1.97) 쓰기 데이터에 작성 단말의 로그인 uid 를 붙인다. 로그인 전(null)이면 필드를 생략한다(기록만, 읽기·강제 없음). */
-    private fun Map<String, Any>.withUid(): Map<String, Any> =
-        FirebaseAuth.getInstance().currentUser?.uid?.let { this + ("uid" to it) } ?: this
+    // ── (v1.1.98) 작성 단말 uid — DB 규칙이 경보 기록·비콘 공유·에코 보정 쓰기에 uid(=auth.uid)를 요구한다 ──
+    private fun currentUid(): String? = runCatching { FirebaseAuth.getInstance().currentUser?.uid }.getOrNull()
+
+    private var pending: PendingAlerts? = null
+
+    /** 앱 시작 시 1회(SafeAlertApp) — 보류 기록 저장소를 열고, 로그인되면(이미 돼 있어도) 보류분을 보낸다. */
+    fun init(context: Context) {
+        pending = PendingAlerts(context.getSharedPreferences("pending_alerts", Context.MODE_PRIVATE))
+        try {
+            FirebaseAuth.getInstance().addAuthStateListener { auth ->
+                auth.currentUser?.uid?.let { flushPendingAlerts(it) }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "로그인 상태 구독 실패: ${e.message}")
+        }
+    }
+
+    private fun flushPendingAlerts(uid: String) {
+        val items = pending?.drain().orEmpty()
+        if (items.isEmpty()) return
+        val database = FirebaseDatabase.getInstance()
+        for ((url, data) in items) {
+            runCatching { database.getReferenceFromUrl(url) }
+                .onSuccess { ref ->
+                    ref.setValue(data + ("uid" to uid))
+                        .addOnFailureListener { Log.e(TAG, "보류 경보 저장 실패: ${it.message}") }
+                }
+                .onFailure { Log.e(TAG, "보류 경보 주소 오류: ${it.message}") }
+        }
+        Log.d(TAG, "보류 경보 ${items.size}건 저장")
+    }
 
     // 역할(myRole/peerRole)은 03_service 에서 이름으로 변환해 넘긴다 — 04_firebase 는
     //   02_ble 에 의존하지 않는다(레이어 규칙). 기본값이 있어 기존 호출은 그대로 컴파일된다.
@@ -47,8 +76,16 @@ object FirebaseManager {
             "myRole" to myRole,
             "peerRole" to peerRole,
             "site" to DevSettings.siteCode
-        ).withUid()
-        siteNode("alerts").child(today).child(alertId).setValue(data)
+        )
+        val ref = siteNode("alerts").child(today).child(alertId)
+        val uid = currentUid()
+        if (uid == null) {
+            // (v1.1.98) 로그인 전 — 날짜·사업장 자리를 지금 기준으로 정해 보류했다가 로그인되면 보낸다
+            pending?.add(ref.toString(), data) ?: Log.w(TAG, "보류 저장소 없음 — 경보 기록 생략")
+            Log.d(TAG, "경보 보류(로그인 전): $level ${withSite(logId)}")
+            return
+        }
+        ref.setValue(data + ("uid" to uid))
             .addOnFailureListener { Log.e(TAG, "경보 저장 실패: ${it.message}") }
         Log.d(TAG, "경보 저장: $level ${withSite(logId)} rssi=$rssi")
     }
@@ -171,14 +208,17 @@ object FirebaseManager {
     /** 선택한 비콘 프로파일(JSON)을 이름붙은 세트로 업로드 */
     fun uploadBeaconSet(setName: String, profilesJson: String, count: Int, sender: String, onResult: (Boolean) -> Unit) {
         val node = beaconShareNode() ?: return onResult(false)
+        // (v1.1.98) 로그인 전이면 실패로 알리고 로그인을 다시 시도한다(규칙이 uid 를 요구)
+        val uid = currentUid() ?: run { FirebaseConfig.ensureSignedIn(); return onResult(false) }
         val key = sanitizeKey(setName)
         val data = mapOf(
             "name"         to setName.trim().ifEmpty { key },
             "profilesJson" to profilesJson,
             "count"        to count,
             "sender"       to sender,
-            "timestamp"    to System.currentTimeMillis()
-        ).withUid()
+            "timestamp"    to System.currentTimeMillis(),
+            "uid"          to uid
+        )
         node.child(key).setValue(data)
             .addOnSuccessListener { Log.d(TAG, "비콘 세트 업로드: $key (${count}개)"); onResult(true) }
             .addOnFailureListener { Log.e(TAG, "비콘 세트 업로드 실패: ${it.message}"); onResult(false) }
@@ -230,6 +270,8 @@ object FirebaseManager {
 
     /** 내 노드 전체 덮어쓰기 업로드 — peers 키는 sanitize 된 상대 기기ID, 값=(중앙값, n, 산포). */
     fun uploadEchoCalib(myId: String, model: String, peers: Map<String, Triple<Double, Int, Double>>, onResult: (Boolean) -> Unit) {
+        // (v1.1.98) 로그인 전이면 이번 회차는 건너뛴다(규칙이 uid 를 요구, 다음 주기에 다시 올린다)
+        val uid = currentUid() ?: return onResult(false)
         val data = mapOf(
             "model" to model,
             // (v1.1.84) 앱 버전 — echo_calib 은 1시간마다 전체 덮어쓰기라 항상 현재값이다.
@@ -239,8 +281,9 @@ object FirebaseManager {
             // (v1.1.85) 사업장 코드는 경로가 아니라 라벨로만 남긴다. saveAlert 는 경로(siteNode)도
             //   사업장별이고 라벨도 남기지만, 이 에코 업로드는 경로가 평면이고 라벨만 남는다.
             "site"  to DevSettings.siteCode,
-            "peers" to peers.mapValues { (_, v) -> mapOf("m" to v.first, "n" to v.second, "iqr" to v.third) }
-        ).withUid()
+            "peers" to peers.mapValues { (_, v) -> mapOf("m" to v.first, "n" to v.second, "iqr" to v.third) },
+            "uid"   to uid
+        )
         db.child("echo_calib").child(sanitizeKey(myId)).setValue(data)
             .addOnSuccessListener { Log.d(TAG, "에코보정 업로드: $myId (피어 ${peers.size})"); onResult(true) }
             .addOnFailureListener { Log.e(TAG, "에코보정 업로드 실패: ${it.message}"); onResult(false) }
