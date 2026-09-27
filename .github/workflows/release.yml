@@ -16,6 +16,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7   # node24 런타임. v4(node20)는 러너 강제 우회로만 돌던 상태였다
 
+      # 설정 PIN 비밀값이 비었거나 숫자 3자리가 아니면 빌드하지 않는다(값은 출력하지 않는다).
+      #   로컬 빌드의 기본값 '000'(app/build.gradle)은 그대로다. 테스트보다 먼저 확인해 바로 멈춘다.
+      - name: Check dev PIN secret
+        env:
+          SA_DEV_PIN: ${{ secrets.SA_DEV_PIN }}
+        run: |
+          if [[ ! "$SA_DEV_PIN" =~ ^[0-9]{3}$ ]]; then
+            echo "::error::SA_DEV_PIN 비밀값이 비었거나 숫자 3자리가 아니다"
+            exit 1
+          fi
+
       - name: Set up JDK 17
         uses: actions/setup-java@v5   # node24 런타임
         with:
@@ -58,7 +69,7 @@ jobs:
           # 클래스명 앞의 "com.wf11.safealert.ble." 패키지 접두어는 아래 경로 조합에 하드코딩돼
           # 있다 — 이 패키지 밖으로 골든 테스트가 옮겨지면 이 스크립트도 함께 고쳐야 한다.
           REQUIRED="RssiCascadeTest RssiCascadeIsolationTest MedianFilterWarmupTest AlertCascadeGoldenTest UwbSessionGoldenTest LowSpeedApproachRegressionTest BeaconFullIdTest SpecialAlertTimeGateTest"
-          MIN_TOTAL=161   # 2026-09-27 전체 단위 테스트 수(v1.1.97 PIN 잠금·공유 세트 검증·에코 상한 14건 포함). 테스트를 늘리면 이 하한도 함께 올린다.
+          MIN_TOTAL=165   # 2026-09-27 전체 단위 테스트 수(v1.1.97 PIN 잠금·공유 세트 검증·에코 집계 18건 포함). 테스트를 늘리면 이 하한도 함께 올린다.
 
           if [ ! -d "$XML_DIR" ]; then
             echo "::error::테스트 결과 디렉터리가 없다: $XML_DIR — 테스트가 한 건도 실행되지 않았다"
@@ -94,17 +105,6 @@ jobs:
             echo "::notice::'$GITHUB_REF_NAME' 은 정식 릴리스 태그(vX.Y.Z)가 아니다 — Firebase 업데이트를 건너뛴다"
           fi
 
-      # 설정 PIN 비밀값이 비었거나 숫자 3자리가 아니면 빌드하지 않는다(값은 출력하지 않는다).
-      #   로컬 빌드의 기본값 '000'(app/build.gradle)은 그대로다.
-      - name: Check dev PIN secret
-        env:
-          SA_DEV_PIN: ${{ secrets.SA_DEV_PIN }}
-        run: |
-          if [[ ! "$SA_DEV_PIN" =~ ^[0-9]{3}$ ]]; then
-            echo "::error::SA_DEV_PIN 비밀값이 비었거나 숫자 3자리가 아니다"
-            exit 1
-          fi
-
       - name: Build release APK
         env:
           SA_RELEASE_KEYSTORE: ${{ runner.temp }}/release.p12
@@ -131,6 +131,16 @@ jobs:
         id: apk
         run: echo "sha256=$(sha256sum safealert-${{ steps.ver.outputs.name }}.apk | cut -d' ' -f1)" >> $GITHUB_OUTPUT
 
+      # DB 보안 규칙을 레포의 database.rules.json 으로 덮어쓴다. 콘솔 수작업 불필요.
+      #   (v1.1.97) APK 공개·버전 갱신보다 먼저 — 새 규칙은 옛 앱과도 호환되므로 먼저 바꿔도 되고,
+      #   교체가 실패하면 여기서 멈춰 새 앱이 옛 규칙을 만나는 일이 없다.
+      #   legacy secret 은 규칙을 우회하는 admin 권한이라, 규칙을 바꾼 뒤에도 아래 버전 PATCH 는 통과한다.
+      - name: Deploy DB security rules
+        if: ${{ steps.ver.outputs.is_release == 'true' }}
+        run: |
+          curl -fsSX PUT --data-binary @database.rules.json \
+            "${{ secrets.FIREBASE_DB_URL }}/.settings/rules.json?auth=${{ secrets.FIREBASE_DB_SECRET }}"
+
       - name: Create GitHub Release & Upload APK
         uses: softprops/action-gh-release@v3   # node24 런타임
         with:
@@ -155,11 +165,3 @@ jobs:
             "${{ secrets.FIREBASE_DB_URL }}/wf11/version.json?auth=${{ secrets.FIREBASE_DB_SECRET }}" \
             -H "Content-Type: application/json" \
             -d "{\"latest\":\"${VER}\",\"apk_url\":\"${APK_URL}\",\"apk_sha256\":\"${SHA}\",\"force_update\":false,\"changelog\":\"\"}"
-
-      # DB 보안 규칙을 레포의 database.rules.json 으로 덮어쓴다. 콘솔 수작업 불필요.
-      #   legacy secret 은 규칙을 우회하는 admin 권한이라, 규칙을 잠근 뒤에도 위 PATCH 는 계속 통과한다.
-      - name: Deploy DB security rules
-        if: ${{ steps.ver.outputs.is_release == 'true' }}
-        run: |
-          curl -fsSX PUT --data-binary @database.rules.json \
-            "${{ secrets.FIREBASE_DB_URL }}/.settings/rules.json?auth=${{ secrets.FIREBASE_DB_SECRET }}"
