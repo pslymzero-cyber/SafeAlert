@@ -281,22 +281,25 @@ object FirebaseManager {
      *  fold 규칙: 내 모델 노드가 상대모델을 잰 표본은 +m, 상대모델 노드가 내 모델을 잰 표본은 −m
      *  (편차는 반대칭: A가 본 A−B = −(B가 본 B−A)). n 가중 평균. 동일 모델쌍(M×M)은 양방향이
      *  자연히 ±상쇄돼 0 근방으로 수렴한다(대칭 하드웨어의 기대값). per-sample 산포 게이트로
-     *  노이즈 표본(iqr>maxIqrDb) 제외, 모델 미상 피어(자기 노드 없음) 제외. Σn 유효성은 호출부가 판단. */
-    fun aggregateEchoPriors(nodes: List<EchoCalibNode>, myModel: String, maxIqrDb: Double): Map<String, Pair<Double, Int>> {
+     *  노이즈 표본(iqr>maxIqrDb) 제외, 모델 미상 피어(자기 노드 없음) 제외. Σn 유효성은 호출부가 판단.
+     *  (v1.1.97) 표본 하나의 반영 비중은 min(n, capN) — 가중치와 Σn 을 같은 값으로 누적한다.
+     *  capN 을 Σn 게이트(echoCalMinTicks)와 같게 주면 게이트 통과 여부는 상한이 없을 때와 같다. */
+    fun aggregateEchoPriors(nodes: List<EchoCalibNode>, myModel: String, maxIqrDb: Double, capN: Int): Map<String, Pair<Double, Int>> {
         val modelById = nodes.associate { it.id to it.model }
         val sum = mutableMapOf<String, Double>()
         val cnt = mutableMapOf<String, Int>()
         for (node in nodes) for ((peerId, st) in node.peers) {
             val peerModel = modelById[peerId] ?: continue
             if (st.n <= 0 || st.iqr > maxIqrDb) continue
+            val w = minOf(st.n, capN)
             when {
                 node.model == myModel -> {   // 직접: 내 모델이 상대모델을 잰 중앙값(+)
-                    sum[peerModel] = (sum[peerModel] ?: 0.0) + st.m * st.n
-                    cnt[peerModel] = (cnt[peerModel] ?: 0) + st.n
+                    sum[peerModel] = (sum[peerModel] ?: 0.0) + st.m * w
+                    cnt[peerModel] = (cnt[peerModel] ?: 0) + w
                 }
                 peerModel == myModel -> {    // 역방향: 상대모델 노드가 내 모델을 잰 중앙값(−로 fold)
-                    sum[node.model] = (sum[node.model] ?: 0.0) - st.m * st.n
-                    cnt[node.model] = (cnt[node.model] ?: 0) + st.n
+                    sum[node.model] = (sum[node.model] ?: 0.0) - st.m * w
+                    cnt[node.model] = (cnt[node.model] ?: 0) + w
                 }
             }
         }

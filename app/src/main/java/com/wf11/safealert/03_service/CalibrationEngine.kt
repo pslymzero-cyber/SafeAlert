@@ -237,7 +237,8 @@ object CalibrationEngine {
             val med = echoQuantileDb(s.buckets, s.echoTicks, 0.50)
             val iqr = (echoQuantileDb(s.buckets, s.echoTicks, 0.75) -
                        echoQuantileDb(s.buckets, s.echoTicks, 0.25)) / 2.0
-            peers[FirebaseManager.sanitizeKey(id)] = Triple(med, s.echoTicks, iqr)
+            // (v1.1.97) 올리는 n 은 망각 상한으로 자른다 — 망각 도입(v1.1.55) 전 누적분도 같은 척도로
+            peers[FirebaseManager.sanitizeKey(id)] = Triple(med, minOf(s.echoTicks, ECHO_DECAY_TICKS), iqr)
         }
         if (peers.isEmpty()) return
         echoPrefs().edit().putLong(ECHO_FB_UPLOADED_AT, now).apply()
@@ -267,7 +268,7 @@ object CalibrationEngine {
             if (nodes.isEmpty()) return@downloadEchoCalibAll
             val models = nodes.associate { it.id to it.model }
             val priors = FirebaseManager.aggregateEchoPriors(
-                nodes, Build.MODEL, DevSettings.echoCalMaxIqrDb.toDouble())
+                nodes, Build.MODEL, DevSettings.echoCalMaxIqrDb.toDouble(), DevSettings.echoCalMinTicks)
             echoFbModelById.clear()
             echoFbModelById.putAll(models)
             echoFbPriorByModel.clear()
