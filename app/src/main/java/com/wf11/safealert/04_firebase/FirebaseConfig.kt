@@ -1,7 +1,6 @@
 ﻿package com.wf11.safealert.firebase
 
 import android.util.Log
-import com.google.firebase.appcheck.FirebaseAppCheck
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.database.FirebaseDatabase
 
@@ -13,13 +12,6 @@ object FirebaseConfig {
     private var signInInProgress = false
 
     fun init() {
-        // (v1.1.98) App Check — 다른 Firebase 호출보다 먼저 설치. 강제 여부는 Firebase 콘솔에서 정하고,
-        //   강제 전에는 토큰이 없어도 요청이 그대로 통과한다(검증 비율만 집계). 실패는 로그만 남긴다.
-        try {
-            FirebaseAppCheck.getInstance().installAppCheckProviderFactory(AppCheckProviders.factory())
-        } catch (e: Exception) {
-            Log.w(TAG, "App Check 설치 실패: ${e.message}")
-        }
         try {
             FirebaseDatabase.getInstance().setPersistenceEnabled(true)
             Log.d(TAG, "Firebase 초기화 완료 (오프라인 캐시 활성화)")
