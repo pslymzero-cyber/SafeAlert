@@ -94,6 +94,17 @@ jobs:
             echo "::notice::'$GITHUB_REF_NAME' 은 정식 릴리스 태그(vX.Y.Z)가 아니다 — Firebase 업데이트를 건너뛴다"
           fi
 
+      # 설정 PIN 비밀값이 비었거나 숫자 3자리가 아니면 빌드하지 않는다(값은 출력하지 않는다).
+      #   로컬 빌드의 기본값 '000'(app/build.gradle)은 그대로다.
+      - name: Check dev PIN secret
+        env:
+          SA_DEV_PIN: ${{ secrets.SA_DEV_PIN }}
+        run: |
+          if [[ ! "$SA_DEV_PIN" =~ ^[0-9]{3}$ ]]; then
+            echo "::error::SA_DEV_PIN 비밀값이 비었거나 숫자 3자리가 아니다"
+            exit 1
+          fi
+
       - name: Build release APK
         env:
           SA_RELEASE_KEYSTORE: ${{ runner.temp }}/release.p12
