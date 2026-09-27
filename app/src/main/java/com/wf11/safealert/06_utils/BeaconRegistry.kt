@@ -136,13 +136,17 @@ object BeaconRegistry {
         return arr.toString()
     }
 
-    /** 공유받은 JSON 배열 문자열을 BeaconProfile 목록으로 파싱 (불량 항목은 건너뜀) */
-    fun parseProfiles(json: String): List<BeaconProfile> = runCatching {
+    /**
+     * 공유받은 JSON 배열 문자열을 BeaconProfile 목록으로 파싱.
+     * (v1.1.97) 읽을 수 없는 항목(객체 아님·UUID 없음·알려진 필드의 타입 오류)이 하나라도 있거나
+     * JSON 자체가 깨지면 null — 세트 전체를 받지 않는다. 빈 배열은 빈 목록.
+     */
+    fun parseProfiles(json: String): List<BeaconProfile>? = runCatching {
         val arr = JSONArray(json)
-        (0 until arr.length()).mapNotNull { i ->
-            val obj = arr.optJSONObject(i) ?: return@mapNotNull null
+        (0 until arr.length()).map { i ->
+            val obj = arr.optJSONObject(i) ?: return null
             val uuid = normUuid(obj.optString("uuid", ""))
-            if (uuid.isEmpty()) return@mapNotNull null
+            if (uuid.isEmpty() || hasWrongType(obj)) return null
             BeaconProfile(
                 uuid          = uuid,
                 label         = obj.optString("label", uuid),
@@ -154,7 +158,13 @@ object BeaconRegistry {
                 visitorBeacon = obj.optBoolean("visitorBeacon", true)
             )
         }
-    }.getOrDefault(emptyList())
+    }.getOrNull()
+
+    // 값이 있으면 타입이 맞아야 한다 — opt*() 는 타입이 틀린 값을 조용히 기본값으로 바꾼다
+    private fun hasWrongType(o: JSONObject): Boolean =
+        listOf("uuid", "label", "type").any { o.has(it) && o.opt(it) !is String } ||
+        listOf("addedAt", "rssiOffset", "zoneEnterRssi").any { o.has(it) && o.opt(it) !is Number } ||
+        listOf("zoneMute", "visitorBeacon").any { o.has(it) && o.opt(it) !is Boolean }
 
     /** 공유 병합 결과 (추가·갱신·한도초과 건수) */
     data class MergeResult(val added: Int, val updated: Int, val skipped: Int)

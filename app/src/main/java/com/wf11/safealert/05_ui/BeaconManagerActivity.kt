@@ -347,21 +347,14 @@ class BeaconManagerActivity : AppCompatActivity() {
             Toast.makeText(this, "세트를 불러오지 못했습니다", Toast.LENGTH_SHORT).show()
             return
         }
+        // (v1.1.97) 읽을 수 없는 항목이나 범위 밖 항목이 하나라도 있으면 세트 전체를 받지 않는다
         val incoming = BeaconRegistry.parseProfiles(json)
+            ?: return showRejectedSet(set, "읽을 수 없는 항목이 있습니다(형식 오류)")
         if (incoming.isEmpty()) {
             Toast.makeText(this, "세트가 비어 있습니다", Toast.LENGTH_SHORT).show()
             return
         }
-        // (v1.1.97) 범위 밖 항목이 하나라도 있으면 세트 전체를 받지 않는다(클라우드 삭제는 할 수 있다)
-        BeaconRegistry.validateShared(incoming)?.let { reason ->
-            AlertDialog.Builder(this)
-                .setTitle("받을 수 없는 세트")
-                .setMessage("세트: ${set.name}\n보낸 기기: ${set.sender}\n\n$reason\n\n이 세트는 받지 않습니다.")
-                .setPositiveButton("확인", null)
-                .setNeutralButton("이 세트 삭제") { _, _ -> confirmDeleteSet(set) }
-                .show()
-            return
-        }
+        BeaconRegistry.validateShared(incoming)?.let { return showRejectedSet(set, it) }
         // (v1.1.97) 받으면 바뀌는 내역 — 안전구역·방문자용처럼 경보에 영향을 주는 변경을 미리 보여 준다
         val c = BeaconRegistry.summarizeChanges(BeaconRegistry.getAll(), incoming)
         val msg = buildString {
@@ -386,6 +379,16 @@ class BeaconManagerActivity : AppCompatActivity() {
             }
             .setNeutralButton("이 세트 삭제") { _, _ -> confirmDeleteSet(set) }
             .setNegativeButton("취소", null)
+            .show()
+    }
+
+    /** (v1.1.97) 받지 않는 세트 안내 — 사유를 보여 주고, 클라우드에서 지울 수는 있게 한다. */
+    private fun showRejectedSet(set: FirebaseManager.BeaconSetMeta, reason: String) {
+        AlertDialog.Builder(this)
+            .setTitle("받을 수 없는 세트")
+            .setMessage("세트: ${set.name}\n보낸 기기: ${set.sender}\n\n$reason\n\n이 세트는 받지 않습니다.")
+            .setPositiveButton("확인", null)
+            .setNeutralButton("이 세트 삭제") { _, _ -> confirmDeleteSet(set) }
             .show()
     }
 
