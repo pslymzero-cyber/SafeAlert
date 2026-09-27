@@ -42,3 +42,7 @@ docs/presentation/contest/base_contest.pptx
 *.jks
 *.p12
 *.keystore
+
+# JVM 크래시 로그(hs_err)·JIT 재현 파일(replay)
+hs_err_pid*.log
+replay_pid*.log
