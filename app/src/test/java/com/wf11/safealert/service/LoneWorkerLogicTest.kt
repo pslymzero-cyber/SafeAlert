@@ -26,7 +26,14 @@ class LoneWorkerLogicTest {
 
     private fun LoneWorkerLogic.server(
         key: String, id: String, active: Boolean, now: Long, name: String = "Hong"
-    ) = onPeerServer(key, id, name, "WALKER", "still", "B1", now, active, now)
+    ) = peerServer(key, id, name, "WALKER", "still", "B1", now, active, now)
+
+    private fun LoneWorkerLogic.peerServer(
+        key: String, id: String, name: String, role: String, trigger: String, beacon: String,
+        created: Long, active: Boolean, now: Long, ep: Int = 0
+    ) = onPeerServer(LoneWorkerPeers.ServerRec(key, id, name, role, trigger, beacon, created, active, ep, null), now)
+
+    private fun LoneWorkerLogic.ackAll(now: Long) = silencePeers(now, peers.associate { it.id to it.epId })
 
     // -- own state --
 
@@ -198,7 +205,7 @@ class LoneWorkerLogicTest {
         l.onPeerBle("P", true, 1_100)
         assertEquals(1, l.peers.size)
         assertEquals(1, l.audiblePeers().size)
-        l.silencePeers(1_101)
+        l.ackAll(1_101)
         assertEquals(0, l.audiblePeers().size)
         assertTrue(l.peer("P").active)
         l.onPeerBle("P", true, 1_200)
@@ -244,7 +251,7 @@ class LoneWorkerLogicTest {
     @Test fun ble_bit_after_30s_gap_is_a_rising_edge() {
         val l = newLogic()
         l.onPeerBle("P", true, 1_000)
-        l.silencePeers(1_001)
+        l.ackAll(1_001)
         l.onPeerBle("P", true, 29_000)
         assertEquals(0, l.audiblePeers().size)
         l.onPeerBle("P", true, 60_000)
@@ -273,8 +280,8 @@ class LoneWorkerLogicTest {
     @Test fun stale_ble_edge_right_after_resolve_is_ignored_then_new_episode_revives() {
         fun resolved(): LoneWorkerLogic {
             val l = newLogic()
-            l.onPeerServer("k1", "P", "n", "WALKER", "still", "B1", 1_000, true, 1_000, 1)
-            l.onPeerServer("k1", "P", "n", "WALKER", "still", "B1", 1_000, false, 2_000, 1)
+            l.peerServer("k1", "P", "n", "WALKER", "still", "B1", 1_000, true, 1_000, 1)
+            l.peerServer("k1", "P", "n", "WALKER", "still", "B1", 1_000, false, 2_000, 1)
             return l
         }
         val l = resolved()
@@ -320,18 +327,18 @@ class LoneWorkerLogicTest {
 
     @Test fun new_server_key_is_a_new_audible_episode() {
         val l = newLogic()
-        l.onPeerServer("k1", "P", "n", "WALKER", "still", "", 1_000, true, 1_000)
-        l.silencePeers(1_001)
-        l.onPeerServer("k2", "P", "n", "WALKER", "still", "", 2_000, true, 2_000)
+        l.peerServer("k1", "P", "n", "WALKER", "still", "", 1_000, true, 1_000)
+        l.ackAll(1_001)
+        l.peerServer("k2", "P", "n", "WALKER", "still", "", 2_000, true, 2_000)
         assertEquals(2, l.peers.size)
         assertEquals("k2", l.audiblePeers().single().key)
     }
 
     @Test fun older_record_does_not_touch_newer_entry() {
         val l = newLogic()
-        l.onPeerServer("k2", "P", "n", "WALKER", "still", "", 3_000, true, 3_000)
-        l.silencePeers(3_001)
-        l.onPeerServer("k1", "P", "n", "WALKER", "still", "", 1_000, true, 3_500)
+        l.peerServer("k2", "P", "n", "WALKER", "still", "", 3_000, true, 3_000)
+        l.ackAll(3_001)
+        l.peerServer("k1", "P", "n", "WALKER", "still", "", 1_000, true, 3_500)
         assertEquals(2, l.peers.size)
         assertTrue(l.peers.single { it.key == "k2" }.silenced)
         assertTrue(l.peers.single { it.key == "k1" }.active)
@@ -340,18 +347,18 @@ class LoneWorkerLogicTest {
     @Test fun epless_record_never_adopts_or_ends_ble_entry() {
         val l = newLogic()
         l.onPeerBle("P", true, 1_000)
-        l.onPeerServer("k9", "P", "n", "WALKER", "still", "", 500, false, 2_000)
+        l.peerServer("k9", "P", "n", "WALKER", "still", "", 500, false, 2_000)
         assertTrue(l.peer("P").active)
 
         val m = newLogic()
         m.onPeerBle("P", true, 1_000)
-        m.silencePeers(1_001)
-        m.onPeerServer("k1", "P", "n", "WALKER", "still", "", 1_500, true, 1_600)
+        m.ackAll(1_001)
+        m.peerServer("k1", "P", "n", "WALKER", "still", "", 1_500, true, 1_600)
         assertEquals("k1", m.audiblePeers().single().key)
         val ble = m.peers.single { it.key == null }
         assertTrue(ble.active)
         assertTrue(ble.silenced)
-        m.onPeerServer("k1", "P", "n", "WALKER", "still", "", 1_500, false, 5_000)
+        m.peerServer("k1", "P", "n", "WALKER", "still", "", 1_500, false, 5_000)
         assertFalse(m.peers.single { it.key == "k1" }.active)
         assertTrue(m.audiblePeers().isEmpty())
     }
@@ -368,7 +375,7 @@ class LoneWorkerLogicTest {
         val l = newLogic()
         l.onPeerBle("P", true, 1_000, 1)
         assertEquals(1, l.peer("P").episode)
-        l.silencePeers(1_001)
+        l.ackAll(1_001)
         l.onPeerBle("P", true, 29_000, 1)
         assertEquals(0, l.audiblePeers().size)
         l.onPeerBle("P", true, 30_000, 2)
@@ -382,11 +389,11 @@ class LoneWorkerLogicTest {
 
     @Test fun server_entry_matches_same_ble_episode_then_next_number_resounds() {
         val l = newLogic()
-        l.onPeerServer("k1", "P", "n", "WALKER", "still", "B1", 1_000, true, 1_000, 5)
-        l.silencePeers(1_001)
+        l.peerServer("k1", "P", "n", "WALKER", "still", "B1", 1_000, true, 1_000, 5)
+        l.ackAll(1_001)
         l.onPeerBle("P", true, 2_000, 5)
         assertEquals(1, l.audiblePeers().size)
-        l.silencePeers(2_001)
+        l.ackAll(2_001)
         l.onPeerBle("P", true, 2_500, 5)
         assertEquals(0, l.audiblePeers().size)
         assertEquals("k1", l.peers.single().key)

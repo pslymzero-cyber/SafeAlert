@@ -1,5 +1,6 @@
 package com.wf11.safealert.firebase
 
+import android.os.SystemClock
 import android.util.Log
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.database.ChildEventListener
@@ -44,9 +45,11 @@ object SosRemote {
     const val BEACON_RSSI_MIN = -150
     const val BEACON_RSSI_MAX = 20
 
-    /** 동료 기록 시각을 서버 시각으로 바꾸는 데 쓰는 서버 시각 오프셋. listen() 이 읽으며 모르면 null 이다. */
-    @Volatile var serverOffsetMs: Long? = null
-        private set
+    /** 서버 시각 오프셋을 읽은 순간의 (서버 시각, elapsedRealtime). listen() 이 계속 갱신하며 모르면 null 이다. */
+    @Volatile private var serverAnchor: Pair<Long, Long>? = null
+
+    /** 지금 서버 시각 추정: 오프셋을 읽은 순간의 서버 시각 + 그 뒤 경과 시간(벽시계 변경과 무관). 모르면 null. */
+    fun serverNowMs(): Long? = serverAnchor?.let { (s, e) -> s + (SystemClock.elapsedRealtime() - e) }
 
     /** 수신 재생 창: 시작 전 30분 이내에 만들어진 기록까지 받는다 (R1). */
     const val REPLAY_WINDOW_MS = 30 * 60_000L
@@ -143,7 +146,7 @@ object SosRemote {
     }
 
     /**
-     * 구조 요청 실시간 수신 (R1). 이 함수를 부른 시각 t0 를 잡아 두고 서버 시각 오프셋을 한 번 읽은 뒤
+     * 구조 요청 실시간 수신 (R1). 이 함수를 부른 시각 t0 를 잡아 두고 서버 시각 오프셋을 처음 읽은 뒤
      * (t0 + 오프셋 - 30분) 이후 생성분을 조회한다. 그래서 진행 중(active) 기록은 30분 이내면 재생되어 울리고,
      * 그보다 오래된 기록은 조회되지 않으며, 해제된 기록은 알림 대상이 아니다.
      * 삭제된 기록은 해제로 전달한다. 취소(onCancelled)되면 조회를 버리고 onCancel 을 한 번 부른다.
@@ -174,20 +177,24 @@ object SosRemote {
             q.addChildEventListener(listener)
             attached = q to listener
         }
-        FirebaseDatabase.getInstance().getReference(".info/serverTimeOffset")
-            .addListenerForSingleValueEvent(object : ValueEventListener {
-                override fun onDataChange(s: DataSnapshot) {
-                    val off = (s.value as? Number)?.toLong()?.takeIf { it != 0L }
-                    serverOffsetMs = off
-                    attach(off ?: 0L)
-                }
-                override fun onCancelled(e: DatabaseError) {
-                    serverOffsetMs = null
-                    attach(0L)
-                }
-            })
+        // 오프셋은 계속 구독해 서버 시각 기준점만 갱신한다. 조회는 첫 콜백에서 한 번만 붙인다.
+        var first = true
+        val offsetRef = FirebaseDatabase.getInstance().getReference(".info/serverTimeOffset")
+        val offsetListener = object : ValueEventListener {
+            override fun onDataChange(s: DataSnapshot) {
+                val off = (s.value as? Number)?.toLong()?.takeIf { it != 0L }
+                serverAnchor = off?.let { System.currentTimeMillis() + it to SystemClock.elapsedRealtime() }
+                if (first) { first = false; attach(off ?: 0L) }
+            }
+            override fun onCancelled(e: DatabaseError) {
+                serverAnchor = null
+                if (first) { first = false; attach(0L) }
+            }
+        }
+        offsetRef.addValueEventListener(offsetListener)
         return {
             stopped = true
+            offsetRef.removeEventListener(offsetListener)
             attached?.let { (q, l) -> q.removeEventListener(l) }
             attached = null
         }

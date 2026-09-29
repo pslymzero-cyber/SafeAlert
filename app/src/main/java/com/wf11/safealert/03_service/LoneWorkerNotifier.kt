@@ -56,8 +56,17 @@ class LoneWorkerNotifier(
 
         /** 알림의 [괜찮음]이 화면을 열면서 넘기는 표시: 화면은 바로 확인 대화상자를 띄운다. */
         const val EXTRA_CONFIRM_OK = "lw_confirm_ok"
-        /** 알림의 [확인]이 넘기는 회차 ID 목록(bleId#ep): 이 회차만 묵음으로 만든다. */
+        /** 알림의 [확인]이 넘기는 항목 id 목록: 이 항목만 묵음으로 만든다. */
         const val EXTRA_PEER_IDS = "lw_peer_ids"
+        /** EXTRA_PEER_IDS 와 같은 순서의 회차 ID 목록(bleId#ep). */
+        const val EXTRA_PEER_EPS = "lw_peer_eps"
+
+        /** [확인] 인텐트의 묵음 대상(항목 id -> 회차 ID). 두 목록 길이가 다르면 아무것도 묵음으로 만들지 않는다. */
+        fun peerTargets(intent: Intent?): Map<String, String> {
+            val ids = intent?.getStringArrayListExtra(EXTRA_PEER_IDS).orEmpty()
+            val eps = intent?.getStringArrayListExtra(EXTRA_PEER_EPS).orEmpty()
+            return if (ids.size == eps.size) ids.zip(eps).toMap() else emptyMap()
+        }
         private const val REQ_ACK = 40
         private const val REQ_SILENCE = 42
         private const val REQ_OPEN = 43
@@ -79,12 +88,15 @@ class LoneWorkerNotifier(
         }
     }
 
-    private fun servicePi(req: Int, action: String, ids: ArrayList<String>? = null): PendingIntent =
+    private fun servicePi(req: Int, action: String, peers: List<LoneWorkerPeers.Peer>? = null): PendingIntent =
         PendingIntent.getService(
             ctx, req,
             Intent(ctx, BleService::class.java).apply {
                 this.action = action
-                ids?.let { putStringArrayListExtra(EXTRA_PEER_IDS, it) }
+                peers?.let {
+                    putStringArrayListExtra(EXTRA_PEER_IDS, ArrayList(it.map { p -> p.id }))
+                    putStringArrayListExtra(EXTRA_PEER_EPS, ArrayList(it.map { p -> p.epId }))
+                }
             },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
@@ -134,7 +146,7 @@ class LoneWorkerNotifier(
             mode == LoneWorkerLogic.Mode.CHECKING ->
                 Triple("근무 중이신가요?", "응답하지 않으면 같은 사업장에 구조 요청이 나갑니다", "근무 중" to servicePi(REQ_ACK, BleService.ACTION_LW_ACK))
             audible.isNotEmpty() ->
-                Triple("구조 요청", audible.joinToString(", ") { it.displayName() }, "확인" to servicePi(REQ_SILENCE, BleService.ACTION_LW_SILENCE, ArrayList(audible.map { it.epId })))
+                Triple("구조 요청", audible.joinToString(", ") { it.displayName() }, "확인" to servicePi(REQ_SILENCE, BleService.ACTION_LW_SILENCE, audible))
             quiet != null -> Triple(quiet.first, quiet.second, null)
             else -> Triple("해제됨", resolved.joinToString(", ") { it.displayName() }, null)
         }

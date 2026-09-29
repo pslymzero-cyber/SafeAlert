@@ -742,7 +742,7 @@ class BleService : LifecycleService() {
             }
             // (v1.1.99) 단독 작업자 알림 버튼
             ACTION_LW_ACK -> loneWorker.ack()
-            ACTION_LW_SILENCE -> loneWorker.silencePeers(intent?.getStringArrayListExtra(LoneWorkerNotifier.EXTRA_PEER_IDS))
+            ACTION_LW_SILENCE -> loneWorker.silencePeers(LoneWorkerNotifier.peerTargets(intent))
         }
         return START_STICKY
     }

@@ -387,18 +387,13 @@ class LoneWorkerLogic(var myBleId: String) {
 
     // ── 동료 SOS (D-06): 회차 단위 항목은 LoneWorkerPeers 가 맡는다 ─────────
 
-    fun onPeerServer(
-        key: String, bleId: String, name: String, role: String, trigger: String,
-        beacon: String, createdAtMs: Long, active: Boolean, nowMs: Long, ep: Int = 0,
-        resolvedAtMs: Long = 0L, serverNowMs: Long = 0L, slackMs: Long = 0L
-    ) = peerStore.onServer(key, bleId, name, role, trigger, beacon, createdAtMs, active, nowMs, ep,
-        resolvedAtMs, serverNowMs, slackMs)
+    fun onPeerServer(rec: LoneWorkerPeers.ServerRec, nowMs: Long) = peerStore.onServer(rec, nowMs)
 
     fun onPeerBle(bleId: String, sos: Boolean, nowMs: Long, episode: Int = 0, beacon: String = "") =
         peerStore.onBle(bleId, sos, nowMs, episode, beacon)
 
-    /** 확인 버튼. ids(bleId#ep) 가 없으면 지금 목록의 모든 항목, 있으면 그 회차만 묵음으로 만든다. */
-    fun silencePeers(nowMs: Long, ids: Collection<String>? = null) = peerStore.silence(nowMs, ids)
+    /** 확인 버튼. targets = 항목 id -> 회차 ID. 그 항목만 묵음으로 만든다. */
+    fun silencePeers(nowMs: Long, targets: Map<String, String>) = peerStore.silence(nowMs, targets)
 
     fun audiblePeers(): List<LoneWorkerPeers.Peer> = peerStore.audible()
 

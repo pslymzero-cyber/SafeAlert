@@ -15,6 +15,7 @@ import com.wf11.safealert.databinding.ActivityLoneWorkerBinding
 import com.wf11.safealert.service.LoneWorkerLogic
 import com.wf11.safealert.service.LoneWorkerMonitor
 import com.wf11.safealert.service.LoneWorkerNotifier
+import com.wf11.safealert.service.PeerRow
 
 /**
  * 단독 작업자 확인·구조 요청 화면 (v1.1.99).
@@ -123,7 +124,7 @@ class LoneWorkerActivity : AppCompatActivity() {
             finish()
             return
         }
-        ackGate.onRender(st.peerIds, st.activePeerIds, SystemClock.elapsedRealtime())
+        ackGate.onRender(st.peers, SystemClock.elapsedRealtime())
         b.btnLwPeer.visibility = View.GONE
         val own = st.mode != LoneWorkerLogic.Mode.WATCHING
         val bg: Int
@@ -132,7 +133,7 @@ class LoneWorkerActivity : AppCompatActivity() {
             st.mode == LoneWorkerLogic.Mode.SOS -> {
                 bg = Color.parseColor("#C62828"); fg = Color.WHITE
                 b.tvLwTitle.text = "구조 요청 중"
-                b.tvLwBody.text = (listOf(listOfNotNull("같은 사업장 휴대폰에 구조 요청이 나가고 있습니다", st.serverStatus).joinToString("\n")) + st.peerLines)
+                b.tvLwBody.text = (listOf(listOfNotNull("같은 사업장 휴대폰에 구조 요청이 나가고 있습니다", st.serverStatus).joinToString("\n")) + st.peers.map { it.line })
                     .joinToString("\n\n")
                 b.btnLwPrimary.text = "괜찮음"
                 b.btnLwPrimary.setOnClickListener { showConfirm(mon) }
@@ -140,7 +141,7 @@ class LoneWorkerActivity : AppCompatActivity() {
             st.mode == LoneWorkerLogic.Mode.CHECKING -> {
                 bg = Color.parseColor("#FFC107"); fg = Color.BLACK
                 b.tvLwTitle.text = "근무 중이신가요?"
-                b.tvLwBody.text = (listOf("${st.responseLeftSec}초 안에 누르지 않으면 같은 사업장에 구조 요청이 나갑니다") + st.peerLines)
+                b.tvLwBody.text = (listOf("${st.responseLeftSec}초 안에 누르지 않으면 같은 사업장에 구조 요청이 나갑니다") + st.peers.map { it.line })
                     .joinToString("\n\n")
                 b.btnLwPrimary.text = "근무 중"
                 b.btnLwPrimary.setOnClickListener { mon.ack() }
@@ -148,7 +149,7 @@ class LoneWorkerActivity : AppCompatActivity() {
             else -> {
                 bg = Color.parseColor("#C62828"); fg = Color.WHITE
                 b.tvLwTitle.text = if (st.peerActive) "구조 요청" else "해제됨"
-                b.tvLwBody.text = st.peerLines.joinToString("\n\n")
+                b.tvLwBody.text = st.peers.joinToString("\n\n") { it.line }
                 b.btnLwPrimary.text = if (st.peerActive) "확인" else "닫기"
                 b.btnLwPrimary.setOnClickListener { ackPeers(mon) }
             }
@@ -170,21 +171,22 @@ class LoneWorkerActivity : AppCompatActivity() {
 
     /** 마지막으로 그린 항목만 묵음으로 만든다. 진행 중 항목이 막 바뀐 직후면 탭을 무시한다. */
     private fun ackPeers(mon: LoneWorkerMonitor) {
-        ackGate.onTap(SystemClock.elapsedRealtime())?.let { mon.silencePeers(it) }
+        ackGate.onTap(SystemClock.elapsedRealtime())?.let { rows -> mon.silencePeers(rows.associate { it.id to it.epId }) }
     }
 }
 
-/** 화면 확인 대상: 마지막으로 그린 회차 ID 만 넘기고, 진행 중 ID 집합이 바뀐 뒤 SETTLE_MS 안의 탭은 무시(null)한다. */
+/** 화면 확인 대상: 마지막으로 그린 줄만 넘기고, 진행 중 항목 id 집합이 바뀐 뒤 SETTLE_MS 안의 탭은 무시(null)한다. */
 internal class PeerAckGate {
     companion object {
         const val SETTLE_MS = 700L
     }
 
-    private var shown: List<String> = emptyList()
+    private var shown: List<PeerRow> = emptyList()
     private var active: Set<String> = emptySet()
     private var changedAt = Long.MIN_VALUE
 
-    fun onRender(shown: List<String>, activeIds: Set<String>, nowMs: Long) {
+    fun onRender(shown: List<PeerRow>, nowMs: Long) {
+        val activeIds = shown.filter { it.active }.mapTo(HashSet()) { it.id }
         if (activeIds != active) {
             active = activeIds
             changedAt = nowMs
@@ -193,6 +195,6 @@ internal class PeerAckGate {
     }
 
     /** null = 이 탭은 무시한다. 빈 목록은 아무것도 묵음으로 만들지 않는다. */
-    fun onTap(nowMs: Long): List<String>? =
+    fun onTap(nowMs: Long): List<PeerRow>? =
         if (changedAt != Long.MIN_VALUE && nowMs - changedAt < SETTLE_MS) null else shown
 }

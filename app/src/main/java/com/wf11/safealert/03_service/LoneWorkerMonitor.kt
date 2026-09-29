@@ -7,6 +7,7 @@ import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
 import android.util.Log
+import com.wf11.safealert.firebase.SosRemote
 import com.wf11.safealert.utils.BeaconRegistry
 import com.wf11.safealert.utils.DevSettings
 
@@ -29,13 +30,12 @@ class LoneWorkerMonitor(
     data class UiState(
         val mode: LoneWorkerLogic.Mode,
         val responseLeftSec: Int,
-        val peerLines: List<String>,
-        val peerActive: Boolean,
+        val peers: List<PeerRow>,  // 그린 동료 줄(그린 순서)
         val serverStatus: String?, // 내 SOS 서버 전송 상태(SOS 가 아니면 null)
-        val alarmFault: String? = null, // 경보음 볼륨을 올리지 못했을 때의 안내(v1.1.99)
-        val peerIds: List<String> = emptyList(),       // 그린 동료 항목의 회차 ID(그린 순서)
-        val activePeerIds: Set<String> = emptySet()    // 그중 진행 중인 항목의 회차 ID
-    )
+        val alarmFault: String? = null // 경보음 볼륨을 올리지 못했을 때의 안내(v1.1.99)
+    ) {
+        val peerActive: Boolean get() = peers.any { it.active }
+    }
 
     companion object {
         private const val TAG = "LoneWorkerMonitor"
@@ -56,8 +56,11 @@ class LoneWorkerMonitor(
     private val sync = LoneWorkerSosSync(ctx, handler,
         { rec ->
             if (started) {
-                logic.onPeerServer(rec.key, rec.bleId, rec.name, rec.role, rec.trigger, rec.beacon, rec.createdAt, rec.active, now(), rec.ep,
-                    rec.resolvedAt, LoneWorkerSosSync.serverNowMs(), LoneWorkerSosSync.clockSlackMs())
+                val t = now()
+                logic.onPeerServer(LoneWorkerPeers.ServerRec(
+                    rec.key, rec.bleId, rec.name, rec.role, rec.trigger, rec.beacon, rec.createdAt, rec.active, rec.ep,
+                    LoneWorkerPeers.resolvedLocalMs(rec.resolvedAt, SosRemote.serverNowMs(), System.currentTimeMillis(), t)
+                ), t)
                 render()
             }
         },
@@ -270,10 +273,10 @@ class LoneWorkerMonitor(
         render()
     }
 
-    /** ids(bleId#ep) 의 회차만 묵음으로 만든다. null 이면 지금 목록의 모든 항목이다(화면은 쓰지 않는다). */
-    fun silencePeers(ids: List<String>?) {
+    /** targets(항목 id -> 회차 ID) 의 항목만 묵음으로 만든다. */
+    fun silencePeers(targets: Map<String, String>) {
         if (!started) return
-        logic.silencePeers(now(), ids)
+        logic.silencePeers(now(), targets)
         render()
     }
 
@@ -293,16 +296,12 @@ class LoneWorkerMonitor(
         val t = now()
         val shown = logic.peers.filter { !it.silenced }  // 해제된 항목은 [닫기] 전까지 보인다
         if (logic.mode == LoneWorkerLogic.Mode.WATCHING && shown.isEmpty()) return null
-        val lines = shown.map { it.line(t) }
         return UiState(
             logic.mode,
             ((logic.responseLeftMs(t) + 999L) / 1000L).toInt(),
-            lines,
-            shown.any { it.active },
+            shown.map { PeerRow(it.id, it.epId, it.line(t), it.active) },
             if (logic.mode == LoneWorkerLogic.Mode.SOS) sync.statusText() else null,
-            alarm.volumeFault,
-            shown.map { it.epId },
-            shown.filter { it.active }.mapTo(HashSet()) { it.epId }
+            alarm.volumeFault
         )
     }
 
