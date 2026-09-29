@@ -169,6 +169,7 @@ class BleAdvertiser(
     // (v1.1.62) 존 비콘 접촉(IN_ZONE) 선언 — ServiceData 확장 바이트(bit0)로 송출.
     //   BleService 존 상태 머신이 updateInZone() 으로 민다. 수신측은 이 기기를 무해(SAFE) 판정.
     @Volatile private var currentInZone = false
+    @Volatile private var currentSos = false          // (v1.1.99) 단독 작업자 구조 요청 — 확장 바이트 bit1
     // [v1.0.36] STATE·Speed 재광고 공용 throttle 타임스탬프 (구 lastStateUpdateMs)
     private var lastPayloadUpdateMs = 0L
     // [v1.1.14] 위험상태(RISK) 전용 throttle 타임스탬프 — STATE/TURN throttle 과 독립.
@@ -299,7 +300,8 @@ class BleAdvertiser(
                     //   상태 1바이트(2-2-2-2)는 만석이라 1바이트 증설. 구버전 수신은 byte[0]만
                     //   읽으므로 무해(뒤호환). ServiceData 5→6B, 전체 예산 28B ≤ 31B.
                     //   (v1.1.87) ID 14→15B 로 전체 29B ≤ 31B.
-                    (if (currentInZone) BleConstants.EXT_FLAG_IN_ZONE else 0).toByte()
+                    //   (v1.1.99) bit1=SOS(단독 작업자 구조 요청). bit0 의미 불변.
+                    BleConstants.encodeExt(currentInZone, currentSos).toByte()
                 )
             )
             .addManufacturerData(companyId, idBytes)
@@ -433,6 +435,24 @@ class BleAdvertiser(
         currentInZone = inZone
         Log.d(TAG, "IN_ZONE 갱신 → $inZone 재광고")
         restartAdvertise()
+    }
+
+    /**
+     * (v1.1.99) 구조 요청 비트 갱신 — 확장 바이트 bit1. 동일값이면 no-op.
+     *  updateInZone 과 달리 슬립(paused) 중에도 재광고해야 한다: 단독 작업자 폰은 이웃이 없어
+     *  대개 슬립 모드인데, 이때 restartAdvertise 는 아무것도 하지 않아 새 값이 송출되지 않는다.
+     *  그래서 pauseAdvertising 과 같은 방식(광고 중지 → 지연 후 startAdvertising)으로 직접 재시작한다.
+     *  startAdvertising 은 paused 이면 LOW_POWER 로 송출하므로 슬립 상태는 유지된다.
+     */
+    fun updateSos(sos: Boolean) {
+        if (stopped) return
+        if (sos == currentSos) return
+        currentSos = sos
+        Log.d(TAG, "SOS 갱신 → $sos 재광고")
+        try { advertiser.stopAdvertising(callback) } catch (_: Exception) {}
+        stateHandler.postDelayed({
+            startAdvertising(currentDeviceId, lastUwbAddress)
+        }, STATE_RESTART_DELAY_MS)
     }
 
     /**

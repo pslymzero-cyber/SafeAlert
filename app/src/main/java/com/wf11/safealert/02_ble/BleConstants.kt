@@ -26,6 +26,8 @@ object BleConstants {
     //   상태 1바이트(2-2-2-2)는 만석이라 ServiceData 에 확장 바이트를 1개 증설한다.
     //   구버전 수신은 byte[0]만 읽으므로 무해(뒤호환), 구버전 송신은 byte[1] 부재 → false 해석.
     const val EXT_FLAG_IN_ZONE     = 0x01
+    // (v1.1.99) 확장 바이트 bit1 — 단독 작업자 구조 요청. bit0 의미 불변, 구버전은 byte[0] 또는 bit0 만 읽으므로 무해
+    const val EXT_FLAG_SOS         = 0x02
 
     // RSSI >= 임계값 → 경보 (가까울수록 RSSI가 0에 가까워짐)
     // 경고: 더 멀리서(더 음수), 위험: 더 가까이서(덜 음수)
@@ -137,6 +139,13 @@ object BleConstants {
         val r = (risk and RISK_MASK) shl RISK_SHIFT      // [v1.1.14] 위험 감지 상태(RSV→RISK)
         return (c or s or t or r).toByte()
     }
+
+    /** (v1.1.99) 확장 바이트 조립 — bit0=IN_ZONE, bit1=SOS. 첫 바이트(encodePayload)와 무관. */
+    fun encodeExt(inZone: Boolean, sos: Boolean): Int =
+        (if (inZone) EXT_FLAG_IN_ZONE else 0) or (if (sos) EXT_FLAG_SOS else 0)
+
+    /** (v1.1.99) 확장 바이트에서 SOS(bit1) 추출. 바이트 부재는 0 으로 넘어오므로 false. */
+    fun decodeSos(ext: Int): Boolean = (ext and EXT_FLAG_SOS) != 0
 
     /** 패킹된 1바이트에서 Category(bits 7:6) 추출. */
     fun decodeCategory(payload: Int): Int = ((payload and 0xFF) shr CAT_SHIFT) and CAT_MASK

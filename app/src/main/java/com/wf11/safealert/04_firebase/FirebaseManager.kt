@@ -3,8 +3,12 @@
 import android.content.Context
 import android.util.Log
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.database.ChildEventListener
 import com.google.firebase.database.DataSnapshot
+import com.google.firebase.database.DatabaseError
 import com.google.firebase.database.FirebaseDatabase
+import com.google.firebase.database.ServerValue
+import com.google.firebase.database.ValueEventListener
 import com.wf11.safealert.BuildConfig
 import com.wf11.safealert.utils.BeaconRegistry
 import com.wf11.safealert.utils.DevSettings
@@ -359,6 +363,116 @@ object FirebaseManager {
             if (acc * 2 == total) return (s.first + sorted[i + 1].first) / 2
         }
         return sorted.last().first
+    }
+
+    // ── (v1.1.99) 단독 작업자 구조 요청(SOS) ────────────────────────────────
+    //   {firebaseRoot}/sos/{siteCode}/{pushKey}. 규칙(database.rules.json)이 작성자 uid 소유 기록만
+    //   생성하고, 작성자만 active→resolved 로 바꿀 수 있게 막는다. 사업장 코드가 비면 사용 불가(null).
+    //   FCM·Functions 없이 RTDB 리스너로만 전달한다.
+
+    /** 구조 요청 기록 한 건. bleId 는 광고 fullId 그대로라 BLE 수신 키와 병합된다. */
+    data class SosRecord(
+        val key: String,
+        val bleId: String,
+        val name: String,
+        val role: String,
+        val trigger: String,      // "still" | "fall"
+        val beacon: String,       // 최근 최강 비콘 라벨(없으면 "")
+        val beaconRssi: Int?,
+        val createdAt: Long,
+        val active: Boolean
+    )
+
+    private const val SOS_STR_MAX = 64
+
+    /** 스냅샷 값(Map) → SosRecord. 경계 입력이라 타입·길이가 어긋나면 null(무시). */
+    fun parseSosRecord(key: String, v: Any?): SosRecord? {
+        val m = v as? Map<*, *> ?: return null
+        val bleId = (m["bleId"] as? String)?.takeIf { it.isNotEmpty() && it.length <= SOS_STR_MAX } ?: return null
+        val status = m["status"] as? String
+        if (status != "active" && status != "resolved") return null
+        val createdAt = (m["createdAt"] as? Number)?.toLong() ?: return null
+        val trigger = (m["trigger"] as? String)?.takeIf { it == "still" || it == "fall" } ?: "still"
+        return SosRecord(
+            key = key,
+            bleId = bleId,
+            name = (m["name"] as? String).orEmpty().take(SOS_STR_MAX),
+            role = (m["role"] as? String).orEmpty().take(SOS_STR_MAX),
+            trigger = trigger,
+            beacon = (m["beacon"] as? String).orEmpty().take(SOS_STR_MAX),
+            beaconRssi = (m["beaconRssi"] as? Number)?.toInt(),
+            createdAt = createdAt,
+            active = status == "active"
+        )
+    }
+
+    /** 내 사업장 구조 요청 노드. 사업장 코드 미설정이면 null */
+    private fun sosNode() =
+        DevSettings.siteCode.takeIf { it.isNotEmpty() }?.let { db.child("sos").child(it) }
+
+    /** 구조 요청 기록 생성. 성공 시 키, 노드 없음·로그인 전이면 null(호출측이 재시도). */
+    fun sosCreate(bleId: String, name: String, role: String, trigger: String, beacon: String?, beaconRssi: Int?): String? {
+        val node = sosNode() ?: return null
+        val uid = currentUid() ?: run { FirebaseConfig.ensureSignedIn(); return null }
+        val ref = node.push()
+        val data = HashMap<String, Any>()
+        data["bleId"] = bleId.take(SOS_STR_MAX)
+        data["name"] = name.take(SOS_STR_MAX)
+        data["role"] = role.take(32)
+        data["trigger"] = trigger
+        data["createdAt"] = ServerValue.TIMESTAMP
+        data["status"] = "active"
+        data["uid"] = uid
+        if (!beacon.isNullOrEmpty()) data["beacon"] = beacon.take(SOS_STR_MAX)
+        if (beaconRssi != null) data["beaconRssi"] = beaconRssi
+        ref.setValue(data)
+            .addOnSuccessListener { Log.d(TAG, "구조 요청 기록: ${ref.key}") }
+            .addOnFailureListener { Log.e(TAG, "구조 요청 기록 실패: ${it.message}") }
+        return ref.key
+    }
+
+    /** 구조 요청 해제 — status=resolved + resolvedAt(서버 시각). 나머지 필드는 불변. */
+    fun sosResolve(key: String) {
+        val node = sosNode() ?: return
+        node.child(key).updateChildren(mapOf("status" to "resolved", "resolvedAt" to ServerValue.TIMESTAMP))
+            .addOnSuccessListener { Log.d(TAG, "구조 요청 해제 기록: $key") }
+            .addOnFailureListener { Log.e(TAG, "구조 요청 해제 기록 실패: ${it.message}") }
+    }
+
+    /**
+     * 구조 요청 실시간 수신. 호출 시각(서버 시각 환산) 이후 생성분만 받아 시작 전 기록을 재생하지 않는다.
+     * 반환값은 해제 함수(오프셋 읽기가 끝나기 전에 불러도 안전). 노드 없음이면 null.
+     */
+    fun sosListen(onRecord: (SosRecord) -> Unit): (() -> Unit)? {
+        val node = sosNode() ?: return null
+        var stopped = false
+        var attached: Pair<com.google.firebase.database.Query, ChildEventListener>? = null
+        val handle = { s: DataSnapshot ->
+            parseSosRecord(s.key.orEmpty(), s.value)?.let(onRecord)
+        }
+        val listener = object : ChildEventListener {
+            override fun onChildAdded(s: DataSnapshot, prev: String?) { handle(s) }
+            override fun onChildChanged(s: DataSnapshot, prev: String?) { handle(s) }
+            override fun onChildRemoved(s: DataSnapshot) {}
+            override fun onChildMoved(s: DataSnapshot, prev: String?) {}
+            override fun onCancelled(e: DatabaseError) { Log.e(TAG, "구조 요청 수신 취소: ${e.message}") }
+        }
+        fun attach(offset: Long) {
+            if (stopped) return
+            val q = node.orderByChild("createdAt").startAt((System.currentTimeMillis() + offset).toDouble())
+            q.addChildEventListener(listener)
+            attached = q to listener
+        }
+        FirebaseDatabase.getInstance().getReference(".info/serverTimeOffset")
+            .addListenerForSingleValueEvent(object : ValueEventListener {
+                override fun onDataChange(s: DataSnapshot) { attach((s.value as? Number)?.toLong() ?: 0L) }
+                override fun onCancelled(e: DatabaseError) { attach(0L) }
+            })
+        return {
+            stopped = true
+            attached?.let { (q, l) -> q.removeEventListener(l) }
+            attached = null
+        }
     }
 
 }
