@@ -14,7 +14,7 @@ import com.wf11.safealert.ui.LoneWorkerActivity
 import com.wf11.safealert.ui.MainActivity
 
 /** 동료 항목의 표시 이름: 이름이 없으면 장비 ID 에서 접두어를 뗀 값. */
-internal fun LoneWorkerLogic.Peer.displayName(): String =
+internal fun LoneWorkerPeers.Peer.displayName(): String =
     name.ifEmpty { bleId.removePrefix("SAFEALERT_DEVICE_").removePrefix("SAFEALERT_WALKER_") }
 
 /**
@@ -36,6 +36,8 @@ class LoneWorkerNotifier(
 
         /** 알림의 [괜찮음]이 화면을 열면서 넘기는 표시: 화면은 바로 확인 대화상자를 띄운다. */
         const val EXTRA_CONFIRM_OK = "lw_confirm_ok"
+        /** 알림의 [확인]이 넘기는 회차 ID 목록(bleId#ep): 이 회차만 묵음으로 만든다. */
+        const val EXTRA_PEER_IDS = "lw_peer_ids"
         private const val REQ_ACK = 40
         private const val REQ_SILENCE = 42
         private const val REQ_OPEN = 43
@@ -57,9 +59,13 @@ class LoneWorkerNotifier(
         }
     }
 
-    private fun servicePi(req: Int, action: String): PendingIntent =
+    private fun servicePi(req: Int, action: String, ids: ArrayList<String>? = null): PendingIntent =
         PendingIntent.getService(
-            ctx, req, Intent(ctx, BleService::class.java).apply { this.action = action },
+            ctx, req,
+            Intent(ctx, BleService::class.java).apply {
+                this.action = action
+                ids?.let { putStringArrayListExtra(EXTRA_PEER_IDS, it) }
+            },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
@@ -86,8 +92,8 @@ class LoneWorkerNotifier(
      */
     fun update(
         mode: LoneWorkerLogic.Mode,
-        audible: List<LoneWorkerLogic.Peer>,
-        resolved: List<LoneWorkerLogic.Peer>,
+        audible: List<LoneWorkerPeers.Peer>,
+        resolved: List<LoneWorkerPeers.Peer>,
         notice: Pair<String, String>?,
         alertAgain: Boolean
     ) {
@@ -98,7 +104,7 @@ class LoneWorkerNotifier(
             if (lastKey != null) { nm.cancel(NOTIF_ID); lastKey = null }
             return
         }
-        val key = "${quiet?.first}|${quiet?.second}|$mode|${audible.joinToString(",") { it.bleId }}|${resolved.joinToString(",") { it.bleId }}"
+        val key = "${quiet?.first}|${quiet?.second}|$mode|${audible.joinToString(",") { it.id }}|${resolved.joinToString(",") { it.id }}"
         val again = loud && alertAgain
         if (key == lastKey && !again) return
         lastKey = key
@@ -108,7 +114,7 @@ class LoneWorkerNotifier(
             mode == LoneWorkerLogic.Mode.CHECKING ->
                 Triple("근무 중이신가요?", "응답하지 않으면 같은 사업장에 구조 요청이 나갑니다", "근무 중" to servicePi(REQ_ACK, BleService.ACTION_LW_ACK))
             audible.isNotEmpty() ->
-                Triple("구조 요청", audible.joinToString(", ") { it.displayName() }, "확인" to servicePi(REQ_SILENCE, BleService.ACTION_LW_SILENCE))
+                Triple("구조 요청", audible.joinToString(", ") { it.displayName() }, "확인" to servicePi(REQ_SILENCE, BleService.ACTION_LW_SILENCE, ArrayList(audible.map { it.epId })))
             quiet != null -> Triple(quiet.first, quiet.second, null)
             else -> Triple("해제됨", resolved.joinToString(", ") { it.displayName() }, null)
         }

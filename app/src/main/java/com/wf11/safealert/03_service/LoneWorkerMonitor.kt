@@ -47,6 +47,7 @@ class LoneWorkerMonitor(
         private const val REFRESH_MS = 5_000L
         private const val TICK_MIN_MS = 1_000L
         private const val BEACON_NOTE_MS = 2_000L
+        private const val SID_MISS_MS = 30_000L
         private const val WAKE_LOCK_MS = 10 * 60_000L
         private const val SYNC_TICK_MS = 10_000L
 
@@ -91,6 +92,7 @@ class LoneWorkerMonitor(
     val sosEpisode: Int get() = if (sosActive) sync.episode() else 0
     val sosHint: Int get() = if (sosActive) sync.hint() else 0
     private val sidLabels = HashMap<Int, String>()   // (v1.1.99) 짧은 ID → 비콘 라벨 캐시(찾은 것만 저장), stop 에서 비움
+    private val sidMissUntil = HashMap<Int, Long>()  // 라벨 없는 짧은 ID → 다시 찾을 수 있는 시각
     private val power = LoneWorkerPower(ctx) { onPower(it) }
     /** (v1.1.99) 외부 전원 연결로 무동작·낙상 확인을 쉬는 중인지 — 메인 화면 안내용 */
     val charging: Boolean get() = started && logic.charging
@@ -153,6 +155,7 @@ class LoneWorkerMonitor(
         lastMode = LoneWorkerLogic.Mode.WATCHING
         lastAudible = emptySet()
         sidLabels.clear()
+        sidMissUntil.clear()
         // 서버의 active 기록과 저장된 내 SOS 는 그대로 둔다 — 해제는 본인 [괜찮음]뿐 (D-05, R3)
         logic = LoneWorkerLogic("") // 재시작 때 지난 동료 항목이 되살아나지 않게 비운다
         if (current === this) current = null
@@ -295,12 +298,17 @@ class LoneWorkerMonitor(
     fun onPeerBle(bleId: String, sos: Boolean, episode: Int = 0, hint: Int = 0) {
         if (!started) return
         val before = peerSig()
-        // ponytail: 찾지 못한 짧은 ID 는 광고마다 비콘 목록을 다시 읽는다. 부담이 되면 짧은 TTL 캐시로 올린다
-        val label = if (sos && hint != 0)
-            sidLabels[hint] ?: BeaconRegistry.labelForShortId(hint)?.also { sidLabels[hint] = it } ?: "" else ""
-        logic.onPeerBle(bleId, sos, now(), episode, label)
+        val t = now()
+        val label = if (sos && hint != 0) sidLabel(hint, t) else ""
+        logic.onPeerBle(bleId, sos, t, episode, label)
         if (peerSig() != before) render()
     }
+
+    /** 찾은 라벨은 캐시하고, 못 찾은 짧은 ID 는 30초 동안 다시 찾지 않는다. */
+    private fun sidLabel(hint: Int, t: Long): String =
+        sidLabels[hint] ?: if ((sidMissUntil[hint] ?: Long.MIN_VALUE) > t) "" else
+            BeaconRegistry.labelForShortId(hint)?.takeIf { it.isNotEmpty() }?.also { sidLabels[hint] = it }
+                ?: "".also { sidMissUntil[hint] = t + SID_MISS_MS }
 
     fun noteBeacon(deviceId: String, rssi: Int) {
         if (!started || !BeaconRegistry.isBeaconFullId(deviceId)) return
@@ -326,16 +334,17 @@ class LoneWorkerMonitor(
         render()
     }
 
-    fun silencePeers() {
+    /** ids(bleId#ep) 가 없으면 지금 목록의 모든 항목, 있으면 알림에 보였던 회차만 묵음으로 만든다. */
+    fun silencePeers(ids: List<String>? = null) {
         if (!started) return
-        logic.silencePeers(now())
+        logic.silencePeers(now(), ids)
         render()
     }
 
     private fun peerSig(): Int {
         var h = 0
-        for (p in logic.peers.values) {
-            h = h * 31 + p.bleId.hashCode()
+        for (p in logic.peers) {
+            h = h * 31 + p.id.hashCode()
             h = h * 31 + (if (p.active) 1 else 0) + (if (p.silenced) 2 else 0)
         }
         return h
@@ -346,7 +355,7 @@ class LoneWorkerMonitor(
     fun uiState(): UiState? {
         if (!started) return null
         val t = now()
-        val shown = logic.peers.values.filter { !it.active || !it.silenced }
+        val shown = logic.peers.filter { !it.silenced }  // 해제된 항목은 [닫기] 전까지 보인다
         if (logic.mode == LoneWorkerLogic.Mode.WATCHING && shown.isEmpty()) return null
         val lines = shown.map { peerLine(it, t) }
         return UiState(
@@ -359,7 +368,7 @@ class LoneWorkerMonitor(
         )
     }
 
-    private fun peerLine(p: LoneWorkerLogic.Peer, t: Long): String {
+    private fun peerLine(p: LoneWorkerPeers.Peer, t: Long): String {
         val role = when (p.role) {
             "WALKER" -> "보행자"
             "FORKLIFT" -> "지게차"
@@ -422,7 +431,7 @@ class LoneWorkerMonitor(
         lastMode = mode
 
         val audible = logic.audiblePeers()
-        val ids = audible.mapTo(HashSet()) { it.bleId }
+        val ids = audible.mapTo(HashSet()) { it.epId }
         if (ids.any { it !in lastAudible }) showScreen = true
         lastAudible = ids
 
@@ -432,7 +441,7 @@ class LoneWorkerMonitor(
             else -> alarm.stop()
         }
 
-        notifier.update(mode, audible, logic.peers.values.filter { !it.active }, notice(), showScreen)
+        notifier.update(mode, audible, logic.peers.filter { !it.active && !it.silenced }, notice(), showScreen)
         if (showScreen) notifier.openScreen()
         updateWakeLock(false)
         scheduleLoop()
