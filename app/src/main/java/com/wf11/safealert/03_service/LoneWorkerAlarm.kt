@@ -12,6 +12,33 @@ import android.util.Log
 import com.wf11.safealert.utils.DevSettings
 
 /**
+ * 충돌 경보 경로와 단독 작업자 알람이 STREAM_ALARM 볼륨을 함께 쓴다. 구조 요청 알람이 울리는 동안에는
+ * 충돌 경로가 볼륨을 낮추지 않고, 알람을 끝낼 때는 충돌 경로가 그 사이 볼륨을 만지지 않았을 때만 원래 값으로 되돌린다.
+ */
+object AlarmVolumeShare {
+    const val COLLISION_HOLD_MS = 10_000L
+
+    @Volatile var sosSounding = false
+
+    @Volatile var collisionGen = 0
+        private set
+
+    @Volatile var collisionAtMs = -COLLISION_HOLD_MS
+        private set
+
+    fun noteCollision(nowMs: Long) {
+        collisionGen++
+        collisionAtMs = nowMs
+    }
+
+    fun collisionTarget(target: Int, current: Int, sosSounding: Boolean) =
+        if (sosSounding) maxOf(target, current) else target
+
+    fun mayRestore(ourGen: Int, gen: Int, nowMs: Long, collisionAtMs: Long) =
+        ourGen >= 0 && ourGen == gen && nowMs - collisionAtMs >= COLLISION_HOLD_MS
+}
+
+/**
  * 단독 작업자 확인·구조 요청 전용 소리·진동 (v1.1.99).
  *
  * 충돌 경보용 소리 재생기와 완전히 분리한다. 코드로 만든 PCM(SirenGenerator)을 정적 AudioTrack 으로
@@ -45,12 +72,14 @@ class LoneWorkerAlarm(
     private var fallback: ToneGenerator? = null
     private var fallbackFor: Pattern? = null
     private var failedAt = 0L
+    private var ourGen = -1   // 우리가 볼륨을 올린 시점의 충돌 경로 볼륨 세대
 
     private val audio: AudioManager?
         get() = runCatching { ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager }.getOrNull()
 
     fun play(p: Pattern) {
         if (playing == p) return
+        AlarmVolumeShare.sosSounding = true
         val t0 = SystemClock.elapsedRealtime()
         // 대체음이 나는 동안에는 5초에 한 번만 트랙을 다시 시도한다
         if (fallbackFor == p && t0 - failedAt < RETRY_MS) {
@@ -139,6 +168,7 @@ class LoneWorkerAlarm(
     }
 
     fun stop() {
+        AlarmVolumeShare.sosSounding = false
         if (playing == null && track == null && fallbackFor == null && !prefs.contains(K_ORIG)) return
         releaseTrack()
         stopFallback()
@@ -146,11 +176,14 @@ class LoneWorkerAlarm(
         VibrationHelper.stopAlarmLoop(ctx)
         val p = prefs
         if (p.contains(K_ORIG) && p.contains(K_OURS)) {
-            // 지금 볼륨이 이 앱이 올린 값일 때만 되돌린다 (그 뒤 충돌 경보나 사용자가 바꾼 값은 건드리지 않는다).
+            // 우리가 올린 뒤 충돌 경로가 볼륨을 다시 정하지 않았고 최근 10초 안에도 없을 때만 되돌린다.
             val cur = audio?.getStreamVolume(AudioManager.STREAM_ALARM)
             val orig = p.getInt(K_ORIG, -1)
-            if (cur != null && orig >= 0 && cur == p.getInt(K_OURS, -1) && cur != orig) setAlarmVolume(orig)
+            if (cur != null && orig >= 0 && cur != orig && AlarmVolumeShare.mayRestore(
+                    ourGen, AlarmVolumeShare.collisionGen, SystemClock.elapsedRealtime(), AlarmVolumeShare.collisionAtMs)
+            ) setAlarmVolume(orig)
         }
+        ourGen = -1
         p.edit().remove(K_ORIG).remove(K_OURS).apply()
         volumeFault = null
     }
@@ -168,6 +201,7 @@ class LoneWorkerAlarm(
         val max = am.getStreamMaxVolume(AudioManager.STREAM_ALARM)
         val cur = am.getStreamVolume(AudioManager.STREAM_ALARM)
         val pf = prefs
+        if (ourGen < 0) ourGen = AlarmVolumeShare.collisionGen
         if (!pf.contains(K_ORIG)) pf.edit().putInt(K_ORIG, cur).apply()   // 재시작 중에도 진짜 원래 값을 유지
         val target = if (p == Pattern.SIREN) max else {
             val pref = Math.ceil(max * DevSettings.alarmVolume / 100.0).toInt().coerceIn(0, max)
@@ -176,6 +210,7 @@ class LoneWorkerAlarm(
         var now = cur
         if (cur != target) {
             setAlarmVolume(target)
+            ourGen = AlarmVolumeShare.collisionGen
             now = am.getStreamVolume(AudioManager.STREAM_ALARM)   // 읽어 보고 확인
             if (now != cur) pf.edit().putInt(K_OURS, now).apply()
         }

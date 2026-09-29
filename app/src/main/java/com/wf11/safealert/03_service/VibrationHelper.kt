@@ -24,12 +24,15 @@ object VibrationHelper {
     /** 이 앱의 진동 구간. LoneWorkerMonitor 가 센서 표본을 거를 때 쓴다. */
     val window = VibrationWindow()
 
+    // 진동 서비스는 같은 호출자 토큰으로 건 진동만 취소한다. 토큰은 Context 마다 따로 생기므로
+    // 걸기·일시정지·재개·취소가 모두 같은 인스턴스를 쓰도록 항상 applicationContext 로 얻는다.
     internal fun vibrator(context: Context): Vibrator? = runCatching {
+        val app = context.applicationContext ?: context
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
-            (context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager).defaultVibrator
+            (app.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager).defaultVibrator
         else
             @Suppress("DEPRECATION")
-            context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+            app.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
     }.onFailure { Log.w(TAG, "Vibrator 획득 실패: ${it.message}") }.getOrNull()
 
     /** 경고 패턴: 중간 세기 2회, 펄스 길이는 개발자 설정(기본 500ms, 선택지 300/500/1000ms).
@@ -108,8 +111,11 @@ object VibrationHelper {
 
     /** 충돌 경보 경로의 진동 정지. 알람 반복이 요청된 상태면 곧바로 다시 건다(충돌 정지가 알람 진동을 끊지 않게). */
     fun stopVibration(context: Context) {
+        val now = SystemClock.elapsedRealtime()
+        // 자를 충돌 진동이 없으면 알람 반복을 건드리지 않는다.
+        if (loopCtx != null && oneShotEnd <= now) return
         handler.removeCallbacks(resume)
-        window.cut(SystemClock.elapsedRealtime())
+        window.cut(now)
         oneShotEnd = 0L
         runCatching { vibrator(context)?.cancel() }
         loopCtx?.let { startLoop(it) }

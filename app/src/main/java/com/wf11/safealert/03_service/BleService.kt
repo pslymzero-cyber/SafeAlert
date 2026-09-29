@@ -1050,8 +1050,12 @@ class BleService : LifecycleService() {
         try {
             val am     = getSystemService(AUDIO_SERVICE) as AudioManager
             val maxVol = am.getStreamMaxVolume(AudioManager.STREAM_ALARM)
-            val target = (maxVol * DevSettings.alarmVolume / 100f).toInt().coerceIn(0, maxVol)
+            val cur    = am.getStreamVolume(AudioManager.STREAM_ALARM)
+            // 구조 요청 알람이 울리는 동안에는 알람 볼륨을 낮추지 않는다.
+            val target = AlarmVolumeShare.collisionTarget(
+                (maxVol * DevSettings.alarmVolume / 100f).toInt().coerceIn(0, maxVol), cur, AlarmVolumeShare.sosSounding)
             am.setStreamVolume(AudioManager.STREAM_ALARM, target, 0)
+            AlarmVolumeShare.noteCollision(android.os.SystemClock.elapsedRealtime())
             val actual = am.getStreamVolume(AudioManager.STREAM_ALARM)   // 실제 반영 여부 되읽기
             Log.d(TAG, "알람 볼륨: $actual/$maxVol (요청 $target, ${DevSettings.alarmVolume}%)")
             // target == 0 은 사용자가 알람 볼륨 0% 로 설정한 의도된 상태이므로 이상 아님.
