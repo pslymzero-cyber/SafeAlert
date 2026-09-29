@@ -63,14 +63,13 @@ class SirenGeneratorTest {
 
     @Test fun wail_amplitude_is_bounded_and_loud_enough() {
         val pcm = SirenGenerator.wailCycle()
-        val cap = AMPLITUDE * 32767 + 1
+        val target = Math.round(AMPLITUDE * 32767).toInt()
         var peak = 0
         for (s in pcm) {
             assertTrue(s.toInt() != Short.MIN_VALUE.toInt())
-            assertTrue(abs(s.toInt()) <= cap)
             peak = maxOf(peak, abs(s.toInt()))
         }
-        assertTrue(peak >= 0.5 * AMPLITUDE * 32767)
+        assertTrue("peak=$peak", abs(peak - target) <= 1)
     }
 
     @Test fun wail_loop_seam_is_click_free() {
@@ -106,5 +105,13 @@ class SirenGeneratorTest {
         val toneEnd = SAMPLE_RATE * SirenGenerator.BEEP_ON_MS / 1000
         val hz = zeroCrossHz(pcm, 0, toneEnd)
         assertTrue("hz=$hz", hz >= BEEP_HZ * 0.95 && hz <= BEEP_HZ * 1.05)
+    }
+
+    @Test fun check_beep_is_clearly_quieter_than_the_siren() {
+        fun peakOf(a: ShortArray): Int = a.maxOf { abs(it.toInt()) }
+        val wailPeak = peakOf(SirenGenerator.wailCycle())
+        val beepPeak = peakOf(SirenGenerator.checkBeepCycle())
+        assertTrue(beepPeak <= Math.round(SirenGenerator.BEEP_AMPLITUDE * 32767) + 1)
+        assertTrue(beepPeak <= 0.6 * wailPeak)
     }
 }

@@ -8,12 +8,13 @@ import kotlin.math.sqrt
  *
  * 순수 JVM 로직. 활동 초: 1초 창의 |a| 표준편차가 ACTIVE_STD 이상이거나, 직전 창 평균 벡터와의
  * 각도 차가 ACTIVE_ANGLE_DEG 이상이면 활동. 최근 10개 창 중 3개 이상 활동이면 MOVED.
- * 샘플이 없는 창은 정지로 센다 (D-07).
+ * 샘플이 없는 창은 정지로 센다 (D-07). 샘플 공백은 MOVED 판정 전에 빈 창으로 밀어 넣는다 (v1.1.99).
  *
  * 낙상: 자유낙하(0.5 G 미만 60 ms 이상) 직후 1초 안의 충격(2.5 G 초과), 충격 2~12초 뒤 구간에서
  * 자세가 45도 이상 바뀌었고 활동 초가 3개 미만이면 FALL. 임계값은 문헌 범위의 보수값이라 현장 보정 대상이다.
+ * 충격 임계값은 센서 측정 범위가 2.5 G 미만인 기기(2 G 센서)에서는 범위에 맞춰 낮춘다 (impactGFor).
  */
-class MotionAnalyzer {
+class MotionAnalyzer(private val impactG: Double = IMPACT_G) {
 
     enum class Signal { NONE, MOVED, FALL }
 
@@ -31,6 +32,13 @@ class MotionAnalyzer {
         const val POST_END_MS = 12000L
         const val POSTURE_DEG = 45.0
         const val POST_MAX_ACTIVE = 3
+
+        /** 센서 최대 범위(m/s^2)가 2.5 G 미만이면 범위의 90% 를 충격 임계로 쓴다. 아니면 IMPACT_G. */
+        fun impactGFor(maxRangeMs2: Float): Double {
+            if (maxRangeMs2 <= 0f) return IMPACT_G
+            val rangeG = maxRangeMs2 / G
+            return if (rangeG < IMPACT_G) 0.9 * rangeG else IMPACT_G
+        }
     }
 
     // 1초 창 누적
@@ -91,7 +99,7 @@ class MotionAnalyzer {
         if (curIdx < 0) {
             curIdx = idx
         } else if (idx > curIdx) {
-            moved = closeWindow()
+            moved = closeWindow(idx)
             curIdx = idx
         }
         n++; sumM += mag; sumM2 += mag * mag; sx += ax; sy += ay; sz += az
@@ -100,8 +108,8 @@ class MotionAnalyzer {
         return if (fell) Signal.FALL else if (moved) Signal.MOVED else Signal.NONE
     }
 
-    /** 현재 창을 닫고 MOVED 조건 충족 여부를 돌려준다. */
-    private fun closeWindow(): Boolean {
+    /** 현재 창을 닫고 MOVED 조건 충족 여부를 돌려준다. nextIdx 는 새 샘플이 여는 창 번호. */
+    private fun closeWindow(nextIdx: Long): Boolean {
         val cnt = n.toDouble()
         val mx = sx / cnt; val my = sy / cnt; val mz = sz / cnt
         val mm = sumM / cnt
@@ -114,6 +122,9 @@ class MotionAnalyzer {
             activeMask = if (gap >= 64) 0L else activeMask shl gap.toInt()
         }
         if (active) activeMask = activeMask or 1L
+        // 닫힌 창과 새 창 사이의 빈 창은 정지로 밀어 넣은 뒤 판정한다 (D-07)
+        val empty = nextIdx - curIdx - 1
+        if (empty > 0) activeMask = if (empty >= 64) 0L else activeMask shl empty.toInt()
 
         if (candidate) {
             val start = curIdx * 1000
@@ -121,7 +132,7 @@ class MotionAnalyzer {
         }
 
         hasPrev = true; prevX = mx; prevY = my; prevZ = mz
-        lastClosedIdx = curIdx
+        lastClosedIdx = nextIdx - 1
         n = 0; sumM = 0.0; sumM2 = 0.0; sx = 0.0; sy = 0.0; sz = 0.0
         val mask = (1L shl MOVE_WINDOWS) - 1
         return java.lang.Long.bitCount(activeMask and mask) >= MOVE_MIN_ACTIVE
@@ -148,7 +159,7 @@ class MotionAnalyzer {
         if (armedEnd >= 0) {
             if (t - armedEnd > IMPACT_WINDOW_MS) {
                 armedEnd = -1L
-            } else if (mag > IMPACT_G * G && !candidate) {
+            } else if (mag > impactG * G && !candidate) {
                 candidate = true
                 impactT = t
                 candPreValid = armedPreValid

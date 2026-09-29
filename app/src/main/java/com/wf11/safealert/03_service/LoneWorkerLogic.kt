@@ -35,6 +35,8 @@ class LoneWorkerLogic(var myBleId: String) {
         const val BEACON_HINT_MS = 60_000L
         const val PEER_RESOLVE_GUARD_MS = 30_000L
         const val RESOLVED_KEEP_MS = 60_000L
+        /** BLE 로만 보이던 동료가 이 시간 이상 안 보이다 다시 SOS 비트를 켜면 새 신호로 본다 (v1.1.99). */
+        const val PEER_BLE_GAP_MS = 30_000L
         private const val BEACON_SAMPLE_CAP = 256
     }
 
@@ -67,6 +69,7 @@ class LoneWorkerLogic(var myBleId: String) {
 
     private val peerMap = LinkedHashMap<String, Peer>()
     private val bleLast = HashMap<String, Boolean>()
+    private val bleSeenAt = HashMap<String, Long>()
 
     private class BeaconSample(val label: String, val rssi: Int, val tMs: Long)
     private val beaconSamples = ArrayDeque<BeaconSample>()
@@ -161,6 +164,17 @@ class LoneWorkerLogic(var myBleId: String) {
         return true
     }
 
+    /**
+     * 저장된 본인 SOS 로 복원한다 (서비스 재시작·프로세스 사망 뒤). start() 뒤에 호출한다.
+     * SOS 는 cancelSos 로만 끝나므로 구역 정착·기능 끄기·ackWorking 으로는 벗어나지 않는다 (v1.1.99).
+     */
+    fun restoreSos(trigger: String, nowMs: Long) {
+        mode = Mode.SOS
+        this.trigger = trigger
+        modeSinceMs = nowMs
+        pendingFall = false
+    }
+
     fun responseLeftMs(nowMs: Long): Long =
         if (mode == Mode.CHECKING) (responseMs - (nowMs - modeSinceMs)).coerceAtLeast(0L) else 0L
 
@@ -198,11 +212,22 @@ class LoneWorkerLogic(var myBleId: String) {
         val cur = peerMap[bleId]
         if (active) {
             if (cur != null && cur.active) {
-                // 같은 에피소드 병합: 묵음 상태 유지
-                peerMap[bleId] = cur.copy(
-                    key = key, name = name, role = role, trigger = trigger,
-                    beacon = beacon, createdAtMs = createdAtMs, fromServer = true
-                )
+                if (cur.key == null || cur.key == key) {
+                    // 같은 에피소드 병합: 묵음 상태 유지
+                    peerMap[bleId] = cur.copy(
+                        key = key, name = name, role = role, trigger = trigger,
+                        beacon = beacon, createdAtMs = createdAtMs, fromServer = true
+                    )
+                } else if (createdAtMs < cur.createdAtMs) {
+                    // 더 오래된 에피소드 기록은 새 것을 덮지 못한다 (서버 기록끼리만 시각 비교)
+                } else {
+                    // 다른 키 = 새 에피소드: 묵음 해제, 다시 울린다
+                    peerMap[bleId] = Peer(
+                        bleId, key, name, role, trigger, beacon, createdAtMs,
+                        firstSeenMs = nowMs, active = true, silenced = false,
+                        fromServer = true, resolvedAtMs = 0L
+                    )
+                }
             } else if (cur != null && cur.key == key) {
                 // 이미 해제된 같은 기록의 늦은 중복 전달 — 되살리지 않는다
             } else {
@@ -220,18 +245,21 @@ class LoneWorkerLogic(var myBleId: String) {
                     firstSeenMs = nowMs, active = false, silenced = false,
                     fromServer = true, resolvedAtMs = nowMs
                 )
-            } else if (cur.key == null || cur.key == key) {
+            } else if (cur.key == key) {
                 peerMap[bleId] = cur.copy(active = false, resolvedAtMs = nowMs)
             }
-            // 키가 다르면(더 새로운 에피소드가 이미 활성) 무시
+            // 키가 다르거나 BLE 전용(키 없음)이면 무시: 접속 때 재생된 옛 해제가 살아 있는 BLE 경보를 끄면 안 된다
         }
     }
 
     fun onPeerBle(bleId: String, sos: Boolean, nowMs: Long) {
         if (bleId == myBleId) return
         val prev = bleLast[bleId]
-        if (sos || prev != null) bleLast[bleId] = sos
-        val rising = sos && prev != true
+        val tracked = sos || prev != null
+        val unseenMs = bleSeenAt[bleId]?.let { nowMs - it }
+        if (tracked) { bleLast[bleId] = sos; bleSeenAt[bleId] = nowMs }
+        // 30초 이상 안 보이다 다시 켜진 비트도 상승 에지다 (D-06). 하강 판정은 원시 이전 상태를 쓴다.
+        val rising = sos && (prev != true || (unseenMs != null && unseenMs >= PEER_BLE_GAP_MS))
         val falling = !sos && prev == true
         val cur = peerMap[bleId]
         if (rising) {
@@ -245,6 +273,9 @@ class LoneWorkerLogic(var myBleId: String) {
                     firstSeenMs = nowMs, active = true, silenced = false,
                     fromServer = false, resolvedAtMs = 0L
                 )
+            } else if (cur != null && cur.active && cur.key == null) {
+                // BLE 전용 항목이 공백 뒤 다시 켜짐: 새 에피소드
+                peerMap[bleId] = cur.copy(silenced = false, firstSeenMs = nowMs, createdAtMs = nowMs)
             }
         } else if (falling) {
             if (cur != null && cur.active && !cur.fromServer) {

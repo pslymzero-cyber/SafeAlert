@@ -278,4 +278,68 @@ class LoneWorkerLogicTest {
         assertEquals("B" to -70, l.beaconHint(70_000))
         assertNull(l.beaconHint(100_000))
     }
+
+    // v1.1.99 review fixes
+
+    @Test fun new_server_key_is_a_new_audible_episode() {
+        val l = newLogic()
+        l.onPeerServer("k1", "P", "n", "WALKER", "still", "", 1_000, true, 1_000)
+        l.silencePeers()
+        l.onPeerServer("k2", "P", "n", "WALKER", "still", "", 2_000, true, 2_000)
+        assertEquals(1, l.peers.size)
+        assertEquals("k2", l.peers.getValue("P").key)
+        assertEquals(1, l.audiblePeers().size)
+    }
+
+    @Test fun older_key_never_replaces_a_newer_one() {
+        val l = newLogic()
+        l.onPeerServer("k2", "P", "n", "WALKER", "still", "", 3_000, true, 3_000)
+        l.silencePeers()
+        l.onPeerServer("k1", "P", "n", "WALKER", "still", "", 1_000, true, 3_500)
+        assertEquals("k2", l.peers.getValue("P").key)
+        assertTrue(l.peers.getValue("P").silenced)
+    }
+
+    @Test fun server_resolve_does_not_end_ble_only_peer_but_key_adoption_does() {
+        val l = newLogic()
+        l.onPeerBle("P", true, 1_000)
+        l.onPeerServer("k9", "P", "n", "WALKER", "still", "", 500, false, 2_000)
+        assertTrue(l.peers.getValue("P").active)
+
+        val m = newLogic()
+        m.onPeerBle("P", true, 1_000)
+        m.silencePeers()
+        m.onPeerServer("k1", "P", "n", "WALKER", "still", "", 1_500, true, 1_600)
+        assertEquals("k1", m.peers.getValue("P").key)
+        assertTrue(m.peers.getValue("P").silenced)
+        m.onPeerServer("k1", "P", "n", "WALKER", "still", "", 1_500, false, 5_000)
+        assertFalse(m.peers.getValue("P").active)
+    }
+
+    @Test fun ble_bit_after_30s_gap_is_a_rising_edge() {
+        val l = newLogic()
+        l.onPeerBle("P", true, 1_000)
+        l.silencePeers()
+        l.onPeerBle("P", true, 29_000)
+        assertEquals(0, l.audiblePeers().size)
+        l.onPeerBle("P", true, 60_000)
+        assertEquals(1, l.audiblePeers().size)
+        l.onPeerBle("P", false, 61_000)
+        assertFalse(l.peers.getValue("P").active)
+    }
+
+    @Test fun restore_sos_survives_settle_disable_and_ack() {
+        val l = newLogic()
+        l.restoreSos("fall", 5_000)
+        assertEquals(Mode.SOS, l.mode)
+        assertEquals("fall", l.trigger)
+        assertTrue(l.sosActive)
+        l.onZone(true, 6_000)
+        l.tick(70_000)
+        l.setEnabled(false, 71_000)
+        assertFalse(l.ackWorking(72_000))
+        assertEquals(Mode.SOS, l.mode)
+        assertTrue(l.cancelSos(73_000))
+        assertEquals(Mode.WATCHING, l.mode)
+    }
 }

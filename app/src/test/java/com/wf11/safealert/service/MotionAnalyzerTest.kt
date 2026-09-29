@@ -126,4 +126,39 @@ class MotionAnalyzerTest {
         run.span(0, 60_000, walking(4.0, 3.0))
         assertTrue(run.times(Signal.FALL).isEmpty())
     }
+
+    // v1.1.99 review fixes
+
+    @Test fun long_gap_shifts_still_windows_before_moved_is_evaluated() {
+        val r = Run()
+        r.span(0, 5_000, walking(3.0, 2.0))
+        r.sample(65_000, 0f, 0f, 9.81f)
+        assertTrue(r.times(Signal.MOVED).none { it >= 65_000 })
+    }
+
+    @Test fun short_gap_keeps_recent_active_windows() {
+        val r = Run()
+        r.span(0, 5_000, walking(3.0, 2.0))
+        r.span(7_000, 9_000, walking(3.0, 2.0))
+        assertTrue(r.times(Signal.MOVED).contains(7_000L))
+    }
+
+    @Test fun impact_threshold_follows_sensor_range() {
+        assertEquals(1.8, MotionAnalyzer.impactGFor(19.6f), 0.01)
+        assertEquals(MotionAnalyzer.IMPACT_G, MotionAnalyzer.impactGFor(78.4f), 1e-9)
+        assertEquals(MotionAnalyzer.IMPACT_G, MotionAnalyzer.impactGFor(0f), 1e-9)
+    }
+
+    @Test fun clipped_two_g_sensor_needs_the_range_based_threshold() {
+        fun trace(a: MotionAnalyzer): Run {
+            val r = Run(a)
+            r.span(0, 3000, still)
+            r.span(3000, 3200) { floatArrayOf(0f, 0f, 1.5f) }
+            r.span(3200, 3260) { floatArrayOf(0f, 0f, 19.6f) }
+            r.span(3260, 17_000, lying)
+            return r
+        }
+        assertTrue(trace(MotionAnalyzer()).times(Signal.FALL).isEmpty())
+        assertEquals(1, trace(MotionAnalyzer(MotionAnalyzer.impactGFor(19.6f))).times(Signal.FALL).size)
+    }
 }
