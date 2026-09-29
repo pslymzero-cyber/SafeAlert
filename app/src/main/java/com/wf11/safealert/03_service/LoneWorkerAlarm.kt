@@ -13,7 +13,7 @@ import com.wf11.safealert.utils.DevSettings
 
 /**
  * 충돌 경보 경로와 단독 작업자 알람이 STREAM_ALARM 볼륨을 함께 쓴다. 구조 요청 알람이 울리는 동안에는
- * 충돌 경로가 볼륨을 낮추지 않고, 알람을 끝낼 때는 충돌 경로가 그 사이 볼륨을 만지지 않았을 때만 원래 값으로 되돌린다.
+ * 충돌 경로가 볼륨을 낮추지 않고, 알람을 끝낼 때는 현재 볼륨이 우리가 올려 둔 값 그대로일 때만 원래 값으로 되돌린다.
  */
 object AlarmVolumeShare {
     const val COLLISION_HOLD_MS = 10_000L
@@ -34,8 +34,17 @@ object AlarmVolumeShare {
     fun collisionTarget(target: Int, current: Int, sosSounding: Boolean) =
         if (sosSounding) maxOf(target, current) else target
 
-    fun mayRestore(ourGen: Int, gen: Int, nowMs: Long, collisionAtMs: Long) =
-        ourGen >= 0 && ourGen == gen && nowMs - collisionAtMs >= COLLISION_HOLD_MS
+    /** 충돌 경로가 볼륨을 실제로 바꿨을 때만 기록한다. */
+    fun noteCollisionIfChanged(before: Int, after: Int, nowMs: Long) {
+        if (after != before) noteCollision(nowMs)
+    }
+
+    /**
+     * 기본 조건은 저장해 둔 우리 값과 현재 볼륨이 같은지다(프로세스가 다시 떠도 동작).
+     * 세대는 같은 프로세스에서 충돌 경로가 그 사이 볼륨을 바꿨는지 보는 보조 조건이다.
+     */
+    fun mayRestore(cur: Int, ours: Int, ourGen: Int, gen: Int, nowMs: Long, collisionAtMs: Long) =
+        cur == ours && (ourGen < 0 || (ourGen == gen && nowMs - collisionAtMs >= COLLISION_HOLD_MS))
 }
 
 /**
@@ -176,11 +185,12 @@ class LoneWorkerAlarm(
         VibrationHelper.stopAlarmLoop(ctx)
         val p = prefs
         if (p.contains(K_ORIG) && p.contains(K_OURS)) {
-            // 우리가 올린 뒤 충돌 경로가 볼륨을 다시 정하지 않았고 최근 10초 안에도 없을 때만 되돌린다.
+            // 현재 볼륨이 우리가 저장해 둔 값 그대로일 때만 되돌린다(같은 프로세스면 충돌 경로 변경도 확인).
             val cur = audio?.getStreamVolume(AudioManager.STREAM_ALARM)
             val orig = p.getInt(K_ORIG, -1)
+            val ours = p.getInt(K_OURS, -1)
             if (cur != null && orig >= 0 && cur != orig && AlarmVolumeShare.mayRestore(
-                    ourGen, AlarmVolumeShare.collisionGen, SystemClock.elapsedRealtime(), AlarmVolumeShare.collisionAtMs)
+                    cur, ours, ourGen, AlarmVolumeShare.collisionGen, SystemClock.elapsedRealtime(), AlarmVolumeShare.collisionAtMs)
             ) setAlarmVolume(orig)
         }
         ourGen = -1

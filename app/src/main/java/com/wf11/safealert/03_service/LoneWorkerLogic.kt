@@ -21,6 +21,8 @@ class LoneWorkerLogic(var myBleId: String) {
     companion object {
         const val ZONE_SETTLE_MS = 60_000L
         const val BEACON_HINT_MS = 60_000L
+        /** 꽂은 뒤 이 시간이 지나 나온 움직임만 '몸에 지님'으로 본다 (꽂는 순간의 흔들림 제외). */
+        const val CHARGE_SETTLE_MS = 15_000L
         private const val BEACON_SAMPLE_CAP = 256
     }
 
@@ -50,10 +52,21 @@ class LoneWorkerLogic(var myBleId: String) {
     private var zoneInside = false
     private var zoneInsideSince = 0L
     private var pendingFall = false
-    /** 외부 전원(PDA 충전 거치대) 연결 중: 무동작·낙상 확인만 쉰다. 구조 요청(SOS)과 동료 경보에는 영향이 없다. */
+    /**
+     * 외부 전원 연결 상태(원본 값). 충전 중이면서 가만히 있으면 거치대에 놓인 것으로 보고 무동작·낙상 확인을 쉰다.
+     * 꽂은 지 15초 뒤에도 움직임이 계속 나오면 몸에 지닌 것(carried)으로 보고 뽑을 때까지 평소처럼 감시한다.
+     * 구조 요청(SOS)과 동료 경보에는 영향이 없다.
+     */
     var charging = false
         private set
-    private var chargeEndAt = Long.MIN_VALUE
+    private var chargeAt = Long.MIN_VALUE
+    /** 이번 충전 중 꽂은 뒤 15초가 지나 움직임 판정이 나왔다 = 몸에 지님. 뽑을 때까지 유지. */
+    private var carried = false
+    /** 몸에 지니지 않은 채 전원이 빠졌다: 첫 움직임까지 무동작을 세지 않는다 (거치대 전원 차단 오경보 방지). */
+    private var awaitPickup = false
+
+    /** 무동작·낙상 확인을 쉬는 중: 충전 거치 또는 전원이 빠진 뒤 아직 움직이지 않음. */
+    val resting: Boolean get() = (charging && !carried) || awaitPickup
 
     private val peerStore = LoneWorkerPeers()
 
@@ -85,28 +98,37 @@ class LoneWorkerLogic(var myBleId: String) {
         }
     }
 
-    /** 충전 시작이면 열린 확인은 답한 것으로 닫고 낙상 대기를 버린다. 충전 해제면 무동작 시간을 다시 센다. */
+    /**
+     * 꽂으면 열린 확인은 답한 것으로 닫고 낙상 대기를 버린다. 거치 상태로 시작한다.
+     * 뽑을 때 몸에 지니지 않았다면 첫 움직임이 나올 때까지 무동작을 세지 않고, 지니고 있었다면 그대로 감시한다.
+     */
     fun setCharging(on: Boolean, nowMs: Long) {
         if (on == charging) return
         charging = on
         if (on) {
+            chargeAt = nowMs
+            carried = false
+            awaitPickup = false
             pendingFall = false
             if (mode == Mode.CHECKING) {
                 lastAckAt = nowMs
                 toWatching(nowMs)
             }
         } else {
-            chargeEndAt = nowMs
+            awaitPickup = !carried
+            carried = false
         }
     }
 
     /** 움직임은 타이머만 갱신한다. 열린 확인은 절대 닫지 않는다 (D-02, D-07). */
     fun onMoved(nowMs: Long) {
         if (nowMs > lastMovedAt) lastMovedAt = nowMs
+        awaitPickup = false
+        if (charging && !carried && nowMs - chargeAt >= CHARGE_SETTLE_MS) carried = true
     }
 
     fun onFall(nowMs: Long) {
-        if (!enabled || zoneSettled || charging || mode != Mode.WATCHING) return
+        if (!enabled || zoneSettled || resting || mode != Mode.WATCHING) return
         pendingFall = true
     }
 
@@ -128,7 +150,7 @@ class LoneWorkerLogic(var myBleId: String) {
 
     fun tick(nowMs: Long) {
         updateSettle(nowMs)
-        if (enabled && !zoneSettled && !charging) {
+        if (enabled && !zoneSettled && !resting) {
             when (mode) {
                 Mode.WATCHING -> {
                     if (pendingFall) {
@@ -179,7 +201,7 @@ class LoneWorkerLogic(var myBleId: String) {
         if (mode == Mode.CHECKING) (responseMs - (nowMs - modeSinceMs)).coerceAtLeast(0L) else 0L
 
     private fun stillStart(): Long =
-        maxOf(startedAt, lastMovedAt, lastAckAt, enabledAt, zoneLeftAt, chargeEndAt)
+        maxOf(startedAt, lastMovedAt, lastAckAt, enabledAt, zoneLeftAt)
 
     private fun updateSettle(nowMs: Long) {
         if (zoneInside && !zoneSettled && nowMs - zoneInsideSince >= ZONE_SETTLE_MS) {

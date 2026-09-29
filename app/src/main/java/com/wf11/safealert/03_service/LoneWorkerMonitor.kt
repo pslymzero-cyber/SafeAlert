@@ -74,7 +74,7 @@ class LoneWorkerMonitor(
     private var lastMode = LoneWorkerLogic.Mode.WATCHING
     private var lastAudible: Set<String> = emptySet()
     private val stall = SensorStall()
-    private var stallLogged = false
+    private var noSensor = false   // 가속도 센서 자체가 없음: 무동작·낙상 판정을 끈다 (등록 실패와 구분)
     private val watchdog = LoneWorkerWatchdog(ctx, { onWatchdog() }, { onNotificationDismissed() })
     private val notifier = LoneWorkerNotifier(ctx) { watchdog.dismissPi() }
     private var lastTickAt = 0L
@@ -94,8 +94,8 @@ class LoneWorkerMonitor(
     private val sidLabels = HashMap<Int, String>()   // (v1.1.99) 짧은 ID → 비콘 라벨 캐시(찾은 것만 저장), stop 에서 비움
     private val sidMissUntil = HashMap<Int, Long>()  // 라벨 없는 짧은 ID → 다시 찾을 수 있는 시각
     private val power = LoneWorkerPower(ctx) { onPower(it) }
-    /** (v1.1.99) 외부 전원 연결로 무동작·낙상 확인을 쉬는 중인지 — 메인 화면 안내용 */
-    val charging: Boolean get() = started && logic.charging
+    /** (v1.1.99) 무동작·낙상 확인을 쉬는 중 — 충전 거치 또는 전원이 빠진 뒤 아직 움직이지 않음. 메인 화면 안내용 */
+    val resting: Boolean get() = started && logic.resting
     private var rendering = false
     private var renderAgain = false
 
@@ -133,6 +133,7 @@ class LoneWorkerMonitor(
         override fun run() {
             if (!started) return
             sync.tick()
+            logic.setCharging(power.plugged(), now())   // 방송을 놓쳐도 스티키 배터리 상태로 보정
             checkStall(now())
             handler.postDelayed(this, SYNC_TICK_MS)
         }
@@ -167,16 +168,16 @@ class LoneWorkerMonitor(
         val t = now()
         logic.stillMs = DevSettings.lwStillMin * 60_000L
         logic.responseMs = DevSettings.lwResponseMin * 60_000L
-        // 센서 등록 실패는 판정을 끄지 않는다: 확인은 그대로 열리고 신호 없음은 움직임 없음으로 센다 (v1.1.99)
+        // 센서가 아예 없으면 판정을 끈다. 등록만 실패한 경우는 판정을 유지한다: 확인은 그대로 열리고 신호 없음은 움직임 없음으로 센다 (v1.1.99)
         if (DevSettings.lwEnabled) {
             if (!sensorRegistered) stall.reset(t)
             registerSensor()
-            watchdog.arm()
+            if (noSensor) watchdog.disarm() else watchdog.arm()
         } else {
             unregisterSensor()
             watchdog.disarm()
         }
-        logic.setEnabled(DevSettings.lwEnabled, t)
+        logic.setEnabled(DevSettings.lwEnabled && !noSensor, t)
         render()
     }
 
@@ -186,7 +187,8 @@ class LoneWorkerMonitor(
         if (sensorRegistered) return
         val sm = runCatching { ctx.getSystemService(Context.SENSOR_SERVICE) as SensorManager }.getOrNull()
         if (sm == null) {
-            Log.w(TAG, "센서 서비스 없음 — 무동작 판정 끔")
+            Log.w(TAG, "센서 서비스 없음 — 무동작·낙상 판정 끔")
+            noSensor = true
             return
         }
         var s = sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER, true)
@@ -196,7 +198,8 @@ class LoneWorkerMonitor(
             wake = false
         }
         if (s == null) {
-            Log.w(TAG, "가속도 센서 없음 — 무동작 판정 끔")
+            Log.w(TAG, "가속도 센서 없음 — 무동작·낙상 판정 끔")
+            noSensor = true
             return
         }
         val impactG = MotionAnalyzer.impactGFor(s.maximumRange)
@@ -204,7 +207,7 @@ class LoneWorkerMonitor(
         analyzer = MotionAnalyzer(impactG)
         val ok = sm.registerListener(this, s, 20_000, 5_000_000, handler)
         if (!ok) {
-            Log.w(TAG, "가속도 센서 등록 실패 — 무동작 판정 끔")
+            Log.w(TAG, "가속도 센서 등록 실패 — 판정 유지, 다시 등록")
             return
         }
         sensorManager = sm
@@ -245,18 +248,11 @@ class LoneWorkerMonitor(
      */
     private fun checkStall(t: Long) {
         if (!started) return
-        if (DevSettings.lwEnabled) {
-            when (stall.check(t)) {
-                // 등록에 실패해 센서가 없는 동안에도 같은 백오프로 다시 등록한다
-                SensorStall.Action.REREGISTER -> {
-                    Log.w(TAG, "가속도 센서 신호 없음 또는 미등록 — 다시 등록")
-                    unregisterSensor()
-                    registerSensor()
-                }
-                SensorStall.Action.STALLED -> if (!stallLogged) Log.w(TAG, "가속도 센서 신호 끊김 지속")
-                SensorStall.Action.OK -> {}
-            }
-            stallLogged = stall.stalled
+        // 등록에 실패해 센서가 없는 동안에도 같은 백오프로 다시 등록한다
+        if (DevSettings.lwEnabled && !noSensor && stall.check(t) == SensorStall.Action.REREGISTER) {
+            Log.w(TAG, "가속도 센서 신호 없음 또는 미등록 — 다시 등록")
+            unregisterSensor()
+            registerSensor()
         }
         logic.tick(t)
         render()
@@ -265,7 +261,7 @@ class LoneWorkerMonitor(
     private fun onWatchdog() {
         if (!started) return
         checkStall(now())
-        if (DevSettings.lwEnabled) watchdog.arm()
+        if (DevSettings.lwEnabled && !noSensor) watchdog.arm()
     }
 
     /** 외부 전원 연결·해제 (PDA 거치대): 무동작·낙상 확인만 쉬거나 다시 시작한다 (v1.1.99). */
@@ -383,8 +379,10 @@ class LoneWorkerMonitor(
 
     // ── 렌더링: 상태 전환·소리·알림·화면 ────────────────────────
 
-    /** 조용한 안내 알림. 우선순위: 센서 불가, 센서 신호 끊김, 해제 미전송. */
+    /** 조용한 안내 알림. 우선순위: 센서 없음, 센서 등록 실패, 센서 신호 끊김, 해제 미전송. */
     private fun notice(): Pair<String, String>? = when {
+        DevSettings.lwEnabled && noSensor ->
+            "무동작 감시 불가" to "이 기기에는 가속도 센서가 없어 무동작·낙상 감시를 하지 않습니다. 동료 구조 요청 수신은 계속됩니다"
         DevSettings.lwEnabled && !sensorRegistered ->
             "무동작 감시 불가" to "가속도 센서를 등록하지 못했습니다. 움직임이 없는 것으로 보고 확인을 계속하며 센서를 다시 등록합니다"
         DevSettings.lwEnabled && stall.stalled ->

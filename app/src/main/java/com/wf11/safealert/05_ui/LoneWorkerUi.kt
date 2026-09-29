@@ -117,7 +117,7 @@ object LoneWorkerUi {
     }
 
     /**
-     * 메인 화면 800ms 폴링에서 한 번에 부른다: 알림 화면 진입, 정지 경합 복구, 충전 중 안내.
+     * 메인 화면 800ms 폴링에서 한 번에 부른다: 알림 화면 진입, 정지 경합 복구, 거치 중 안내.
      * stopped 는 메인 화면이 실행 상태를 지운 상태(currentMode == null)다. 그런데 서비스가 구조 요청 때문에
      * 정지를 무시했다면 서비스가 running_mode 를 되살렸으므로 실행 카드로 돌아간다.
      */
@@ -129,8 +129,10 @@ object LoneWorkerUi {
             }.getOrNull()
             if (running != null) restore()
         }
-        val charging = LoneWorkerMonitor.current?.charging == true && DevSettings.lwEnabled
-        status.visibility = if (charging) View.VISIBLE else View.GONE
-        if (charging) status.text = "충전 중 — 무동작 감시 쉼"
+        val resting = LoneWorkerMonitor.current?.resting == true && DevSettings.lwEnabled
+        val vis = if (resting) View.VISIBLE else View.GONE
+        if (status.visibility != vis) status.visibility = vis
+        val text = "거치 중 — 무동작 감시 쉼 (들고 움직이면 다시 시작)"
+        if (resting && status.text.toString() != text) status.text = text
     }
 }
