@@ -262,6 +262,19 @@ object BeaconRegistry {
         }
     }
 
+    /**
+     * (v1.1.99) 구조 요청 광고의 비콘 짧은 ID 로 등록 비콘 라벨 역조회.
+     * 정확히 한 프로파일만 일치하고 라벨이 비어 있지 않을 때만 돌려준다(0·미일치·중복은 null).
+     */
+    fun labelForShortId(sid: Int): String? {
+        if (sid == 0) return null
+        val hits = getAll().filter { p ->
+            val key = if (p.type == "MAC") p.uuid.replace(":", "") else p.uuid.replace("-", "")
+            com.wf11.safealert.ble.SosAdvert.beaconShortId(key) == sid
+        }
+        return hits.singleOrNull()?.label?.takeIf { it.isNotBlank() }
+    }
+
     /** (v1.1.91) 표시·로그용 — BEA_ 뒤 32hex UUID 키만 앞 8자로 줄인다(v1.1.90 표기). MAC 12hex·비콘 아님은 그대로 */
     fun shortFullId(fullId: String): String {
         val key = fullId.substringAfter("BEA_", "")

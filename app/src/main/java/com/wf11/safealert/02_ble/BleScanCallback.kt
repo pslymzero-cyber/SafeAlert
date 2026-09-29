@@ -11,7 +11,8 @@ interface BleScanCallback {
     fun onDeviceLost(deviceId: String)
     fun onScanError(errorCode: Int)
     // (v1.1.99) 상대의 구조 요청(확장 바이트 bit1)은 존·보행자 게이트를 거치는 onDeviceDetected 와 분리해 따로 전달(기본: 무시)
-    fun onPeerSos(deviceId: String, sos: Boolean) {}
+    //   episode = 광고된 구조 요청 회차(byte2, 없으면 0), hint = 최근 비콘 짧은 ID(byte3-4, 없으면 0)
+    fun onPeerSos(deviceId: String, sos: Boolean, episode: Int = 0, hint: Int = 0) {}
     // UWB 주소가 스캔 응답에서 파싱됐을 때 (기본: 무시)
     fun onUwbAddressReceived(deviceId: String, uwbAddress: ByteArray) {}
     // (v1.1.62) 존 비콘(zoneMute 프로파일) 신호 — 기기 목록·판정에 넣지 않고 존 상태 머신에만 전달(기본: 무시)

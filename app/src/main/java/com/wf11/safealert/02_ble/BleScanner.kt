@@ -175,7 +175,7 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
                 BleService.safeAlertFound++
                 detectedDevices[fullId] = System.currentTimeMillis()
                 scanCallback?.onDeviceDetected(fullId, rssi, remoteState, remoteTurn, payloadPresent, peerEchoRssi, peerInZone)
-                scanCallback?.onPeerSos(fullId, BleConstants.decodeSos(extByte))   // (v1.1.99) 확장 바이트 bit1
+                scanCallback?.onPeerSos(fullId, BleConstants.decodeSos(extByte), SosAdvert.decodeEpisode(svcData), SosAdvert.decodeHint(svcData))   // (v1.1.99) 확장 바이트 bit1
 
                 // UWB 주소 스캔 응답 파싱 (지원 기기 한정)
                 // (v1.1.30) DEVICE(컨트롤러)=4바이트(주소+채널+프리앰블), WALKER(컨트롤리)=2바이트 — 있는 만큼 전달

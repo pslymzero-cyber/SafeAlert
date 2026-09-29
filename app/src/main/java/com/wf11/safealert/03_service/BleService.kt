@@ -54,7 +54,6 @@ class BleService : LifecycleService() {
         const val ACTION_REAPPLY_UWB   = "ACTION_REAPPLY_UWB"  // (v1.1.38 A) 권한 부여·강제 토글 직후 UWB 세션 재평가 넛지
         // (v1.1.99) 단독 작업자 확인·구조 요청 알림 버튼
         const val ACTION_LW_ACK        = "ACTION_LW_ACK"
-        const val ACTION_LW_CANCEL     = "ACTION_LW_CANCEL"
         const val ACTION_LW_SILENCE    = "ACTION_LW_SILENCE"
         // (v1.1.67) 상시 알림 → MainActivity 역할 전환 확인 다이얼로그 직행. 서비스가 아니라
         //   Activity 가 받는 액션이다. 전환 자체는 정지→재시작(v1.1.60)이라 서비스 단독 처리 시
@@ -146,7 +145,7 @@ class BleService : LifecycleService() {
     @Volatile private var isMuted = false
     // (v1.1.99) 단독 작업자 무동작·낙상 SOS — 생성자는 참조만 저장, start() 전에는 모든 진입점이 no-op
     private val loneWorker by lazy {
-        LoneWorkerMonitor(this, advertiseSos = { bleAdvertiser?.updateSos(it) }, setAlarmVolume = { setAlarmVolumeGuarded(it) })
+        LoneWorkerMonitor(this, advertiseSos = { sos, ep, hint -> bleAdvertiser?.updateSos(sos, ep, hint) }, setAlarmVolume = { setAlarmVolumeGuarded(it) })
     }
 
     @Volatile private var activeSoundLevel = BleConstants.LEVEL_SAFE
@@ -524,7 +523,7 @@ class BleService : LifecycleService() {
             //   (주 송출은 onDeviceDetected 스캔주기. 동일레벨 no-op 라 중복 호출 무해.)
             bleAdvertiser?.updateRisk(getCurrentMaxLevel())
             reevaluateZones()       // (v1.1.62) 존 신호 두절 이탈·스테일 엔트리 폐기 폴링(+IN_ZONE self-heal)
-            bleAdvertiser?.updateSos(loneWorker.sosActive)   // (v1.1.99) 재생성된 광고기 self-heal — 값이 같으면 no-op
+            bleAdvertiser?.updateSos(loneWorker.sosActive, loneWorker.sosEpisode, loneWorker.sosHint)   // (v1.1.99) 재생성된 광고기 self-heal — 값이 같으면 no-op
             pushRssiEcho()          // [v1.1.53 상호RSSI] 내가 측정한 상대 RSSI 표를 스캔응답 에코에 실어 되돌려 송출
             broadcastLocalState()   // [v1.0.42 Req2] 주기 갱신 — Local UI(상태/회전) 폴링 소스 최신 유지
             speedPushHandler.postDelayed(this, SPEED_PUSH_INTERVAL_MS)
@@ -646,7 +645,9 @@ class BleService : LifecycleService() {
         super.onStartCommand(intent, flags, startId)
 
         // null intent = START_STICKY 재시작 → SharedPrefs 복원
-        if (intent?.action == null && myMode.isEmpty()) {
+        // (v1.1.99) 단독 작업자 알림 버튼으로 빈 프로세스가 깨어난 경우도 같은 복원을 거친다 — 감시·저장된 구조 요청을 먼저 되살린다
+        val lwAction = intent?.action == ACTION_LW_ACK || intent?.action == ACTION_LW_SILENCE
+        if ((intent?.action == null || lwAction) && myMode.isEmpty()) {
             val prefs     = getSharedPreferences("safealert_prefs", MODE_PRIVATE)
             val savedMode = prefs.getString("running_mode", null)
             if (savedMode != null) {
@@ -657,12 +658,13 @@ class BleService : LifecycleService() {
                 val title = "${categoryRoleName(myCategory)} 실행 중"
                 startForeground(NOTIF_ID, buildNotification(title, "재시작됨"))
                 applyMode()
-                return START_STICKY
+                if (intent?.action == null) return START_STICKY   // (v1.1.99) 알림 동작이면 아래 when 으로 이어간다
+            } else {
+                // (v1.1.62 버그C) 복원 근거 없음(사용자 중지 상태에서 시스템 재기동) — BLE 없이
+                //   포그라운드 알림만 띄운 유령 인스턴스가 STICKY 로 영구 잔존하는 것을 차단.
+                stopSelf(startId)
+                return START_NOT_STICKY
             }
-            // (v1.1.62 버그C) 복원 근거 없음(사용자 중지 상태에서 시스템 재기동) — BLE 없이
-            //   포그라운드 알림만 띄운 유령 인스턴스가 STICKY 로 영구 잔존하는 것을 차단.
-            stopSelf(startId)
-            return START_NOT_STICKY
         }
 
         when (intent?.action) {
@@ -690,7 +692,11 @@ class BleService : LifecycleService() {
                 ))
                 applyMode()
             }
-            ACTION_STOP       -> {
+            ACTION_STOP       -> if (loneWorker.sosActive) {
+                // (v1.1.99) 구조 요청 중에는 중지·역할 전환 불가 — 해제는 본인 [괜찮음]뿐
+                Log.d(TAG, "구조 요청 중 정지 요청 무시")
+                sendStatusBroadcast("[괜찮음]으로 먼저 해제하세요")
+            } else {
                 // [v1.0.46 중지버그] 사용자가 직접 중지 → START_STICKY 복원 키를 동기(.commit) 제거.
                 //   stopAll() 내부가 아닌 여기서만 지운다: onDestroy→stopAll() 경로(시스템 킬·앱 종료)는
                 //   prefs 가 남아 있어야 Always-On 복원이 동작한다. device_id 는 사용자 식별자라 보존.
@@ -724,7 +730,6 @@ class BleService : LifecycleService() {
             }
             // (v1.1.99) 단독 작업자 알림 버튼
             ACTION_LW_ACK -> loneWorker.ack()
-            ACTION_LW_CANCEL -> loneWorker.cancelSos()
             ACTION_LW_SILENCE -> loneWorker.silencePeers()
         }
         return START_STICKY
@@ -900,8 +905,8 @@ class BleService : LifecycleService() {
                             uwbRanger?.onPeerUwbAddressReceived(deviceId, uwbAddress)
                         }
                         // (v1.1.99) 동료 구조 요청 비트 — 존 안·보행자 폰도 받도록 판정 게이트와 별개 경로
-                        override fun onPeerSos(deviceId: String, sos: Boolean) {
-                            loneWorker.onPeerBle(deviceId, sos)
+                        override fun onPeerSos(deviceId: String, sos: Boolean, episode: Int, hint: Int) {
+                            loneWorker.onPeerBle(deviceId, sos, episode, hint)
                         }
                         override fun onZoneBeaconSignal(beaconKey: String, rssi: Int, enterRssi: Int) {
                             // (v1.1.82) 존 비콘도 엄연한 스캔 결과다. 여기서 갱신하지 않으면 주변에

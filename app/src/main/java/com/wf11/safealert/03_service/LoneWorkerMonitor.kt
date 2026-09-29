@@ -28,7 +28,7 @@ import java.util.Locale
  */
 class LoneWorkerMonitor(
     private val ctx: Context,
-    private val advertiseSos: (Boolean) -> Unit,
+    private val advertiseSos: (Boolean, Int, Int) -> Unit,
     setAlarmVolume: (Int) -> Unit
 ) : SensorEventListener {
 
@@ -86,6 +86,10 @@ class LoneWorkerMonitor(
     private val timeFmt = SimpleDateFormat("HH:mm", Locale.KOREA)
 
     val sosActive: Boolean get() = started && logic.sosActive
+    // (v1.1.99) 광고에 실을 구조 요청 회차·비콘 짧은 ID — 구조 요청 중이 아니면 0
+    val sosEpisode: Int get() = if (sosActive) sync.episode() else 0
+    val sosHint: Int get() = if (sosActive) sync.hint() else 0
+    private val sidLabels = HashMap<Int, String>()   // (v1.1.99) 짧은 ID → 비콘 라벨 캐시(빈 문자열=없음), stop 에서 비움
 
     private fun now() = SystemClock.elapsedRealtime()
 
@@ -140,6 +144,7 @@ class LoneWorkerMonitor(
         notifier.cancel()
         lastMode = LoneWorkerLogic.Mode.WATCHING
         lastAudible = emptySet()
+        sidLabels.clear()
         // 서버의 active 기록과 저장된 내 SOS 는 그대로 둔다 — 해제는 본인 [괜찮음]뿐 (D-05, R3)
         logic = LoneWorkerLogic("") // 재시작 때 지난 동료 항목이 되살아나지 않게 비운다
         if (current === this) current = null
@@ -265,10 +270,11 @@ class LoneWorkerMonitor(
     }
 
     /** 스캔마다 불리므로 가볍게: 동료 항목이 바뀐 때만 다시 그린다. */
-    fun onPeerBle(bleId: String, sos: Boolean) {
+    fun onPeerBle(bleId: String, sos: Boolean, episode: Int = 0, hint: Int = 0) {
         if (!started) return
         val before = peerSig()
-        logic.onPeerBle(bleId, sos, now())
+        val label = if (sos && hint != 0) sidLabels.getOrPut(hint) { BeaconRegistry.labelForShortId(hint) ?: "" } else ""
+        logic.onPeerBle(bleId, sos, now(), episode, label)
         if (peerSig() != before) render()
     }
 
@@ -278,7 +284,10 @@ class LoneWorkerMonitor(
         val last = beaconNoteAt[deviceId]
         if (last != null && t - last < BEACON_NOTE_MS) return
         beaconNoteAt[deviceId] = t
-        logic.noteBeacon(BeaconRegistry.labelForFullId(deviceId), rssi, t)
+        // (v1.1.99) 등록 비콘만 짧은 ID 를 싣는다(미등록 0)
+        val sid = if (BeaconRegistry.findProfileByFullId(deviceId) != null)
+            com.wf11.safealert.ble.SosAdvert.beaconShortId(deviceId.substringAfter("BEA_")) else 0
+        logic.noteBeacon(BeaconRegistry.labelForFullId(deviceId), rssi, t, sid)
     }
 
     fun ack() {
@@ -334,7 +343,7 @@ class LoneWorkerMonitor(
         val wall = if (p.fromServer) p.createdAtMs else System.currentTimeMillis() - (t - p.firstSeenMs)
         return listOfNotNull(
             p.displayName(), role.ifEmpty { null }, timeFmt.format(Date(wall)),
-            p.beacon.ifEmpty { null }?.let { "마지막 위치: $it" }, if (p.active) "구조 요청" else "해제됨"
+            p.beacon.ifEmpty { null }?.let { if (p.fromServer) "마지막 위치: $it" else "${it} 근처" }, if (p.active) "구조 요청" else "해제됨"
         ).joinToString(" · ")
     }
 
@@ -361,12 +370,12 @@ class LoneWorkerMonitor(
         if (mode == LoneWorkerLogic.Mode.SOS && lastMode != LoneWorkerLogic.Mode.SOS) {
             val hint = logic.beaconHint(t)
             sync.begin(logic.myBleId, name, roleName, logic.trigger, hint?.first, hint?.second, logic.beaconSid(t))
-            advertiseSos(true)
+            advertiseSos(true, sync.episode(), sync.hint())
             showScreen = true
         }
         if (mode != LoneWorkerLogic.Mode.SOS && lastMode == LoneWorkerLogic.Mode.SOS) {
             sync.resolve()
-            advertiseSos(false)
+            advertiseSos(false, 0, 0)
         }
         lastMode = mode
 

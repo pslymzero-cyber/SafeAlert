@@ -170,6 +170,8 @@ class BleAdvertiser(
     //   BleService 존 상태 머신이 updateInZone() 으로 민다. 수신측은 이 기기를 무해(SAFE) 판정.
     @Volatile private var currentInZone = false
     @Volatile private var currentSos = false          // (v1.1.99) 단독 작업자 구조 요청 — 확장 바이트 bit1
+    @Volatile private var sosEpisode = 0              // (v1.1.99) 구조 요청 회차(서비스 데이터 byte2, 0=없음)
+    @Volatile private var sosHint = 0                 // (v1.1.99) 최근 비콘 짧은 ID(byte3-4, 0=없음)
     // [v1.0.36] STATE·Speed 재광고 공용 throttle 타임스탬프 (구 lastStateUpdateMs)
     private var lastPayloadUpdateMs = 0L
     // [v1.1.14] 위험상태(RISK) 전용 throttle 타임스탬프 — STATE/TURN throttle 과 독립.
@@ -283,7 +285,9 @@ class BleAdvertiser(
             BleConstants.COMPANY_ID_DEVICE else BleConstants.COMPANY_ID_WALKER
 
         // ID를 짧게 (최대 15바이트 — v1.1.87 14→15, 한글 5자·영문 15자) — 전체 패킷 ≤ 31바이트 유지
-        val idBytes = deviceId.toByteArray(Charsets.UTF_8).take(15).toByteArray()
+        // (v1.1.99) 구조 요청 중(회차 있음)에는 서비스 데이터가 5바이트라 ID 를 12바이트로 제한 — 평상시는 15바이트 그대로
+        val sosExt = currentSos && sosEpisode != 0
+        val idBytes = SosAdvert.idBytes(deviceId, sosExt)
 
         // ── Primary 광고 패킷 (ServiceUUID 포함 → 화면 꺼짐에도 스캔 필터 작동) ──
         val advertiseData = AdvertiseData.Builder()
@@ -294,14 +298,17 @@ class BleAdvertiser(
             //   SERVICE_UUID 가 16비트 short UUID(0x1234) 패턴 → ServiceData 약 5바이트.
             .addServiceData(
                 ParcelUuid(UUID.fromString(BleConstants.SERVICE_UUID)),
-                byteArrayOf(
+                // (v1.1.62) 확장 플래그 바이트 — bit0=IN_ZONE(존 비콘 접촉 선언).
+                //   상태 1바이트(2-2-2-2)는 만석이라 1바이트 증설. 구버전 수신은 byte[0]만
+                //   읽으므로 무해(뒤호환). ServiceData 5→6B, 전체 예산 28B ≤ 31B.
+                //   (v1.1.87) ID 14→15B 로 전체 29B ≤ 31B.
+                //   (v1.1.99) bit1=SOS(단독 작업자 구조 요청). bit0 의미 불변.
+                //   (v1.1.99) 구조 요청 중에만 byte2=회차, byte3-4=비콘 짧은 ID 를 덧붙인다(ID 12B 제한 → 최대 31B).
+                SosAdvert.serviceData(
                     BleConstants.encodePayload(category, currentState, currentTurnDir, currentRisk),
-                    // (v1.1.62) 확장 플래그 바이트 — bit0=IN_ZONE(존 비콘 접촉 선언).
-                    //   상태 1바이트(2-2-2-2)는 만석이라 1바이트 증설. 구버전 수신은 byte[0]만
-                    //   읽으므로 무해(뒤호환). ServiceData 5→6B, 전체 예산 28B ≤ 31B.
-                    //   (v1.1.87) ID 14→15B 로 전체 29B ≤ 31B.
-                    //   (v1.1.99) bit1=SOS(단독 작업자 구조 요청). bit0 의미 불변.
-                    BleConstants.encodeExt(currentInZone, currentSos).toByte()
+                    BleConstants.encodeExt(currentInZone, currentSos),
+                    if (sosExt) sosEpisode else 0,
+                    sosHint
                 )
             )
             .addManufacturerData(companyId, idBytes)
@@ -444,10 +451,14 @@ class BleAdvertiser(
      *  그래서 pauseAdvertising 과 같은 방식(광고 중지 → 지연 후 startAdvertising)으로 직접 재시작한다.
      *  startAdvertising 은 paused 이면 LOW_POWER 로 송출하므로 슬립 상태는 유지된다.
      */
-    fun updateSos(sos: Boolean) {
+    fun updateSos(sos: Boolean, episode: Int = 0, hint: Int = 0) {
         if (stopped) return
-        if (sos == currentSos) return
+        val ep = if (sos) episode else 0
+        val h = if (sos) hint else 0
+        if (sos == currentSos && ep == sosEpisode && h == sosHint) return
         currentSos = sos
+        sosEpisode = ep
+        sosHint = h
         Log.d(TAG, "SOS 갱신 → $sos 재광고")
         try { advertiser.stopAdvertising(callback) } catch (_: Exception) {}
         stateHandler.postDelayed({
