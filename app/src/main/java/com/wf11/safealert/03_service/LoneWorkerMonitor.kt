@@ -1,24 +1,16 @@
 package com.wf11.safealert.service
 
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.PendingIntent
 import android.content.Context
-import android.content.Intent
 import android.content.SharedPreferences
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
-import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
-import android.provider.Settings
 import android.util.Log
-import androidx.core.app.NotificationCompat
-import com.wf11.safealert.ui.LoneWorkerActivity
 import com.wf11.safealert.utils.BeaconRegistry
 import com.wf11.safealert.utils.DevSettings
 import java.text.SimpleDateFormat
@@ -51,13 +43,10 @@ class LoneWorkerMonitor(
 
     companion object {
         private const val TAG = "LoneWorkerMonitor"
-        const val CHANNEL_ID = "safealert_sos"
-        const val NOTIF_ID = 4242
         private const val REFRESH_MS = 5_000L
         private const val TICK_MIN_MS = 1_000L
         private const val BEACON_NOTE_MS = 2_000L
         private const val WAKE_LOCK_MS = 10 * 60_000L
-        private const val RESOLVED_NOTIF_MS = 60_000L
         private const val SYNC_TICK_MS = 10_000L
 
         @Volatile var current: LoneWorkerMonitor? = null
@@ -82,7 +71,10 @@ class LoneWorkerMonitor(
     private var roleName = ""
     private var lastMode = LoneWorkerLogic.Mode.WATCHING
     private var lastAudible: Set<String> = emptySet()
-    private var lastNotifKey: String? = null
+    private val stall = SensorStall()
+    private var stallLogged = false
+    private val watchdog = LoneWorkerWatchdog(ctx, { onWatchdog() }, { onNotificationDismissed() })
+    private val notifier = LoneWorkerNotifier(ctx) { watchdog.dismissPi() }
     private var lastTickAt = 0L
     private var sensorManager: SensorManager? = null
     private var sensorRegistered = false
@@ -108,7 +100,8 @@ class LoneWorkerMonitor(
         logic.start(now(), zoneInside)
         // 저장된 본인 SOS 가 있으면 첫 렌더 전에 되살린다 — 같은 서버 키로 사이렌·광고 bit1 이 다시 켜진다 (v1.1.99, R3)
         sync.restoredTrigger()?.let { logic.restoreSos(it, now()) }
-        createChannel()
+        notifier.createChannel()
+        watchdog.start()
         SirenGenerator.prewarm() // 사이렌·확인음 PCM 을 백그라운드에서 미리 만든다 (v1.1.99)
         val l = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
             if (key == DevSettings.KEY_LW_ENABLED || key == DevSettings.KEY_LW_STILL_MIN ||
@@ -127,6 +120,7 @@ class LoneWorkerMonitor(
             if (!started) return
             sync.tick()
             if (DevSettings.lwEnabled && !sensorRegistered) applySettings() // 센서 등록 재시도 (v1.1.99)
+            checkStall(now())
             handler.postDelayed(this, SYNC_TICK_MS)
         }
     }
@@ -142,8 +136,8 @@ class LoneWorkerMonitor(
         releaseWakeLock()
         handler.removeCallbacksAndMessages(null)
         loopOn = false
-        runCatching { (ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).cancel(NOTIF_ID) }
-        lastNotifKey = null
+        watchdog.stop()
+        notifier.cancel()
         lastMode = LoneWorkerLogic.Mode.WATCHING
         lastAudible = emptySet()
         // 서버의 active 기록과 저장된 내 SOS 는 그대로 둔다 — 해제는 본인 [괜찮음]뿐 (D-05, R3)
@@ -158,6 +152,7 @@ class LoneWorkerMonitor(
         logic.stillMs = DevSettings.lwStillMin * 60_000L
         logic.responseMs = DevSettings.lwResponseMin * 60_000L
         if (DevSettings.lwEnabled) {
+            if (!sensorRegistered) stall.reset(t)
             registerSensor()
             logic.setEnabled(sensorRegistered, t)
         } else {
@@ -210,8 +205,9 @@ class LoneWorkerMonitor(
         val v = event.values
         val t = now()
         val evMs = event.timestamp / 1_000_000L
-        // 이 앱의 진동+200ms 동안의 표본은 뺀다 — 공백은 정지로 채워진다 (v1.1.99, F07)
-        if (!VibrationHelper.window.covers(evMs)) when (analyzer.add(evMs, v[0], v[1], v[2])) {
+        stall.onEvent(t)
+        // 이 앱의 진동 구간 표본은 활동 통계에서만 뺀다. 낙상 감지에는 그대로 넣는다 (v1.1.99, F07·RR02)
+        when (analyzer.add(evMs, v[0], v[1], v[2], masked = VibrationHelper.window.covers(evMs))) {
             MotionAnalyzer.Signal.MOVED -> logic.onMoved(t)
             MotionAnalyzer.Signal.FALL -> logic.onFall(t)
             MotionAnalyzer.Signal.NONE -> {}
@@ -224,6 +220,39 @@ class LoneWorkerMonitor(
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+
+    /**
+     * 센서 신호 공백 검사 (RR08). 끊긴 동안에도 움직임이 없는 것으로 보고 무동작 시간을 계속 센다.
+     * 다시 등록할 때는 무동작 시작 시각·확인 중 상태를 건드리지 않는다(열려 있는 확인을 취소하지 않기 위해).
+     */
+    private fun checkStall(t: Long) {
+        if (!started || !sensorRegistered) return
+        when (stall.check(t)) {
+            SensorStall.Action.REREGISTER -> {
+                Log.w(TAG, "가속도 센서 신호 ${SensorStall.STALL_MS / 1000}초 없음 — 다시 등록")
+                unregisterSensor()
+                registerSensor()
+            }
+            SensorStall.Action.STALLED -> if (!stallLogged) Log.w(TAG, "가속도 센서 신호 끊김 지속")
+            SensorStall.Action.OK -> {}
+        }
+        stallLogged = stall.stalled
+        logic.tick(t)
+        render()
+    }
+
+    private fun onWatchdog() {
+        if (!started) return
+        checkStall(now())
+        watchdog.arm()
+    }
+
+    /** 알림을 쓸어 내렸다: 큰 알림이면 다시 올린다 (RR13). */
+    private fun onNotificationDismissed() {
+        if (!started) return
+        notifier.forget()
+        render()
+    }
 
     // ── BleService 진입점 ─────────────────────────────────────
 
@@ -296,9 +325,6 @@ class LoneWorkerMonitor(
         )
     }
 
-    private fun displayName(p: LoneWorkerLogic.Peer) =
-        p.name.ifEmpty { p.bleId.removePrefix("SAFEALERT_DEVICE_").removePrefix("SAFEALERT_WALKER_") }
-
     private fun peerLine(p: LoneWorkerLogic.Peer, t: Long): String {
         val role = when (p.role) {
             "WALKER" -> "보행자"
@@ -307,12 +333,23 @@ class LoneWorkerMonitor(
         }
         val wall = if (p.fromServer) p.createdAtMs else System.currentTimeMillis() - (t - p.firstSeenMs)
         return listOfNotNull(
-            displayName(p), role.ifEmpty { null }, timeFmt.format(Date(wall)),
+            p.displayName(), role.ifEmpty { null }, timeFmt.format(Date(wall)),
             p.beacon.ifEmpty { null }?.let { "마지막 위치: $it" }, if (p.active) "구조 요청" else "해제됨"
         ).joinToString(" · ")
     }
 
     // ── 렌더링: 상태 전환·소리·알림·화면 ────────────────────────
+
+    /** 조용한 안내 알림. 우선순위: 센서 불가, 센서 신호 끊김, 해제 미전송. */
+    private fun notice(): Pair<String, String>? = when {
+        DevSettings.lwEnabled && !sensorRegistered ->
+            "무동작 감시 불가" to "가속도 센서를 쓸 수 없어 무동작·낙상 확인이 꺼져 있습니다. 계속 다시 등록을 시도합니다"
+        DevSettings.lwEnabled && stall.stalled ->
+            "무동작 감시 불가" to "가속도 센서 신호가 끊겼습니다. 움직임이 없는 것으로 보고 확인을 계속하며 센서를 다시 등록합니다"
+        sync.resolveFailing() ->
+            "구조 요청 해제 미전송" to "서버에 해제를 기록하지 못했습니다. 계속 다시 보냅니다"
+        else -> null
+    }
 
     private fun render() {
         if (!started) return
@@ -323,7 +360,7 @@ class LoneWorkerMonitor(
         if (mode == LoneWorkerLogic.Mode.CHECKING && lastMode != LoneWorkerLogic.Mode.CHECKING) showScreen = true
         if (mode == LoneWorkerLogic.Mode.SOS && lastMode != LoneWorkerLogic.Mode.SOS) {
             val hint = logic.beaconHint(t)
-            sync.begin(logic.myBleId, name, roleName, logic.trigger, hint?.first, hint?.second)
+            sync.begin(logic.myBleId, name, roleName, logic.trigger, hint?.first, hint?.second, logic.beaconSid(t))
             advertiseSos(true)
             showScreen = true
         }
@@ -344,89 +381,11 @@ class LoneWorkerMonitor(
             else -> alarm.stop()
         }
 
-        updateNotification(mode, audible)
-        if (showScreen) openScreen()
+        notifier.update(mode, audible, logic.peers.values.filter { !it.active }, notice(), showScreen)
+        if (showScreen) notifier.openScreen()
         updateWakeLock(false)
         scheduleLoop()
         uiListener?.invoke()
-    }
-
-    private fun createChannel() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
-        runCatching {
-            val ch = NotificationChannel(CHANNEL_ID, "구조 요청·근무 확인", NotificationManager.IMPORTANCE_HIGH).apply {
-                setSound(null, null)
-                enableVibration(false)
-                lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
-            }
-            (ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(ch)
-        }
-    }
-
-    private fun servicePi(req: Int, action: String): PendingIntent =
-        PendingIntent.getService(
-            ctx, req, Intent(ctx, BleService::class.java).apply { this.action = action },
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-    private fun activityPi(): PendingIntent =
-        PendingIntent.getActivity(
-            ctx, 43, activityIntent(),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-    private fun activityIntent() = Intent(ctx, LoneWorkerActivity::class.java)
-        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-
-    private fun updateNotification(mode: LoneWorkerLogic.Mode, audible: List<LoneWorkerLogic.Peer>) {
-        val resolved = logic.peers.values.filter { !it.active }
-        val loud = mode != LoneWorkerLogic.Mode.WATCHING || audible.isNotEmpty()
-        val nm = runCatching { ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager }.getOrNull() ?: return
-        // 감시를 켰는데 센서를 못 쓰면 조용한 알림(무동작 감시 불가). 큰 알림·해제됨이 우선 (v1.1.99, F10)
-        val noSensor = !loud && resolved.isEmpty() && DevSettings.lwEnabled && !sensorRegistered
-        if (!loud && resolved.isEmpty() && !noSensor) {
-            if (lastNotifKey != null) { nm.cancel(NOTIF_ID); lastNotifKey = null }
-            return
-        }
-        val key = "$noSensor|$mode|${audible.joinToString(",") { it.bleId }}|${resolved.joinToString(",") { it.bleId }}"
-        if (key == lastNotifKey) return
-        lastNotifKey = key
-        val (title, text, act) = when {
-            mode == LoneWorkerLogic.Mode.SOS ->
-                Triple("구조 요청 중", "[괜찮음]을 눌러야 해제됩니다", "괜찮음" to servicePi(41, BleService.ACTION_LW_CANCEL))
-            mode == LoneWorkerLogic.Mode.CHECKING ->
-                Triple("근무 중이신가요?", "응답하지 않으면 같은 사업장에 구조 요청이 나갑니다", "근무 중" to servicePi(40, BleService.ACTION_LW_ACK))
-            noSensor ->
-                Triple("무동작 감시 불가", "가속도 센서를 쓸 수 없어 무동작·낙상 확인이 꺼져 있습니다. 계속 다시 등록을 시도합니다", null)
-            audible.isNotEmpty() ->
-                Triple("구조 요청", audible.joinToString(", ") { displayName(it) }, "확인" to servicePi(42, BleService.ACTION_LW_SILENCE))
-            else -> Triple("해제됨", resolved.joinToString(", ") { displayName(it) }, null)
-        }
-        val b = NotificationCompat.Builder(ctx, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_dialog_alert)
-            .setContentTitle(title)
-            .setContentText(text)
-            .setContentIntent(activityPi())
-            .setCategory(NotificationCompat.CATEGORY_ALARM)
-            .setPriority(NotificationCompat.PRIORITY_MAX)
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .setOnlyAlertOnce(true)
-        if (loud) {
-            b.setOngoing(true)
-            if (Build.VERSION.SDK_INT < 34 || nm.canUseFullScreenIntent()) b.setFullScreenIntent(activityPi(), true)
-        } else {
-            b.setSilent(true)
-            if (!noSensor) b.setTimeoutAfter(RESOLVED_NOTIF_MS)
-        }
-        act?.let { b.addAction(0, it.first, it.second) }
-        runCatching { nm.notify(NOTIF_ID, b.build()) }
-            .onFailure { Log.w(TAG, "알림 게시 실패: ${it.message}") }
-    }
-
-    private fun openScreen() {
-        if (!runCatching { Settings.canDrawOverlays(ctx) }.getOrDefault(false)) return
-        runCatching { ctx.startActivity(activityIntent()) }
-            .onFailure { Log.w(TAG, "확인 화면 직접 실행 실패: ${it.message}") }
     }
 
     // ── 5초 갱신·웨이크락 ─────────────────────────────────────

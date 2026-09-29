@@ -119,6 +119,21 @@ object SosRemote {
     }
 
     /**
+     * 기록 한 건 조회(서버 우선, 닿지 않을 때만 캐시). 쓰기가 실패한 뒤 서버에 이미 내 기록이 있는지 확인하는 데 쓴다.
+     * 성공이면 (true, 기록 또는 없음/해석 불가 시 null), 조회 실패면 (false, null).
+     */
+    fun read(path: String, key: String, onResult: (Boolean, SosRecord?) -> Unit) {
+        FirebaseDatabase.getInstance().reference.child(path).child(key).get()
+            .addOnCompleteListener {
+                if (it.isSuccessful) onResult(true, parseSosRecord(key, it.result?.value))
+                else {
+                    Log.e(TAG, "구조 요청 조회 실패: ${it.exception?.message}")
+                    onResult(false, null)
+                }
+            }
+    }
+
+    /**
      * 구조 요청 실시간 수신 (R1). 이 함수를 부른 시각 t0 를 잡아 두고 서버 시각 오프셋을 한 번 읽은 뒤
      * (t0 + 오프셋 - 30분) 이후 생성분을 조회한다. 그래서 진행 중(active) 기록은 30분 이내면 재생되어 울리고,
      * 그보다 오래된 기록은 조회되지 않으며, 해제된 기록은 알림 대상이 아니다.
