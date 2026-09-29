@@ -18,9 +18,6 @@ import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
 import androidx.core.app.NotificationCompat
-import com.google.firebase.auth.FirebaseAuth
-import com.wf11.safealert.firebase.FirebaseConfig
-import com.wf11.safealert.firebase.FirebaseManager
 import com.wf11.safealert.ui.LoneWorkerActivity
 import com.wf11.safealert.utils.BeaconRegistry
 import com.wf11.safealert.utils.DevSettings
@@ -48,7 +45,8 @@ class LoneWorkerMonitor(
         val mode: LoneWorkerLogic.Mode,
         val responseLeftSec: Int,
         val peerLines: List<String>,
-        val peerActive: Boolean
+        val peerActive: Boolean,
+        val serverStatus: String? // 내 SOS 서버 전송 상태(SOS 가 아니면 null)
     )
 
     companion object {
@@ -60,7 +58,7 @@ class LoneWorkerMonitor(
         private const val BEACON_NOTE_MS = 2_000L
         private const val WAKE_LOCK_MS = 10 * 60_000L
         private const val RESOLVED_NOTIF_MS = 60_000L
-        private const val SOS_ATTACH_RETRY_MS = 10_000L
+        private const val SYNC_TICK_MS = 10_000L
 
         @Volatile var current: LoneWorkerMonitor? = null
         var uiListener: (() -> Unit)? = null
@@ -70,6 +68,14 @@ class LoneWorkerMonitor(
     private val analyzer = MotionAnalyzer()
     private val alarm = LoneWorkerAlarm(ctx, setAlarmVolume)
     private val handler = Handler(Looper.getMainLooper())
+    private val sync = LoneWorkerSosSync(ctx, handler,
+        { rec ->
+            if (started) {
+                logic.onPeerServer(rec.key, rec.bleId, rec.name, rec.role, rec.trigger, rec.beacon, rec.createdAt, rec.active, now())
+                render()
+            }
+        },
+        { render() })
 
     private var started = false
     private var name = ""
@@ -78,9 +84,6 @@ class LoneWorkerMonitor(
     private var lastAudible: Set<String> = emptySet()
     private var lastNotifKey: String? = null
     private var lastTickAt = 0L
-    private var sosKey: String? = null
-    private var sosRemover: (() -> Unit)? = null
-    private var sosSite = ""
     private var sensorManager: SensorManager? = null
     private var sensorRegistered = false
     private var fallbackWake = false
@@ -103,6 +106,8 @@ class LoneWorkerMonitor(
         if (started) return
         started = true
         logic.start(now(), zoneInside)
+        // 저장된 본인 SOS 가 있으면 첫 렌더 전에 되살린다 — 같은 서버 키로 사이렌·광고 bit1 이 다시 켜진다 (v1.1.99, R3)
+        sync.restoredTrigger()?.let { logic.restoreSos(it, now()) }
         createChannel()
         val l = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
             if (key == DevSettings.KEY_LW_ENABLED || key == DevSettings.KEY_LW_STILL_MIN ||
@@ -111,37 +116,17 @@ class LoneWorkerMonitor(
         prefsListener = l
         DevSettings.registerOnChange(l)
         applySettings()
-        attachSosListener()
+        handler.post(syncRunnable)
         current = this
     }
 
-    /**
-     * 동료 구조 요청 수신 — 서버 시각 기준 시작 이후 기록만 (D-06, D-08).
-     * 로그인 전이나 사업장 코드 미설정이면 붙이지 못하므로 10초마다 다시 시도하고,
-     * 사업장 코드가 바뀌면 새 노드로 다시 붙인다.
-     */
-    private fun attachSosListener() {
-        if (!started) return
-        val site = DevSettings.siteCode
-        if (sosRemover != null && site != sosSite) {
-            sosRemover?.invoke()
-            sosRemover = null
+    /** 10초마다: 동료 수신 재연결·내 SOS 전송 재시도 (v1.1.99). */
+    private val syncRunnable = object : Runnable {
+        override fun run() {
+            if (!started) return
+            sync.tick()
+            handler.postDelayed(this, SYNC_TICK_MS)
         }
-        if (sosRemover == null && site.isNotEmpty()) {
-            if (runCatching { FirebaseAuth.getInstance().currentUser }.getOrNull() == null) {
-                FirebaseConfig.ensureSignedIn()
-            } else {
-                sosRemover = FirebaseManager.sosListen { rec ->
-                    handler.post {
-                        if (!started) return@post
-                        logic.onPeerServer(rec.key, rec.bleId, rec.name, rec.role, rec.trigger, rec.beacon, rec.createdAt, rec.active, now())
-                        render()
-                    }
-                }
-                sosSite = site
-            }
-        }
-        handler.postDelayed({ attachSosListener() }, SOS_ATTACH_RETRY_MS)
     }
 
     fun stop() {
@@ -150,9 +135,7 @@ class LoneWorkerMonitor(
         unregisterSensor()
         prefsListener?.let { DevSettings.unregisterOnChange(it) }
         prefsListener = null
-        sosRemover?.invoke()
-        sosRemover = null
-        sosSite = ""
+        sync.stopListening()
         alarm.stop()
         releaseWakeLock()
         handler.removeCallbacksAndMessages(null)
@@ -161,8 +144,7 @@ class LoneWorkerMonitor(
         lastNotifKey = null
         lastMode = LoneWorkerLogic.Mode.WATCHING
         lastAudible = emptySet()
-        // 서버에 남은 active 기록은 그대로 둔다 — 해제는 본인 [괜찮음]뿐 (D-05)
-        sosKey = null
+        // 서버의 active 기록과 저장된 내 SOS 는 그대로 둔다 — 해제는 본인 [괜찮음]뿐 (D-05, R3)
         logic = LoneWorkerLogic("") // 재시작 때 지난 동료 항목이 되살아나지 않게 비운다
         if (current === this) current = null
         uiListener?.invoke()
@@ -304,7 +286,8 @@ class LoneWorkerMonitor(
             logic.mode,
             ((logic.responseLeftMs(t) + 999L) / 1000L).toInt(),
             lines,
-            shown.any { it.active }
+            shown.any { it.active },
+            if (logic.mode == LoneWorkerLogic.Mode.SOS) sync.statusText() else null
         )
     }
 
@@ -334,13 +317,13 @@ class LoneWorkerMonitor(
 
         if (mode == LoneWorkerLogic.Mode.CHECKING && lastMode != LoneWorkerLogic.Mode.CHECKING) showScreen = true
         if (mode == LoneWorkerLogic.Mode.SOS && lastMode != LoneWorkerLogic.Mode.SOS) {
-            ensureSosRecord(t)
+            val hint = logic.beaconHint(t)
+            sync.begin(logic.myBleId, name, roleName, logic.trigger, hint?.first, hint?.second)
             advertiseSos(true)
             showScreen = true
         }
         if (mode != LoneWorkerLogic.Mode.SOS && lastMode == LoneWorkerLogic.Mode.SOS) {
-            sosKey?.let { FirebaseManager.sosResolve(it) }
-            sosKey = null
+            sync.resolve()
             advertiseSos(false)
         }
         lastMode = mode
@@ -361,13 +344,6 @@ class LoneWorkerMonitor(
         updateWakeLock(false)
         scheduleLoop()
         uiListener?.invoke()
-    }
-
-    /** SOS 기록이 아직 없으면 생성한다(로그인 전이면 null → 5초 갱신에서 재시도). */
-    private fun ensureSosRecord(t: Long) {
-        if (sosKey != null || logic.mode != LoneWorkerLogic.Mode.SOS) return
-        val hint = logic.beaconHint(t)
-        sosKey = FirebaseManager.sosCreate(logic.myBleId, name, roleName, logic.trigger, hint?.first, hint?.second)
     }
 
     private fun createChannel() {
@@ -461,7 +437,6 @@ class LoneWorkerMonitor(
             val t = now()
             lastTickAt = t
             logic.tick(t)
-            ensureSosRecord(t)
             render()
             alarm.refresh()
             updateWakeLock(true)

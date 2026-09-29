@@ -24,7 +24,7 @@ class SosRecordParseTest {
 
     @Test
     fun validMap_keepsFields() {
-        val r = FirebaseManager.parseSosRecord("k1", valid())
+        val r = SosRemote.parseSosRecord("k1", valid())
         assertNotNull(r)
         r!!
         assertEquals("k1", r.key)
@@ -35,32 +35,33 @@ class SosRecordParseTest {
         assertEquals("GATE-A", r.beacon)
         assertEquals(-70, r.beaconRssi)
         assertEquals(1780000000000L, r.createdAt)
+        assertEquals("u1", r.uid)
         assertTrue(r.active)
     }
 
     @Test
     fun resolved_isNotActive() {
-        val r = FirebaseManager.parseSosRecord("k", valid().apply { put("status", "resolved") })
+        val r = SosRemote.parseSosRecord("k", valid().apply { put("status", "resolved") })
         assertFalse(r!!.active)
     }
 
     @Test
     fun badRequiredFields_yieldNull() {
-        assertNull(FirebaseManager.parseSosRecord("k", null))
-        assertNull(FirebaseManager.parseSosRecord("k", "text"))
-        assertNull(FirebaseManager.parseSosRecord("k", valid().apply { remove("bleId") }))
-        assertNull(FirebaseManager.parseSosRecord("k", valid().apply { put("bleId", 5L) }))
-        assertNull(FirebaseManager.parseSosRecord("k", valid().apply { put("bleId", "x".repeat(65)) }))
-        assertNull(FirebaseManager.parseSosRecord("k", valid().apply { put("status", "done") }))
-        assertNull(FirebaseManager.parseSosRecord("k", valid().apply { remove("status") }))
-        assertNull(FirebaseManager.parseSosRecord("k", valid().apply { remove("createdAt") }))
-        assertNull(FirebaseManager.parseSosRecord("k", valid().apply { put("createdAt", "1780000000000") }))
+        assertNull(SosRemote.parseSosRecord("k", null))
+        assertNull(SosRemote.parseSosRecord("k", "text"))
+        assertNull(SosRemote.parseSosRecord("k", valid().apply { remove("bleId") }))
+        assertNull(SosRemote.parseSosRecord("k", valid().apply { put("bleId", 5L) }))
+        assertNull(SosRemote.parseSosRecord("k", valid().apply { put("bleId", "x".repeat(65)) }))
+        assertNull(SosRemote.parseSosRecord("k", valid().apply { put("status", "done") }))
+        assertNull(SosRemote.parseSosRecord("k", valid().apply { remove("status") }))
+        assertNull(SosRemote.parseSosRecord("k", valid().apply { remove("createdAt") }))
+        assertNull(SosRemote.parseSosRecord("k", valid().apply { put("createdAt", "1780000000000") }))
     }
 
     @Test
     fun optionalFields_normalized() {
         val long = "y".repeat(100)
-        val r = FirebaseManager.parseSosRecord("k", valid().apply {
+        val r = SosRemote.parseSosRecord("k", valid().apply {
             put("name", long); put("role", long); put("beacon", long); put("trigger", "weird")
         })!!
         assertEquals(64, r.name.length)
@@ -68,11 +69,41 @@ class SosRecordParseTest {
         assertEquals(64, r.beacon.length)
         assertEquals("still", r.trigger)
 
-        val r2 = FirebaseManager.parseSosRecord("k", valid().apply {
+        val r2 = SosRemote.parseSosRecord("k", valid().apply {
             remove("beacon"); remove("beaconRssi"); put("createdAt", 1780000000000.0)
         })!!
         assertEquals("", r2.beacon)
         assertNull(r2.beaconRssi)
         assertEquals(1780000000000L, r2.createdAt)
+    }
+
+    @Test
+    fun payload_beaconRssiOnlyInsideRuleRange() {
+        fun p(rssi: Int?) = SosRemote.recordPayload("id", "n", "WALKER", "still", "GATE-A", rssi, "u1", 1L)
+        assertFalse(p(-151).containsKey("beaconRssi"))
+        assertFalse(p(21).containsKey("beaconRssi"))
+        assertFalse(p(null).containsKey("beaconRssi"))
+        assertEquals(-150, p(-150)["beaconRssi"])
+        assertEquals(20, p(20)["beaconRssi"])
+    }
+
+    @Test
+    fun payload_alwaysHasCoreFields_beaconOnlyWhenNotEmpty() {
+        val m = SosRemote.recordPayload("id", "n", "WALKER", "fall", "", -70, "u1", 123L)
+        assertFalse(m.containsKey("beacon"))
+        assertFalse(SosRemote.recordPayload("id", "n", "WALKER", "fall", null, -70, "u1", 123L).containsKey("beacon"))
+        assertEquals("id", m["bleId"])
+        assertEquals("n", m["name"])
+        assertEquals("WALKER", m["role"])
+        assertEquals("fall", m["trigger"])
+        assertEquals(123L, m["createdAt"])
+        assertEquals("active", m["status"])
+        assertEquals("u1", m["uid"])
+        assertEquals("GATE-A", SosRemote.recordPayload("id", "n", "R", "still", "GATE-A", null, "u", 1L)["beacon"])
+    }
+
+    @Test
+    fun replayStart_isThirtyMinutesBeforeServerNow() {
+        assertEquals(1_780_000_000_000L + 5_000L - 1_800_000L, SosRemote.replayStartAt(1_780_000_000_000L, 5_000L))
     }
 }

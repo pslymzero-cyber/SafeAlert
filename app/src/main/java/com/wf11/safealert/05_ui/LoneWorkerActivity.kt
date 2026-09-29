@@ -69,7 +69,8 @@ class LoneWorkerActivity : AppCompatActivity() {
             st.mode == LoneWorkerLogic.Mode.SOS -> {
                 bg = Color.parseColor("#C62828"); fg = Color.WHITE
                 b.tvLwTitle.text = "구조 요청 중"
-                b.tvLwBody.text = (listOf("같은 사업장 휴대폰에 구조 요청이 나가고 있습니다") + st.peerLines).joinToString("\n\n")
+                b.tvLwBody.text = (listOf(listOfNotNull("같은 사업장 휴대폰에 구조 요청이 나가고 있습니다", st.serverStatus).joinToString("\n")) + st.peerLines)
+                    .joinToString("\n\n")
                 b.btnLwPrimary.text = "괜찮음"
                 b.btnLwPrimary.setOnClickListener { mon.cancelSos() }
             }
