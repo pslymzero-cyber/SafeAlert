@@ -87,6 +87,16 @@
             android:foregroundServiceType="connectedDevice"
             android:exported="false" />
 
+        <!-- (v1.1.99) 재부팅·앱 업데이트 뒤 서비스가 돌던 상태면 저장 상태 복원 경로로 다시 띄운다 -->
+        <receiver
+            android:name=".service.BootRestoreReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
     </application>
 
 </manifest>

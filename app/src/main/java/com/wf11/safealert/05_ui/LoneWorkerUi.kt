@@ -4,6 +4,8 @@ import android.app.Activity
 import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
+import android.Manifest
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
@@ -27,17 +29,42 @@ import com.wf11.safealert.utils.DevSettings
  */
 object LoneWorkerUi {
 
+    /** 경고 문구 공통 끝말. 이 끝말로 끝나는 경고만 도달성 경고로 보고 다시 판정해 지운다. */
+    private const val REACH_TAIL = "구조 요청 화면이 뜨지 않습니다. 감시는 계속됩니다."
+
+    /**
+     * 서비스 시작 조건 — 포그라운드 서비스 유형(근처 기기)의 전제 권한. 메인 화면 시작 조건과 같은 목록이다.
+     */
+    val runPermissions: Array<String> = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        arrayOf(
+            Manifest.permission.BLUETOOTH_SCAN,
+            Manifest.permission.BLUETOOTH_ADVERTISE,
+            Manifest.permission.BLUETOOTH_CONNECT,
+            Manifest.permission.ACCESS_FINE_LOCATION
+        )
+    } else {
+        arrayOf(
+            Manifest.permission.BLUETOOTH,
+            Manifest.permission.BLUETOOTH_ADMIN,
+            Manifest.permission.ACCESS_FINE_LOCATION
+        )
+    }
+
+    fun hasRunPermissions(ctx: Context): Boolean =
+        runPermissions.all { ContextCompat.checkSelfPermission(ctx, it) == PackageManager.PERMISSION_GRANTED }
+
+    private fun runningMode(ctx: Context): String? = runCatching {
+        ctx.getSharedPreferences("safealert_prefs", Context.MODE_PRIVATE).getString("running_mode", null)
+    }.getOrNull()
+
     /**
      * 저장된 내 구조 요청이 있는데 모니터가 없으면 서비스를 다시 띄운다 (교대 인계·서비스 사망).
      * action 없는 시작은 BleService 의 저장 상태 복원 경로이며 monitor.start 가 저장된 구조 요청을 되살린다.
-     * 되살릴 실행 상태(running_mode)가 없으면 아무것도 하지 않는다. 시작을 요청했으면 true.
+     * 되살릴 실행 상태(running_mode)가 없거나 실행 권한이 빠져 있으면 아무것도 하지 않는다. 시작을 요청했으면 true.
      */
     fun reviveIfStoredSos(ctx: Context): Boolean {
         if (LoneWorkerMonitor.current != null || !LoneWorkerSosSync.hasStoredSos(ctx)) return false
-        val running = runCatching {
-            ctx.getSharedPreferences("safealert_prefs", Context.MODE_PRIVATE).getString("running_mode", null)
-        }.getOrNull()
-        if (running == null) return false
+        if (runningMode(ctx) == null || !hasRunPermissions(ctx)) return false
         return runCatching { ContextCompat.startForegroundService(ctx, Intent(ctx, BleService::class.java)) }.isSuccess
     }
 
@@ -52,46 +79,41 @@ object LoneWorkerUi {
             Toast.makeText(activity, "[괜찮음]으로 먼저 해제하세요", Toast.LENGTH_LONG).show()
             return true
         }
-        if (!reviveIfStoredSos(activity)) return false
+        if (!reviveIfStoredSos(activity)) {
+            // 권한이 빠져 서비스를 못 띄우는 상태: 저장된 구조 요청이 남아 있으면 실행 상태를 지우지 않고 막는다
+            if (runningMode(activity) == null || !LoneWorkerSosSync.hasStoredSos(activity) || hasRunPermissions(activity)) return false
+            Toast.makeText(activity, "권한을 허용한 뒤 [괜찮음]으로 먼저 해제하세요", Toast.LENGTH_LONG).show()
+            return true
+        }
         Toast.makeText(activity, "구조 요청을 복원합니다 — [괜찮음]으로 먼저 해제하세요", Toast.LENGTH_LONG).show()
         return true
     }
 
     /**
-     * 화면이 꺼져 있거나 다른 앱을 쓰는 중에 확인·구조 요청 화면이 뜰 길이 없으면 경고와 설정 이동 버튼을 보인다.
-     * "다른 앱 위에 표시"가 켜져 있으면 서비스가 화면을 직접 열 수 있어 경고하지 않는다. 감시는 계속된다.
+     * 화면이 꺼져 있거나 다른 앱을 쓰는 중에 확인·구조 요청 화면이 뜰 길이 없으면 (경고 문구, 설정 이동 의도)를 돌려준다.
+     * "다른 앱 위에 표시"가 켜져 있으면 서비스가 화면을 직접 열 수 있어 null 이다. 감시는 계속된다.
      */
-    fun warnIfUnreachable(activity: Activity, show: (String, () -> Unit) -> Unit) {
-        val overlay = runCatching { Settings.canDrawOverlays(activity) }.getOrDefault(true)
-        if (overlay) return
-        val pkg = activity.packageName
-        val notif = runCatching { NotificationManagerCompat.from(activity).areNotificationsEnabled() }.getOrDefault(true)
-        val nm = runCatching { activity.getSystemService(NotificationManager::class.java) }.getOrNull()
+    fun reachabilityWarning(ctx: Context): Pair<String, Intent>? {
+        val overlay = runCatching { Settings.canDrawOverlays(ctx) }.getOrDefault(true)
+        if (overlay) return null
+        val pkg = ctx.packageName
+        val notif = runCatching { NotificationManagerCompat.from(ctx).areNotificationsEnabled() }.getOrDefault(true)
+        val nm = runCatching { ctx.getSystemService(NotificationManager::class.java) }.getOrNull()
         val chan = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
             runCatching { nm?.getNotificationChannel(LoneWorkerNotifier.CHANNEL_ID) }.getOrNull() else null
         val fsiDenied = Build.VERSION.SDK_INT >= 34 && runCatching { nm?.canUseFullScreenIntent() == false }.getOrDefault(false)
-        when {
-            !notif -> show(
-                "알림 권한과 '다른 앱 위에 표시' 권한이 모두 꺼져 있어, 화면이 꺼져 있거나 다른 앱을 쓰는 중에는 " +
-                    "근무 확인·구조 요청 화면이 뜨지 않습니다. 감시는 계속됩니다."
-            ) { open(activity, Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, pkg)) }
-            chan != null && chan.importance < NotificationManager.IMPORTANCE_HIGH -> show(
-                "구조 요청 알림 채널이 꺼져 있거나 중요도가 '높음'보다 낮아, 화면이 꺼져 있거나 다른 앱을 쓰는 중에는 " +
-                    "근무 확인·구조 요청 화면이 뜨지 않습니다. 감시는 계속됩니다."
-            ) {
-                open(
-                    activity,
+        return when {
+            !notif -> "알림 권한과 '다른 앱 위에 표시' 권한이 모두 꺼져 있어, 화면이 꺼져 있거나 다른 앱을 쓰는 중에는 " +
+                "근무 확인·" + REACH_TAIL to Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, pkg)
+            chan != null && chan.importance < NotificationManager.IMPORTANCE_HIGH ->
+                "구조 요청 알림 채널이 꺼져 있거나 '소리와 함께 화면에 팝업'(Android 8 은 '긴급')으로 설정되어 있지 않아, " +
+                    "화면이 꺼져 있거나 다른 앱을 쓰는 중에는 근무 확인·" + REACH_TAIL to
                     Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
                         .putExtra(Settings.EXTRA_APP_PACKAGE, pkg)
                         .putExtra(Settings.EXTRA_CHANNEL_ID, LoneWorkerNotifier.CHANNEL_ID)
-                )
-            }
-            fsiDenied -> show(
-                "전체 화면 알림 권한이 꺼져 있어, 화면이 꺼져 있을 때 근무 확인·구조 요청 화면이 뜨지 않습니다. 감시는 계속됩니다."
-            ) {
-                if (Build.VERSION.SDK_INT >= 34)
-                    open(activity, Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, Uri.parse("package:$pkg")))
-            }
+            fsiDenied -> "전체 화면 알림 권한이 꺼져 있어, 화면이 꺼져 있을 때 근무 확인·" + REACH_TAIL to
+                Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, Uri.parse("package:$pkg"))
+            else -> null
         }
     }
 
@@ -117,17 +139,23 @@ object LoneWorkerUi {
     }
 
     /**
-     * 메인 화면 800ms 폴링에서 한 번에 부른다: 알림 화면 진입, 정지 경합 복구, 거치 중 안내.
+     * 메인 화면 800ms 폴링에서 한 번에 부른다: 알림 화면 진입, 정지 경합 복구, 거치 중 안내, 도달성 경고 재판정.
+     * 도달성 경고는 매번 다시 판정한다 — 막혀 있으면 띄우고 풀렸으면 지운다. 블루투스 권한 경고는 건드리지 않는다.
      * stopped 는 메인 화면이 실행 상태를 지운 상태(currentMode == null)다. 그런데 서비스가 구조 요청 때문에
      * 정지를 무시했다면 서비스가 running_mode 를 되살렸으므로 실행 카드로 돌아간다.
      */
-    fun onPoll(activity: Activity, status: TextView, stopped: Boolean, restore: () -> Unit) {
+    fun onPoll(
+        activity: Activity, status: TextView, warnBox: View, warnMsg: TextView,
+        stopped: Boolean, warn: (String, () -> Unit) -> Unit, restore: () -> Unit
+    ) {
         openIfAlerting(activity)
+        val w = if (stopped) null else reachabilityWarning(activity)
+        val cur = if (warnBox.visibility == View.VISIBLE) warnMsg.text.toString() else null
+        // 다른 경고(블루투스 권한 등)가 떠 있으면 덮어쓰지 않는다 — 비어 있거나 도달성 경고일 때만 갱신
+        if (w != null && cur != w.first && (cur == null || cur.endsWith(REACH_TAIL))) warn(w.first) { open(activity, w.second) }
+        if (w == null && cur != null && cur.endsWith(REACH_TAIL)) warnBox.visibility = View.GONE
         if (stopped && LoneWorkerMonitor.current?.sosActive == true) {
-            val running = runCatching {
-                activity.getSharedPreferences("safealert_prefs", Context.MODE_PRIVATE).getString("running_mode", null)
-            }.getOrNull()
-            if (running != null) restore()
+            if (runningMode(activity) != null) restore()
         }
         val resting = LoneWorkerMonitor.current?.resting == true && DevSettings.lwEnabled
         val vis = if (resting) View.VISIBLE else View.GONE

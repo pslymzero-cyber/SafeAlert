@@ -3,6 +3,7 @@ package com.wf11.safealert.ble
 import android.app.NotificationManager
 import androidx.lifecycle.Lifecycle
 import com.wf11.safealert.service.BleService
+import com.wf11.safealert.service.BootRestoreReceiver
 import com.wf11.safealert.support.BleServiceTestHarness
 import com.wf11.safealert.utils.DevSettings
 import com.wf11.safealert.utils.OverlayManager
@@ -62,7 +63,8 @@ class AlertCascadeGoldenTest {
         // com.wf11.safealert 패키지 소속 리시버만 필터링한다(실측: DEBUG 로 baseline 확인 완료).
         val appShadow = shadowOf(RuntimeEnvironment.getApplication())
         val ownReceivers = appShadow.registeredReceivers.filter {
-            it.broadcastReceiver::class.java.name.startsWith("com.wf11.safealert")
+            it.broadcastReceiver::class.java.name.startsWith("com.wf11.safealert") &&
+                it.broadcastReceiver !is BootRestoreReceiver   // 매니페스트 정적 리시버 (v1.1.99)
         }
         assertTrue(
             "onCreate() 미실행인데 앱 자체 BroadcastReceiver 가 등록됐다: $ownReceivers",

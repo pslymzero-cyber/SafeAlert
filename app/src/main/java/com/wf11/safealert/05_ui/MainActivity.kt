@@ -104,7 +104,7 @@ class MainActivity : AppCompatActivity() {
         private var lastText = ""
         private var lastMuted = false
         override fun run() {
-            LoneWorkerUi.onPoll(this@MainActivity, binding.tvLwStatus, currentMode == null) { restoreRunningState() }   // 확인·구조 요청 화면 진입·정지 경합 복구·충전 안내 (v1.1.99)
+            LoneWorkerUi.onPoll(this@MainActivity, binding.tvLwStatus, binding.layoutPermissionWarning, binding.tvPermissionMsg, currentMode == null, this@MainActivity::showPermissionWarning) { restoreRunningState() }   // 확인·구조 요청 화면 진입·정지 경합 복구·충전 안내·도달성 경고 재판정 (v1.1.99)
             if (binding.cardRunning.visibility == View.VISIBLE) {
                 // [v1.0.42] Broadcast 누락 대비 폴백 — 서비스 스냅샷(BleService.detectedSnapshot)을
                 //   직접 읽어 목록을 동기화한다. 브로드캐스트가 정상이면 같은 값이라 no-op,
@@ -169,20 +169,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private val blePermissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-        arrayOf(
-            Manifest.permission.BLUETOOTH_SCAN,
-            Manifest.permission.BLUETOOTH_ADVERTISE,
-            Manifest.permission.BLUETOOTH_CONNECT,
-            Manifest.permission.ACCESS_FINE_LOCATION
-        )
-    } else {
-        arrayOf(
-            Manifest.permission.BLUETOOTH,
-            Manifest.permission.BLUETOOTH_ADMIN,
-            Manifest.permission.ACCESS_FINE_LOCATION
-        )
-    }
+    private val blePermissions = LoneWorkerUi.runPermissions   // 서비스 시작 조건과 같은 목록 (v1.1.99)
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -661,7 +648,6 @@ class MainActivity : AppCompatActivity() {
             .putInt("running_category", currentCategory)
             .apply()
         showRunningUi(mode, since)
-        LoneWorkerUi.warnIfUnreachable(this, ::showPermissionWarning)   // (v1.1.99)
     }
 
     private fun stopServiceImmediately() {
@@ -742,6 +728,7 @@ class MainActivity : AppCompatActivity() {
         //   겹치면 광고/스캔 재초기화가 이전 인스턴스 정리와 경합한다.
         statusHandler.postDelayed({
             if (isFinishing || isDestroyed) return@postDelayed
+            if (LoneWorkerUi.blockIfOwnSos(this)) return@postDelayed   // 전환 대기 중 구조 요청이 시작된 경우 (v1.1.99)
             // (v1.1.90 SA-1) 장비로 전환할 때도 장비를 고르게 한다 — 고른 장비가 역할을 정한다
             if (fromMode == "WALKER") startAsPitOperator()
             else onRoleSelected("WALKER", BleConstants.CAT_WALKER)
