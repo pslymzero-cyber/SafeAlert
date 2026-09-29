@@ -104,6 +104,7 @@ class MainActivity : AppCompatActivity() {
         private var lastText = ""
         private var lastMuted = false
         override fun run() {
+            LoneWorkerUi.openIfAlerting(this@MainActivity)   // 확인·구조 요청 화면 진입 (v1.1.99)
             if (binding.cardRunning.visibility == View.VISIBLE) {
                 // [v1.0.42] Broadcast 누락 대비 폴백 — 서비스 스냅샷(BleService.detectedSnapshot)을
                 //   직접 읽어 목록을 동기화한다. 브로드캐스트가 정상이면 같은 값이라 no-op,
@@ -293,7 +294,7 @@ class MainActivity : AppCompatActivity() {
         //   card_role_epj 는 레이아웃에서 gone 이라 리스너를 달지 않는다(EPJ·워키는 장비 목록에 있다).
         binding.cardRoleWalker.setOnClickListener   { requireSiteCode { onRoleSelected("WALKER", BleConstants.CAT_WALKER) } }
         binding.cardRoleForklift.setOnClickListener { requireSiteCode { startAsPitOperator() } }
-        binding.btnStop.setOnClickListener       { stopServiceImmediately() }
+        binding.btnStop.setOnClickListener       { if (!LoneWorkerUi.blockIfOwnSos(this)) stopServiceImmediately() }
         binding.btnSwitchRole.setOnClickListener { confirmSwitchRole() }   // [v1.1.60] 역할 전환
         binding.cardSettings.setOnClickListener  { showDevPinDialog { startActivity(Intent(this, DevSettingsActivity::class.java)) } }
         binding.cardBleSettings.setOnClickListener {
@@ -659,6 +660,7 @@ class MainActivity : AppCompatActivity() {
             .putInt("running_category", currentCategory)
             .apply()
         showRunningUi(mode, since)
+        LoneWorkerUi.warnIfUnreachable(this, ::showPermissionWarning)   // (v1.1.99)
     }
 
     private fun stopServiceImmediately() {
@@ -721,6 +723,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun confirmSwitchRole() {
+        if (LoneWorkerUi.blockIfOwnSos(this)) return   // 구조 요청 중 전환 차단 (v1.1.99)
         val mode = currentMode ?: return
         val target = switchTargetLabel()
         AlertDialog.Builder(this)
@@ -732,6 +735,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun performSwitchRole(fromMode: String) {
+        if (LoneWorkerUi.blockIfOwnSos(this)) return   // 확인 창이 열린 사이 구조 요청이 시작된 경우 (v1.1.99)
         stopServiceImmediately()
         // (v1.1.62 버그B) 정지→재시작 800ms 유예 — ACTION_STOP 처리(BLE teardown)와 신규 시작이
         //   겹치면 광고/스캔 재초기화가 이전 인스턴스 정리와 경합한다.

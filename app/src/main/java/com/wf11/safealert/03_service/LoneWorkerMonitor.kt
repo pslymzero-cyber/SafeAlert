@@ -38,7 +38,8 @@ class LoneWorkerMonitor(
         val responseLeftSec: Int,
         val peerLines: List<String>,
         val peerActive: Boolean,
-        val serverStatus: String? // 내 SOS 서버 전송 상태(SOS 가 아니면 null)
+        val serverStatus: String?, // 내 SOS 서버 전송 상태(SOS 가 아니면 null)
+        val alarmFault: String? = null // 경보음 볼륨을 올리지 못했을 때의 안내(v1.1.99)
     )
 
     companion object {
@@ -330,7 +331,8 @@ class LoneWorkerMonitor(
             ((logic.responseLeftMs(t) + 999L) / 1000L).toInt(),
             lines,
             shown.any { it.active },
-            if (logic.mode == LoneWorkerLogic.Mode.SOS) sync.statusText() else null
+            if (logic.mode == LoneWorkerLogic.Mode.SOS) sync.statusText() else null,
+            alarm.volumeFault
         )
     }
 

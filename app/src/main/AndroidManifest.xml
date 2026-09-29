@@ -69,7 +69,7 @@
         <activity android:name=".ui.BeaconManagerActivity" android:exported="false" />
         <activity android:name=".ui.BleSettingsActivity" android:exported="false" />
         <activity android:name=".ui.OpenSourceLicensesActivity" android:exported="false" />
-        <activity android:name=".ui.LoneWorkerActivity" android:exported="false" android:launchMode="singleTop" android:excludeFromRecents="true" />
+        <activity android:name=".ui.LoneWorkerActivity" android:exported="false" android:launchMode="singleTop" android:excludeFromRecents="true" android:showWhenLocked="true" android:turnScreenOn="true" />
 
         <!-- APK 설치용 FileProvider -->
         <provider

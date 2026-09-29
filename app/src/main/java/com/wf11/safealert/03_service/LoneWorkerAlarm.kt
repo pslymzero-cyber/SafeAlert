@@ -6,6 +6,7 @@ import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioTrack
 import android.media.ToneGenerator
+import android.app.NotificationManager
 import android.os.SystemClock
 import android.util.Log
 import com.wf11.safealert.utils.DevSettings
@@ -27,11 +28,20 @@ class LoneWorkerAlarm(
         private const val TAG = "LoneWorkerAlarm"
         private const val RETRY_MS = 5_000L
         private const val FALLBACK_TONE_MS = 6_000
+        private const val PREFS = "lone_worker_alarm"
+        private const val K_ORIG = "orig"   // 사이렌 전 원래 볼륨 (프로세스가 죽어도 남는다)
+        private const val K_OURS = "ours"   // 이 앱이 올려 둔 볼륨
+        private const val FAULT_TEXT = "경보음 볼륨을 올리지 못했습니다 — 방해 금지·음량 제한을 확인하세요"
     }
+
+    /** 볼륨을 올리지 못했을 때 화면에 보일 안내. 문제가 없으면 null. */
+    var volumeFault: String? = null
+        private set
+
+    private val prefs get() = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
     private var track: AudioTrack? = null
     private var playing: Pattern? = null
-    private var savedVolume = -1
     private var fallback: ToneGenerator? = null
     private var fallbackFor: Pattern? = null
     private var failedAt = 0L
@@ -129,16 +139,20 @@ class LoneWorkerAlarm(
     }
 
     fun stop() {
-        if (playing == null && track == null && fallbackFor == null && savedVolume < 0) return
+        if (playing == null && track == null && fallbackFor == null && !prefs.contains(K_ORIG)) return
         releaseTrack()
         stopFallback()
         playing = null
-        VibrationHelper.stopVibration(ctx)
-        if (savedVolume >= 0) {
+        VibrationHelper.stopAlarmLoop(ctx)
+        val p = prefs
+        if (p.contains(K_ORIG) && p.contains(K_OURS)) {
+            // 지금 볼륨이 이 앱이 올린 값일 때만 되돌린다 (그 뒤 충돌 경보나 사용자가 바꾼 값은 건드리지 않는다).
             val cur = audio?.getStreamVolume(AudioManager.STREAM_ALARM)
-            if (cur != null && cur != savedVolume) setAlarmVolume(savedVolume)
-            savedVolume = -1
+            val orig = p.getInt(K_ORIG, -1)
+            if (cur != null && orig >= 0 && cur == p.getInt(K_OURS, -1) && cur != orig) setAlarmVolume(orig)
         }
+        p.edit().remove(K_ORIG).remove(K_OURS).apply()
+        volumeFault = null
     }
 
     private fun releaseTrack() {
@@ -153,12 +167,26 @@ class LoneWorkerAlarm(
         val am = audio ?: return
         val max = am.getStreamMaxVolume(AudioManager.STREAM_ALARM)
         val cur = am.getStreamVolume(AudioManager.STREAM_ALARM)
-        if (savedVolume < 0) savedVolume = cur
+        val pf = prefs
+        if (!pf.contains(K_ORIG)) pf.edit().putInt(K_ORIG, cur).apply()   // 재시작 중에도 진짜 원래 값을 유지
         val target = if (p == Pattern.SIREN) max else {
             val pref = Math.ceil(max * DevSettings.alarmVolume / 100.0).toInt().coerceIn(0, max)
             maxOf(cur, pref)
         }
-        if (cur != target) setAlarmVolume(target)
+        var now = cur
+        if (cur != target) {
+            setAlarmVolume(target)
+            now = am.getStreamVolume(AudioManager.STREAM_ALARM)   // 읽어 보고 확인
+            if (now != cur) pf.edit().putInt(K_OURS, now).apply()
+        }
+        val silent = runCatching {
+            am.isStreamMute(AudioManager.STREAM_ALARM) ||
+                (ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).currentInterruptionFilter ==
+                NotificationManager.INTERRUPTION_FILTER_NONE
+        }.getOrDefault(false)
+        val fault = if (now < target || silent) FAULT_TEXT else null
+        if (fault != volumeFault) Log.w(TAG, "경보음 볼륨 상태 변경: ${fault ?: "정상"} (요청 ${target}, 실제 ${now})")
+        volumeFault = fault
     }
 
     private fun vibrate() = VibrationHelper.vibrateAlarmLoop(ctx)
