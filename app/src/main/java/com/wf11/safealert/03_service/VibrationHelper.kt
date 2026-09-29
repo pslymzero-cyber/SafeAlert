@@ -12,7 +12,7 @@ object VibrationHelper {
 
     private const val TAG = "VibrationHelper"
 
-    private fun vibrator(context: Context): Vibrator? = runCatching {
+    internal fun vibrator(context: Context): Vibrator? = runCatching {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
             (context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager).defaultVibrator
         else

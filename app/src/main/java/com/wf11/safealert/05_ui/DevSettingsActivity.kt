@@ -53,6 +53,10 @@ class DevSettingsActivity : AppCompatActivity() {
         // (v1.1.63) 경보 볼륨은 BLE 감지 설정 [경보 기본]으로 이동(50~100%).
         // 송수신 모드
         binding.switchWalkerDetectsWalker.isChecked = DevSettings.walkerDetectsWalker
+        // (v1.1.99) 단독 작업자 보호
+        binding.switchLoneWorker.isChecked = DevSettings.lwEnabled
+        binding.etLwStillMin.setText(DevSettings.lwStillMin.toString())
+        binding.etLwResponseMin.setText(DevSettings.lwResponseMin.toString())
         binding.switchDeviceTx.isChecked = DevSettings.deviceTx
         binding.switchDeviceRx.isChecked = DevSettings.deviceRx
         binding.switchWalkerTx.isChecked = DevSettings.walkerTx
@@ -216,6 +220,9 @@ class DevSettingsActivity : AppCompatActivity() {
 
         // ── Switch : 즉시 기록 (+ 의존 UI 갱신) ─────────────────────────
         binding.switchWalkerDetectsWalker.setOnCheckedChangeListener { _, c -> DevSettings.walkerDetectsWalker = c }
+        binding.switchLoneWorker.setOnCheckedChangeListener { _, c -> DevSettings.lwEnabled = c }
+        bindIntField(binding.etLwStillMin,     { DevSettings.lwStillMin },     { DevSettings.lwStillMin = it })
+        bindIntField(binding.etLwResponseMin,  { DevSettings.lwResponseMin },  { DevSettings.lwResponseMin = it })
         binding.switchDeviceTx.setOnCheckedChangeListener { _, c -> DevSettings.deviceTx = c }
         binding.switchDeviceRx.setOnCheckedChangeListener { _, c -> DevSettings.deviceRx = c }
         binding.switchWalkerTx.setOnCheckedChangeListener { _, c -> DevSettings.walkerTx = c }

@@ -39,6 +39,7 @@
 
     <!-- 시스템 오버레이 (다른 앱 위에 경보 표시) -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
 
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="true" />
 
@@ -68,6 +69,7 @@
         <activity android:name=".ui.BeaconManagerActivity" android:exported="false" />
         <activity android:name=".ui.BleSettingsActivity" android:exported="false" />
         <activity android:name=".ui.OpenSourceLicensesActivity" android:exported="false" />
+        <activity android:name=".ui.LoneWorkerActivity" android:exported="false" android:launchMode="singleTop" android:excludeFromRecents="true" />
 
         <!-- APK 설치용 FileProvider -->
         <provider

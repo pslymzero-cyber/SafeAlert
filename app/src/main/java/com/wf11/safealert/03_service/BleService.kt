@@ -52,6 +52,10 @@ class BleService : LifecycleService() {
         const val ACTION_MUTE_ALL      = "ACTION_MUTE_ALL"     // (v1.1.65) 사이드바를 끝까지 드래그해 닫음 → 현재 위험 기기 일괄 ACK 음소거
         const val ACTION_TEST_STATE    = "ACTION_TEST_STATE"   // [v1.0.34] 개발자 수동 STATE 주입(후진/하역 예약비트 송신 테스트)
         const val ACTION_REAPPLY_UWB   = "ACTION_REAPPLY_UWB"  // (v1.1.38 A) 권한 부여·강제 토글 직후 UWB 세션 재평가 넛지
+        // (v1.1.99) 단독 작업자 확인·구조 요청 알림 버튼
+        const val ACTION_LW_ACK        = "ACTION_LW_ACK"
+        const val ACTION_LW_CANCEL     = "ACTION_LW_CANCEL"
+        const val ACTION_LW_SILENCE    = "ACTION_LW_SILENCE"
         // (v1.1.67) 상시 알림 → MainActivity 역할 전환 확인 다이얼로그 직행. 서비스가 아니라
         //   Activity 가 받는 액션이다. 전환 자체는 정지→재시작(v1.1.60)이라 서비스 단독 처리 시
         //   prefs·UI 상태가 이원화된다. 기존 confirmSwitchRole() 재사용이 유일 안전 경로.
@@ -140,6 +144,10 @@ class BleService : LifecycleService() {
     //   콜백까지 지워 ignoringVolumeChange=true 고착(볼륨버튼 무음 영구 무력화) 레이스가 있었다.
     private val volumeGuardHandler = android.os.Handler(android.os.Looper.getMainLooper())
     @Volatile private var isMuted = false
+    // (v1.1.99) 단독 작업자 무동작·낙상 SOS — 생성자는 참조만 저장, start() 전에는 모든 진입점이 no-op
+    private val loneWorker by lazy {
+        LoneWorkerMonitor(this, advertiseSos = { bleAdvertiser?.updateSos(it) }, setAlarmVolume = { setAlarmVolumeGuarded(it) })
+    }
 
     @Volatile private var activeSoundLevel = BleConstants.LEVEL_SAFE
 
@@ -516,6 +524,7 @@ class BleService : LifecycleService() {
             //   (주 송출은 onDeviceDetected 스캔주기. 동일레벨 no-op 라 중복 호출 무해.)
             bleAdvertiser?.updateRisk(getCurrentMaxLevel())
             reevaluateZones()       // (v1.1.62) 존 신호 두절 이탈·스테일 엔트리 폐기 폴링(+IN_ZONE self-heal)
+            bleAdvertiser?.updateSos(loneWorker.sosActive)   // (v1.1.99) 재생성된 광고기 self-heal — 값이 같으면 no-op
             pushRssiEcho()          // [v1.1.53 상호RSSI] 내가 측정한 상대 RSSI 표를 스캔응답 에코에 실어 되돌려 송출
             broadcastLocalState()   // [v1.0.42 Req2] 주기 갱신 — Local UI(상태/회전) 폴링 소스 최신 유지
             speedPushHandler.postDelayed(this, SPEED_PUSH_INTERVAL_MS)
@@ -713,6 +722,10 @@ class BleService : LifecycleService() {
             ACTION_REAPPLY_UWB -> {
                 if (myMode.isNotEmpty()) applyUwbLiveState() else stopSelf(startId)
             }
+            // (v1.1.99) 단독 작업자 알림 버튼
+            ACTION_LW_ACK -> loneWorker.ack()
+            ACTION_LW_CANCEL -> loneWorker.cancelSos()
+            ACTION_LW_SILENCE -> loneWorker.silencePeers()
         }
         return START_STICKY
     }
@@ -731,6 +744,11 @@ class BleService : LifecycleService() {
         //   헤더 탭으로 공정을 바꿀 수 있다. 블루투스 점검보다 먼저 띄운다 — BT 가 꺼져 아래에서 조기
         //   반환하더라도 공정 변경 진입점은 살아 있어야 하기 때문이다.
         updateFloatingOverlay()
+        // (v1.1.99) 전 역할 상시 — 블루투스가 꺼져 있어도 무동작·낙상 확인은 돌아야 한다
+        loneWorker.start(
+            (if (myMode == "DEVICE") BleConstants.DEVICE_PREFIX else BleConstants.WALKER_PREFIX) + myId,
+            myId, BleConstants.categoryName(myCategory), myZoneInside
+        )
         val btManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
         val btAdapter = btManager.adapter
 
@@ -805,6 +823,7 @@ class BleService : LifecycleService() {
                     s.startScanning(object : BleScanCallback {
                         override fun onDeviceDetected(deviceId: String, rssi: Int, remoteState: Int, remoteTurn: Int, payloadPresent: Boolean, peerEchoRssi: Int, peerInZone: Boolean) {
                             lastScanResultMs = System.currentTimeMillis()
+                            loneWorker.noteBeacon(deviceId, rssi)   // (v1.1.99) 구조 요청에 실을 최근 최강 비콘 — 게이트 앞에서 기록
 
                             if (myMode == "WALKER"
                                 && deviceId.startsWith(BleConstants.WALKER_PREFIX)
@@ -879,6 +898,10 @@ class BleService : LifecycleService() {
                             // [v1.1.43] 0x9ABC 관측 기록(진단용 — 판정 불사용) + 주소 전달 = 세션 (재)개설 경로
                             peerUwbSeenMap[deviceId] = System.currentTimeMillis()
                             uwbRanger?.onPeerUwbAddressReceived(deviceId, uwbAddress)
+                        }
+                        // (v1.1.99) 동료 구조 요청 비트 — 존 안·보행자 폰도 받도록 판정 게이트와 별개 경로
+                        override fun onPeerSos(deviceId: String, sos: Boolean) {
+                            loneWorker.onPeerBle(deviceId, sos)
                         }
                         override fun onZoneBeaconSignal(beaconKey: String, rssi: Int, enterRssi: Int) {
                             // (v1.1.82) 존 비콘도 엄연한 스캔 결과다. 여기서 갱신하지 않으면 주변에
@@ -1036,6 +1059,17 @@ class BleService : LifecycleService() {
             setVolumeFault("알람 볼륨 설정 실패 — 경보음이 들리지 않을 수 있음")
         }
         volumeGuardHandler.removeCallbacksAndMessages(null)   // [v1.0.46 #11] 연속 호출 시 직전 해제 예약 갱신
+        volumeGuardHandler.postDelayed({ ignoringVolumeChange = false }, 300)
+    }
+
+    // (v1.1.99) 사이렌 볼륨 변경 전용 — 볼륨 변경 브로드캐스트를 볼륨 버튼 음소거로 오인하지 않게 같은 보호를 건다.
+    //   경보 wake lock 은 잡지 않는다(단독 작업자 모니터가 자기 wake lock 을 관리).
+    private fun setAlarmVolumeGuarded(level: Int) {
+        ignoringVolumeChange = true
+        runCatching {
+            (getSystemService(AUDIO_SERVICE) as AudioManager).setStreamVolume(AudioManager.STREAM_ALARM, level, 0)
+        }.onFailure { Log.w(TAG, "사이렌 볼륨 설정 실패: ${it.message}") }
+        volumeGuardHandler.removeCallbacksAndMessages(null)
         volumeGuardHandler.postDelayed({ ignoringVolumeChange = false }, 300)
     }
 
@@ -1228,6 +1262,7 @@ class BleService : LifecycleService() {
         val inside = zoneInsideMap.values.any { it }
         if (inside == myZoneInside) return
         myZoneInside = inside
+        loneWorker.onZoneChanged(inside)   // (v1.1.99) 안전구역 정착 시 무동작 확인 제외
         if (inside) {
             bleScanner?.forceLoseAll()          // 전 기기 정상 소실 — 27종 상태맵·필터·UWB 정리
             AlertSoundPlayer.stopSound()        // 잔존 사이렌 즉시 정지(이중 안전)
@@ -1770,6 +1805,7 @@ class BleService : LifecycleService() {
         ecoHandler.removeCallbacks(ecoDowngradeRunnable)
         speedPushHandler.removeCallbacks(speedPushRunnable)   // [v1.0.36] 속도 송신 폴링 중지
         ImuFusion.stop()
+        loneWorker.stop()   // (v1.1.99)
         uwbRanger?.stop(); uwbRanger = null
         AlertSoundPlayer.stopSound()
         VibrationHelper.stopVibration(this)

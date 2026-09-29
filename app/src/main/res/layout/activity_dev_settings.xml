@@ -71,6 +71,31 @@
                             <Switch android:id="@+id/switch_walker_detects_walker" android:layout_width="wrap_content" android:layout_height="wrap_content" />
                         </LinearLayout>
 
+                        <!-- (v1.1.99) 단독 작업자 보호 -->
+                        <View style="@style/SA.Divider" />
+
+                        <TextView style="@style/SA.SubHeader" android:text="단독 작업자 보호" />
+
+                        <LinearLayout style="@style/SA.Row">
+                            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
+                                <TextView style="@style/SA.Label" android:text="무동작·넘어짐 확인" />
+                                <TextView style="@style/SA.Hint" android:layout_marginTop="1dp" android:text="움직임이 없거나 넘어지면 확인 창을 띄우고, 응답이 없으면 같은 사업장에 구조 요청 (기본: ON)" />
+                            </LinearLayout>
+                            <Switch android:id="@+id/switch_lone_worker" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                        </LinearLayout>
+
+                        <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
+                            <TextView style="@style/SA.RowLabel" android:text="무동작 확인까지 (분)" />
+                            <EditText android:id="@+id/et_lw_still_min" style="@style/SA.EditNumber" />
+                        </LinearLayout>
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="0dp" android:text="1~30, 기본 3" />
+
+                        <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
+                            <TextView style="@style/SA.RowLabel" android:text="응답 대기 (분)" />
+                            <EditText android:id="@+id/et_lw_response_min" style="@style/SA.EditNumber" />
+                        </LinearLayout>
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="0dp" android:text="1~10, 기본 2" />
+
                         <View style="@style/SA.Divider" />
 
                         <TextView style="@style/SA.SubHeader" android:text="보행자"

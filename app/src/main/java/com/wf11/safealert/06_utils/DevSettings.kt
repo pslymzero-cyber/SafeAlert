@@ -218,6 +218,20 @@ object DevSettings {
         get() = prefs.getBoolean(KEY_WALKER_DETECTS_WALKER, false)
         set(v) = prefs.edit().putBoolean(KEY_WALKER_DETECTS_WALKER, v).apply()
 
+    // (v1.1.99) 단독 작업자 무동작·낙상 확인 — 켜기 / 무동작 분 / 응답 대기 분. 임계값은 코드 상수.
+    const val KEY_LW_ENABLED = "lw_enabled"
+    const val KEY_LW_STILL_MIN = "lw_still_min"
+    const val KEY_LW_RESPONSE_MIN = "lw_response_min"
+    var lwEnabled: Boolean
+        get() = prefs.getBoolean(KEY_LW_ENABLED, true)
+        set(v) = prefs.edit().putBoolean(KEY_LW_ENABLED, v).apply()
+    var lwStillMin: Int
+        get() = prefs.getInt(KEY_LW_STILL_MIN, 3).coerceIn(1, 30)
+        set(v) = prefs.edit().putInt(KEY_LW_STILL_MIN, v.coerceIn(1, 30)).apply()
+    var lwResponseMin: Int
+        get() = prefs.getInt(KEY_LW_RESPONSE_MIN, 2).coerceIn(1, 10)
+        set(v) = prefs.edit().putInt(KEY_LW_RESPONSE_MIN, v.coerceIn(1, 10)).apply()
+
     // ── 판정 파라미터 — BleService 하드코딩 상수의 설정 전환 ─────────────────
     //   기본값은 모두 '기존 하드코딩값과 동일'(거동 보존). BleService 가 같은 이름의
     //   private 게터로 매 프레임 라이브로 읽어 앱 재시작 없이 반영한다(timeGateMs 선례).
