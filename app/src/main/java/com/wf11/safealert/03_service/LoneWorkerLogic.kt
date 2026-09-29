@@ -18,11 +18,21 @@ class LoneWorkerLogic(var myBleId: String) {
 
     enum class Mode { WATCHING, CHECKING, SOS }
 
+    /** 무동작·낙상 확인을 쉬는 이유: 없음, 거치(충전 중·몸에 지니지 않음), 집어 들기 대기. */
+    enum class Rest { NONE, DOCKED, PICKUP }
+
     companion object {
         const val ZONE_SETTLE_MS = 60_000L
         const val BEACON_HINT_MS = 60_000L
-        /** 꽂은 뒤 이 시간이 지나 나온 움직임만 '몸에 지님'으로 본다 (꽂는 순간의 흔들림 제외). */
+        /** 꽂은 뒤 이 시간이 지난 조용한 창부터 거치 자세 기준으로 삼고, 낙상도 이때부터 본다 (꽂는 순간의 흔들림 제외). */
         const val CHARGE_SETTLE_MS = 15_000L
+        /** 거치 자세 기준에서 이 각도 이상 기운 창이 LIFT_WINDOWS 개 연속이면 집어 든 것이다. */
+        const val LIFT_DEG = 30.0
+        const val LIFT_WINDOWS = 2
+        /** 꽂기 전 이 시간 안에 끝난 활동 창이 있어야 사람이 다룬 연결로 본다. */
+        const val PLUG_LOOKBACK_MS = 10_000L
+        /** 집어 들기 대기 중 센서 창이 이 시간 동안 오지 않으면 대기를 끝내고 평소처럼 센다. */
+        const val SENSOR_SILENT_MS = 60_000L
         private const val BEACON_SAMPLE_CAP = 256
     }
 
@@ -53,20 +63,33 @@ class LoneWorkerLogic(var myBleId: String) {
     private var zoneInsideSince = 0L
     private var pendingFall = false
     /**
-     * 외부 전원 연결 상태(원본 값). 충전 중이면서 가만히 있으면 거치대에 놓인 것으로 보고 무동작·낙상 확인을 쉰다.
-     * 꽂은 지 15초 뒤에도 움직임이 계속 나오면 몸에 지닌 것(carried)으로 보고 뽑을 때까지 평소처럼 감시한다.
-     * 구조 요청(SOS)과 동료 경보에는 영향이 없다.
+     * 외부 전원 연결 상태(원본 값). 충전 중이고 몸에 지니지 않았으면 거치로 보고 무동작·낙상 확인을 쉰다.
+     * 몸에 지님(carried)은 진동이 아니라 자세로 정한다. 구조 요청(SOS)과 동료 경보에는 영향이 없다.
      */
     var charging = false
         private set
     private var chargeAt = Long.MIN_VALUE
-    /** 이번 충전 중 꽂은 뒤 15초가 지나 움직임 판정이 나왔다 = 몸에 지님. 뽑을 때까지 유지. */
+    /** 몸에 지님: 쉬는 중 자세가 거치 기준에서 벗어났거나 낙상이 나왔다. 사람이 다룬 연결과 start() 만 지운다. */
     private var carried = false
-    /** 몸에 지니지 않은 채 전원이 빠졌다: 첫 움직임까지 무동작을 세지 않는다 (거치대 전원 차단 오경보 방지). */
+    /** 몸에 지니지 않은 채 전원이 빠졌다: 집어 드는 자세·낙상·센서 무신호 60초까지 무동작을 세지 않는다. */
     private var awaitPickup = false
+    private var awaitSince = 0L
+    private var lastActiveEndMs = Long.MIN_VALUE
+    private var lastWindowAt = Long.MIN_VALUE
+    private var baseline: DoubleArray? = null   // 거치 자세 기준(평균 중력 방향)
+    private var offCount = 0
+    private var plugHuman = false
+    private var restEndAt = Long.MIN_VALUE      // 쉼이 끝난 시각 — 무동작은 여기부터 센다
 
-    /** 무동작·낙상 확인을 쉬는 중: 충전 거치 또는 전원이 빠진 뒤 아직 움직이지 않음. */
-    val resting: Boolean get() = (charging && !carried) || awaitPickup
+    /** 쉬는 이유. 집어 들기 대기가 거치보다 먼저다. */
+    val rest: Rest get() = when {
+        awaitPickup -> Rest.PICKUP
+        charging && !carried -> Rest.DOCKED
+        else -> Rest.NONE
+    }
+
+    /** 무동작·낙상 확인을 쉬는 중: 거치 또는 집어 들기 대기. */
+    val resting: Boolean get() = rest != Rest.NONE
 
     private val peerStore = LoneWorkerPeers()
 
@@ -75,8 +98,17 @@ class LoneWorkerLogic(var myBleId: String) {
 
     // ── 본인 상태 ──────────────────────────────────────────────
 
-    fun start(nowMs: Long, zoneInside: Boolean) {
+    /** charging 은 시작 시 전원 상태(사람이 다룬 연결로 본다), awaitPickup 은 재부팅 복원 시작. */
+    fun start(nowMs: Long, zoneInside: Boolean, charging: Boolean = false, awaitPickup: Boolean = false) {
         startedAt = nowMs
+        this.charging = charging
+        chargeAt = nowMs
+        plugHuman = charging
+        carried = false
+        this.awaitPickup = awaitPickup
+        awaitSince = nowMs
+        baseline = null
+        offCount = 0
         mode = Mode.WATCHING
         trigger = ""
         modeSinceMs = nowMs
@@ -99,37 +131,83 @@ class LoneWorkerLogic(var myBleId: String) {
     }
 
     /**
-     * 꽂으면 열린 확인은 답한 것으로 닫고 낙상 대기를 버린다. 거치 상태로 시작한다.
-     * 뽑을 때 몸에 지니지 않았다면 첫 움직임이 나올 때까지 무동작을 세지 않고, 지니고 있었다면 그대로 감시한다.
+     * 꽂기 전 10초 안에 활동 창이 끝났으면 사람이 다룬 연결이다: 거치로 시작하고 열린 확인은 답한 것으로 닫는다.
+     * 움직임 없는 연결(접점 흔들림·거치대 전원 복구)은 충전 상태만 바꾼다 — 몸에 지님·확인·낙상 대기는 그대로.
+     * 뽑아도 몸에 지님은 지우지 않는다. 몸에 지니지 않은 채 뽑으면 집어 들기를 기다린다.
      */
     fun setCharging(on: Boolean, nowMs: Long) {
         if (on == charging) return
         charging = on
         if (on) {
             chargeAt = nowMs
-            carried = false
-            awaitPickup = false
-            pendingFall = false
-            if (mode == Mode.CHECKING) {
-                lastAckAt = nowMs
-                toWatching(nowMs)
-            }
-        } else {
-            awaitPickup = !carried
-            carried = false
+            plugHuman = false
+            if (lastActiveEndMs != Long.MIN_VALUE && nowMs - lastActiveEndMs <= PLUG_LOOKBACK_MS) humanPlug(nowMs)
+        } else if (!carried && !awaitPickup) {
+            awaitPickup = true
+            awaitSince = nowMs
         }
     }
 
-    /** 움직임은 타이머만 갱신한다. 열린 확인은 절대 닫지 않는다 (D-02, D-07). */
-    fun onMoved(nowMs: Long) {
-        if (nowMs > lastMovedAt) lastMovedAt = nowMs
-        awaitPickup = false
-        if (charging && !carried && nowMs - chargeAt >= CHARGE_SETTLE_MS) carried = true
+    /**
+     * 닫힌 1초 센서 창(센서 시각 endMs). 활동 창은 사람이 다룬 연결 판정에 쓰고(늦게 도착한 창 포함),
+     * 쉬는 중에는 거치 자세 기준과 비교해 LIFT_DEG 이상 기운 창이 LIFT_WINDOWS 개 연속이면 집어 든 것으로 본다.
+     * 진동처럼 방향이 그대로인 흔들림은 쉼을 끝내지 않는다.
+     */
+    fun onWindow(nowMs: Long, w: MotionAnalyzer.Window) {
+        lastWindowAt = nowMs
+        if (!w.has) return
+        if (w.active) {
+            if (w.endMs > lastActiveEndMs) lastActiveEndMs = w.endMs
+            if (charging && !plugHuman && w.endMs <= chargeAt && chargeAt - w.endMs <= PLUG_LOOKBACK_MS) humanPlug(nowMs)
+        }
+        if (!resting) {
+            offCount = 0
+            return
+        }
+        val b = baseline
+        if (b == null) {
+            if (w.quiet && (!charging || w.endMs - 1000 >= chargeAt + CHARGE_SETTLE_MS)) baseline = doubleArrayOf(w.x, w.y, w.z)
+            return
+        }
+        if (MotionAnalyzer.angleDeg(w.x, w.y, w.z, b[0], b[1], b[2]) >= LIFT_DEG) {
+            if (++offCount >= LIFT_WINDOWS) lifted(nowMs)
+        } else {
+            offCount = 0
+        }
     }
 
+    /** 움직임은 타이머만 갱신한다. 열린 확인은 절대 닫지 않고, 몸에 지님도 정하지 않는다 (D-02, D-07). */
+    fun onMoved(nowMs: Long) {
+        if (nowMs > lastMovedAt) lastMovedAt = nowMs
+    }
+
+    /** 꽂은 지 15초 안의 낙상(꽂는 순간의 충격)은 무시한다. 쉬는 중 낙상은 집어 든 것으로 보고 확인을 연다. */
     fun onFall(nowMs: Long) {
-        if (!enabled || zoneSettled || resting || mode != Mode.WATCHING) return
+        if (charging && !carried && nowMs - chargeAt < CHARGE_SETTLE_MS) return
+        if (resting) lifted(nowMs)
+        if (!enabled || zoneSettled || mode != Mode.WATCHING) return
         pendingFall = true
+    }
+
+    private fun humanPlug(nowMs: Long) {
+        plugHuman = true
+        carried = false
+        awaitPickup = false
+        pendingFall = false
+        baseline = null
+        offCount = 0
+        if (mode == Mode.CHECKING) {
+            lastAckAt = nowMs
+            toWatching(nowMs)
+        }
+    }
+
+    private fun lifted(nowMs: Long) {
+        carried = true
+        awaitPickup = false
+        baseline = null
+        offCount = 0
+        restEndAt = nowMs
     }
 
     fun onZone(inside: Boolean, nowMs: Long) {
@@ -150,6 +228,11 @@ class LoneWorkerLogic(var myBleId: String) {
 
     fun tick(nowMs: Long) {
         updateSettle(nowMs)
+        // 집어 들기 대기 중 센서 창이 60초 동안 없으면 대기를 끝낸다 (자세를 볼 수 없으니 평소처럼 센다)
+        if (awaitPickup && nowMs - maxOf(lastWindowAt, awaitSince) >= SENSOR_SILENT_MS) {
+            awaitPickup = false
+            restEndAt = nowMs
+        }
         if (enabled && !zoneSettled && !resting) {
             when (mode) {
                 Mode.WATCHING -> {
@@ -201,7 +284,7 @@ class LoneWorkerLogic(var myBleId: String) {
         if (mode == Mode.CHECKING) (responseMs - (nowMs - modeSinceMs)).coerceAtLeast(0L) else 0L
 
     private fun stillStart(): Long =
-        maxOf(startedAt, lastMovedAt, lastAckAt, enabledAt, zoneLeftAt)
+        maxOf(startedAt, lastMovedAt, lastAckAt, enabledAt, zoneLeftAt, restEndAt)
 
     private fun updateSettle(nowMs: Long) {
         if (zoneInside && !zoneSettled && nowMs - zoneInsideSince >= ZONE_SETTLE_MS) {

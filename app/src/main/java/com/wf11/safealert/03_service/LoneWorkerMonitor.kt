@@ -13,9 +13,6 @@ import android.os.SystemClock
 import android.util.Log
 import com.wf11.safealert.utils.BeaconRegistry
 import com.wf11.safealert.utils.DevSettings
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 /**
  * 단독 작업자 무동작·낙상 SOS 의 안드로이드 접착부 (v1.1.99).
@@ -85,7 +82,6 @@ class LoneWorkerMonitor(
     private var loopOn = false
     private var prefsListener: SharedPreferences.OnSharedPreferenceChangeListener? = null
     private val beaconNoteAt = HashMap<String, Long>()
-    private val timeFmt = SimpleDateFormat("HH:mm", Locale.KOREA)
 
     val sosActive: Boolean get() = started && logic.sosActive
     // (v1.1.99) 광고에 실을 구조 요청 회차·비콘 짧은 ID — 구조 요청 중이 아니면 0
@@ -94,8 +90,8 @@ class LoneWorkerMonitor(
     private val sidLabels = HashMap<Int, String>()   // (v1.1.99) 짧은 ID → 비콘 라벨 캐시(찾은 것만 저장), stop 에서 비움
     private val sidMissUntil = HashMap<Int, Long>()  // 라벨 없는 짧은 ID → 다시 찾을 수 있는 시각
     private val power = LoneWorkerPower(ctx) { onPower(it) }
-    /** (v1.1.99) 무동작·낙상 확인을 쉬는 중 — 충전 거치 또는 전원이 빠진 뒤 아직 움직이지 않음. 메인 화면 안내용 */
-    val resting: Boolean get() = started && logic.resting
+    /** (v1.1.99) 무동작·낙상 확인을 쉬는 이유(거치·집어 들기 대기). 메인 화면 안내용 */
+    val rest: LoneWorkerLogic.Rest get() = if (started) logic.rest else LoneWorkerLogic.Rest.NONE
     private var rendering = false
     private var renderAgain = false
 
@@ -103,16 +99,16 @@ class LoneWorkerMonitor(
 
     // ── 시작·종료 ──────────────────────────────────────────────
 
-    fun start(bleId: String, name: String, roleName: String, zoneInside: Boolean) {
+    fun start(bleId: String, name: String, roleName: String, zoneInside: Boolean, bootRestore: Boolean = false) {
         this.name = name
         this.roleName = roleName
         logic.myBleId = bleId
         if (started) return
         started = true
-        logic.start(now(), zoneInside)
+        // PDA 거치대 충전 중이면 거치로, 재부팅 복원이면 집어 들기 대기로 시작한다 (v1.1.99)
+        logic.start(now(), zoneInside, power.start(), bootRestore)
         // 저장된 본인 SOS 가 있으면 첫 렌더 전에 되살린다 — 같은 서버 키로 사이렌·광고 bit1 이 다시 켜진다 (v1.1.99, R3)
         sync.restoredTrigger()?.let { logic.restoreSos(it, now()) }
-        logic.setCharging(power.start(), now()) // PDA 거치대 충전 중이면 무동작·낙상 확인을 쉰다 (v1.1.99)
         notifier.createChannel()
         notifier.cancel() // 이전 프로세스가 남긴 알림을 한 번 치운다 (v1.1.99)
         watchdog.start()
@@ -204,7 +200,7 @@ class LoneWorkerMonitor(
         }
         val impactG = MotionAnalyzer.impactGFor(s.maximumRange)
         Log.i(TAG, "가속도 센서 wakeUp=${s.isWakeUpSensor} fifoMax=${s.fifoMaxEventCount} fifoReserved=${s.fifoReservedEventCount} range=${s.maximumRange} impactG=$impactG")
-        analyzer = MotionAnalyzer(impactG)
+        analyzer = MotionAnalyzer(impactG) { logic.onWindow(now(), it) }
         val ok = sm.registerListener(this, s, 20_000, 5_000_000, handler)
         if (!ok) {
             Log.w(TAG, "가속도 센서 등록 실패 — 판정 유지, 다시 등록")
@@ -353,7 +349,7 @@ class LoneWorkerMonitor(
         val t = now()
         val shown = logic.peers.filter { !it.silenced }  // 해제된 항목은 [닫기] 전까지 보인다
         if (logic.mode == LoneWorkerLogic.Mode.WATCHING && shown.isEmpty()) return null
-        val lines = shown.map { peerLine(it, t) }
+        val lines = shown.map { it.line(t) }
         return UiState(
             logic.mode,
             ((logic.responseLeftMs(t) + 999L) / 1000L).toInt(),
@@ -364,29 +360,19 @@ class LoneWorkerMonitor(
         )
     }
 
-    private fun peerLine(p: LoneWorkerPeers.Peer, t: Long): String {
-        val role = when (p.role) {
-            "WALKER" -> "보행자"
-            "FORKLIFT" -> "지게차"
-            else -> p.role
-        }
-        val wall = if (p.fromServer) p.createdAtMs else System.currentTimeMillis() - (t - p.firstSeenMs)
-        return listOfNotNull(
-            p.displayName(), role.ifEmpty { null }, timeFmt.format(Date(wall)),
-            p.beacon.ifEmpty { null }?.let { if (p.fromServer) "마지막 위치: $it" else "${it} 근처" }, if (p.active) "구조 요청" else "해제됨"
-        ).joinToString(" · ")
-    }
-
     // ── 렌더링: 상태 전환·소리·알림·화면 ────────────────────────
+
+    private val keepText: String
+        get() = if (logic.resting) "거치 중이라 무동작 확인은 쉬며" else "움직임이 없는 것으로 보고 확인을 계속하며"
 
     /** 조용한 안내 알림. 우선순위: 센서 없음, 센서 등록 실패, 센서 신호 끊김, 해제 미전송. */
     private fun notice(): Pair<String, String>? = when {
         DevSettings.lwEnabled && noSensor ->
             "무동작 감시 불가" to "이 기기에는 가속도 센서가 없어 무동작·낙상 감시를 하지 않습니다. 동료 구조 요청 수신은 계속됩니다"
         DevSettings.lwEnabled && !sensorRegistered ->
-            "무동작 감시 불가" to "가속도 센서를 등록하지 못했습니다. 움직임이 없는 것으로 보고 확인을 계속하며 센서를 다시 등록합니다"
+            "무동작 감시 불가" to "가속도 센서를 등록하지 못했습니다. " + keepText + " 센서를 다시 등록합니다"
         DevSettings.lwEnabled && stall.stalled ->
-            "무동작 감시 불가" to "가속도 센서 신호가 끊겼습니다. 움직임이 없는 것으로 보고 확인을 계속하며 센서를 다시 등록합니다"
+            "무동작 감시 불가" to "가속도 센서 신호가 끊겼습니다. " + keepText + " 센서를 다시 등록합니다"
         sync.resolveFailing() ->
             "구조 요청 해제 미전송" to "서버에 해제를 기록하지 못했습니다. 계속 다시 보냅니다"
         else -> null

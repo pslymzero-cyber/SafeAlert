@@ -12,10 +12,27 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.wf11.safealert.ui.LoneWorkerActivity
 import com.wf11.safealert.ui.MainActivity
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /** 동료 항목의 표시 이름: 이름이 없으면 장비 ID 에서 접두어를 뗀 값. */
 internal fun LoneWorkerPeers.Peer.displayName(): String =
     name.ifEmpty { bleId.removePrefix("SAFEALERT_DEVICE_").removePrefix("SAFEALERT_WALKER_") }
+
+/** 동료 항목 한 줄: 이름 · 역할 · 시각 · 위치 · 상태. */
+internal fun LoneWorkerPeers.Peer.line(nowMs: Long): String {
+    val roleText = when (role) {
+        "WALKER" -> "보행자"
+        "FORKLIFT" -> "지게차"
+        else -> role
+    }
+    val wall = if (fromServer) createdAtMs else System.currentTimeMillis() - (nowMs - firstSeenMs)
+    return listOfNotNull(
+        displayName(), roleText.ifEmpty { null }, SimpleDateFormat("HH:mm", Locale.KOREA).format(Date(wall)),
+        beacon.ifEmpty { null }?.let { if (fromServer) "마지막 위치: $it" else "${it} 근처" }, if (active) "구조 요청" else "해제됨"
+    ).joinToString(" · ")
+}
 
 /**
  * 단독 작업자 알림 (v1.1.99). 모니터에서 분리해 알림 규칙만 모은다. 메인 스레드에서만 부른다.

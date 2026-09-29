@@ -5,10 +5,11 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.math.PI
+import kotlin.math.cos
 import kotlin.math.sin
 
 /**
- * MotionAnalyzer 합성 50 Hz 트레이스 테스트 (v1.1.99). 중력 포함 m/s^2, 20 ms 간격.
+ * MotionAnalyzer synthetic 50 Hz trace tests (v1.1.99). m/s^2 with gravity, 20 ms step.
  */
 class MotionAnalyzerTest {
 
@@ -48,7 +49,7 @@ class MotionAnalyzerTest {
     }
     private val lying = { _: Long -> floatArrayOf(9.81f, 0f, 0f) }
 
-    // 낙하 트레이스 머리: 직립 3초, 200ms 자유낙하, 충격 3샘플. 충격 시각은 3200.
+    // Fall trace head: upright 3 s, 200 ms free fall, 3 impact samples. Impact at 3200.
     private fun Run.fallHead() {
         span(0, 3000, still)
         span(3000, 3200) { floatArrayOf(0f, 0f, 1.5f) }
@@ -190,5 +191,22 @@ class MotionAnalyzerTest {
         r.maskedSpan(3200, 3260) { floatArrayOf(0f, 0f, 30f) }
         r.maskedSpan(3260, 17_000, lying)
         assertEquals(1, r.times(Signal.FALL).size)
+    }
+
+    @Test fun window_reports_mean_direction_and_quiet() {
+        val windows = ArrayList<MotionAnalyzer.Window>()
+        val r = Run(MotionAnalyzer { windows.add(it) })
+        val tilt = 40.0 * PI / 180.0
+        r.span(0, 3000, still)
+        r.span(3000, 6000) { t -> floatArrayOf(0f, 0f, (9.81 + 1.5 * sin(2 * PI * 20.0 * sec(t))).toFloat()) }
+        r.span(6000, 9020) { floatArrayOf(0f, (9.81 * sin(tilt)).toFloat(), (9.81 * cos(tilt)).toFloat()) }
+        fun w(end: Long) = windows.single { it.endMs == end }
+        fun toZ(x: MotionAnalyzer.Window) = MotionAnalyzer.angleDeg(x.x, x.y, x.z, 0.0, 0.0, 1.0)
+        for (e in listOf(1000L, 2000L, 3000L)) assertTrue(w(e).quiet)
+        for (e in listOf(4000L, 5000L, 6000L)) {
+            assertTrue(w(e).active)
+            assertTrue(toZ(w(e)) < 5.0)
+        }
+        for (e in listOf(7000L, 8000L, 9000L)) assertEquals(40.0, toZ(w(e)), 3.0)
     }
 }

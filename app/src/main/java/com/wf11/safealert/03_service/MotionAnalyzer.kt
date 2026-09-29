@@ -16,10 +16,17 @@ import kotlin.math.sqrt
  *
  * 이 앱 자신의 진동 구간 표본(masked)은 활동 통계에서만 뺀다. 낙상 판정은 모든 표본을 본다 —
  * 진동 모터 가속도는 충격 임계값보다 훨씬 작고, 알람 중 낙상을 놓치는 쪽이 더 나쁘다 (v1.1.99).
+ *
+ * 닫힌 1초 창마다 평균 중력 방향과 조용함 여부를 onWindow 로 알린다 — 거치·집어 들기 자세 판정용.
  */
-class MotionAnalyzer(private val impactG: Double = IMPACT_G) {
+class MotionAnalyzer(private val impactG: Double = IMPACT_G, private val onWindow: (Window) -> Unit = {}) {
 
     enum class Signal { NONE, MOVED, FALL }
+
+    /** 닫힌 1초 창: endMs(센서 시각), 표본 유무, 평균 벡터, 활동 여부. 표본이 있고 활동이 아니면 조용한 창. */
+    data class Window(val endMs: Long, val has: Boolean, val x: Double, val y: Double, val z: Double, val active: Boolean) {
+        val quiet: Boolean get() = has && !active
+    }
 
     companion object {
         const val G = 9.80665
@@ -41,6 +48,14 @@ class MotionAnalyzer(private val impactG: Double = IMPACT_G) {
             if (maxRangeMs2 <= 0f) return IMPACT_G
             val rangeG = maxRangeMs2 / G
             return if (rangeG < IMPACT_G) 0.9 * rangeG else IMPACT_G
+        }
+
+        fun angleDeg(ax: Double, ay: Double, az: Double, bx: Double, by: Double, bz: Double): Double {
+            val na = sqrt(ax * ax + ay * ay + az * az)
+            val nb = sqrt(bx * bx + by * by + bz * bz)
+            if (na < 1e-6 || nb < 1e-6) return 0.0
+            val c = ((ax * bx + ay * by + az * bz) / (na * nb)).coerceIn(-1.0, 1.0)
+            return Math.toDegrees(acos(c))
         }
     }
 
@@ -123,6 +138,7 @@ class MotionAnalyzer(private val impactG: Double = IMPACT_G) {
         val std = if (has) sqrt((sumM2 / cnt - mm * mm).coerceAtLeast(0.0)) else 0.0
         var active = has && std >= ACTIVE_STD
         if (!active && has && hasPrev) active = angleDeg(mx, my, mz, prevX, prevY, prevZ) >= ACTIVE_ANGLE_DEG
+        onWindow(Window((curIdx + 1) * 1000, has, mx, my, mz, active))
 
         if (lastClosedIdx >= 0) {
             val gap = curIdx - lastClosedIdx
@@ -190,13 +206,5 @@ class MotionAnalyzer(private val impactG: Double = IMPACT_G) {
         val posture = !candPreValid ||
             angleDeg(postX / postN, postY / postN, postZ / postN, candPreX, candPreY, candPreZ) >= POSTURE_DEG
         return posture
-    }
-
-    private fun angleDeg(ax: Double, ay: Double, az: Double, bx: Double, by: Double, bz: Double): Double {
-        val na = sqrt(ax * ax + ay * ay + az * az)
-        val nb = sqrt(bx * bx + by * by + bz * bz)
-        if (na < 1e-6 || nb < 1e-6) return 0.0
-        val c = ((ax * bx + ay * by + az * bz) / (na * nb)).coerceIn(-1.0, 1.0)
-        return Math.toDegrees(acos(c))
     }
 }

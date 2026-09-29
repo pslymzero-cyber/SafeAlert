@@ -13,6 +13,11 @@ import com.wf11.safealert.ui.LoneWorkerUi
  * 사용자가 중지한 상태(running_mode 없음)나 실행 권한이 빠진 상태에서는 아무것도 하지 않는다.
  */
 class BootRestoreReceiver : BroadcastReceiver() {
+    companion object {
+        /** 재부팅·업데이트 복원 시작 표시: 단독 작업자 감시를 집어 들기 대기로 시작한다. */
+        const val EXTRA_BOOT_RESTORE = "com.wf11.safealert.extra.BOOT_RESTORE"
+    }
+
     override fun onReceive(ctx: Context, intent: Intent) {
         if (intent.action != Intent.ACTION_BOOT_COMPLETED && intent.action != Intent.ACTION_MY_PACKAGE_REPLACED) return
         val running = runCatching {
@@ -22,7 +27,8 @@ class BootRestoreReceiver : BroadcastReceiver() {
             Log.w("BootRestore", "run permissions missing, skip restore ($running)")
             return
         }
-        runCatching { ContextCompat.startForegroundService(ctx, Intent(ctx, BleService::class.java)) }
+        val start = Intent(ctx, BleService::class.java).putExtra(EXTRA_BOOT_RESTORE, true)
+        runCatching { ContextCompat.startForegroundService(ctx, start) }
             .onFailure { Log.w("BootRestore", "service start failed: ${it.javaClass.simpleName}") }
     }
 }
