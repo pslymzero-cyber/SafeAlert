@@ -32,7 +32,8 @@ object SosRemote {
         val beaconRssi: Int?,
         val createdAt: Long,
         val active: Boolean,
-        val uid: String           // 작성자 uid(없으면 ""). 내 기록 걸러내기에 쓴다
+        val uid: String,          // 작성자 uid(없으면 ""). 내 기록 걸러내기에 쓴다
+        val ep: Int = 0           // SOS 회차 1..255(0 = 없음). BLE 광고 회차와 같은 값이다
     )
 
     private const val SOS_STR_MAX = 64
@@ -63,14 +64,15 @@ object SosRemote {
             beaconRssi = (m["beaconRssi"] as? Number)?.toInt(),
             createdAt = createdAt,
             active = status == "active",
-            uid = (m["uid"] as? String).orEmpty().take(SOS_STR_MAX)
+            uid = (m["uid"] as? String).orEmpty().take(SOS_STR_MAX),
+            ep = (m["ep"] as? Number)?.toInt()?.takeIf { it in 1..255 } ?: 0
         )
     }
 
     /** 기록 본문. beacon 은 비어 있지 않을 때만, beaconRssi 는 규칙 범위 안일 때만 넣는다. */
     fun recordPayload(
         bleId: String, name: String, role: String, trigger: String,
-        beacon: String?, beaconRssi: Int?, uid: String, createdAt: Any
+        beacon: String?, beaconRssi: Int?, uid: String, createdAt: Any, ep: Int = 0
     ): Map<String, Any> {
         val data = HashMap<String, Any>()
         data["bleId"] = bleId.take(SOS_STR_MAX)
@@ -82,6 +84,7 @@ object SosRemote {
         data["uid"] = uid
         if (!beacon.isNullOrEmpty()) data["beacon"] = beacon.take(SOS_STR_MAX)
         if (beaconRssi != null && beaconRssi in BEACON_RSSI_MIN..BEACON_RSSI_MAX) data["beaconRssi"] = beaconRssi
+        if (ep in 1..255) data["ep"] = ep
         return data
     }
 

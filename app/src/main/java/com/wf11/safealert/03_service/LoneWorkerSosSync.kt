@@ -60,10 +60,10 @@ class LoneWorkerSosSync(
 
         override fun newKey(path: String): String = SosRemote.newKey(path)
 
-        // 규칙(R2)이 허용하는 필드만 쓴다: 에피소드·비콘 짧은 ID 는 서버 기록에 넣지 않는다
+        // 규칙(R2)이 허용하는 필드만 쓴다: 에피소드는 선택 필드 ep 로 싣고, 비콘 짧은 ID 는 서버 기록에 넣지 않는다
         override fun create(path: String, key: String, rec: SosLedger.Record, uid: String, done: (Boolean) -> Unit) {
             val payload = SosRemote.recordPayload(
-                rec.bleId, rec.name, rec.role, rec.trigger, rec.beacon, rec.beaconRssi, uid, ServerValue.TIMESTAMP
+                rec.bleId, rec.name, rec.role, rec.trigger, rec.beacon, rec.beaconRssi, uid, ServerValue.TIMESTAMP, rec.ep
             )
             SosRemote.create(path, key, payload) { ok -> handler.post { done(ok) } }
         }

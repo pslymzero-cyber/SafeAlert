@@ -26,12 +26,14 @@ class SosLedgerTest {
         var site: String? = "root/site"
         var keyN = 0
         val creates = ArrayList<Call<Boolean>>()
+        val recs = ArrayList<SosLedger.Record>()
         val resolves = ArrayList<Call<Boolean>>()
         val reads = ArrayList<Call<Remote>>()
         override fun uid() = uid
         override fun sitePath() = site
         override fun newKey(path: String) = "k" + (++keyN)
         override fun create(path: String, key: String, rec: SosLedger.Record, uid: String, done: (Boolean) -> Unit) {
+            recs.add(rec)
             creates.add(Call(path, key, done))
         }
         override fun resolve(path: String, key: String, done: (Boolean) -> Unit) {
@@ -45,6 +47,15 @@ class SosLedgerTest {
     private var now = 0L
     private fun ledger(kv: Kv, tr: Tr) = SosLedger(kv, tr, { now })
     private fun rec(sid: Int = 0) = SosLedger.Record("BLE_ME", "n", "WALKER", "still", null, null, sid)
+
+    @Test fun create_record_carries_episode() {
+        val kv = Kv(); val tr = Tr(); val l = ledger(kv, tr)
+        l.begin(rec())
+        assertEquals(1, tr.recs[0].ep)
+        l.resolve()
+        l.begin(rec())
+        assertEquals(2, tr.recs[1].ep)
+    }
 
     @Test fun offline_ok_then_new_sos_starts_at_once_and_late_acks_touch_only_their_slot() {
         val kv = Kv(); val tr = Tr(); val l = ledger(kv, tr)

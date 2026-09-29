@@ -61,7 +61,7 @@ class LoneWorkerMonitor(
     private val sync = LoneWorkerSosSync(ctx, handler,
         { rec ->
             if (started) {
-                logic.onPeerServer(rec.key, rec.bleId, rec.name, rec.role, rec.trigger, rec.beacon, rec.createdAt, rec.active, now())
+                logic.onPeerServer(rec.key, rec.bleId, rec.name, rec.role, rec.trigger, rec.beacon, rec.createdAt, rec.active, now(), rec.ep)
                 render()
             }
         },
@@ -305,7 +305,7 @@ class LoneWorkerMonitor(
 
     fun silencePeers() {
         if (!started) return
-        logic.silencePeers()
+        logic.silencePeers(now())
         render()
     }
 

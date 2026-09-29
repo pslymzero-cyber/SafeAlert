@@ -103,6 +103,18 @@ class SosRecordParseTest {
     }
 
     @Test
+    fun episode_round_trips_and_out_of_range_is_dropped() {
+        assertEquals(7, SosRemote.recordPayload("id", "n", "WALKER", "still", null, null, "u1", 1L, 7)["ep"])
+        assertFalse(SosRemote.recordPayload("id", "n", "WALKER", "still", null, null, "u1", 1L, 0).containsKey("ep"))
+        assertFalse(SosRemote.recordPayload("id", "n", "WALKER", "still", null, null, "u1", 1L, 256).containsKey("ep"))
+        assertFalse(SosRemote.recordPayload("id", "n", "WALKER", "still", null, null, "u1", 1L).containsKey("ep"))
+        assertEquals(7, SosRemote.parseSosRecord("k", valid().apply { put("ep", 7L) })!!.ep)
+        assertEquals(0, SosRemote.parseSosRecord("k", valid())!!.ep)
+        assertEquals(0, SosRemote.parseSosRecord("k", valid().apply { put("ep", 300L) })!!.ep)
+        assertEquals(0, SosRemote.parseSosRecord("k", valid().apply { put("ep", "7") })!!.ep)
+    }
+
+    @Test
     fun replayStart_isThirtyMinutesBeforeServerNow() {
         assertEquals(1_780_000_000_000L + 5_000L - 1_800_000L, SosRemote.replayStartAt(1_780_000_000_000L, 5_000L))
     }

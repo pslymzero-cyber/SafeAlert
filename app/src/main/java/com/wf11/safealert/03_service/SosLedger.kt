@@ -39,7 +39,7 @@ class SosLedger(
 ) {
     data class Record(
         val bleId: String, val name: String, val role: String, val trigger: String,
-        val beacon: String?, val beaconRssi: Int?, val sid: Int
+        val beacon: String?, val beaconRssi: Int?, val sid: Int, val ep: Int = 0
     )
 
     enum class Remote { ABSENT, MINE_ACTIVE, MINE_RESOLVED, OTHER, ERROR }
@@ -200,7 +200,7 @@ class SosLedger(
     private fun currentRecord() = Record(
         kv.get(K_BLE).orEmpty(), kv.get(K_NAME).orEmpty(), kv.get(K_ROLE).orEmpty(),
         kv.get(K_TRIGGER).orEmpty(), kv.get(K_BEACON), kv.get(K_RSSI)?.toIntOrNull(),
-        kv.get(K_SID)?.toIntOrNull() ?: 0
+        kv.get(K_SID)?.toIntOrNull() ?: 0, kv.get(K_EP)?.toIntOrNull() ?: 0
     )
 
     // ── 해제 ──────────────────────────────────────────────────

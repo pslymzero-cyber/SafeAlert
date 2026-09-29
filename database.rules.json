@@ -151,6 +151,9 @@
             "uid": {
               ".validate": "newData.isString() && newData.val() === auth.uid"
             },
+            "ep": {
+              ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 255 && (!data.exists() || newData.val() === data.val())"
+            },
             "$other": {
               ".validate": false
             }
