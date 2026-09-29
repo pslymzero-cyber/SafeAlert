@@ -330,4 +330,46 @@ class LoneWorkerAccidentTest {
         chk.setEnabled(true, 42_000)
         for (t in 50_000L..400_000L step 10_000L) assertEquals(Mode.WATCHING, chk.modeAt(t))
     }
+
+    // Steps are counted in a sliding window: distinct motion = 5 steps within the last 10 s.
+
+    @Test fun five_steps_spread_over_more_than_10s_are_not_distinct_motion() {
+        val l = newLogic()
+        l.activeAt(9_000)
+        l.onAccident(10_000)
+        for (i in 0 until 5) l.onStep(12_000 + i * 2_501L)
+        assertEquals(Mode.CHECKING, l.modeAt(40_000))
+    }
+
+    @Test fun five_steps_within_10s_are_distinct_motion() {
+        val l = newLogic()
+        l.activeAt(9_000)
+        l.onAccident(10_000)
+        for (i in 0 until 5) l.onStep(12_000 + i * 2_500L)
+        assertEquals(Mode.WATCHING, l.modeAt(51_999))
+        assertEquals(Mode.CHECKING, l.modeAt(52_000))
+    }
+
+    @Test fun sporadic_single_steps_never_close_accident_check() {
+        val l = newLogic()
+        l.activeAt(9_000)
+        l.onAccident(10_000)
+        assertEquals(Mode.CHECKING, l.modeAt(40_000))
+        for (t in 41_000L..98_000L step 3_000L) {
+            l.onStep(t)
+            assertEquals(Mode.CHECKING, l.modeAt(t))
+        }
+        assertEquals(Mode.SOS, l.modeAt(100_000))
+    }
+
+    @Test fun ok_on_still_check_also_ends_accident_suspicion() {
+        val l = newLogic()
+        l.stillMs = 180_000L
+        assertEquals(Mode.CHECKING, l.modeAt(180_000))
+        assertEquals("still", l.trigger)
+        l.activeAt(189_000)
+        l.onAccident(190_000)
+        assertEquals(true, l.ackWorking(195_000))
+        for (t in 200_000L..370_000L step 5_000L) assertEquals(Mode.WATCHING, l.modeAt(t))
+    }
 }

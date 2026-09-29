@@ -17,10 +17,10 @@ import kotlin.math.abs
  *
  * 규칙 2(무동작): 지님(Rest.NONE)일 때만 stillMs 무동작이면 무동작 확인 창("still", responseMs)을 연다.
  * 충전 안 함은 시작·전원 해제 뒤 첫 뚜렷한 움직임(또는 센서 1분 무응답)부터 지님이고 그 전은 대기(WAIT)다.
- * 충전 중은 걸음 10걸음(걸음 센서가 없으면 30초 연속 강한 움직임)부터 다음 연결까지 지님, 그 전은 거치(DOCKED)다.
+ * 충전 중은 최근 30초 안 10걸음(걸음 센서가 없으면 30초 연속 강한 움직임)부터 다음 연결까지 지님, 그 전은 거치(DOCKED)다.
  * 정착한 안전구역(원시 안쪽 60초 연속)에서는 무동작 확인 창이 열리지 않고, 정착 시 열린 무동작 확인 창은 거둔다.
  *
- * 뚜렷한 움직임: 걸음 5걸음. 걸음 센서를 쓸 수 없으면 3초 이상 이어진 걷기 수준 강한 움직임 창.
+ * 뚜렷한 움직임: 최근 10초 안 5걸음. 걸음 센서를 쓸 수 없으면 3초 이상 이어진 걷기 수준 강한 움직임 창.
  * 확인 창(두 종류)은 [괜찮음]·뚜렷한 움직임·실제 전원 연결로 닫힌다. 실제 연결은 사고 의심도 끝낸다.
  * SOS 는 구역 진입·기능 끄기로 끝나지 않고 오직 cancelSos 로만 끝난다.
  * 동료 SOS 수신은 LoneWorkerPeers 가 회차(bleId, ep) 단위 항목으로 다룬다(서버 기록과 BLE 비트가 같은 회차면 한 항목).
@@ -49,8 +49,11 @@ class LoneWorkerLogic(var myBleId: String) {
         const val ACCIDENT_RESPONSE_MS = 60_000L
         /** 충격 전후 이 시간 안의 실제 전원 연결은 거치대에 꽂는 동작이다. */
         const val PLUG_EXCEPT_MS = 10_000L
+        /** 걸음은 미끄러지는 시간 창으로 센다: 뚜렷한 움직임 = 최근 10초 안 5걸음, 충전 중 지님 = 최근 30초 안 10걸음. */
         const val DISTINCT_STEPS = 5
+        const val DISTINCT_STEP_WINDOW_MS = 10_000L
         const val CARRY_STEPS = 10
+        const val CARRY_STEP_WINDOW_MS = 30_000L
         /** 걸음 센서를 쓸 수 없을 때: 뚜렷한 움직임 = 강한 움직임 창 3개, 충전 중 지님 = 30개 연속. */
         const val STRONG_RUN_MS = 3_000L
         const val CARRY_RUN_MS = 30_000L
@@ -89,16 +92,14 @@ class LoneWorkerLogic(var myBleId: String) {
     // 지님
     private var charging = false
     private var chargeAt = 0L
-    private var chargeSteps = 0
     private var stepCarry = false
     private var waitMove = false
     private var carriedSince = Long.MIN_VALUE
 
-    // 움직임 기록: 최근 활동 창 끝·걸음 시각, 뚜렷한 움직임 셈(floorAt 뒤만 센다), 연속 강한 창 구간
+    // 움직임 기록: 최근 활동 창 끝·걸음 시각, 뚜렷한 움직임은 floorAt 뒤 걸음만 센다, 연속 강한 창 구간
     private val recentActive = ArrayDeque<Long>()
     private val recentSteps = ArrayDeque<Long>()
     private var floorAt = Long.MIN_VALUE
-    private var floorSteps = 0
     private var lastDistinctAt = Long.MIN_VALUE
     private var runStart = Long.MIN_VALUE
     private var runEnd = Long.MIN_VALUE
@@ -128,14 +129,12 @@ class LoneWorkerLogic(var myBleId: String) {
         startedAt = nowMs
         this.charging = charging
         chargeAt = nowMs
-        chargeSteps = 0
         stepCarry = false
         waitMove = !charging
         carriedSince = Long.MIN_VALUE
         recentActive.clear()
         recentSteps.clear()
         floorAt = nowMs
-        floorSteps = 0
         runEnd = Long.MIN_VALUE
         clearAccident()
         lastPlugAt = Long.MIN_VALUE
@@ -172,7 +171,6 @@ class LoneWorkerLogic(var myBleId: String) {
         if (on) {
             waitMove = false
             lastPlugAt = atMs
-            chargeSteps = recentSteps.count { it >= atMs }
             if (mode == Mode.CHECKING) {
                 lastAckAt = atMs
                 toWatching(atMs)
@@ -201,12 +199,17 @@ class LoneWorkerLogic(var myBleId: String) {
         if (charging && !stepCarry && runMs(chargeAt) >= CARRY_RUN_MS) carry(end)
     }
 
-    /** 걸음 감지 1건(센서 시각을 바꾼 값). */
+    /** 걸음 감지 1건(센서 시각을 바꾼 값). 연결 전·floorAt(충격·확인 창 열림 등) 전 걸음은 세지 않는다. */
     fun onStep(tMs: Long) {
         remember(recentSteps, tMs)
-        if (charging && !stepCarry && tMs >= chargeAt && ++chargeSteps >= CARRY_STEPS) carry(tMs)
-        if (tMs > floorAt && ++floorSteps >= DISTINCT_STEPS) onDistinct(tMs)
+        if (charging && !stepCarry && tMs >= chargeAt &&
+            stepsIn(maxOf(chargeAt, tMs - CARRY_STEP_WINDOW_MS), tMs) >= CARRY_STEPS) carry(tMs)
+        if (tMs > floorAt && stepsIn(maxOf(floorAt + 1, tMs - DISTINCT_STEP_WINDOW_MS), tMs) >= DISTINCT_STEPS) {
+            onDistinct(tMs)
+        }
     }
+
+    private fun stepsIn(from: Long, to: Long): Int = recentSteps.count { it in from..to }
 
     /** 움직임(MOVED)은 무동작 타이머만 갱신한다. 열린 확인 창은 닫지 않는다 (D-02, D-07). */
     fun onMoved(nowMs: Long) {
@@ -349,7 +352,6 @@ class LoneWorkerLogic(var myBleId: String) {
 
     private fun resetFloor(t: Long) {
         floorAt = t
-        floorSteps = recentSteps.count { it > t }
     }
 
     private fun remember(q: ArrayDeque<Long>, t: Long) {

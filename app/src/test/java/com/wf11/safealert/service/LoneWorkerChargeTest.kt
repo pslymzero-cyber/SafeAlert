@@ -230,4 +230,31 @@ class LoneWorkerChargeTest {
         assertNull(d.poll(2_050))
         assertEquals(true to 1_000L, d.poll(3_050))
     }
+
+    // Carrying while charging = 10 steps within the last 30 s.
+
+    @Test fun ten_steps_within_30s_while_charging_carry() {
+        val l = newLogic(charging = true)
+        for (i in 0 until 10) l.onStep(1_000 + i * 3_000L)
+        assertEquals(Rest.NONE, l.rest)
+    }
+
+    @Test fun ten_steps_spread_over_more_than_30s_do_not_carry() {
+        val l = newLogic(charging = true)
+        for (i in 0 until 60) {
+            l.onStep(1_000 + i * 3_500L)
+            assertEquals(Rest.DOCKED, l.rest)
+        }
+    }
+
+    @Test fun sporadic_single_steps_never_close_still_check() {
+        val l = newLogic()
+        l.sensorSilent(0L)
+        assertEquals(Mode.CHECKING, l.modeAt(stillMs))
+        for (t in stillMs + 1_000 until stillMs + responseMs step 3_000L) {
+            l.onStep(t)
+            assertEquals(Mode.CHECKING, l.modeAt(t))
+        }
+        assertEquals(Mode.SOS, l.modeAt(stillMs + responseMs))
+    }
 }
