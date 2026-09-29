@@ -11,6 +11,7 @@ import android.provider.Settings
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.wf11.safealert.ui.LoneWorkerActivity
+import com.wf11.safealert.ui.MainActivity
 
 /** 동료 항목의 표시 이름: 이름이 없으면 장비 ID 에서 접두어를 뗀 값. */
 internal fun LoneWorkerLogic.Peer.displayName(): String =
@@ -39,6 +40,7 @@ class LoneWorkerNotifier(
         private const val REQ_SILENCE = 42
         private const val REQ_OPEN = 43
         private const val REQ_CONFIRM = 44
+        private const val REQ_MAIN = 45
     }
 
     private var lastKey: String? = null
@@ -70,6 +72,14 @@ class LoneWorkerNotifier(
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+    /** 조용한 안내 알림을 누르면 메인 화면을 연다(확인 화면은 열 이유가 없다). */
+    private fun mainPi(): PendingIntent =
+        PendingIntent.getActivity(
+            ctx, REQ_MAIN,
+            Intent(ctx, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
     /**
      * 상태에 맞는 알림을 올리거나 지운다. 우선순위: SOS, 확인 중, 울리는 동료, 해제됨, 조용한 안내(notice).
      * alertAgain 이 참이고 큰 알림이면 키가 같아도 지웠다가 다시 올린다.
@@ -88,7 +98,7 @@ class LoneWorkerNotifier(
             if (lastKey != null) { nm.cancel(NOTIF_ID); lastKey = null }
             return
         }
-        val key = "${quiet?.first}|$mode|${audible.joinToString(",") { it.bleId }}|${resolved.joinToString(",") { it.bleId }}"
+        val key = "${quiet?.first}|${quiet?.second}|$mode|${audible.joinToString(",") { it.bleId }}|${resolved.joinToString(",") { it.bleId }}"
         val again = loud && alertAgain
         if (key == lastKey && !again) return
         lastKey = key
@@ -107,7 +117,7 @@ class LoneWorkerNotifier(
             .setSmallIcon(android.R.drawable.ic_dialog_alert)
             .setContentTitle(title)
             .setContentText(text)
-            .setContentIntent(open)
+            .setContentIntent(if (quiet != null) mainPi() else open)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
@@ -118,7 +128,8 @@ class LoneWorkerNotifier(
             if (Build.VERSION.SDK_INT < 34 || nm.canUseFullScreenIntent()) b.setFullScreenIntent(open, true)
         } else {
             b.setSilent(true)
-            if (quiet == null) b.setTimeoutAfter(RESOLVED_NOTIF_MS)
+            // 조용한 안내는 쓸어 내려도 다시 올린다: deleteIntent -> onNotificationDismissed -> forget -> render
+            if (quiet == null) b.setTimeoutAfter(RESOLVED_NOTIF_MS) else b.setDeleteIntent(deletePi())
         }
         act?.let { b.addAction(0, it.first, it.second) }
         // 같은 알림 위에 덮어쓰면 헤드업·전체 화면 인텐트가 다시 뜨지 않으므로 먼저 지운다

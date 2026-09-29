@@ -251,6 +251,16 @@
                         android:foreground="?attr/selectableItemBackground"
                         android:visibility="gone"/>
 
+                    <!-- 충전 중 무동작 감시 쉼 안내 (PDA 거치대) -->
+                    <TextView
+                        android:id="@+id/tv_lw_status"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="@dimen/sa_space_xs"
+                        android:textSize="@dimen/sa_type_body"
+                        android:textColor="@color/sa_text_tertiary"
+                        android:visibility="gone"/>
+
                     <!-- [v1.1.60] 역할 전환 버튼 — 확인 다이얼로그 후 정지→반대 역할 재시작 -->
                     <Button
                         android:id="@+id/btn_switch_role"

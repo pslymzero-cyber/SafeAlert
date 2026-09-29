@@ -90,7 +90,12 @@ class LoneWorkerMonitor(
     // (v1.1.99) 광고에 실을 구조 요청 회차·비콘 짧은 ID — 구조 요청 중이 아니면 0
     val sosEpisode: Int get() = if (sosActive) sync.episode() else 0
     val sosHint: Int get() = if (sosActive) sync.hint() else 0
-    private val sidLabels = HashMap<Int, String>()   // (v1.1.99) 짧은 ID → 비콘 라벨 캐시(빈 문자열=없음), stop 에서 비움
+    private val sidLabels = HashMap<Int, String>()   // (v1.1.99) 짧은 ID → 비콘 라벨 캐시(찾은 것만 저장), stop 에서 비움
+    private val power = LoneWorkerPower(ctx) { onPower(it) }
+    /** (v1.1.99) 외부 전원 연결로 무동작·낙상 확인을 쉬는 중인지 — 메인 화면 안내용 */
+    val charging: Boolean get() = started && logic.charging
+    private var rendering = false
+    private var renderAgain = false
 
     private fun now() = SystemClock.elapsedRealtime()
 
@@ -105,7 +110,9 @@ class LoneWorkerMonitor(
         logic.start(now(), zoneInside)
         // 저장된 본인 SOS 가 있으면 첫 렌더 전에 되살린다 — 같은 서버 키로 사이렌·광고 bit1 이 다시 켜진다 (v1.1.99, R3)
         sync.restoredTrigger()?.let { logic.restoreSos(it, now()) }
+        logic.setCharging(power.start(), now()) // PDA 거치대 충전 중이면 무동작·낙상 확인을 쉰다 (v1.1.99)
         notifier.createChannel()
+        notifier.cancel() // 이전 프로세스가 남긴 알림을 한 번 치운다 (v1.1.99)
         watchdog.start()
         SirenGenerator.prewarm() // 사이렌·확인음 PCM 을 백그라운드에서 미리 만든다 (v1.1.99)
         val l = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
@@ -119,12 +126,11 @@ class LoneWorkerMonitor(
         current = this
     }
 
-    /** 10초마다: 동료 수신 재연결·내 SOS 전송 재시도 (v1.1.99). */
+    /** 10초마다: 동료 수신 재연결·내 SOS 전송 재시도·센서 공백 검사(등록 실패도 백오프로 재시도) (v1.1.99). */
     private val syncRunnable = object : Runnable {
         override fun run() {
             if (!started) return
             sync.tick()
-            if (DevSettings.lwEnabled && !sensorRegistered) applySettings() // 센서 등록 재시도 (v1.1.99)
             checkStall(now())
             handler.postDelayed(this, SYNC_TICK_MS)
         }
@@ -142,6 +148,7 @@ class LoneWorkerMonitor(
         handler.removeCallbacksAndMessages(null)
         loopOn = false
         watchdog.stop()
+        power.stop()
         notifier.cancel()
         lastMode = LoneWorkerLogic.Mode.WATCHING
         lastAudible = emptySet()
@@ -157,14 +164,16 @@ class LoneWorkerMonitor(
         val t = now()
         logic.stillMs = DevSettings.lwStillMin * 60_000L
         logic.responseMs = DevSettings.lwResponseMin * 60_000L
+        // 센서 등록 실패는 판정을 끄지 않는다: 확인은 그대로 열리고 신호 없음은 움직임 없음으로 센다 (v1.1.99)
         if (DevSettings.lwEnabled) {
             if (!sensorRegistered) stall.reset(t)
             registerSensor()
-            logic.setEnabled(sensorRegistered, t)
+            watchdog.arm()
         } else {
             unregisterSensor()
-            logic.setEnabled(false, t)
+            watchdog.disarm()
         }
+        logic.setEnabled(DevSettings.lwEnabled, t)
         render()
     }
 
@@ -232,17 +241,20 @@ class LoneWorkerMonitor(
      * 다시 등록할 때는 무동작 시작 시각·확인 중 상태를 건드리지 않는다(열려 있는 확인을 취소하지 않기 위해).
      */
     private fun checkStall(t: Long) {
-        if (!started || !sensorRegistered) return
-        when (stall.check(t)) {
-            SensorStall.Action.REREGISTER -> {
-                Log.w(TAG, "가속도 센서 신호 ${SensorStall.STALL_MS / 1000}초 없음 — 다시 등록")
-                unregisterSensor()
-                registerSensor()
+        if (!started) return
+        if (DevSettings.lwEnabled) {
+            when (stall.check(t)) {
+                // 등록에 실패해 센서가 없는 동안에도 같은 백오프로 다시 등록한다
+                SensorStall.Action.REREGISTER -> {
+                    Log.w(TAG, "가속도 센서 신호 없음 또는 미등록 — 다시 등록")
+                    unregisterSensor()
+                    registerSensor()
+                }
+                SensorStall.Action.STALLED -> if (!stallLogged) Log.w(TAG, "가속도 센서 신호 끊김 지속")
+                SensorStall.Action.OK -> {}
             }
-            SensorStall.Action.STALLED -> if (!stallLogged) Log.w(TAG, "가속도 센서 신호 끊김 지속")
-            SensorStall.Action.OK -> {}
+            stallLogged = stall.stalled
         }
-        stallLogged = stall.stalled
         logic.tick(t)
         render()
     }
@@ -250,7 +262,16 @@ class LoneWorkerMonitor(
     private fun onWatchdog() {
         if (!started) return
         checkStall(now())
-        watchdog.arm()
+        if (DevSettings.lwEnabled) watchdog.arm()
+    }
+
+    /** 외부 전원 연결·해제 (PDA 거치대): 무동작·낙상 확인만 쉬거나 다시 시작한다 (v1.1.99). */
+    private fun onPower(on: Boolean) {
+        if (!started) return
+        val t = now()
+        logic.setCharging(on, t)
+        logic.tick(t)
+        render()
     }
 
     /** 알림을 쓸어 내렸다: 큰 알림이면 다시 올린다 (RR13). */
@@ -274,7 +295,9 @@ class LoneWorkerMonitor(
     fun onPeerBle(bleId: String, sos: Boolean, episode: Int = 0, hint: Int = 0) {
         if (!started) return
         val before = peerSig()
-        val label = if (sos && hint != 0) sidLabels.getOrPut(hint) { BeaconRegistry.labelForShortId(hint) ?: "" } else ""
+        // ponytail: 찾지 못한 짧은 ID 는 광고마다 비콘 목록을 다시 읽는다. 부담이 되면 짧은 TTL 캐시로 올린다
+        val label = if (sos && hint != 0)
+            sidLabels[hint] ?: BeaconRegistry.labelForShortId(hint)?.also { sidLabels[hint] = it } ?: "" else ""
         logic.onPeerBle(bleId, sos, now(), episode, label)
         if (peerSig() != before) render()
     }
@@ -354,7 +377,7 @@ class LoneWorkerMonitor(
     /** 조용한 안내 알림. 우선순위: 센서 불가, 센서 신호 끊김, 해제 미전송. */
     private fun notice(): Pair<String, String>? = when {
         DevSettings.lwEnabled && !sensorRegistered ->
-            "무동작 감시 불가" to "가속도 센서를 쓸 수 없어 무동작·낙상 확인이 꺼져 있습니다. 계속 다시 등록을 시도합니다"
+            "무동작 감시 불가" to "가속도 센서를 등록하지 못했습니다. 움직임이 없는 것으로 보고 확인을 계속하며 센서를 다시 등록합니다"
         DevSettings.lwEnabled && stall.stalled ->
             "무동작 감시 불가" to "가속도 센서 신호가 끊겼습니다. 움직임이 없는 것으로 보고 확인을 계속하며 센서를 다시 등록합니다"
         sync.resolveFailing() ->
@@ -362,8 +385,25 @@ class LoneWorkerMonitor(
         else -> null
     }
 
+    /** SosLedger.begin/resolve 가 onChange 로 render 를 동기 호출하므로 다시 들어오면 한 번 더 돌 표시만 남긴다. */
     private fun render() {
         if (!started) return
+        if (rendering) {
+            renderAgain = true
+            return
+        }
+        rendering = true
+        try {
+            do {
+                renderAgain = false
+                renderOnce()
+            } while (renderAgain && started)
+        } finally {
+            rendering = false
+        }
+    }
+
+    private fun renderOnce() {
         val t = now()
         val mode = logic.mode
         var showScreen = false

@@ -3,6 +3,7 @@ package com.wf11.safealert.ui
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.content.Intent
 import android.view.View
 import android.view.WindowManager
@@ -28,6 +29,9 @@ class LoneWorkerActivity : AppCompatActivity() {
     private lateinit var binding: ActivityLoneWorkerBinding
     private var confirmDialog: AlertDialog? = null
     private var pendingConfirm = false
+    private var waitUntil = 0L   // 서비스 복원 대기 마감(elapsedRealtime), 0 = 대기 안 함
+    private val retry = Runnable { render() }
+    private val listener: () -> Unit = { runOnUiThread { render() } }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -56,12 +60,14 @@ class LoneWorkerActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
-        LoneWorkerMonitor.uiListener = { runOnUiThread { render() } }
+        LoneWorkerMonitor.uiListener = listener
         render()
     }
 
     override fun onStop() {
-        LoneWorkerMonitor.uiListener = null
+        // 다른 화면이 이미 자기 리스너로 바꿨다면 건드리지 않는다
+        if (LoneWorkerMonitor.uiListener === listener) LoneWorkerMonitor.uiListener = null
+        binding.root.removeCallbacks(retry)
         confirmDialog?.dismiss()
         confirmDialog = null
         super.onStop()
@@ -92,13 +98,29 @@ class LoneWorkerActivity : AppCompatActivity() {
     }
 
     private fun render() {
+        val b = binding
         val mon = LoneWorkerMonitor.current
-        val st = mon?.uiState()
-        if (mon == null || st == null) {
+        if (mon == null) {
+            // 서비스가 없으면 저장된 구조 요청을 되살리고 최대 10초 기다린다. 대기 중에는 pendingConfirm 을 지우지 않는다.
+            val t = SystemClock.elapsedRealtime()
+            if (waitUntil == 0L && LoneWorkerUi.reviveIfStoredSos(this)) waitUntil = t + 10_000L
+            if (t < waitUntil) {
+                b.tvLwTitle.text = "구조 요청 복원 중"
+                b.tvLwBody.text = ""
+                b.btnLwPeer.visibility = View.GONE
+                b.root.removeCallbacks(retry)
+                b.root.postDelayed(retry, 500L)
+                return
+            }
             finish()
             return
         }
-        val b = binding
+        waitUntil = 0L
+        val st = mon.uiState()
+        if (st == null) {
+            finish()
+            return
+        }
         b.btnLwPeer.visibility = View.GONE
         val own = st.mode != LoneWorkerLogic.Mode.WATCHING
         val bg: Int

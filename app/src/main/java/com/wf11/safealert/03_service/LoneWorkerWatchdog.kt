@@ -12,41 +12,43 @@ import androidx.core.content.ContextCompat
 /**
  * 가속도 센서 신호가 끊겼는지 판단하는 순수 모델 (v1.1.99, RR08).
  *
- * 마지막 이벤트로부터 stallMs 동안 아무것도 오지 않으면 센서를 한 번 다시 등록하게 하고(REREGISTER),
- * 그래도 다시 stallMs 가 지나도록 이벤트가 없으면 STALLED 로 알린다. 이벤트가 오면 모두 되돌아간다.
- * 끊긴 동안에도 호출하는 쪽은 움직임이 없는 것으로 보고 무동작 시간을 계속 센다.
+ * 마지막 이벤트로부터 stallMs 동안 아무것도 오지 않으면 센서를 다시 등록하게 한다(REREGISTER).
+ * 그래도 이벤트가 없으면 간격을 두 배씩 늘려(30초, 60초, 120초 ... 최대 5분) 계속 다시 등록하게 하고,
+ * 두 번째 재등록부터는 STALLED 로 알린다. 다음 검사 시각 전에는 OK(이미 STALLED 면 STALLED)를 준다.
+ * 이벤트가 오면 모두 되돌아간다. 끊긴 동안에도 호출하는 쪽은 움직임이 없는 것으로 보고 무동작 시간을 계속 센다.
  */
 class SensorStall(private val stallMs: Long = STALL_MS) {
     enum class Action { OK, REREGISTER, STALLED }
 
     companion object {
         const val STALL_MS = 30_000L
+        const val MAX_RETRY_MS = 300_000L
     }
 
-    private var lastEventMs = 0L
-    private var retried = false
+    private var nextCheckAt = stallMs
+    private var retryGap = stallMs
+    private var tries = 0
 
     /** 신호가 끊긴 것으로 확정된 상태. 이벤트가 오거나 reset 하면 풀린다. */
     var stalled = false
         private set
 
     fun reset(nowMs: Long) {
-        lastEventMs = nowMs
-        retried = false
+        nextCheckAt = nowMs + stallMs
+        retryGap = stallMs
+        tries = 0
         stalled = false
     }
 
     fun onEvent(nowMs: Long) = reset(nowMs)
 
     fun check(nowMs: Long): Action {
-        if (nowMs - lastEventMs < stallMs) return Action.OK
-        if (!retried) {
-            retried = true
-            lastEventMs = nowMs
-            return Action.REREGISTER
-        }
-        stalled = true
-        return Action.STALLED
+        if (nowMs < nextCheckAt) return if (stalled) Action.STALLED else Action.OK
+        tries++
+        stalled = tries >= 2
+        nextCheckAt = nowMs + retryGap
+        retryGap = minOf(retryGap * 2, MAX_RETRY_MS)
+        return Action.REREGISTER
     }
 }
 
@@ -97,10 +99,9 @@ class LoneWorkerWatchdog(
         receiver = r
         val f = IntentFilter().apply { addAction(ACTION_WAKE); addAction(ACTION_DISMISSED) }
         runCatching { ContextCompat.registerReceiver(ctx, r, f, ContextCompat.RECEIVER_NOT_EXPORTED) }
-        arm()
     }
 
-    /** 다음 깨우기를 예약한다. 깨어난 뒤 onWake 처리가 끝나면 다시 부른다. */
+    /** 다음 깨우기를 예약한다(기능이 켜져 있을 때만 부른다). 깨어난 뒤 onWake 처리가 끝나면 다시 부른다. */
     fun arm() {
         runCatching {
             (ctx.getSystemService(Context.ALARM_SERVICE) as AlarmManager).setAndAllowWhileIdle(
@@ -109,8 +110,13 @@ class LoneWorkerWatchdog(
         }
     }
 
-    fun stop() {
+    /** 예약된 깨우기를 취소한다. 기능을 끈 동안에는 알람이 없어야 한다. */
+    fun disarm() {
         runCatching { (ctx.getSystemService(Context.ALARM_SERVICE) as AlarmManager).cancel(pi(REQ_WAKE, ACTION_WAKE)) }
+    }
+
+    fun stop() {
+        disarm()
         receiver?.let { r -> runCatching { ctx.unregisterReceiver(r) } }
         receiver = null
     }

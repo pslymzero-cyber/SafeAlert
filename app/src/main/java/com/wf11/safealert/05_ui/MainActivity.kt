@@ -104,7 +104,7 @@ class MainActivity : AppCompatActivity() {
         private var lastText = ""
         private var lastMuted = false
         override fun run() {
-            LoneWorkerUi.openIfAlerting(this@MainActivity)   // 확인·구조 요청 화면 진입 (v1.1.99)
+            LoneWorkerUi.onPoll(this@MainActivity, binding.tvLwStatus, currentMode == null) { restoreRunningState() }   // 확인·구조 요청 화면 진입·정지 경합 복구·충전 안내 (v1.1.99)
             if (binding.cardRunning.visibility == View.VISIBLE) {
                 // [v1.0.42] Broadcast 누락 대비 폴백 — 서비스 스냅샷(BleService.detectedSnapshot)을
                 //   직접 읽어 목록을 동기화한다. 브로드캐스트가 정상이면 같은 값이라 no-op,
@@ -339,6 +339,7 @@ class MainActivity : AppCompatActivity() {
         //   백그라운드 감시는 BleService 단독 책임이라 Activity 폴링은 순수 전력 낭비였다.
         statusHandler.removeCallbacks(statusRunnable)
         statusHandler.post(statusRunnable)
+        LoneWorkerUi.reviveIfStoredSos(this)   // 교대 인계: 서비스 없이 저장된 구조 요청 복원 (v1.1.99)
         // (v1.1.90) 개발자 설정에서 사업장 코드를 바꾸고 돌아온 경우 입력칸 반영
         refreshSiteCodeField()
         // BLE 설정 요약 업데이트 — [v1.1.8] 칼만 단일화(고정값·혼합 제거)

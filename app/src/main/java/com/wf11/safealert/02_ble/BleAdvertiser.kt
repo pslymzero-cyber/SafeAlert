@@ -450,8 +450,9 @@ class BleAdvertiser(
      *  대개 슬립 모드인데, 이때 restartAdvertise 는 아무것도 하지 않아 새 값이 송출되지 않는다.
      *  그래서 pauseAdvertising 과 같은 방식(광고 중지 → 지연 후 startAdvertising)으로 직접 재시작한다.
      *  startAdvertising 은 paused 이면 LOW_POWER 로 송출하므로 슬립 상태는 유지된다.
+     *  restart 가 false 이면 값만 미리 넣고 재광고하지 않는다(막 만든 광고기에 startAdvertising 직전 상태를 싣는 용도).
      */
-    fun updateSos(sos: Boolean, episode: Int = 0, hint: Int = 0) {
+    fun updateSos(sos: Boolean, episode: Int = 0, hint: Int = 0, restart: Boolean = true) {
         if (stopped) return
         val ep = if (sos) episode else 0
         val h = if (sos) hint else 0
@@ -459,6 +460,7 @@ class BleAdvertiser(
         currentSos = sos
         sosEpisode = ep
         sosHint = h
+        if (!restart) return
         Log.d(TAG, "SOS 갱신 → $sos 재광고")
         try { advertiser.stopAdvertising(callback) } catch (_: Exception) {}
         stateHandler.postDelayed({

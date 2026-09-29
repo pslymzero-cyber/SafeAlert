@@ -414,4 +414,38 @@ class LoneWorkerLogicTest {
         assertTrue(l.cancelSos(73_000))
         assertEquals(Mode.WATCHING, l.mode)
     }
+
+    @Test fun charging_pauses_still_and_fall_and_unplug_restarts_count() {
+        val l = newLogic()
+        l.setCharging(true, 1_000)
+        l.tick(stillMs + 60_000)
+        assertEquals(Mode.WATCHING, l.mode)
+        l.onFall(stillMs + 61_000)
+        l.tick(stillMs + 62_000)
+        assertEquals(Mode.WATCHING, l.mode)
+        l.setCharging(false, 500_000)
+        l.tick(500_000 + stillMs - 1)
+        assertEquals(Mode.WATCHING, l.mode)
+        l.tick(500_000 + stillMs)
+        assertEquals(Mode.CHECKING, l.mode)
+    }
+
+    @Test fun plugging_in_during_check_answers_it() {
+        val l = newLogic()
+        l.toChecking()
+        l.setCharging(true, stillMs + 1_000)
+        assertEquals(Mode.WATCHING, l.mode)
+        l.tick(stillMs + responseMs + 10_000)
+        assertEquals(Mode.WATCHING, l.mode)
+    }
+
+    @Test fun charging_keeps_sos() {
+        val l = newLogic()
+        l.toSos()
+        l.setCharging(true, stillMs + responseMs + 1_000)
+        assertEquals(Mode.SOS, l.mode)
+        l.setCharging(false, stillMs + responseMs + 2_000)
+        l.tick(stillMs + responseMs + 3_000)
+        assertEquals(Mode.SOS, l.mode)
+    }
 }

@@ -695,6 +695,10 @@ class BleService : LifecycleService() {
             ACTION_STOP       -> if (loneWorker.sosActive) {
                 // (v1.1.99) 구조 요청 중에는 중지·역할 전환 불가 — 해제는 본인 [괜찮음]뿐
                 Log.d(TAG, "구조 요청 중 정지 요청 무시")
+                // 화면이 먼저 지운 실행 상태를 되살린다 — 다음 복원·화면 복귀가 이 값을 쓴다 (v1.1.99)
+                saveRunningMode(myMode, myId, myCategory)
+                val sp = getSharedPreferences("safealert_prefs", MODE_PRIVATE)
+                if (sp.getLong("running_since", 0L) == 0L) sp.edit().putLong("running_since", System.currentTimeMillis()).commit()
                 sendStatusBroadcast("[괜찮음]으로 먼저 해제하세요")
             } else {
                 // [v1.0.46 중지버그] 사용자가 직접 중지 → START_STICKY 복원 키를 동기(.commit) 제거.
@@ -790,6 +794,7 @@ class BleService : LifecycleService() {
                 bleAdvertiser = bleAdv
                 // (v1.1.64 패치3-3) 광고 실패가 로그로만 끝나던 경로 → 상시 알림으로 승격
                 bleAdv.onTxFault = { reason -> txFault = reason; refreshNotification() }
+                bleAdv.updateSos(loneWorker.sosActive, loneWorker.sosEpisode, loneWorker.sosHint, restart = false)   // (v1.1.99) 새 광고기에 현재 구조 요청 상태를 먼저 싣는다
                 bleAdv.startAdvertising(myId)
                 // (v1.1.30) UWB 는 광고 시작 후 별도 적용 — 모드 전환 대비 이전 세션 정리 후 재생성
                 uwbRanger?.stop(); uwbRanger = null

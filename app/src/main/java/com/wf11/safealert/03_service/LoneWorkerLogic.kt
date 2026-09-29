@@ -75,6 +75,10 @@ class LoneWorkerLogic(var myBleId: String) {
     private var zoneInside = false
     private var zoneInsideSince = 0L
     private var pendingFall = false
+    /** 외부 전원(PDA 충전 거치대) 연결 중: 무동작·낙상 확인만 쉰다. 구조 요청(SOS)과 동료 경보에는 영향이 없다. */
+    var charging = false
+        private set
+    private var chargeEndAt = Long.MIN_VALUE
 
     private val peerMap = LinkedHashMap<String, Peer>()
     /** bleId 별 BLE 관측: 마지막 true 시각, 그 뒤 첫 false 시각(Long.MIN_VALUE = 없음), 마지막 에피소드 번호. */
@@ -110,13 +114,28 @@ class LoneWorkerLogic(var myBleId: String) {
         }
     }
 
+    /** 충전 시작이면 열린 확인은 답한 것으로 닫고 낙상 대기를 버린다. 충전 해제면 무동작 시간을 다시 센다. */
+    fun setCharging(on: Boolean, nowMs: Long) {
+        if (on == charging) return
+        charging = on
+        if (on) {
+            pendingFall = false
+            if (mode == Mode.CHECKING) {
+                lastAckAt = nowMs
+                toWatching(nowMs)
+            }
+        } else {
+            chargeEndAt = nowMs
+        }
+    }
+
     /** 움직임은 타이머만 갱신한다. 열린 확인은 절대 닫지 않는다 (D-02, D-07). */
     fun onMoved(nowMs: Long) {
         if (nowMs > lastMovedAt) lastMovedAt = nowMs
     }
 
     fun onFall(nowMs: Long) {
-        if (!enabled || zoneSettled || mode != Mode.WATCHING) return
+        if (!enabled || zoneSettled || charging || mode != Mode.WATCHING) return
         pendingFall = true
     }
 
@@ -138,7 +157,7 @@ class LoneWorkerLogic(var myBleId: String) {
 
     fun tick(nowMs: Long) {
         updateSettle(nowMs)
-        if (enabled && !zoneSettled) {
+        if (enabled && !zoneSettled && !charging) {
             when (mode) {
                 Mode.WATCHING -> {
                     if (pendingFall) {
@@ -197,7 +216,7 @@ class LoneWorkerLogic(var myBleId: String) {
         if (mode == Mode.CHECKING) (responseMs - (nowMs - modeSinceMs)).coerceAtLeast(0L) else 0L
 
     private fun stillStart(): Long =
-        maxOf(startedAt, lastMovedAt, lastAckAt, enabledAt, zoneLeftAt)
+        maxOf(startedAt, lastMovedAt, lastAckAt, enabledAt, zoneLeftAt, chargeEndAt)
 
     private fun updateSettle(nowMs: Long) {
         if (zoneInside && !zoneSettled && nowMs - zoneInsideSince >= ZONE_SETTLE_MS) {
