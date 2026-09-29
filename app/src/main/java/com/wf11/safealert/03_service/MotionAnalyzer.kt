@@ -13,6 +13,9 @@ import kotlin.math.sqrt
  * 낙상: 자유낙하(0.5 G 미만 60 ms 이상) 직후 1초 안의 충격(2.5 G 초과), 충격 2~12초 뒤 구간에서
  * 자세가 45도 이상 바뀌었고 활동 초가 3개 미만이면 FALL. 임계값은 문헌 범위의 보수값이라 현장 보정 대상이다.
  * 충격 임계값은 센서 측정 범위가 2.5 G 미만인 기기(2 G 센서)에서는 범위에 맞춰 낮춘다 (impactGFor).
+ *
+ * 이 앱 자신의 진동 구간 표본(masked)은 활동 통계에서만 뺀다. 낙상 판정은 모든 표본을 본다 —
+ * 진동 모터 가속도는 충격 임계값보다 훨씬 작고, 알람 중 낙상을 놓치는 쪽이 더 나쁘다 (v1.1.99).
  */
 class MotionAnalyzer(private val impactG: Double = IMPACT_G) {
 
@@ -90,7 +93,7 @@ class MotionAnalyzer(private val impactG: Double = IMPACT_G) {
         candidate = false; postN = 0; postX = 0.0; postY = 0.0; postZ = 0.0; postActive = 0
     }
 
-    fun add(tMs: Long, x: Float, y: Float, z: Float): Signal {
+    fun add(tMs: Long, x: Float, y: Float, z: Float, masked: Boolean = false): Signal {
         val ax = x.toDouble(); val ay = y.toDouble(); val az = z.toDouble()
         val mag = sqrt(ax * ax + ay * ay + az * az)
 
@@ -102,7 +105,7 @@ class MotionAnalyzer(private val impactG: Double = IMPACT_G) {
             moved = closeWindow(idx)
             curIdx = idx
         }
-        n++; sumM += mag; sumM2 += mag * mag; sx += ax; sy += ay; sz += az
+        if (!masked) { n++; sumM += mag; sumM2 += mag * mag; sx += ax; sy += ay; sz += az }
 
         val fell = detectFall(tMs, ax, ay, az, mag)
         return if (fell) Signal.FALL else if (moved) Signal.MOVED else Signal.NONE
@@ -110,12 +113,16 @@ class MotionAnalyzer(private val impactG: Double = IMPACT_G) {
 
     /** 현재 창을 닫고 MOVED 조건 충족 여부를 돌려준다. nextIdx 는 새 샘플이 여는 창 번호. */
     private fun closeWindow(nextIdx: Long): Boolean {
+        // 표본이 하나도 쌓이지 않은 창(전부 자체 진동 구간)은 정지로 세고 직전 평균 벡터를 바꾸지 않는다
         val cnt = n.toDouble()
-        val mx = sx / cnt; val my = sy / cnt; val mz = sz / cnt
-        val mm = sumM / cnt
-        val std = sqrt((sumM2 / cnt - mm * mm).coerceAtLeast(0.0))
-        var active = std >= ACTIVE_STD
-        if (!active && hasPrev) active = angleDeg(mx, my, mz, prevX, prevY, prevZ) >= ACTIVE_ANGLE_DEG
+        val has = n > 0
+        val mx = if (has) sx / cnt else prevX
+        val my = if (has) sy / cnt else prevY
+        val mz = if (has) sz / cnt else prevZ
+        val mm = if (has) sumM / cnt else 0.0
+        val std = if (has) sqrt((sumM2 / cnt - mm * mm).coerceAtLeast(0.0)) else 0.0
+        var active = has && std >= ACTIVE_STD
+        if (!active && has && hasPrev) active = angleDeg(mx, my, mz, prevX, prevY, prevZ) >= ACTIVE_ANGLE_DEG
 
         if (lastClosedIdx >= 0) {
             val gap = curIdx - lastClosedIdx
@@ -131,7 +138,7 @@ class MotionAnalyzer(private val impactG: Double = IMPACT_G) {
             if (active && start >= impactT + POST_START_MS && start + 1000 <= impactT + POST_END_MS) postActive++
         }
 
-        hasPrev = true; prevX = mx; prevY = my; prevZ = mz
+        if (has) { hasPrev = true; prevX = mx; prevY = my; prevZ = mz }
         lastClosedIdx = nextIdx - 1
         n = 0; sumM = 0.0; sumM2 = 0.0; sx = 0.0; sy = 0.0; sz = 0.0
         val mask = (1L shl MOVE_WINDOWS) - 1

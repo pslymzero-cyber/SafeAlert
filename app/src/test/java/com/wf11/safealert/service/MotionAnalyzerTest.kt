@@ -26,6 +26,15 @@ class MotionAnalyzerTest {
                 t += 20
             }
         }
+        fun maskedSpan(from: Long, to: Long, f: (Long) -> FloatArray) {
+            var t = from
+            while (t < to) {
+                val v = f(t)
+                val s = a.add(t, v[0], v[1], v[2], masked = true)
+                if (s != Signal.NONE) signals.add(t to s)
+                t += 20
+            }
+        }
         fun times(s: Signal) = signals.filter { it.second == s }.map { it.first }
     }
 
@@ -160,5 +169,26 @@ class MotionAnalyzerTest {
         }
         assertTrue(trace(MotionAnalyzer()).times(Signal.FALL).isEmpty())
         assertEquals(1, trace(MotionAnalyzer(MotionAnalyzer.impactGFor(19.6f))).times(Signal.FALL).size)
+    }
+
+    // v1.1.99 re-review fixes
+
+    @Test fun masked_samples_never_count_as_motion() {
+        val r = Run()
+        r.maskedSpan(0, 15_000, walking(3.0, 2.0))
+        assertTrue(r.signals.isEmpty())
+        r.span(15_000, 20_000, walking(3.0, 2.0))
+        val moved = r.times(Signal.MOVED)
+        assertTrue(moved.isNotEmpty())
+        assertTrue(moved.all { it >= 15_000 })
+    }
+
+    @Test fun masked_samples_still_feed_fall_detection() {
+        val r = Run()
+        r.maskedSpan(0, 3000, still)
+        r.maskedSpan(3000, 3200) { floatArrayOf(0f, 0f, 1.5f) }
+        r.maskedSpan(3200, 3260) { floatArrayOf(0f, 0f, 30f) }
+        r.maskedSpan(3260, 17_000, lying)
+        assertEquals(1, r.times(Signal.FALL).size)
     }
 }

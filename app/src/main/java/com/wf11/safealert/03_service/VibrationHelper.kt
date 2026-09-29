@@ -10,34 +10,13 @@ import android.os.VibratorManager
 import android.util.Log
 import com.wf11.safealert.utils.DevSettings
 
-/**
- * 이 앱이 건 진동 구간(v1.1.99). 진동 모터의 흔들림을 가속도 센서가 움직임으로 읽지 않도록,
- * 시작~끝+200ms 에 든 센서 표본을 무동작 판정에서 뺀다. 순수 클래스(안드로이드 무관).
- * 다른 앱이 건 진동은 볼 수 없다(한계). 센서 이벤트 시각이 elapsedRealtime 기준이라고 가정한다.
- */
-class VibrationWindow {
-    companion object { const val GRACE_MS = 200L }
-
-    private var start = Long.MAX_VALUE // 기록 없음: 아무 시각도 덮지 않는다
-    private var end = 0L               // Long.MAX_VALUE 면 반복(끝 미정)
-
-    /** durMs 가 음수면 반복 진동. 이전 구간이 아직 덮고 있으면 시작 시각은 유지한다. */
-    @Synchronized fun onStart(nowMs: Long, durMs: Long) {
-        if (!covers(nowMs)) start = nowMs
-        end = if (durMs < 0) Long.MAX_VALUE else nowMs + durMs
-    }
-
-    @Synchronized fun onStop(nowMs: Long) {
-        if (start != Long.MAX_VALUE) end = minOf(end, nowMs)
-    }
-
-    @Synchronized fun covers(tMs: Long): Boolean =
-        tMs >= start && (end == Long.MAX_VALUE || tMs <= end + GRACE_MS)
-}
-
 object VibrationHelper {
 
     private const val TAG = "VibrationHelper"
+
+    /** 알람 반복 진동: 0.7초 켬·0.3초 끔. 진동 구간 기록(window)도 같은 값을 쓴다. */
+    const val ALARM_ON_MS = 700L
+    const val ALARM_PERIOD_MS = 1_000L
 
     /** 이 앱의 진동 구간. LoneWorkerMonitor 가 센서 표본을 거를 때 쓴다. */
     val window = VibrationWindow()
@@ -79,9 +58,10 @@ object VibrationHelper {
     fun vibrateAlarmLoop(context: Context) {
         runCatching {
             val vib = vibrator(context) ?: return
-            window.onStart(SystemClock.elapsedRealtime(), -1L)
+            if (!vib.hasVibrator()) return   // 진동기 없는 폰은 구간을 기록하지 않는다 (아무것도 가리지 않음)
+            window.loopStart(SystemClock.elapsedRealtime(), ALARM_ON_MS, ALARM_PERIOD_MS)
             vib.vibrate(
-                VibrationEffect.createWaveform(longArrayOf(0, 700, 300), 0),
+                VibrationEffect.createWaveform(longArrayOf(0, ALARM_ON_MS, ALARM_PERIOD_MS - ALARM_ON_MS), 0),
                 AudioAttributes.Builder()
                     .setUsage(AudioAttributes.USAGE_ALARM)
                     .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
@@ -91,14 +71,14 @@ object VibrationHelper {
     }
 
     fun stopVibration(context: Context) {
-        window.onStop(SystemClock.elapsedRealtime())
+        window.cut(SystemClock.elapsedRealtime())
         runCatching { vibrator(context)?.cancel() }
     }
 
     private fun vibe(context: Context, pattern: LongArray, amplitudes: IntArray) {
         val vib = vibrator(context) ?: return
         if (!vib.hasVibrator()) return
-        window.onStart(SystemClock.elapsedRealtime(), pattern.sum())
+        window.oneShot(SystemClock.elapsedRealtime(), pattern.sum())
         runCatching {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
                 vib.vibrate(VibrationEffect.createWaveform(pattern, amplitudes, -1))
