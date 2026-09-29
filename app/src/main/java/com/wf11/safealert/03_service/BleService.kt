@@ -651,19 +651,26 @@ class BleService : LifecycleService() {
         if ((intent?.action == null || lwAction) && myMode.isEmpty()) {
             val prefs     = getSharedPreferences("safealert_prefs", MODE_PRIVATE)
             val savedMode = prefs.getString("running_mode", null)
-            if (savedMode != null) {
+            val canStart  = ServiceStartGate.canStart(this)
+            if (savedMode != null && canStart) {
                 myId   = prefs.getString("device_id", "SA-DEFAULT") ?: "SA-DEFAULT"
-                myMode = savedMode
                 myCategory = prefs.getInt("running_category",
                     if (savedMode == "DEVICE") BleConstants.CAT_FORKLIFT else BleConstants.CAT_WALKER)
-                val title = "${categoryRoleName(myCategory)} 실행 중"
-                startForeground(NOTIF_ID, buildNotification(title, "재시작됨"))
+                if (!startForegroundTyped("${categoryRoleName(myCategory)} 실행 중", "재시작됨")) {
+                    stopSelf(startId)
+                    return START_NOT_STICKY
+                }
+                myMode = savedMode
+                prefs.edit().putLong(BootRestoreReceiver.K_RUNNING_SINCE, System.currentTimeMillis()).apply()
                 lwBootRestore = intent?.getBooleanExtra(BootRestoreReceiver.EXTRA_BOOT_RESTORE, false) == true
                 applyMode()
                 if (intent?.action == null) return START_STICKY   // (v1.1.99) 알림 동작이면 아래 when 으로 이어간다
             } else {
                 // (v1.1.62 버그C) 복원 근거 없음(사용자 중지 상태에서 시스템 재기동) — BLE 없이
                 //   포그라운드 알림만 띄운 유령 인스턴스가 STICKY 로 영구 잔존하는 것을 차단.
+                // (v1.1.99) 시작 권한이 빠진 복원도 여기서 멈춘다. 포그라운드 시작 요청으로 떴을 수 있어 가능하면 먼저 올렸다 내린다.
+                if (savedMode == null && canStart && startForegroundTyped("SafeAlert", "중지됨")) stopForeground(STOP_FOREGROUND_REMOVE)
+                Log.w(TAG, if (savedMode == null) "복원할 실행 상태 없음 — 중지" else "서비스 시작 권한 없음 — 복원 중지")
                 stopSelf(startId)
                 return START_NOT_STICKY
             }
@@ -677,10 +684,11 @@ class BleService : LifecycleService() {
                 myCategory = intent.getIntExtra(EXTRA_CATEGORY, BleConstants.CAT_FORKLIFT)
                 // 모드 저장: START_STICKY 재시작 시 onStartCommand 복원에 사용
                 saveRunningMode(myMode, myId, myCategory)
-                startForeground(NOTIF_ID, buildNotification(
-                    "${categoryRoleName(myCategory)} 실행 중",
-                    buildSubText(DevSettings.deviceTx, DevSettings.deviceRx)
-                ))
+                if (!startForegroundTyped("${categoryRoleName(myCategory)} 실행 중",
+                        buildSubText(DevSettings.deviceTx, DevSettings.deviceRx))) {
+                    stopSelf(startId)
+                    return START_NOT_STICKY
+                }
                 applyMode()
             }
             ACTION_START_WALKER -> {
@@ -688,10 +696,10 @@ class BleService : LifecycleService() {
                 myMode = "WALKER"
                 myCategory = BleConstants.CAT_WALKER   // [v1.0.34] 보행자 고정
                 saveRunningMode(myMode, myId, myCategory)
-                startForeground(NOTIF_ID, buildNotification(
-                    "보행자 실행 중",
-                    buildSubText(DevSettings.walkerTx, DevSettings.walkerRx)
-                ))
+                if (!startForegroundTyped("보행자 실행 중", buildSubText(DevSettings.walkerTx, DevSettings.walkerRx))) {
+                    stopSelf(startId)
+                    return START_NOT_STICKY
+                }
                 applyMode()
             }
             ACTION_STOP       -> if (loneWorker.sosActive) {
@@ -747,7 +755,19 @@ class BleService : LifecycleService() {
             .putString("running_mode", mode)
             .putString("device_id", id)
             .putInt("running_category", category)   // [v1.0.34] 역할 복원용
+            .putLong(BootRestoreReceiver.K_RUNNING_SINCE, System.currentTimeMillis())   // (v1.1.99) 이보다 오래된 종료 기록은 무시
             .commit()   // [v1.0.46 중지버그] 동기 저장 — .apply() 비동기 유실로 인한 복원/중지 불일치 방지
+    }
+
+    /** 포그라운드 시작은 모두 여기로 (v1.1.99): 유형을 명시하고, 시작 실패(권한·백그라운드 시작 제한)는 잡아 false. */
+    private fun startForegroundTyped(title: String, sub: String): Boolean = try {
+        val n = buildNotification(title, sub)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) startForeground(NOTIF_ID, n, ServiceStartGate.fgsType(this))
+        else startForeground(NOTIF_ID, n)
+        true
+    } catch (e: RuntimeException) {
+        Log.w(TAG, "포그라운드 시작 실패: ${e.javaClass.simpleName}")
+        false
     }
 
     private fun applyMode() {
@@ -1064,7 +1084,7 @@ class BleService : LifecycleService() {
                 (maxVol * DevSettings.alarmVolume / 100f).toInt().coerceIn(0, maxVol), cur, AlarmVolumeShare.sosSounding)
             am.setStreamVolume(AudioManager.STREAM_ALARM, target, 0)
             val actual = am.getStreamVolume(AudioManager.STREAM_ALARM)   // 실제 반영 여부 되읽기
-            AlarmVolumeShare.noteCollisionIfChanged(cur, actual, android.os.SystemClock.elapsedRealtime())
+            AlarmVolumeShare.noteCollision(android.os.SystemClock.elapsedRealtime())
             Log.d(TAG, "알람 볼륨: $actual/$maxVol (요청 $target, ${DevSettings.alarmVolume}%)")
             // target == 0 은 사용자가 알람 볼륨 0% 로 설정한 의도된 상태이므로 이상 아님.
             if (target > 0 && actual == 0)

@@ -12,6 +12,7 @@ import android.provider.Settings
 import android.view.View
 import android.widget.TextView
 import android.widget.Toast
+import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.wf11.safealert.service.BleService
@@ -19,6 +20,7 @@ import com.wf11.safealert.service.LoneWorkerLogic
 import com.wf11.safealert.service.LoneWorkerMonitor
 import com.wf11.safealert.service.LoneWorkerNotifier
 import com.wf11.safealert.service.LoneWorkerSosSync
+import com.wf11.safealert.service.ServiceStartGate
 import com.wf11.safealert.utils.DevSettings
 
 /**
@@ -32,8 +34,12 @@ object LoneWorkerUi {
     /** 경고 문구 공통 끝말. 이 끝말로 끝나는 경고만 도달성 경고로 보고 다시 판정해 지운다. */
     private const val REACH_TAIL = "구조 요청 화면이 뜨지 않습니다. 감시는 계속됩니다."
 
+    /** Android 11 에서 백그라운드 위치가 없을 때의 경고 끝말. 이 끝말로 끝나는 경고도 다시 판정해 지운다. */
+    private const val BG_LOC_TAIL = "위치 권한을 '항상 허용'으로 바꾸세요."
+    private const val REQ_BG_LOC = 4730
+
     /**
-     * 서비스 시작 조건 — 포그라운드 서비스 유형(근처 기기)의 전제 권한. 메인 화면 시작 조건과 같은 목록이다.
+     * 메인 화면이 요청하는 권한 목록(위치 포함). 서비스 시작 판정은 ServiceStartGate 가 따로 한다.
      */
     val runPermissions: Array<String> = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
         arrayOf(
@@ -50,9 +56,6 @@ object LoneWorkerUi {
         )
     }
 
-    fun hasRunPermissions(ctx: Context): Boolean =
-        runPermissions.all { ContextCompat.checkSelfPermission(ctx, it) == PackageManager.PERMISSION_GRANTED }
-
     private fun runningMode(ctx: Context): String? = runCatching {
         ctx.getSharedPreferences("safealert_prefs", Context.MODE_PRIVATE).getString("running_mode", null)
     }.getOrNull()
@@ -64,7 +67,7 @@ object LoneWorkerUi {
      */
     fun reviveIfStoredSos(ctx: Context): Boolean {
         if (LoneWorkerMonitor.current != null || !LoneWorkerSosSync.hasStoredSos(ctx)) return false
-        if (runningMode(ctx) == null || !hasRunPermissions(ctx)) return false
+        if (runningMode(ctx) == null || !ServiceStartGate.canStart(ctx)) return false
         return runCatching { ContextCompat.startForegroundService(ctx, Intent(ctx, BleService::class.java)) }.isSuccess
     }
 
@@ -81,8 +84,8 @@ object LoneWorkerUi {
         }
         if (!reviveIfStoredSos(activity)) {
             // 권한이 빠져 서비스를 못 띄우는 상태: 저장된 구조 요청이 남아 있으면 실행 상태를 지우지 않고 막는다
-            if (runningMode(activity) == null || !LoneWorkerSosSync.hasStoredSos(activity) || hasRunPermissions(activity)) return false
-            Toast.makeText(activity, "권한을 허용한 뒤 [괜찮음]으로 먼저 해제하세요", Toast.LENGTH_LONG).show()
+            if (runningMode(activity) == null || !LoneWorkerSosSync.hasStoredSos(activity) || ServiceStartGate.canStart(activity)) return false
+            Toast.makeText(activity, "근처 기기 권한을 허용한 뒤 [괜찮음]으로 먼저 해제하세요", Toast.LENGTH_LONG).show()
             return true
         }
         Toast.makeText(activity, "구조 요청을 복원합니다 — [괜찮음]으로 먼저 해제하세요", Toast.LENGTH_LONG).show()
@@ -117,6 +120,18 @@ object LoneWorkerUi {
         }
     }
 
+    /** Android 11 에서 정밀 위치는 있는데 '항상 허용'이 아니면 경고 문구. 재시작 뒤 스캔이 멈출 수 있다. */
+    private fun backgroundLocationWarning(ctx: Context): String? {
+        if (Build.VERSION.SDK_INT != Build.VERSION_CODES.R) return null
+        fun granted(p: String) = ContextCompat.checkSelfPermission(ctx, p) == PackageManager.PERMISSION_GRANTED
+        if (!granted(Manifest.permission.ACCESS_FINE_LOCATION) || granted(Manifest.permission.ACCESS_BACKGROUND_LOCATION)) return null
+        return "위치 권한이 '앱 사용 중에만'이라 재시작·재부팅 뒤 근접 감지가 멈출 수 있습니다. $BG_LOC_TAIL"
+    }
+
+    private fun requestBackgroundLocation(activity: Activity) = runCatching {
+        ActivityCompat.requestPermissions(activity, arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION), REQ_BG_LOC)
+    }
+
     /** 고른 설정 화면을 연다. 열지 못하면 앱 정보 화면으로 대신한다. */
     private fun open(activity: Activity, intent: Intent) {
         val ok = runCatching { activity.startActivity(intent) }.isSuccess
@@ -140,7 +155,7 @@ object LoneWorkerUi {
 
     /**
      * 메인 화면 800ms 폴링에서 한 번에 부른다: 알림 화면 진입, 정지 경합 복구, 거치 중 안내, 도달성 경고 재판정.
-     * 도달성 경고는 매번 다시 판정한다 — 막혀 있으면 띄우고 풀렸으면 지운다. 블루투스 권한 경고는 건드리지 않는다.
+     * 도달성·백그라운드 위치(Android 11) 경고는 매번 다시 판정한다 — 막혀 있으면 띄우고 풀렸으면 지운다. 블루투스 권한 경고는 건드리지 않는다.
      * stopped 는 메인 화면이 실행 상태를 지운 상태(currentMode == null)다. 그런데 서비스가 구조 요청 때문에
      * 정지를 무시했다면 서비스가 running_mode 를 되살렸으므로 실행 카드로 돌아간다.
      */
@@ -149,11 +164,15 @@ object LoneWorkerUi {
         stopped: Boolean, warn: (String, () -> Unit) -> Unit, restore: () -> Unit
     ) {
         openIfAlerting(activity)
-        val w = if (stopped) null else reachabilityWarning(activity)
+        // 도달성 경고가 먼저, 없으면 Android 11 백그라운드 위치 경고 (문구, 버튼 동작)
+        val w: Pair<String, () -> Unit>? = if (stopped) null else
+            reachabilityWarning(activity)?.let { (t, i) -> t to { open(activity, i) } }
+                ?: backgroundLocationWarning(activity)?.let { t -> t to { requestBackgroundLocation(activity); Unit } }
         val cur = if (warnBox.visibility == View.VISIBLE) warnMsg.text.toString() else null
-        // 다른 경고(블루투스 권한 등)가 떠 있으면 덮어쓰지 않는다 — 비어 있거나 도달성 경고일 때만 갱신
-        if (w != null && cur != w.first && (cur == null || cur.endsWith(REACH_TAIL))) warn(w.first) { open(activity, w.second) }
-        if (w == null && cur != null && cur.endsWith(REACH_TAIL)) warnBox.visibility = View.GONE
+        val ours = cur != null && (cur.endsWith(REACH_TAIL) || cur.endsWith(BG_LOC_TAIL))
+        // 다른 경고(블루투스 권한 등)가 떠 있으면 덮어쓰지 않는다 — 비어 있거나 우리 경고일 때만 갱신
+        if (w != null && cur != w.first && (cur == null || ours)) warn(w.first, w.second)
+        if (w == null && ours) warnBox.visibility = View.GONE
         if (stopped && LoneWorkerMonitor.current?.sosActive == true) {
             if (runningMode(activity) != null) restore()
         }

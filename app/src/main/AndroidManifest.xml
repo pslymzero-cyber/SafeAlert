@@ -12,10 +12,15 @@
     <!-- 위치 권한 (BLE 스캔 필수) -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <!-- (v1.1.99) Android 10~11 재시작·부팅 뒤 스캔 유지용. 메인 화면 경고의 버튼으로만 요청한다 -->
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION"
+        android:maxSdkVersion="30" />
 
     <!-- 서비스 권한 -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <!-- (v1.1.99) Android 10~11 에서 위치 권한이 있으면 서비스 유형에 위치를 더한다 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
 
     <!-- (v1.1.69) 상시 알림 표시 권한. targetSdk 33+ 에서 이 권한이 없으면
          포그라운드 서비스 알림조차 상태바에 나타나지 않는다 = 상태바 미노출의 원인.
@@ -84,7 +89,7 @@
 
         <service
             android:name=".service.BleService"
-            android:foregroundServiceType="connectedDevice"
+            android:foregroundServiceType="connectedDevice|location"
             android:exported="false" />
 
         <!-- (v1.1.99) 재부팅·앱 업데이트 뒤 서비스가 돌던 상태면 저장 상태 복원 경로로 다시 띄운다 -->
