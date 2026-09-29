@@ -147,7 +147,6 @@ class BleService : LifecycleService() {
     private val loneWorker by lazy {
         LoneWorkerMonitor(this, advertiseSos = { sos, ep, hint -> bleAdvertiser?.updateSos(sos, ep, hint) }, setAlarmVolume = { setAlarmVolumeGuarded(it) })
     }
-    private var lwBootRestore = false   // 재부팅·업데이트 복원 시작 — 다음 loneWorker.start 한 번만 집어 들기 대기로 시작
 
     @Volatile private var activeSoundLevel = BleConstants.LEVEL_SAFE
 
@@ -662,7 +661,6 @@ class BleService : LifecycleService() {
                 }
                 myMode = savedMode
                 prefs.edit().putLong(BootRestoreReceiver.K_RUNNING_SINCE, System.currentTimeMillis()).apply()
-                lwBootRestore = intent?.getBooleanExtra(BootRestoreReceiver.EXTRA_BOOT_RESTORE, false) == true
                 applyMode()
                 if (intent?.action == null) return START_STICKY   // (v1.1.99) 알림 동작이면 아래 when 으로 이어간다
             } else {
@@ -778,9 +776,8 @@ class BleService : LifecycleService() {
         // (v1.1.99) 전 역할 상시 — 블루투스가 꺼져 있어도 무동작·낙상 확인은 돌아야 한다
         loneWorker.start(
             (if (myMode == "DEVICE") BleConstants.DEVICE_PREFIX else BleConstants.WALKER_PREFIX) + myId,
-            myId, BleConstants.categoryName(myCategory), myZoneInside, lwBootRestore
+            myId, BleConstants.categoryName(myCategory), myZoneInside
         )
-        lwBootRestore = false
         val btManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
         val btAdapter = btManager.adapter
 

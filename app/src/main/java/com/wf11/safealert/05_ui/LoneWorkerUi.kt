@@ -176,11 +176,7 @@ object LoneWorkerUi {
         if (stopped && LoneWorkerMonitor.current?.sosActive == true) {
             if (runningMode(activity) != null) restore()
         }
-        val text = when (if (DevSettings.lwEnabled) LoneWorkerMonitor.current?.rest else null) {
-            LoneWorkerLogic.Rest.DOCKED -> "거치 중 — 무동작 감시 쉼 (들어 올리면 다시 시작)"
-            LoneWorkerLogic.Rest.PICKUP -> "집어 들기 전 — 무동작 감시 쉼 (집어 들면 다시 시작)"
-            else -> null
-        }
+        val text = if (DevSettings.lwEnabled) LoneWorkerMonitor.current?.rest?.banner else null
         val vis = if (text != null) View.VISIBLE else View.GONE
         if (status.visibility != vis) status.visibility = vis
         if (text != null && status.text.toString() != text) status.text = text

@@ -3,266 +3,231 @@ package com.wf11.safealert.service
 import com.wf11.safealert.service.LoneWorkerLogic.Mode
 import com.wf11.safealert.service.LoneWorkerLogic.Rest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import kotlin.math.PI
-import kotlin.math.cos
-import kotlin.math.sin
 
 /**
- * External power rule: docked = rest, carried is decided by posture (never by vibration),
- * only a human-handled plug resets carried, unplug from the dock waits for a pickup posture.
+ * Rule 2 (no motion) runs only while the device is carried:
+ *  - not charging: carried from the first distinct motion after start or unplug (or after 1 min of
+ *    sensor silence); before that it waits.
+ *  - charging: docked until 10 steps (no step sensor: 30 s of continuous strong motion), then
+ *    carried until the next real plug.
+ *  - off in a settled zone. Power flaps shorter than 2 s are ignored; a real plug resets carrying
+ *    and withdraws open checks.
  */
 class LoneWorkerChargeTest {
 
     private val stillMs = 180_000L
     private val responseMs = 120_000L
-    private val g = MotionAnalyzer.G
 
-    private fun newLogic() = LoneWorkerLogic("SAFEALERT_WALKER_ME").apply { start(0L, false) }
+    private fun newLogic(charging: Boolean = false, zoneInside: Boolean = false) =
+        LoneWorkerLogic("SAFEALERT_WALKER_ME").apply { start(0L, zoneInside, charging) }
 
-    /** One closed 1 s window whose mean vector is tilted deg degrees around the x axis. */
-    private fun win(endMs: Long, deg: Double, active: Boolean = false): MotionAnalyzer.Window {
-        val r = deg * PI / 180.0
-        return MotionAnalyzer.Window(endMs, true, 0.0, g * sin(r), g * cos(r), active)
+    private fun LoneWorkerLogic.steps(lastMs: Long, n: Int) {
+        for (i in n - 1 downTo 0) onStep(lastMs - i * 500L)
     }
 
-    private fun LoneWorkerLogic.feed(endMs: Long, deg: Double, active: Boolean = false) =
-        onWindow(endMs, win(endMs, deg, active))
-
-    /** Handling motion right before the plug: one active window ending at t, then plug at t. */
-    private fun LoneWorkerLogic.humanPlug(t: Long) {
-        feed(t, 0.0, active = true)
-        setCharging(true, t)
+    private fun LoneWorkerLogic.strongRun(firstEnd: Long, count: Int) {
+        for (i in 0 until count) onWindow(MotionAnalyzer.Window(firstEnd + i * 1000L, true, true, true))
     }
 
-    /** Human plug at 1 s, dock baseline at 17 s, two tilted windows at 18 s and 19 s: carried. */
-    private fun carriedLogic(): LoneWorkerLogic = newLogic().apply {
-        humanPlug(1_000)
-        feed(17_000, 0.0)
-        feed(18_000, 40.0)
-        feed(19_000, 40.0)
-    }
+    private fun LoneWorkerLogic.modeAt(t: Long): Mode { tick(t); return mode }
 
-    /** Human plug at 1 s, dock baseline at 17 s, unplug at 30 s: waiting for pickup. */
-    private fun pickupLogic(): LoneWorkerLogic = newLogic().apply {
-        humanPlug(1_000)
-        feed(17_000, 0.0)
-        setCharging(false, 30_000)
-    }
+    /** Charging, then carried by 10 steps ending at 10 s. */
+    private fun carriedWhileCharging() = newLogic(charging = true).apply { steps(10_000, 10) }
 
-    @Test fun vibration_only_keeps_dock() {
+    @Test fun start_without_charging_waits_for_first_distinct_motion() {
         val l = newLogic()
-        var now = 0L
-        val a = MotionAnalyzer { l.onWindow(now, it) }
-        val end = 5_000 + stillMs + 60_000
-        var plugged = false
-        var moved = 0
-        var t = 0L
-        while (t <= end) {
-            now = t
-            if (!plugged && t >= 5_000) { l.setCharging(true, t); plugged = true }
-            val s = t / 1000.0
-            val z = when {
-                t < 5_000 -> 9.81 + 3.0 * sin(2 * PI * 2.0 * s)
-                t >= 25_000 && t < 85_000 -> 9.81 + 1.5 * sin(2 * PI * 20.0 * s)
-                else -> 9.81
-            }
-            when (a.add(t, 0f, 0f, z.toFloat())) {
-                MotionAnalyzer.Signal.MOVED -> { l.onMoved(t); if (t >= 25_000) moved++ }
-                MotionAnalyzer.Signal.FALL -> l.onFall(t)
-                MotionAnalyzer.Signal.NONE -> {}
-            }
-            if (t % 1000 == 0L) {
-                l.tick(t)
-                assertEquals(Mode.WATCHING, l.mode)
-                if (t >= 5_000) assertEquals(Rest.DOCKED, l.rest)
-            }
-            t += 20
-        }
-        assertTrue(moved > 0)
-    }
-
-    @Test fun posture_lift_after_settle_marks_carried() {
-        val l = carriedLogic()
+        assertEquals(Rest.WAIT, l.rest)
+        assertEquals(Mode.WATCHING, l.modeAt(600_000))
+        l.steps(600_000, 5)
         assertEquals(Rest.NONE, l.rest)
-        l.tick(19_000 + stillMs - 1)
-        assertEquals(Mode.WATCHING, l.mode)
-        l.tick(19_000 + stillMs)
-        assertEquals(Mode.CHECKING, l.mode)
+        assertEquals(Mode.WATCHING, l.modeAt(600_000 + stillMs - 1))
+        assertEquals(Mode.CHECKING, l.modeAt(600_000 + stillMs))
         assertEquals("still", l.trigger)
     }
 
-    @Test fun single_tilted_window_does_not_lift() {
+    @Test fun four_steps_do_not_end_the_wait() {
         val l = newLogic()
-        l.humanPlug(1_000)
-        l.feed(17_000, 0.0)
-        l.feed(18_000, 40.0)
-        l.feed(19_000, 0.0)
-        l.feed(20_000, 40.0)
-        l.feed(21_000, 0.0)
-        assertEquals(Rest.DOCKED, l.rest)
-        l.tick(21_000 + stillMs + 60_000)
-        assertEquals(Mode.WATCHING, l.mode)
+        l.steps(10_000, 4)
+        assertEquals(Rest.WAIT, l.rest)
+        assertEquals(Mode.WATCHING, l.modeAt(600_000))
     }
 
-    @Test fun posture_before_settle_is_ignored() {
+    @Test fun without_step_sensor_3s_strong_motion_ends_the_wait() {
         val l = newLogic()
-        l.humanPlug(1_000)
-        for (s in 3L..10L) l.feed(s * 1000, 40.0)
-        assertEquals(Rest.DOCKED, l.rest)
-        l.tick(10_000 + stillMs + 60_000)
-        assertEquals(Mode.WATCHING, l.mode)
+        l.stepsAvailable = false
+        l.strongRun(10_000, 2)
+        assertEquals(Rest.WAIT, l.rest)
+        l.strongRun(20_000, 3)
+        assertEquals(Rest.NONE, l.rest)
+        assertEquals(Mode.CHECKING, l.modeAt(22_000 + stillMs))
     }
 
-    @Test fun fall_while_docked_after_settle_opens_fall_check() {
+    @Test fun unplug_waits_for_first_distinct_motion() {
+        val l = newLogic(charging = true)
+        assertEquals(Rest.DOCKED, l.rest)
+        l.steps(9_000, 4)
+        l.setCharging(false, 10_000)
+        assertEquals(Rest.WAIT, l.rest)
+        l.onStep(11_000)
+        assertEquals(Rest.WAIT, l.rest)
+        l.steps(15_000, 5)
+        assertEquals(Rest.NONE, l.rest)
+    }
+
+    @Test fun sensor_silence_ends_wait_and_counts_from_there() {
         val l = newLogic()
-        l.humanPlug(1_000)
-        l.onFall(20_000)
+        l.sensorSilent(100_000)
         assertEquals(Rest.NONE, l.rest)
-        l.tick(20_000)
-        assertEquals(Mode.CHECKING, l.mode)
-        assertEquals("fall", l.trigger)
-
-        val j = newLogic()
-        j.humanPlug(1_000)
-        j.onFall(6_000)
-        assertEquals(Rest.DOCKED, j.rest)
-        j.tick(7_000)
-        assertEquals(Mode.WATCHING, j.mode)
+        assertEquals(Mode.WATCHING, l.modeAt(100_000 + stillMs - 1))
+        assertEquals(Mode.CHECKING, l.modeAt(100_000 + stillMs))
     }
 
-    @Test fun moved_alone_never_sets_carried() {
+    @Test fun charging_without_steps_is_docked_and_never_checks_still() {
+        val l = newLogic(charging = true)
+        l.steps(10_000, 9)
+        assertEquals(Rest.DOCKED, l.rest)
+        for (t in 60_000L..3_600_000L step 60_000L) assertEquals(Mode.WATCHING, l.modeAt(t))
+    }
+
+    @Test fun charging_with_ten_steps_is_carried_until_replug() {
+        val l = carriedWhileCharging()
+        assertEquals(Rest.NONE, l.rest)
+        assertEquals(Mode.WATCHING, l.modeAt(10_000 + stillMs - 1))
+        assertEquals(Rest.NONE, l.rest)
+        assertEquals(Mode.CHECKING, l.modeAt(10_000 + stillMs))
+        assertEquals("still", l.trigger)
+    }
+
+    @Test fun steps_before_the_plug_do_not_count_toward_carrying() {
         val l = newLogic()
-        l.humanPlug(1_000)
-        for (s in 16L..60L) l.onMoved(s * 1000)
+        l.steps(9_000, 9)
+        l.setCharging(true, 10_000)
+        l.onStep(11_000)
         assertEquals(Rest.DOCKED, l.rest)
-        l.tick(60_000 + stillMs)
-        assertEquals(Mode.WATCHING, l.mode)
     }
 
-    @Test fun plug_without_motion_keeps_watch_check_and_fall() {
-        val l = carriedLogic()
-        l.tick(19_000 + stillMs)
-        assertEquals(Mode.CHECKING, l.mode)
-        l.setCharging(false, 19_000 + stillMs + 1_000)
-        l.setCharging(true, 19_000 + stillMs + 2_000)
-        assertEquals(Rest.NONE, l.rest)
-        assertEquals(Mode.CHECKING, l.mode)
-        l.tick(19_000 + stillMs + responseMs)
-        assertEquals(Mode.SOS, l.mode)
-
-        val f = carriedLogic()
-        f.onFall(25_000)
-        f.setCharging(false, 26_000)
-        f.setCharging(true, 27_000)
-        assertEquals(Rest.NONE, f.rest)
-        f.tick(28_000)
-        assertEquals(Mode.CHECKING, f.mode)
-        assertEquals("fall", f.trigger)
-    }
-
-    @Test fun human_plug_resets() {
-        val l = carriedLogic()
-        l.tick(19_000 + stillMs)
-        assertEquals(Mode.CHECKING, l.mode)
-        val u = 19_000 + stillMs + 1_000
-        l.setCharging(false, u)
-        l.feed(u + 5_000, 0.0, active = true)
-        l.setCharging(true, u + 6_000)
+    @Test fun replug_resets_step_carry() {
+        val l = carriedWhileCharging()
+        l.setCharging(false, 20_000)
+        assertEquals(Rest.WAIT, l.rest)
+        l.setCharging(true, 30_000)
         assertEquals(Rest.DOCKED, l.rest)
-        assertEquals(Mode.WATCHING, l.mode)
-        l.tick(u + 6_000 + responseMs + stillMs)
-        assertEquals(Mode.WATCHING, l.mode)
-
-        // Late batched window: ended 3 s before a motionless plug, arrives 2 s after it
-        val b = carriedLogic()
-        b.setCharging(false, 60_000)
-        b.setCharging(true, 70_000)
-        assertEquals(Rest.NONE, b.rest)
-        b.onWindow(72_000, win(67_000, 0.0, active = true))
-        assertEquals(Rest.DOCKED, b.rest)
     }
 
-    @Test fun unplug_from_dock_waits_for_pickup_through_vibration() {
-        val l = pickupLogic()
-        assertEquals(Rest.PICKUP, l.rest)
-        var t = 31_000L
-        while (t <= 30_000 + stillMs + 60_000) {
-            l.feed(t, 0.0, active = true)
-            l.onMoved(t)
-            l.tick(t)
-            assertEquals(Mode.WATCHING, l.mode)
-            assertEquals(Rest.PICKUP, l.rest)
-            t += 1_000
-        }
+    @Test fun fallback_30s_strong_motion_carries_only_when_steps_unavailable() {
+        val short = newLogic(charging = true)
+        short.stepsAvailable = false
+        short.strongRun(1_000, 29)
+        assertEquals(Rest.DOCKED, short.rest)
+
+        val long = newLogic(charging = true)
+        long.stepsAvailable = false
+        long.strongRun(1_000, 30)
+        assertEquals(Rest.NONE, long.rest)
+
+        val withSteps = newLogic(charging = true)
+        withSteps.strongRun(1_000, 30)
+        assertEquals(Rest.DOCKED, withSteps.rest)
     }
 
-    @Test fun pickup_posture_ends_wait() {
-        val l = pickupLogic()
-        l.feed(40_000, 45.0, active = true)
-        assertEquals(Rest.PICKUP, l.rest)
-        l.feed(41_000, 45.0)
-        assertEquals(Rest.NONE, l.rest)
-        l.tick(41_000 + stillMs - 1)
-        assertEquals(Mode.WATCHING, l.mode)
-        l.tick(41_000 + stillMs)
-        assertEquals(Mode.CHECKING, l.mode)
+    @Test fun still_rule_is_off_in_settled_zone() {
+        val l = newLogic(zoneInside = true)
+        l.sensorSilent(0)
+        l.tick(60_000)
+        assertTrue(l.zoneSettled)
+        for (t in 60_000L..900_000L step 60_000L) assertEquals(Mode.WATCHING, l.modeAt(t))
     }
 
-    @Test fun sensor_silence_ends_wait_after_60s() {
-        val l = LoneWorkerLogic("SAFEALERT_WALKER_ME").apply { start(0L, false, charging = true) }
-        assertEquals(Rest.DOCKED, l.rest)
-        l.setCharging(false, 100_000)
-        l.tick(159_999)
-        assertEquals(Rest.PICKUP, l.rest)
-        l.tick(160_000)
-        assertEquals(Rest.NONE, l.rest)
-        l.tick(160_000 + stillMs - 1)
-        assertEquals(Mode.WATCHING, l.mode)
-        l.tick(160_000 + stillMs)
-        assertEquals(Mode.CHECKING, l.mode)
-    }
-
-    @Test fun boot_restore_starts_waiting_for_pickup() {
-        val l = LoneWorkerLogic("SAFEALERT_WALKER_ME").apply { start(0L, false, charging = false, awaitPickup = true) }
-        assertEquals(Rest.PICKUP, l.rest)
-        for (s in 1L..5L) l.feed(s * 1000, 0.0)
-        for (s in 6L..30L) { l.feed(s * 1000, 3.0, active = true); l.onMoved(s * 1000) }
-        l.tick(30_000)
-        assertEquals(Rest.PICKUP, l.rest)
-        l.feed(31_000, 50.0, active = true)
-        l.feed(32_000, 50.0)
-        assertEquals(Rest.NONE, l.rest)
-
-        val d = LoneWorkerLogic("SAFEALERT_WALKER_ME").apply { start(0L, false, charging = true) }
-        assertEquals(Rest.DOCKED, d.rest)
-    }
-
-    @Test fun unplug_while_carried_keeps_watching_and_human_replug_rests_again() {
-        val l = carriedLogic()
-        l.setCharging(false, 30_000)
-        assertEquals(Rest.NONE, l.rest)
-        l.tick(19_000 + stillMs)
-        assertEquals(Mode.CHECKING, l.mode)
-
-        val r = carriedLogic()
-        r.setCharging(false, 30_000)
-        r.humanPlug(31_000)
-        assertEquals(Rest.DOCKED, r.rest)
-        r.tick(31_000 + stillMs + 60_000)
-        assertEquals(Mode.WATCHING, r.mode)
-    }
-
-    @Test fun charging_keeps_sos() {
+    @Test fun real_plug_withdraws_open_still_check() {
         val l = newLogic()
-        l.tick(stillMs)
-        l.tick(stillMs + responseMs)
-        assertEquals(Mode.SOS, l.mode)
-        l.setCharging(true, stillMs + responseMs + 1_000)
-        assertEquals(Mode.SOS, l.mode)
-        l.setCharging(false, stillMs + responseMs + 2_000)
-        l.tick(stillMs + responseMs + 3_000)
-        assertEquals(Mode.SOS, l.mode)
+        l.sensorSilent(0)
+        assertEquals(Mode.CHECKING, l.modeAt(stillMs))
+        l.setCharging(true, stillMs + 1_000)
+        assertEquals(Mode.WATCHING, l.mode)
+        assertEquals(Rest.DOCKED, l.rest)
+        assertEquals(Mode.WATCHING, l.modeAt(stillMs + responseMs + 10_000))
+    }
+
+    @Test fun unplug_during_still_check_keeps_it_running_to_sos() {
+        val l = carriedWhileCharging()
+        assertEquals(Mode.CHECKING, l.modeAt(10_000 + stillMs))
+        l.setCharging(false, 200_000)
+        assertEquals(Rest.WAIT, l.rest)
+        assertEquals(Mode.CHECKING, l.modeAt(10_000 + stillMs + responseMs - 1))
+        assertEquals(Mode.SOS, l.modeAt(10_000 + stillMs + responseMs))
+    }
+
+    @Test fun still_check_closed_by_ok_or_distinct_motion_not_by_moved() {
+        val moved = newLogic()
+        moved.sensorSilent(0)
+        moved.tick(stillMs)
+        moved.onMoved(stillMs + 1_000)
+        moved.steps(stillMs + 5_000, 4)
+        assertEquals(Mode.CHECKING, moved.modeAt(stillMs + 6_000))
+
+        val walked = newLogic()
+        walked.sensorSilent(0)
+        walked.tick(stillMs)
+        walked.steps(stillMs + 5_000, 5)
+        assertEquals(Mode.WATCHING, walked.mode)
+        assertEquals(Mode.WATCHING, walked.modeAt(stillMs + 5_000 + stillMs - 1))
+        assertEquals(Mode.CHECKING, walked.modeAt(stillMs + 5_000 + stillMs))
+
+        val ok = newLogic()
+        ok.sensorSilent(0)
+        ok.tick(stillMs)
+        assertTrue(ok.ackWorking(stillMs + 1_000))
+        assertEquals(Mode.WATCHING, ok.mode)
+    }
+
+    @Test fun rest_state_carries_its_own_texts() {
+        assertNull(Rest.NONE.banner)
+        assertTrue(Rest.DOCKED.banner!!.isNotEmpty())
+        assertTrue(Rest.WAIT.banner!!.isNotEmpty())
+        assertFalse(Rest.DOCKED.keepText == Rest.NONE.keepText)
+        assertFalse(Rest.WAIT.keepText == Rest.NONE.keepText)
+    }
+
+    // -- PowerDebounce (2 s) --
+
+    @Test fun debounce_ignores_flaps_shorter_than_2s() {
+        val d = PowerDebounce()
+        d.seed(false)
+        d.raw(true, 0)
+        d.raw(false, 1_000)
+        assertNull(d.poll(2_050))
+        assertNull(d.poll(10_000))
+
+        val u = PowerDebounce()
+        u.seed(true)
+        u.raw(false, 0)
+        u.raw(true, 1_500)
+        assertNull(u.poll(3_550))
+        assertTrue(u.reported)
+    }
+
+    @Test fun debounce_reports_stable_change_with_first_change_time() {
+        val d = PowerDebounce()
+        d.seed(false)
+        d.raw(true, 1_000)
+        d.raw(true, 1_500)
+        assertNull(d.poll(2_999))
+        assertEquals(true to 1_000L, d.poll(3_000))
+        assertNull(d.poll(3_001))
+        assertTrue(d.reported)
+    }
+
+    @Test fun debounce_restarts_when_a_flap_returns() {
+        val d = PowerDebounce()
+        d.seed(false)
+        d.raw(true, 0)
+        d.raw(false, 500)
+        d.raw(true, 1_000)
+        assertNull(d.poll(2_050))
+        assertEquals(true to 1_000L, d.poll(3_050))
     }
 }

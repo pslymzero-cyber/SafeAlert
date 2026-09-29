@@ -8,7 +8,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * LoneWorkerLogic 계약 테스트 (v1.1.99). 시계는 주입하는 elapsed ms 이며 안드로이드 의존이 없다.
+ * LoneWorkerLogic contract tests (v1.1.99). The clock is an injected elapsed ms; no Android dependency.
  */
 class LoneWorkerLogicTest {
 
@@ -16,7 +16,7 @@ class LoneWorkerLogicTest {
     private val responseMs = 120_000L
 
     private fun newLogic(zoneInside: Boolean = false) =
-        LoneWorkerLogic("SAFEALERT_WALKER_ME").apply { start(0L, zoneInside) }
+        LoneWorkerLogic("SAFEALERT_WALKER_ME").apply { start(0L, zoneInside); sensorSilent(0L) }
 
     private fun LoneWorkerLogic.peer(id: String, ep: Int? = null) =
         peers.single { it.bleId == id && (ep == null || it.episode == ep) }
@@ -25,10 +25,10 @@ class LoneWorkerLogicTest {
     private fun LoneWorkerLogic.toSos() { tick(stillMs); tick(stillMs + responseMs) }
 
     private fun LoneWorkerLogic.server(
-        key: String, id: String, active: Boolean, now: Long, name: String = "홍길동"
+        key: String, id: String, active: Boolean, now: Long, name: String = "Hong"
     ) = onPeerServer(key, id, name, "WALKER", "still", "B1", now, active, now)
 
-    // ── 본인 상태 ──
+    // -- own state --
 
     @Test fun still_180s_opens_check_but_not_179_999() {
         val l = newLogic()
@@ -60,7 +60,7 @@ class LoneWorkerLogicTest {
         assertEquals(Mode.CHECKING, l.mode)
     }
 
-    @Test fun motion_does_not_close_an_open_check() {
+    @Test fun moved_signal_does_not_close_an_open_check() {
         val l = newLogic()
         l.toChecking()
         l.onMoved(190_000)
@@ -76,16 +76,6 @@ class LoneWorkerLogicTest {
         assertTrue(l.cancelSos(400_000))
         assertEquals(Mode.WATCHING, l.mode)
         assertFalse(l.cancelSos(400_001))
-    }
-
-    @Test fun fall_opens_check_at_next_tick_regardless_of_still_timer() {
-        val l = newLogic()
-        l.onMoved(1_000)
-        l.onFall(1_500)
-        assertEquals(Mode.WATCHING, l.mode)
-        l.tick(1_600)
-        assertEquals(Mode.CHECKING, l.mode)
-        assertEquals("fall", l.trigger)
     }
 
     @Test fun disabled_never_checks_and_cancels_open_check_but_keeps_sos() {
@@ -115,9 +105,9 @@ class LoneWorkerLogicTest {
         assertEquals(Mode.CHECKING, l.mode)
     }
 
-    // ── 안전구역 (D-03) ──
+    // -- safe zone (D-03) --
 
-    @Test fun settled_zone_cancels_check_and_blocks_trigger_and_fall() {
+    @Test fun settled_zone_cancels_still_check_but_not_accident() {
         val l = newLogic()
         l.toChecking()
         l.onZone(true, 180_000)
@@ -128,9 +118,13 @@ class LoneWorkerLogicTest {
         assertEquals(Mode.WATCHING, l.mode)
         l.tick(900_000)
         assertEquals(Mode.WATCHING, l.mode)
-        l.onFall(900_100)
-        l.tick(900_200)
-        assertEquals(Mode.WATCHING, l.mode)
+        l.onWindow(MotionAnalyzer.Window(900_000, true, true, false))
+        l.onAccident(900_100)
+        l.tick(930_100)
+        assertEquals(Mode.CHECKING, l.mode)
+        assertEquals("fall", l.trigger)
+        l.tick(931_000)
+        assertEquals(Mode.CHECKING, l.mode)
     }
 
     @Test fun inside_59s_then_out_does_not_reset_still_count() {
@@ -188,7 +182,7 @@ class LoneWorkerLogicTest {
         assertEquals(1, l.audiblePeers().size)
     }
 
-    // ── 동료 SOS (D-06) ──
+    // -- peer SOS (D-06) --
 
     @Test fun same_bleid_as_mine_still_alarms() {
         val l = newLogic()
@@ -311,7 +305,7 @@ class LoneWorkerLogicTest {
         assertTrue(l.peers.isEmpty())
     }
 
-    // ── 비콘 힌트 ──
+    // -- beacon hint --
 
     @Test fun beacon_hint_takes_strongest_within_60s() {
         val l = newLogic()

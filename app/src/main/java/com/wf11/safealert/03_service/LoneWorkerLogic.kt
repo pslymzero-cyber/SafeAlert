@@ -1,13 +1,27 @@
 package com.wf11.safealert.service
 
+import kotlin.math.abs
+
 /**
- * 단독 작업자 무동작·낙상 SOS 상태기계 (v1.1.99).
+ * 단독 작업자 사고·무동작 SOS 상태기계 (v1.1.99).
  *
- * 안드로이드 의존이 없는 순수 로직이다. 시각은 전부 호출자가 넘기는 elapsedRealtime 기준 ms 다.
+ * 안드로이드 의존이 없는 순수 로직이다. 시각은 전부 호출자가 넘기는 elapsedRealtime 기준 ms 다
+ * (센서 시각은 호출자가 이 기준으로 바꿔 넘긴다).
  *
- *   WATCHING --무동작 stillMs / 낙상--> CHECKING --응답 없이 responseMs--> SOS --괜찮음--> WATCHING
+ *   WATCHING --사고 30초 무움직임 / 무동작 stillMs--> CHECKING --응답 없이 1분 / responseMs--> SOS --괜찮음--> WATCHING
  *
- * 정착한 안전구역(원시 안쪽 60초 연속) 안에서는 트리거·승격이 없고, 정착 시 열린 확인은 취소된다.
+ * 규칙 1(사고): 이동 중(직전 10초 안의 활동 창·걸음)에 낙상 또는 4 G 충격이 오면 그 충격 시각부터 5분 동안
+ * 사고를 의심한다. 그 안에서 뚜렷한 움직임이 30초 동안 없으면 사고 확인 창("fall", 1분)을 연다.
+ * 거치·충전·안전구역과 무관하다. 충격 전후 10초 안의 실제 전원 연결은 거치대에 꽂는 동작으로 보고 그 트리거를 버린다.
+ * 사고 확인 창을 [괜찮음]으로 닫으면 의심이 끝나고, 뚜렷한 움직임으로 닫히면 5분이 끝날 때까지 계속 지켜본다.
+ *
+ * 규칙 2(무동작): 지님(Rest.NONE)일 때만 stillMs 무동작이면 무동작 확인 창("still", responseMs)을 연다.
+ * 충전 안 함은 시작·전원 해제 뒤 첫 뚜렷한 움직임(또는 센서 1분 무응답)부터 지님이고 그 전은 대기(WAIT)다.
+ * 충전 중은 걸음 10걸음(걸음 센서가 없으면 30초 연속 강한 움직임)부터 다음 연결까지 지님, 그 전은 거치(DOCKED)다.
+ * 정착한 안전구역(원시 안쪽 60초 연속)에서는 무동작 확인 창이 열리지 않고, 정착 시 열린 무동작 확인 창은 거둔다.
+ *
+ * 뚜렷한 움직임: 걸음 5걸음. 걸음 센서를 쓸 수 없으면 3초 이상 이어진 걷기 수준 강한 움직임 창.
+ * 확인 창(두 종류)은 [괜찮음]·뚜렷한 움직임·실제 전원 연결로 닫힌다. 실제 연결은 사고 의심도 끝낸다.
  * SOS 는 구역 진입·기능 끄기로 끝나지 않고 오직 cancelSos 로만 끝난다.
  * 동료 SOS 수신은 LoneWorkerPeers 가 회차(bleId, ep) 단위 항목으로 다룬다(서버 기록과 BLE 비트가 같은 회차면 한 항목).
  *
@@ -18,27 +32,37 @@ class LoneWorkerLogic(var myBleId: String) {
 
     enum class Mode { WATCHING, CHECKING, SOS }
 
-    /** 무동작·낙상 확인을 쉬는 이유: 없음, 거치(충전 중·몸에 지니지 않음), 집어 들기 대기. */
-    enum class Rest { NONE, DOCKED, PICKUP }
+    /** 무동작 확인을 쉬는 이유와 그 안내 문구(메인 화면 배너, 알림 문장 조각). 사고 감지는 쉬지 않는다. */
+    enum class Rest(val banner: String?, val keepText: String) {
+        NONE(null, "움직임이 없는 것으로 보고 확인을 계속하며"),
+        DOCKED("거치 중 — 무동작 감시 쉼 (걸으면 다시 시작, 사고 감지는 계속)", "거치 중이라 무동작 확인은 쉬며"),
+        WAIT("움직임 대기 — 무동작 감시 쉼 (움직이면 다시 시작, 사고 감지는 계속)", "첫 움직임을 기다리는 중이라 무동작 확인은 쉬며")
+    }
 
     companion object {
         const val ZONE_SETTLE_MS = 60_000L
         const val BEACON_HINT_MS = 60_000L
-        /** 꽂은 뒤 이 시간이 지난 조용한 창부터 거치 자세 기준으로 삼고, 낙상도 이때부터 본다 (꽂는 순간의 흔들림 제외). */
-        const val CHARGE_SETTLE_MS = 15_000L
-        /** 거치 자세 기준에서 이 각도 이상 기운 창이 LIFT_WINDOWS 개 연속이면 집어 든 것이다. */
-        const val LIFT_DEG = 30.0
-        const val LIFT_WINDOWS = 2
-        /** 꽂기 전 이 시간 안에 끝난 활동 창이 있어야 사람이 다룬 연결로 본다. */
-        const val PLUG_LOOKBACK_MS = 10_000L
-        /** 집어 들기 대기 중 센서 창이 이 시간 동안 오지 않으면 대기를 끝내고 평소처럼 센다. */
-        const val SENSOR_SILENT_MS = 60_000L
+        /** 이동 중 판정: 충격 전 이 시간 안에 끝난 활동 창 또는 걸음. */
+        const val MOVING_LOOKBACK_MS = 10_000L
+        const val ACCIDENT_WATCH_MS = 300_000L
+        const val ACCIDENT_STILL_MS = 30_000L
+        const val ACCIDENT_RESPONSE_MS = 60_000L
+        /** 충격 전후 이 시간 안의 실제 전원 연결은 거치대에 꽂는 동작이다. */
+        const val PLUG_EXCEPT_MS = 10_000L
+        const val DISTINCT_STEPS = 5
+        const val CARRY_STEPS = 10
+        /** 걸음 센서를 쓸 수 없을 때: 뚜렷한 움직임 = 강한 움직임 창 3개, 충전 중 지님 = 30개 연속. */
+        const val STRONG_RUN_MS = 3_000L
+        const val CARRY_RUN_MS = 30_000L
+        private const val RECENT_KEEP_MS = 60_000L
         private const val BEACON_SAMPLE_CAP = 256
     }
 
-    /** 설정에서 라이브로 바꾼다 (기본 3분 / 2분). */
+    /** 설정에서 라이브로 바꾼다 (기본 3분 / 2분). 무동작 확인 전용 — 사고 확인은 30초 / 1분 고정. */
     var stillMs = 180_000L
     var responseMs = 120_000L
+    /** 걸음 센서가 등록돼 있다(센서·신체 활동 권한 있음). 아니면 강한 움직임 창으로 대신한다. */
+    var stepsAvailable = true
 
     var mode = Mode.WATCHING
         private set
@@ -61,35 +85,36 @@ class LoneWorkerLogic(var myBleId: String) {
     private var zoneLeftAt = Long.MIN_VALUE
     private var zoneInside = false
     private var zoneInsideSince = 0L
-    private var pendingFall = false
-    /**
-     * 외부 전원 연결 상태(원본 값). 충전 중이고 몸에 지니지 않았으면 거치로 보고 무동작·낙상 확인을 쉰다.
-     * 몸에 지님(carried)은 진동이 아니라 자세로 정한다. 구조 요청(SOS)과 동료 경보에는 영향이 없다.
-     */
-    var charging = false
-        private set
-    private var chargeAt = Long.MIN_VALUE
-    /** 몸에 지님: 쉬는 중 자세가 거치 기준에서 벗어났거나 낙상이 나왔다. 사람이 다룬 연결과 start() 만 지운다. */
-    private var carried = false
-    /** 몸에 지니지 않은 채 전원이 빠졌다: 집어 드는 자세·낙상·센서 무신호 60초까지 무동작을 세지 않는다. */
-    private var awaitPickup = false
-    private var awaitSince = 0L
-    private var lastActiveEndMs = Long.MIN_VALUE
-    private var lastWindowAt = Long.MIN_VALUE
-    private var baseline: DoubleArray? = null   // 거치 자세 기준(평균 중력 방향)
-    private var offCount = 0
-    private var plugHuman = false
-    private var restEndAt = Long.MIN_VALUE      // 쉼이 끝난 시각 — 무동작은 여기부터 센다
 
-    /** 쉬는 이유. 집어 들기 대기가 거치보다 먼저다. */
+    // 지님
+    private var charging = false
+    private var chargeAt = 0L
+    private var chargeSteps = 0
+    private var stepCarry = false
+    private var waitMove = false
+    private var carriedSince = Long.MIN_VALUE
+
+    // 움직임 기록: 최근 활동 창 끝·걸음 시각, 뚜렷한 움직임 셈(floorAt 뒤만 센다), 연속 강한 창 구간
+    private val recentActive = ArrayDeque<Long>()
+    private val recentSteps = ArrayDeque<Long>()
+    private var floorAt = Long.MIN_VALUE
+    private var floorSteps = 0
+    private var lastDistinctAt = Long.MIN_VALUE
+    private var runStart = Long.MIN_VALUE
+    private var runEnd = Long.MIN_VALUE
+
+    // 사고 의심
+    private var accidentFrom = Long.MIN_VALUE
+    private var accidentUntil = Long.MIN_VALUE
+    private var lastTrigAt = Long.MIN_VALUE
+    private var lastPlugAt = Long.MIN_VALUE
+
+    /** 무동작 확인을 쉬는 이유. */
     val rest: Rest get() = when {
-        awaitPickup -> Rest.PICKUP
-        charging && !carried -> Rest.DOCKED
+        charging && !stepCarry -> Rest.DOCKED
+        !charging && waitMove -> Rest.WAIT
         else -> Rest.NONE
     }
-
-    /** 무동작·낙상 확인을 쉬는 중: 거치 또는 집어 들기 대기. */
-    val resting: Boolean get() = rest != Rest.NONE
 
     private val peerStore = LoneWorkerPeers()
 
@@ -98,116 +123,118 @@ class LoneWorkerLogic(var myBleId: String) {
 
     // ── 본인 상태 ──────────────────────────────────────────────
 
-    /** charging 은 시작 시 전원 상태(사람이 다룬 연결로 본다), awaitPickup 은 재부팅 복원 시작. */
-    fun start(nowMs: Long, zoneInside: Boolean, charging: Boolean = false, awaitPickup: Boolean = false) {
+    /** charging 은 시작 시 전원 상태: 충전 중이면 거치, 아니면 첫 뚜렷한 움직임 대기로 시작한다. */
+    fun start(nowMs: Long, zoneInside: Boolean, charging: Boolean = false) {
         startedAt = nowMs
         this.charging = charging
         chargeAt = nowMs
-        plugHuman = charging
-        carried = false
-        this.awaitPickup = awaitPickup
-        awaitSince = nowMs
-        baseline = null
-        offCount = 0
+        chargeSteps = 0
+        stepCarry = false
+        waitMove = !charging
+        carriedSince = Long.MIN_VALUE
+        recentActive.clear()
+        recentSteps.clear()
+        floorAt = nowMs
+        floorSteps = 0
+        runEnd = Long.MIN_VALUE
+        clearAccident()
+        lastPlugAt = Long.MIN_VALUE
         mode = Mode.WATCHING
         trigger = ""
         modeSinceMs = nowMs
-        pendingFall = false
         zoneSettled = false
         this.zoneInside = zoneInside
         zoneInsideSince = nowMs
     }
 
+    /** 기능 끄기: 열린 확인 창과 사고 의심은 거두고, 진행 중인 SOS 는 유지한다 (D-05). */
     fun setEnabled(on: Boolean, nowMs: Long) {
         if (on == enabled) return
         enabled = on
         if (on) {
             enabledAt = nowMs
         } else {
-            pendingFall = false
-            // 열린 확인은 취소, 진행 중인 SOS 는 유지 (D-05)
+            clearAccident()
             if (mode == Mode.CHECKING) toWatching(nowMs)
         }
     }
 
     /**
-     * 꽂기 전 10초 안에 활동 창이 끝났으면 사람이 다룬 연결이다: 거치로 시작하고 열린 확인은 답한 것으로 닫는다.
-     * 움직임 없는 연결(접점 흔들림·거치대 전원 복구)은 충전 상태만 바꾼다 — 몸에 지님·확인·낙상 대기는 그대로.
-     * 뽑아도 몸에 지님은 지우지 않는다. 몸에 지니지 않은 채 뽑으면 집어 들기를 기다린다.
+     * 디바운스를 통과한 실제 전원 변화. atMs 는 디바운스 전 첫 변화 시각.
+     * 연결: 새 거치 — 걸음 지님을 지우고, 열린 확인 창은 응답으로 보고 닫으며 사고 의심도 끝낸다.
+     * 확인 창이 없으면 충격 전후 10초 안의 연결만 사고 의심을 거둔다. 해제: 첫 뚜렷한 움직임 대기.
      */
-    fun setCharging(on: Boolean, nowMs: Long) {
+    fun setCharging(on: Boolean, atMs: Long) {
         if (on == charging) return
         charging = on
+        chargeAt = atMs
+        stepCarry = false
         if (on) {
-            chargeAt = nowMs
-            plugHuman = false
-            if (lastActiveEndMs != Long.MIN_VALUE && nowMs - lastActiveEndMs <= PLUG_LOOKBACK_MS) humanPlug(nowMs)
-        } else if (!carried && !awaitPickup) {
-            awaitPickup = true
-            awaitSince = nowMs
-        }
-    }
-
-    /**
-     * 닫힌 1초 센서 창(센서 시각 endMs). 활동 창은 사람이 다룬 연결 판정에 쓰고(늦게 도착한 창 포함),
-     * 쉬는 중에는 거치 자세 기준과 비교해 LIFT_DEG 이상 기운 창이 LIFT_WINDOWS 개 연속이면 집어 든 것으로 본다.
-     * 진동처럼 방향이 그대로인 흔들림은 쉼을 끝내지 않는다.
-     */
-    fun onWindow(nowMs: Long, w: MotionAnalyzer.Window) {
-        lastWindowAt = nowMs
-        if (!w.has) return
-        if (w.active) {
-            if (w.endMs > lastActiveEndMs) lastActiveEndMs = w.endMs
-            if (charging && !plugHuman && w.endMs <= chargeAt && chargeAt - w.endMs <= PLUG_LOOKBACK_MS) humanPlug(nowMs)
-        }
-        if (!resting) {
-            offCount = 0
-            return
-        }
-        val b = baseline
-        if (b == null) {
-            if (w.quiet && (!charging || w.endMs - 1000 >= chargeAt + CHARGE_SETTLE_MS)) baseline = doubleArrayOf(w.x, w.y, w.z)
-            return
-        }
-        if (MotionAnalyzer.angleDeg(w.x, w.y, w.z, b[0], b[1], b[2]) >= LIFT_DEG) {
-            if (++offCount >= LIFT_WINDOWS) lifted(nowMs)
+            waitMove = false
+            lastPlugAt = atMs
+            chargeSteps = recentSteps.count { it >= atMs }
+            if (mode == Mode.CHECKING) {
+                lastAckAt = atMs
+                toWatching(atMs)
+                clearAccident()
+            } else if (accidentUntil != Long.MIN_VALUE && abs(lastTrigAt - atMs) <= PLUG_EXCEPT_MS) {
+                clearAccident()
+            }
         } else {
-            offCount = 0
+            waitMove = true
+            resetFloor(atMs)
         }
     }
 
-    /** 움직임은 타이머만 갱신한다. 열린 확인은 절대 닫지 않고, 몸에 지님도 정하지 않는다 (D-02, D-07). */
+    /** 닫힌 1초 센서 창(endMs 는 이 기준으로 바꾼 시각). 활동 창은 이동 중 판정에, 강한 창은 걸음 대체에 쓴다. */
+    fun onWindow(w: MotionAnalyzer.Window) {
+        val end = w.endMs
+        if (w.has && w.active) remember(recentActive, end)
+        if (!(w.has && w.strong)) {
+            runEnd = Long.MIN_VALUE
+            return
+        }
+        if (runEnd == Long.MIN_VALUE || end - 1000 != runEnd) runStart = end - 1000
+        runEnd = end
+        if (stepsAvailable) return
+        if (runMs(floorAt) >= STRONG_RUN_MS) onDistinct(end)
+        if (charging && !stepCarry && runMs(chargeAt) >= CARRY_RUN_MS) carry(end)
+    }
+
+    /** 걸음 감지 1건(센서 시각을 바꾼 값). */
+    fun onStep(tMs: Long) {
+        remember(recentSteps, tMs)
+        if (charging && !stepCarry && tMs >= chargeAt && ++chargeSteps >= CARRY_STEPS) carry(tMs)
+        if (tMs > floorAt && ++floorSteps >= DISTINCT_STEPS) onDistinct(tMs)
+    }
+
+    /** 움직임(MOVED)은 무동작 타이머만 갱신한다. 열린 확인 창은 닫지 않는다 (D-02, D-07). */
     fun onMoved(nowMs: Long) {
         if (nowMs > lastMovedAt) lastMovedAt = nowMs
     }
 
-    /** 꽂은 지 15초 안의 낙상(꽂는 순간의 충격)은 무시한다. 쉬는 중 낙상은 집어 든 것으로 보고 확인을 연다. */
-    fun onFall(nowMs: Long) {
-        if (charging && !carried && nowMs - chargeAt < CHARGE_SETTLE_MS) return
-        if (resting) lifted(nowMs)
-        if (!enabled || zoneSettled || mode != Mode.WATCHING) return
-        pendingFall = true
+    /** 가속도 센서가 1분 동안 응답하지 않았다: 움직임 대기를 끝내고 지님으로 센다. */
+    fun sensorSilent(nowMs: Long) {
+        if (!waitMove) return
+        waitMove = false
+        carriedSince = nowMs
     }
 
-    private fun humanPlug(nowMs: Long) {
-        plugHuman = true
-        carried = false
-        awaitPickup = false
-        pendingFall = false
-        baseline = null
-        offCount = 0
-        if (mode == Mode.CHECKING) {
-            lastAckAt = nowMs
-            toWatching(nowMs)
-        }
-    }
-
-    private fun lifted(nowMs: Long) {
-        carried = true
-        awaitPickup = false
-        baseline = null
-        offCount = 0
-        restEndAt = nowMs
+    /**
+     * 낙상 또는 4 G 충격(trigMs = 충격 표본 시각). 이동 중이 아니었거나, 꺼짐·SOS·사고 확인 중이거나,
+     * 전원 연결이 충격 전후 10초 안이면 무시한다. 의심 중 새 트리거는 의심 끝만 늘린다.
+     */
+    fun onAccident(trigMs: Long) {
+        if (!enabled || mode == Mode.SOS) return
+        if (mode == Mode.CHECKING && trigger == "fall") return
+        val moving = recentActive.any { it in trigMs - MOVING_LOOKBACK_MS..trigMs } ||
+            recentSteps.any { it in trigMs - MOVING_LOOKBACK_MS..trigMs }
+        if (!moving) return
+        if (lastPlugAt != Long.MIN_VALUE && abs(trigMs - lastPlugAt) <= PLUG_EXCEPT_MS) return
+        if (accidentUntil == Long.MIN_VALUE) accidentFrom = trigMs
+        accidentUntil = maxOf(accidentUntil, trigMs + ACCIDENT_WATCH_MS)
+        lastTrigAt = trigMs
+        if (trigMs > floorAt) resetFloor(trigMs)
     }
 
     fun onZone(inside: Boolean, nowMs: Long) {
@@ -228,37 +255,25 @@ class LoneWorkerLogic(var myBleId: String) {
 
     fun tick(nowMs: Long) {
         updateSettle(nowMs)
-        // 집어 들기 대기 중 센서 창이 60초 동안 없으면 대기를 끝낸다 (자세를 볼 수 없으니 평소처럼 센다)
-        if (awaitPickup && nowMs - maxOf(lastWindowAt, awaitSince) >= SENSOR_SILENT_MS) {
-            awaitPickup = false
-            restEndAt = nowMs
+        accidentTick(nowMs)
+        if (enabled && !zoneSettled && rest == Rest.NONE && mode == Mode.WATCHING && nowMs - stillStart() >= stillMs) {
+            toChecking("still", nowMs)
         }
-        if (enabled && !zoneSettled && !resting) {
-            when (mode) {
-                Mode.WATCHING -> {
-                    if (pendingFall) {
-                        pendingFall = false
-                        toChecking("fall", nowMs)
-                    } else if (nowMs - stillStart() >= stillMs) {
-                        toChecking("still", nowMs)
-                    }
-                }
-                Mode.CHECKING -> {
-                    if (nowMs - modeSinceMs >= responseMs) {
-                        mode = Mode.SOS
-                        modeSinceMs = nowMs
-                    }
-                }
-                Mode.SOS -> {}
-            }
+        // 확인 창 → SOS 는 거치·대기·안전구역과 무관하다
+        if (mode == Mode.CHECKING && nowMs - modeSinceMs >= respFor(trigger)) {
+            mode = Mode.SOS
+            modeSinceMs = nowMs
+            clearAccident()
         }
         peerStore.tick(nowMs)
     }
 
+    /** [괜찮음]: 열린 확인 창을 닫고 진행 중인 사고 의심도 끝낸다. */
     fun ackWorking(nowMs: Long): Boolean {
         if (mode != Mode.CHECKING) return false
         lastAckAt = nowMs
         toWatching(nowMs)
+        clearAccident()
         return true
     }
 
@@ -266,6 +281,7 @@ class LoneWorkerLogic(var myBleId: String) {
         if (mode != Mode.SOS) return false
         lastAckAt = nowMs
         toWatching(nowMs)
+        clearAccident()
         return true
     }
 
@@ -277,20 +293,82 @@ class LoneWorkerLogic(var myBleId: String) {
         mode = Mode.SOS
         this.trigger = trigger
         modeSinceMs = nowMs
-        pendingFall = false
+        clearAccident()
     }
 
     fun responseLeftMs(nowMs: Long): Long =
-        if (mode == Mode.CHECKING) (responseMs - (nowMs - modeSinceMs)).coerceAtLeast(0L) else 0L
+        if (mode == Mode.CHECKING) (respFor(trigger) - (nowMs - modeSinceMs)).coerceAtLeast(0L) else 0L
+
+    private fun respFor(trig: String): Long = if (trig == "fall") ACCIDENT_RESPONSE_MS else responseMs
+
+    /**
+     * 사고 의심 판정. 마지막 뚜렷한 움직임(없으면 충격)부터 30초가 의심 5분 안에 차면 사고 확인 창을 연다.
+     * 무동작 확인 창이 이미 열려 있으면 두 마감 중 이른 쪽을 남긴다. 5분 안에 못 차면 의심을 끝낸다.
+     */
+    private fun accidentTick(nowMs: Long) {
+        if (accidentUntil == Long.MIN_VALUE) return
+        if (mode == Mode.SOS) {
+            clearAccident()
+            return
+        }
+        val openAt = maxOf(accidentFrom, lastDistinctAt) + ACCIDENT_STILL_MS
+        if (openAt <= accidentUntil && nowMs >= openAt) {
+            if (mode == Mode.WATCHING) {
+                toChecking("fall", nowMs)
+            } else if (trigger == "still" && nowMs + ACCIDENT_RESPONSE_MS < modeSinceMs + responseMs) {
+                trigger = "fall"
+                modeSinceMs = nowMs
+            }
+        } else if (nowMs >= accidentUntil) {
+            clearAccident()
+        }
+    }
+
+    /** 뚜렷한 움직임: 대기를 끝내고, 무동작 시간을 새로 세며, 열린 확인 창을 닫는다(사고 의심은 계속). */
+    private fun onDistinct(t: Long) {
+        if (t > lastDistinctAt) lastDistinctAt = t
+        if (t > lastMovedAt) lastMovedAt = t
+        resetFloor(t)
+        if (waitMove) {
+            waitMove = false
+            carriedSince = t
+        }
+        if (mode == Mode.CHECKING) {
+            lastAckAt = t
+            toWatching(t)
+        }
+    }
+
+    /** 지금 이어지는 강한 창 중 from 이후에 시작한 창들의 길이(ms). */
+    private fun runMs(from: Long): Long = (runEnd - maxOf(runStart, from)) / 1000 * 1000
+
+    private fun carry(t: Long) {
+        stepCarry = true
+        carriedSince = t
+    }
+
+    private fun resetFloor(t: Long) {
+        floorAt = t
+        floorSteps = recentSteps.count { it > t }
+    }
+
+    private fun remember(q: ArrayDeque<Long>, t: Long) {
+        q.addLast(t)
+        while (q.isNotEmpty() && t - q.first() > RECENT_KEEP_MS) q.removeFirst()
+    }
+
+    private fun clearAccident() {
+        accidentFrom = Long.MIN_VALUE
+        accidentUntil = Long.MIN_VALUE
+    }
 
     private fun stillStart(): Long =
-        maxOf(startedAt, lastMovedAt, lastAckAt, enabledAt, zoneLeftAt, restEndAt)
+        maxOf(maxOf(startedAt, lastMovedAt, lastAckAt), maxOf(enabledAt, zoneLeftAt, carriedSince))
 
     private fun updateSettle(nowMs: Long) {
         if (zoneInside && !zoneSettled && nowMs - zoneInsideSince >= ZONE_SETTLE_MS) {
             zoneSettled = true
-            pendingFall = false
-            if (mode == Mode.CHECKING) toWatching(nowMs)
+            if (mode == Mode.CHECKING && trigger == "still") toWatching(nowMs)
         }
     }
 
@@ -298,13 +376,13 @@ class LoneWorkerLogic(var myBleId: String) {
         mode = Mode.WATCHING
         trigger = ""
         modeSinceMs = nowMs
-        pendingFall = false
     }
 
     private fun toChecking(trig: String, nowMs: Long) {
         mode = Mode.CHECKING
         trigger = trig
         modeSinceMs = nowMs
+        resetFloor(nowMs)
     }
 
     // ── 동료 SOS (D-06): 회차 단위 항목은 LoneWorkerPeers 가 맡는다 ─────────

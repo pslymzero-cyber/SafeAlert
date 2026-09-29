@@ -2,10 +2,6 @@ package com.wf11.safealert.service
 
 import android.content.Context
 import android.content.SharedPreferences
-import android.hardware.Sensor
-import android.hardware.SensorEvent
-import android.hardware.SensorEventListener
-import android.hardware.SensorManager
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
@@ -15,9 +11,9 @@ import com.wf11.safealert.utils.BeaconRegistry
 import com.wf11.safealert.utils.DevSettings
 
 /**
- * 단독 작업자 무동작·낙상 SOS 의 안드로이드 접착부 (v1.1.99).
+ * 단독 작업자 사고·무동작 SOS 의 안드로이드 접착부 (v1.1.99).
  *
- * 판정은 LoneWorkerLogic/MotionAnalyzer(순수)가 하고, 여기서는 센서·화면·소리·알림·서버·BLE 를 잇는다.
+ * 판정은 LoneWorkerLogic/MotionAnalyzer(순수)가 하고, 여기서는 센서(LoneWorkerSensors)·전원·화면·소리·알림·서버·BLE 를 잇는다.
  * BleService 는 이 클래스의 진입점만 부른다. 충돌 판정 경로와 광고 첫 바이트는 건드리지 않는다.
  *
  * 생성자는 참조만 저장한다(시스템 서비스 호출 없음). start() 전에는 모든 진입점이 즉시 반환한다.
@@ -27,7 +23,7 @@ class LoneWorkerMonitor(
     private val ctx: Context,
     private val advertiseSos: (Boolean, Int, Int) -> Unit,
     setAlarmVolume: (Int) -> Unit
-) : SensorEventListener {
+) {
 
     /** 확인 화면이 그리는 상태. mode 가 WATCHING 이고 동료 줄이 없으면 uiState() 가 null 을 준다. */
     data class UiState(
@@ -55,7 +51,6 @@ class LoneWorkerMonitor(
     }
 
     private var logic = LoneWorkerLogic("")
-    private var analyzer = MotionAnalyzer() // 센서 등록마다 새로 만든다(충격 임계값 주입)
     private val alarm = LoneWorkerAlarm(ctx, setAlarmVolume)
     private val handler = Handler(Looper.getMainLooper())
     private val sync = LoneWorkerSosSync(ctx, handler,
@@ -73,14 +68,9 @@ class LoneWorkerMonitor(
     private var roleName = ""
     private var lastMode = LoneWorkerLogic.Mode.WATCHING
     private var lastAudible: Set<String> = emptySet()
-    private val stall = SensorStall()
-    private var noSensor = false   // 가속도 센서 자체가 없음: 무동작·낙상 판정을 끈다 (등록 실패와 구분)
     private val watchdog = LoneWorkerWatchdog(ctx, { onWatchdog() }, { onNotificationDismissed() })
     private val notifier = LoneWorkerNotifier(ctx) { watchdog.dismissPi() }
     private var lastTickAt = 0L
-    private var sensorManager: SensorManager? = null
-    private var sensorRegistered = false
-    private var fallbackWake = false
     private var wakeLock: PowerManager.WakeLock? = null
     private var loopOn = false
     private var prefsListener: SharedPreferences.OnSharedPreferenceChangeListener? = null
@@ -92,8 +82,10 @@ class LoneWorkerMonitor(
     val sosHint: Int get() = if (sosActive) sync.hint() else 0
     private val sidLabels = HashMap<Int, String>()   // (v1.1.99) 짧은 ID → 비콘 라벨 캐시(찾은 것만 저장), stop 에서 비움
     private val sidMissUntil = HashMap<Int, Long>()  // 라벨 없는 짧은 ID → 다시 찾을 수 있는 시각
-    private val power = LoneWorkerPower(ctx) { onPower(it) }
-    /** (v1.1.99) 무동작·낙상 확인을 쉬는 이유(거치·집어 들기 대기). 메인 화면 안내용 */
+    private val power = LoneWorkerPower(ctx, handler) { on, at -> onPower(on, at) }
+    private val sensors = LoneWorkerSensors(ctx, handler, { logic }) { onSensorEvent(it) }
+    private var lastRest = LoneWorkerLogic.Rest.NONE
+    /** (v1.1.99) 무동작 확인을 쉬는 이유(거치·움직임 대기). 메인 화면 안내용 */
     val rest: LoneWorkerLogic.Rest get() = if (started) logic.rest else LoneWorkerLogic.Rest.NONE
     private var rendering = false
     private var renderAgain = false
@@ -102,14 +94,14 @@ class LoneWorkerMonitor(
 
     // ── 시작·종료 ──────────────────────────────────────────────
 
-    fun start(bleId: String, name: String, roleName: String, zoneInside: Boolean, bootRestore: Boolean = false) {
+    fun start(bleId: String, name: String, roleName: String, zoneInside: Boolean) {
         this.name = name
         this.roleName = roleName
         logic.myBleId = bleId
         if (started) return
         started = true
-        // PDA 거치대 충전 중이면 거치로, 재부팅 복원이면 집어 들기 대기로 시작한다 (v1.1.99)
-        logic.start(now(), zoneInside, power.start(), bootRestore)
+        // 충전 중이면 거치로, 아니면 첫 뚜렷한 움직임 대기로 시작한다 (v1.1.99)
+        logic.start(now(), zoneInside, power.start())
         // 저장된 본인 SOS 가 있으면 첫 렌더 전에 되살린다 — 같은 서버 키로 사이렌·광고 bit1 이 다시 켜진다 (v1.1.99, R3)
         sync.restoredTrigger()?.let { logic.restoreSos(it, now()) }
         notifier.createChannel()
@@ -132,7 +124,8 @@ class LoneWorkerMonitor(
         override fun run() {
             if (!started) return
             sync.tick()
-            logic.setCharging(power.plugged(), now())   // 방송을 놓쳐도 스티키 배터리 상태로 보정
+            power.pollSticky()     // 방송을 놓쳐도 스티키 배터리 상태로 보정(같은 2초 디바운스)
+            sensors.refreshSteps() // 신체 활동 권한이 바뀌었으면 걸음 센서 등록을 맞춘다
             checkStall(now())
             handler.postDelayed(this, SYNC_TICK_MS)
         }
@@ -141,7 +134,7 @@ class LoneWorkerMonitor(
     fun stop() {
         if (!started) return
         started = false
-        unregisterSensor()
+        sensors.unregister()
         prefsListener?.let { DevSettings.unregisterOnChange(it) }
         prefsListener = null
         sync.stopListening()
@@ -169,90 +162,38 @@ class LoneWorkerMonitor(
         logic.responseMs = DevSettings.lwResponseMin * 60_000L
         // 센서가 아예 없으면 판정을 끈다. 등록만 실패한 경우는 판정을 유지한다: 확인은 그대로 열리고 신호 없음은 움직임 없음으로 센다 (v1.1.99)
         if (DevSettings.lwEnabled) {
-            if (!sensorRegistered) stall.reset(t)
-            registerSensor()
-            if (noSensor) watchdog.disarm() else watchdog.arm()
+            if (!sensors.registered) sensors.resetStall(t)
+            sensors.register()
+            if (sensors.noSensor) watchdog.disarm() else watchdog.arm()
         } else {
-            unregisterSensor()
+            sensors.unregister()
             watchdog.disarm()
         }
-        logic.setEnabled(DevSettings.lwEnabled && !noSensor, t)
+        logic.setEnabled(DevSettings.lwEnabled && !sensors.noSensor, t)
         render()
     }
 
     // ── 센서 ──────────────────────────────────────────────────
 
-    private fun registerSensor() {
-        if (sensorRegistered) return
-        val sm = runCatching { ctx.getSystemService(Context.SENSOR_SERVICE) as SensorManager }.getOrNull()
-        if (sm == null) {
-            Log.w(TAG, "센서 서비스 없음 — 무동작·낙상 판정 끔")
-            noSensor = true
-            return
-        }
-        var s = sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER, true)
-        var wake = true
-        if (s == null) {
-            s = sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
-            wake = false
-        }
-        if (s == null) {
-            Log.w(TAG, "가속도 센서 없음 — 무동작·낙상 판정 끔")
-            noSensor = true
-            return
-        }
-        val impactG = MotionAnalyzer.impactGFor(s.maximumRange)
-        Log.i(TAG, "가속도 센서 wakeUp=${s.isWakeUpSensor} fifoMax=${s.fifoMaxEventCount} fifoReserved=${s.fifoReservedEventCount} range=${s.maximumRange} impactG=$impactG")
-        analyzer = MotionAnalyzer(impactG) { logic.onWindow(now(), it) }
-        val ok = sm.registerListener(this, s, 20_000, 5_000_000, handler)
-        if (!ok) {
-            Log.w(TAG, "가속도 센서 등록 실패 — 판정 유지, 다시 등록")
-            return
-        }
-        sensorManager = sm
-        sensorRegistered = true
-        fallbackWake = !wake
-    }
-
-    private fun unregisterSensor() {
-        if (sensorRegistered) runCatching { sensorManager?.unregisterListener(this) }
-        sensorRegistered = false
-        fallbackWake = false
-    }
-
-    override fun onSensorChanged(event: SensorEvent) {
+    /** 센서 콜백 뒤: 상태·쉼 이유가 바뀌었으면 바로, 아니면 1초에 한 번 tick·render 한다 (v1.1.99). */
+    private fun onSensorEvent(t: Long) {
         if (!started) return
-        val v = event.values
-        val t = now()
-        val evMs = event.timestamp / 1_000_000L
-        stall.onEvent(t)
-        // 이 앱의 진동 구간 표본은 활동 통계에서만 뺀다. 낙상 감지에는 그대로 넣는다 (v1.1.99, F07·RR02)
-        when (analyzer.add(evMs, v[0], v[1], v[2], masked = VibrationHelper.window.covers(evMs))) {
-            MotionAnalyzer.Signal.MOVED -> logic.onMoved(t)
-            MotionAnalyzer.Signal.FALL -> logic.onFall(t)
-            MotionAnalyzer.Signal.NONE -> {}
-        }
-        if (t - lastTickAt >= TICK_MIN_MS) {
-            lastTickAt = t
-            logic.tick(t)
-            render()
-        }
+        if (logic.mode == lastMode && logic.rest == lastRest && t - lastTickAt < TICK_MIN_MS) return
+        lastTickAt = t
+        logic.tick(t)
+        render()
     }
-
-    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
 
     /**
      * 센서 신호 공백 검사 (RR08). 끊긴 동안에도 움직임이 없는 것으로 보고 무동작 시간을 계속 센다.
      * 다시 등록할 때는 무동작 시작 시각·확인 중 상태를 건드리지 않는다(열려 있는 확인을 취소하지 않기 위해).
+     * 약 1분 응답이 없으면(두 번째 재등록 검사) 움직임 대기를 끝낸다.
      */
     private fun checkStall(t: Long) {
         if (!started) return
         // 등록에 실패해 센서가 없는 동안에도 같은 백오프로 다시 등록한다
-        if (DevSettings.lwEnabled && !noSensor && stall.check(t) == SensorStall.Action.REREGISTER) {
-            Log.w(TAG, "가속도 센서 신호 없음 또는 미등록 — 다시 등록")
-            unregisterSensor()
-            registerSensor()
-        }
+        if (DevSettings.lwEnabled && !sensors.noSensor) sensors.checkStall(t)
+        if (sensors.stalled) logic.sensorSilent(t)
         logic.tick(t)
         render()
     }
@@ -260,14 +201,14 @@ class LoneWorkerMonitor(
     private fun onWatchdog() {
         if (!started) return
         checkStall(now())
-        if (DevSettings.lwEnabled && !noSensor) watchdog.arm()
+        if (DevSettings.lwEnabled && !sensors.noSensor) watchdog.arm()
     }
 
-    /** 외부 전원 연결·해제 (PDA 거치대): 무동작·낙상 확인만 쉬거나 다시 시작한다 (v1.1.99). */
-    private fun onPower(on: Boolean) {
+    /** 디바운스를 통과한 외부 전원 연결·해제 (atMs = 첫 변화 시각) (v1.1.99). */
+    private fun onPower(on: Boolean, atMs: Long) {
         if (!started) return
+        logic.setCharging(on, atMs)
         val t = now()
-        logic.setCharging(on, t)
         logic.tick(t)
         render()
     }
@@ -367,17 +308,18 @@ class LoneWorkerMonitor(
 
     // ── 렌더링: 상태 전환·소리·알림·화면 ────────────────────────
 
-    private val keepText: String
-        get() = if (logic.resting) "거치 중이라 무동작 확인은 쉬며" else "움직임이 없는 것으로 보고 확인을 계속하며"
+    private val keepText: String get() = logic.rest.keepText
 
-    /** 조용한 안내 알림. 우선순위: 센서 없음, 센서 등록 실패, 센서 신호 끊김, 해제 미전송. */
+    /** 조용한 안내 알림. 우선순위: 센서 없음, 센서 등록 실패, 센서 신호 끊김, 걸음 권한 없음, 해제 미전송. */
     private fun notice(): Pair<String, String>? = when {
-        DevSettings.lwEnabled && noSensor ->
-            "무동작 감시 불가" to "이 기기에는 가속도 센서가 없어 무동작·낙상 감시를 하지 않습니다. 동료 구조 요청 수신은 계속됩니다"
-        DevSettings.lwEnabled && !sensorRegistered ->
+        DevSettings.lwEnabled && sensors.noSensor ->
+            "무동작 감시 불가" to "이 기기에는 가속도 센서가 없어 사고·무동작 감시를 하지 않습니다. 동료 구조 요청 수신은 계속됩니다"
+        DevSettings.lwEnabled && !sensors.registered ->
             "무동작 감시 불가" to "가속도 센서를 등록하지 못했습니다. " + keepText + " 센서를 다시 등록합니다"
-        DevSettings.lwEnabled && stall.stalled ->
+        DevSettings.lwEnabled && sensors.stalled ->
             "무동작 감시 불가" to "가속도 센서 신호가 끊겼습니다. " + keepText + " 센서를 다시 등록합니다"
+        DevSettings.lwEnabled && sensors.stepPermissionMissing ->
+            "걸음 감지 꺼짐" to "신체 활동 권한이 없어 걸음 대신 강한 움직임으로 판단합니다. 앱 설정에서 신체 활동을 허용하세요"
         sync.resolveFailing() ->
             "구조 요청 해제 미전송" to "서버에 해제를 기록하지 못했습니다. 계속 다시 보냅니다"
         else -> null
@@ -418,6 +360,7 @@ class LoneWorkerMonitor(
             advertiseSos(false, 0, 0)
         }
         lastMode = mode
+        lastRest = logic.rest
 
         val audible = logic.audiblePeers()
         val ids = audible.mapTo(HashSet()) { it.epId }
@@ -440,7 +383,7 @@ class LoneWorkerMonitor(
     // ── 5초 갱신·웨이크락 ─────────────────────────────────────
 
     private fun needLoop() =
-        logic.mode != LoneWorkerLogic.Mode.WATCHING || logic.peers.isNotEmpty() || (fallbackWake && sensorRegistered)
+        logic.mode != LoneWorkerLogic.Mode.WATCHING || logic.peers.isNotEmpty() || (sensors.fallbackWake && sensors.registered)
 
     private fun scheduleLoop() {
         if (loopOn || !needLoop()) return
@@ -463,7 +406,7 @@ class LoneWorkerMonitor(
     }
 
     private fun updateWakeLock(renew: Boolean) {
-        val need = (fallbackWake && sensorRegistered) || logic.mode != LoneWorkerLogic.Mode.WATCHING ||
+        val need = (sensors.fallbackWake && sensors.registered) || logic.mode != LoneWorkerLogic.Mode.WATCHING ||
             logic.audiblePeers().isNotEmpty()
         if (!need) {
             releaseWakeLock()

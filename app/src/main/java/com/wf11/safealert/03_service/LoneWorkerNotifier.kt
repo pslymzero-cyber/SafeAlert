@@ -12,9 +12,12 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.wf11.safealert.ui.LoneWorkerActivity
 import com.wf11.safealert.ui.MainActivity
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+
+/** 동료 항목 시각 표시 형식(스레드 안전, 한 번만 만든다). */
+private val HHMM: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
 
 /** 동료 항목의 표시 이름: 이름이 없으면 장비 ID 에서 접두어를 뗀 값. */
 internal fun LoneWorkerPeers.Peer.displayName(): String =
@@ -29,7 +32,7 @@ internal fun LoneWorkerPeers.Peer.line(nowMs: Long): String {
     }
     val wall = if (fromServer) createdAtMs else System.currentTimeMillis() - (nowMs - firstSeenMs)
     return listOfNotNull(
-        displayName(), roleText.ifEmpty { null }, SimpleDateFormat("HH:mm", Locale.KOREA).format(Date(wall)),
+        displayName(), roleText.ifEmpty { null }, HHMM.format(Instant.ofEpochMilli(wall).atZone(ZoneId.systemDefault())),
         beacon.ifEmpty { null }?.let { if (fromServer) "마지막 위치: $it" else "${it} 근처" }, if (active) "구조 요청" else "해제됨"
     ).joinToString(" · ")
 }

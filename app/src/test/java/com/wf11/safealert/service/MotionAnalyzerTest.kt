@@ -2,6 +2,7 @@ package com.wf11.safealert.service
 
 import com.wf11.safealert.service.MotionAnalyzer.Signal
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.math.PI
@@ -193,20 +194,60 @@ class MotionAnalyzerTest {
         assertEquals(1, r.times(Signal.FALL).size)
     }
 
-    @Test fun window_reports_mean_direction_and_quiet() {
+    @Test fun window_reports_activity_per_second() {
         val windows = ArrayList<MotionAnalyzer.Window>()
         val r = Run(MotionAnalyzer { windows.add(it) })
         val tilt = 40.0 * PI / 180.0
         r.span(0, 3000, still)
         r.span(3000, 6000) { t -> floatArrayOf(0f, 0f, (9.81 + 1.5 * sin(2 * PI * 20.0 * sec(t))).toFloat()) }
-        r.span(6000, 9020) { floatArrayOf(0f, (9.81 * sin(tilt)).toFloat(), (9.81 * cos(tilt)).toFloat()) }
+        r.span(6000, 9000, walking(3.0, 2.0))
+        r.span(9000, 12_020) { floatArrayOf(0f, (9.81 * sin(tilt)).toFloat(), (9.81 * cos(tilt)).toFloat()) }
         fun w(end: Long) = windows.single { it.endMs == end }
-        fun toZ(x: MotionAnalyzer.Window) = MotionAnalyzer.angleDeg(x.x, x.y, x.z, 0.0, 0.0, 1.0)
-        for (e in listOf(1000L, 2000L, 3000L)) assertTrue(w(e).quiet)
+        for (e in listOf(1000L, 2000L, 3000L)) {
+            assertTrue(w(e).has)
+            assertFalse(w(e).active)
+            assertFalse(w(e).strong)
+        }
+        // vibration: active but below walking level
         for (e in listOf(4000L, 5000L, 6000L)) {
             assertTrue(w(e).active)
-            assertTrue(toZ(w(e)) < 5.0)
+            assertFalse(w(e).strong)
         }
-        for (e in listOf(7000L, 8000L, 9000L)) assertEquals(40.0, toZ(w(e)), 3.0)
+        for (e in listOf(7000L, 8000L, 9000L)) assertTrue(w(e).strong)
+        // a posture change alone is activity, never strong motion
+        assertTrue(w(10_000L).active)
+        assertFalse(w(10_000L).strong)
+    }
+
+    @Test fun impact_at_4g_emits_impact_with_sample_time() {
+        val r = Run()
+        r.span(0, 3000, still)
+        r.sample(3000, 0f, 0f, 39.3f)
+        assertEquals(listOf(3000L), r.times(Signal.IMPACT))
+        assertEquals(3000L, r.a.eventMs)
+
+        val weak = Run()
+        weak.span(0, 3000, still)
+        weak.sample(3000, 0f, 0f, 38.2f)
+        assertTrue(weak.times(Signal.IMPACT).isEmpty())
+    }
+
+    @Test fun impact_threshold_is_90pct_of_small_range() {
+        assertEquals(2.7, MotionAnalyzer.impactGFor(3 * 9.80665f, MotionAnalyzer.SHOCK_G), 0.01)
+        assertEquals(4.0, MotionAnalyzer.impactGFor(8 * 9.80665f, MotionAnalyzer.SHOCK_G), 1e-9)
+        val small = Run(MotionAnalyzer(shockG = 2.7))
+        small.span(0, 3000, still)
+        small.sample(3000, 0f, 0f, 27f)
+        assertEquals(listOf(3000L), small.times(Signal.IMPACT))
+    }
+
+    @Test fun fall_reports_impact_time_not_decision_time() {
+        val r = Run()
+        r.fallHead()
+        r.span(3260, 17_000, lying)
+        val falls = r.times(Signal.FALL)
+        assertEquals(1, falls.size)
+        assertEquals(3200L, r.a.eventMs)
+        assertTrue(falls[0] - r.a.eventMs >= 12_000)
     }
 }

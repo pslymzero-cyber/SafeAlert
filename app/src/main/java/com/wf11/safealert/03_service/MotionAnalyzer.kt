@@ -4,60 +4,64 @@ import kotlin.math.acos
 import kotlin.math.sqrt
 
 /**
- * 가속도 샘플(중력 포함, m/s^2)로 활동 초와 낙상을 판정한다 (v1.1.99).
+ * 가속도 샘플(중력 포함, m/s^2)로 활동 초·강한 움직임·충격·낙상을 판정한다 (v1.1.99).
  *
  * 순수 JVM 로직. 활동 초: 1초 창의 |a| 표준편차가 ACTIVE_STD 이상이거나, 직전 창 평균 벡터와의
  * 각도 차가 ACTIVE_ANGLE_DEG 이상이면 활동. 최근 10개 창 중 3개 이상 활동이면 MOVED.
  * 샘플이 없는 창은 정지로 센다 (D-07). 샘플 공백은 MOVED 판정 전에 빈 창으로 밀어 넣는다 (v1.1.99).
+ * 강한 움직임 창: |a| 표준편차가 걷기 수준(STRONG_STD) 이상. 각도는 보지 않는다 — 쓰러진 채 뒤척임·자세 변화는 제외.
  *
- * 낙상: 자유낙하(0.5 G 미만 60 ms 이상) 직후 1초 안의 충격(2.5 G 초과), 충격 2~12초 뒤 구간에서
- * 자세가 45도 이상 바뀌었고 활동 초가 3개 미만이면 FALL. 임계값은 문헌 범위의 보수값이라 현장 보정 대상이다.
- * 충격 임계값은 센서 측정 범위가 2.5 G 미만인 기기(2 G 센서)에서는 범위에 맞춰 낮춘다 (impactGFor).
+ * 충격(IMPACT): 중력 포함 크기 표본 하나가 shockG(기본 4 G, 센서 범위가 더 작으면 범위의 90%) 이상.
+ * 낙상(FALL): 자유낙하(0.5 G 미만 60 ms 이상) 직후 1초 안의 충격(2.5 G 초과), 충격 2~12초 뒤 구간에서
+ * 자세가 45도 이상 바뀌었고 활동 초가 3개 미만. 임계값은 문헌 범위의 보수값이라 현장 보정 대상이다.
+ * 낙상 충격 임계값도 센서 측정 범위가 2.5 G 미만인 기기(2 G 센서)에서는 범위에 맞춰 낮춘다 (impactGFor).
+ * 두 신호 모두 eventMs 에 충격 표본의 센서 시각을 남긴다(낙상은 판정 시각이 아니라 충격 시각).
  *
- * 이 앱 자신의 진동 구간 표본(masked)은 활동 통계에서만 뺀다. 낙상 판정은 모든 표본을 본다 —
+ * 이 앱 자신의 진동 구간 표본(masked)은 활동 통계에서만 뺀다. 낙상·충격 판정은 모든 표본을 본다 —
  * 진동 모터 가속도는 충격 임계값보다 훨씬 작고, 알람 중 낙상을 놓치는 쪽이 더 나쁘다 (v1.1.99).
  *
- * 닫힌 1초 창마다 평균 중력 방향과 조용함 여부를 onWindow 로 알린다 — 거치·집어 들기 자세 판정용.
+ * 닫힌 1초 창마다 활동·강한 움직임 여부를 onWindow 로 알린다.
  */
-class MotionAnalyzer(private val impactG: Double = IMPACT_G, private val onWindow: (Window) -> Unit = {}) {
+class MotionAnalyzer(
+    private val impactG: Double = IMPACT_G,
+    private val shockG: Double = SHOCK_G,
+    private val onWindow: (Window) -> Unit = {}
+) {
 
-    enum class Signal { NONE, MOVED, FALL }
+    enum class Signal { NONE, MOVED, IMPACT, FALL }
 
-    /** 닫힌 1초 창: endMs(센서 시각), 표본 유무, 평균 벡터, 활동 여부. 표본이 있고 활동이 아니면 조용한 창. */
-    data class Window(val endMs: Long, val has: Boolean, val x: Double, val y: Double, val z: Double, val active: Boolean) {
-        val quiet: Boolean get() = has && !active
-    }
+    /** 닫힌 1초 창: endMs(센서 시각), 표본 유무, 활동 여부, 걷기 수준 강한 움직임 여부. */
+    data class Window(val endMs: Long, val has: Boolean, val active: Boolean, val strong: Boolean)
 
     companion object {
         const val G = 9.80665
         const val ACTIVE_STD = 0.3
         const val ACTIVE_ANGLE_DEG = 10.0
+        /** 걷기 수준 흔들림(m/s^2, |a| 표준편차). 현장 보정 대상. */
+        const val STRONG_STD = 1.5
         const val MOVE_WINDOWS = 10
         const val MOVE_MIN_ACTIVE = 3
         const val FREE_FALL_G = 0.5
         const val FREE_FALL_MIN_MS = 60L
         const val IMPACT_G = 2.5
+        const val SHOCK_G = 4.0
         const val IMPACT_WINDOW_MS = 1000L
         const val POST_START_MS = 2000L
         const val POST_END_MS = 12000L
         const val POSTURE_DEG = 45.0
         const val POST_MAX_ACTIVE = 3
 
-        /** 센서 최대 범위(m/s^2)가 2.5 G 미만이면 범위의 90% 를 충격 임계로 쓴다. 아니면 IMPACT_G. */
-        fun impactGFor(maxRangeMs2: Float): Double {
-            if (maxRangeMs2 <= 0f) return IMPACT_G
+        /** 센서 최대 범위(m/s^2)가 limitG 미만이면 범위의 90% 를 임계로 쓴다. 아니면 limitG. */
+        fun impactGFor(maxRangeMs2: Float, limitG: Double = IMPACT_G): Double {
+            if (maxRangeMs2 <= 0f) return limitG
             val rangeG = maxRangeMs2 / G
-            return if (rangeG < IMPACT_G) 0.9 * rangeG else IMPACT_G
-        }
-
-        fun angleDeg(ax: Double, ay: Double, az: Double, bx: Double, by: Double, bz: Double): Double {
-            val na = sqrt(ax * ax + ay * ay + az * az)
-            val nb = sqrt(bx * bx + by * by + bz * bz)
-            if (na < 1e-6 || nb < 1e-6) return 0.0
-            val c = ((ax * bx + ay * by + az * bz) / (na * nb)).coerceIn(-1.0, 1.0)
-            return Math.toDegrees(acos(c))
+            return if (rangeG < limitG) 0.9 * rangeG else limitG
         }
     }
+
+    /** 마지막 IMPACT·FALL 신호의 충격 표본 센서 시각(ms). */
+    var eventMs = 0L
+        private set
 
     // 1초 창 누적
     private var curIdx = -1L
@@ -123,7 +127,15 @@ class MotionAnalyzer(private val impactG: Double = IMPACT_G, private val onWindo
         if (!masked) { n++; sumM += mag; sumM2 += mag * mag; sx += ax; sy += ay; sz += az }
 
         val fell = detectFall(tMs, ax, ay, az, mag)
-        return if (fell) Signal.FALL else if (moved) Signal.MOVED else Signal.NONE
+        if (fell) {
+            eventMs = impactT
+            return Signal.FALL
+        }
+        if (mag >= shockG * G) {
+            eventMs = tMs
+            return Signal.IMPACT
+        }
+        return if (moved) Signal.MOVED else Signal.NONE
     }
 
     /** 현재 창을 닫고 MOVED 조건 충족 여부를 돌려준다. nextIdx 는 새 샘플이 여는 창 번호. */
@@ -138,7 +150,7 @@ class MotionAnalyzer(private val impactG: Double = IMPACT_G, private val onWindo
         val std = if (has) sqrt((sumM2 / cnt - mm * mm).coerceAtLeast(0.0)) else 0.0
         var active = has && std >= ACTIVE_STD
         if (!active && has && hasPrev) active = angleDeg(mx, my, mz, prevX, prevY, prevZ) >= ACTIVE_ANGLE_DEG
-        onWindow(Window((curIdx + 1) * 1000, has, mx, my, mz, active))
+        onWindow(Window((curIdx + 1) * 1000, has, active, has && std >= STRONG_STD))
 
         if (lastClosedIdx >= 0) {
             val gap = curIdx - lastClosedIdx
@@ -207,4 +219,12 @@ class MotionAnalyzer(private val impactG: Double = IMPACT_G, private val onWindo
             angleDeg(postX / postN, postY / postN, postZ / postN, candPreX, candPreY, candPreZ) >= POSTURE_DEG
         return posture
     }
+}
+
+private fun angleDeg(ax: Double, ay: Double, az: Double, bx: Double, by: Double, bz: Double): Double {
+    val na = sqrt(ax * ax + ay * ay + az * az)
+    val nb = sqrt(bx * bx + by * by + bz * bz)
+    if (na < 1e-6 || nb < 1e-6) return 0.0
+    val c = ((ax * bx + ay * by + az * bz) / (na * nb)).coerceIn(-1.0, 1.0)
+    return Math.toDegrees(acos(c))
 }
