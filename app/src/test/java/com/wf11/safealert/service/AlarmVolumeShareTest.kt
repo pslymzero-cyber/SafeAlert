@@ -41,4 +41,11 @@ class AlarmVolumeShareTest {
         AlarmVolumeShare.noteCollision(2_000)
         assertEquals(2_000L, AlarmVolumeShare.collisionAtMs)
     }
+
+    @Test
+    fun final_stop_restores_even_within_collision_hold() {
+        assertEquals(Restore.RESTORE, AlarmVolumeShare.restoreAction(7, 3, 7, 100_000, 99_000, final = true))
+        assertEquals(Restore.WAIT, AlarmVolumeShare.restoreAction(7, 3, 7, 100_000, 99_000, final = false))
+        assertEquals(Restore.DROP, AlarmVolumeShare.restoreAction(5, 3, 7, 100_000, 99_000, final = true))
+    }
 }

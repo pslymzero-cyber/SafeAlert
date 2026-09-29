@@ -169,15 +169,24 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private val blePermissions = LoneWorkerUi.runPermissions   // 서비스 시작 조건과 같은 목록 (v1.1.99)
+    private val blePermissions = LoneWorkerUi.runPermissions   // 서비스 시작 권한(ServiceStartGate.required) + 정밀 위치 (v1.1.99)
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { _ ->
         // (v1.1.30) 판정은 BLE 필수 권한만 — UWB_RANGING 은 선택(거부돼도 BLE 로 동작)
-        if (hasAllPermissions()) requestBatteryOptimizationExclusion()
+        if (hasAllPermissions()) afterPermissions()
         else showPermissionWarning("BLE · 위치 권한이 필요합니다. 탭하여 허용해주세요.") { openAppSettings() }
     }
+
+    // (v1.1.99) Android 11 위치 '항상 허용' — 거부해도 시작 흐름은 계속된다(메인 화면 경고만)
+    private val bgLocationLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { _ ->
+        requestBatteryOptimizationExclusion()
+    }
+
+    private fun afterPermissions() =
+        if (LoneWorkerUi.needsBackgroundLocation(this)) bgLocationLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+        else requestBatteryOptimizationExclusion()
 
     private val batteryOptLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -326,7 +335,8 @@ class MainActivity : AppCompatActivity() {
         //   백그라운드 감시는 BleService 단독 책임이라 Activity 폴링은 순수 전력 낭비였다.
         statusHandler.removeCallbacks(statusRunnable)
         statusHandler.post(statusRunnable)
-        LoneWorkerUi.reviveIfStoredSos(this)   // 교대 인계: 서비스 없이 저장된 구조 요청 복원 (v1.1.99)
+        // 교대 인계(저장된 구조 요청) 또는 시작 실패·강제 종료 뒤 실행 상태만 남은 서비스 복원 (v1.1.99)
+        if (!LoneWorkerUi.reviveIfStoredSos(this)) LoneWorkerUi.reviveIfStopped(this)
         // (v1.1.90) 개발자 설정에서 사업장 코드를 바꾸고 돌아온 경우 입력칸 반영
         refreshSiteCodeField()
         // BLE 설정 요약 업데이트 — [v1.1.8] 칼만 단일화(고정값·혼합 제거)
@@ -532,11 +542,16 @@ class MainActivity : AppCompatActivity() {
         val wantNotif = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
                 ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
                     PackageManager.PERMISSION_GRANTED
-        if (hasAllPermissions() && !wantUwb && !wantNotif) requestBatteryOptimizationExclusion()
+        // (v1.1.99) 신체 활동(걸음 감지)도 선택 — 거부하면 강한 움직임으로 대신 판단
+        val wantActivity = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+                ContextCompat.checkSelfPermission(this, Manifest.permission.ACTIVITY_RECOGNITION) !=
+                    PackageManager.PERMISSION_GRANTED
+        if (hasAllPermissions() && !wantUwb && !wantNotif && !wantActivity) afterPermissions()
         else {
             var req = blePermissions
             if (wantUwb)   req += Manifest.permission.UWB_RANGING
             if (wantNotif) req += Manifest.permission.POST_NOTIFICATIONS
+            if (wantActivity) req += Manifest.permission.ACTIVITY_RECOGNITION
             permissionLauncher.launch(req)
         }
     }

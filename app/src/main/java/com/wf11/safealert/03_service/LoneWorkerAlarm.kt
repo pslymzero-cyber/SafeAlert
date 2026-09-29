@@ -36,11 +36,13 @@ object AlarmVolumeShare {
 
     /**
      * 되돌리기 판정. 현재 값을 모르거나 저장값이 없거나 누가 바꿨거나 이미 원래 값이면 DROP(저장값만 버림),
-     * 아직 우리 값인데 충돌 요청이 10초 안에 있었으면 WAIT, 아니면 RESTORE.
+     * 아직 우리 값인데 충돌 요청이 10초 안에 있었으면 WAIT, 아니면 RESTORE. final(감시 정지)이면 미루지 않는다.
      */
-    fun restoreAction(cur: Int?, orig: Int, ours: Int, nowMs: Long, collisionAtMs: Long): Restore = when {
+    fun restoreAction(
+        cur: Int?, orig: Int, ours: Int, nowMs: Long, collisionAtMs: Long, final: Boolean = false
+    ): Restore = when {
         cur == null || orig < 0 || ours < 0 || cur != ours || cur == orig -> Restore.DROP
-        nowMs - collisionAtMs < COLLISION_HOLD_MS -> Restore.WAIT
+        !final && nowMs - collisionAtMs < COLLISION_HOLD_MS -> Restore.WAIT
         else -> Restore.RESTORE
     }
 }
@@ -174,8 +176,11 @@ class LoneWorkerAlarm(
         applyVolume(p)
     }
 
-    /** 재생을 멈추고 볼륨을 정리한다. 되돌리기를 미루는 동안에는 주기 호출(유휴 렌더)마다 다시 판정한다. */
-    fun stop() {
+    /**
+     * 재생을 멈추고 볼륨을 정리한다. 되돌리기를 미루는 동안에는 주기 호출(유휴 렌더)마다 다시 판정한다.
+     * final 은 감시 정지(뒤에 주기 호출이 없음): 미루지 않고 되돌린다.
+     */
+    fun stop(final: Boolean = false) {
         AlarmVolumeShare.sosSounding = false
         val live = playing != null || track != null || fallbackFor != null
         if (!live && !prefs.contains(K_ORIG)) return
@@ -186,16 +191,16 @@ class LoneWorkerAlarm(
             VibrationHelper.stopAlarmLoop(ctx)
             volumeFault = null
         }
-        restoreWaiting = !settleVolume()
+        restoreWaiting = !settleVolume(final)
     }
 
     /** 저장해 둔 원래 볼륨을 판정대로 처리한다. 미루면 false(저장값 유지), 되돌렸거나 버렸으면 true. */
-    private fun settleVolume(): Boolean {
+    private fun settleVolume(final: Boolean): Boolean {
         val p = prefs
         val cur = audio?.getStreamVolume(AudioManager.STREAM_ALARM)
         val orig = p.getInt(K_ORIG, -1)
         val act = AlarmVolumeShare.restoreAction(
-            cur, orig, p.getInt(K_OURS, -1), SystemClock.elapsedRealtime(), AlarmVolumeShare.collisionAtMs)
+            cur, orig, p.getInt(K_OURS, -1), SystemClock.elapsedRealtime(), AlarmVolumeShare.collisionAtMs, final)
         if (act == AlarmVolumeShare.Restore.WAIT) return false
         if (act == AlarmVolumeShare.Restore.RESTORE) setAlarmVolume(orig)
         p.edit().remove(K_ORIG).remove(K_OURS).apply()

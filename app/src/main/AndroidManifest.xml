@@ -12,7 +12,7 @@
     <!-- 위치 권한 (BLE 스캔 필수) -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-    <!-- (v1.1.99) Android 10~11 재시작·부팅 뒤 스캔 유지용. 메인 화면 경고의 버튼으로만 요청한다 -->
+    <!-- (v1.1.99) Android 10~11 재시작·부팅 뒤 스캔 유지용. Android 11 은 권한 요청 뒤 이어서 요청하고, 없으면 메인 화면에 경고한다 -->
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION"
         android:maxSdkVersion="30" />
 

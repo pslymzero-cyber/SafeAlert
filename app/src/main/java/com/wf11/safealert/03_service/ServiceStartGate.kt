@@ -14,12 +14,17 @@ import androidx.core.content.ContextCompat
  */
 object ServiceStartGate {
 
+    /** 서비스 시작에 꼭 필요한 권한(Android 12+ 근처 기기 권한, 11 이하 없음). */
     fun required(sdk: Int): Array<String> = if (sdk >= Build.VERSION_CODES.S) arrayOf(
         Manifest.permission.BLUETOOTH_SCAN,
         Manifest.permission.BLUETOOTH_ADVERTISE,
         Manifest.permission.BLUETOOTH_CONNECT
     ) else emptyArray()
 
+    /** 메인 화면이 한 번에 요청하는 권한: 시작 권한 + 정밀 위치. 11 이하 블루투스 권한은 설치 시 권한이다. */
+    fun screenPermissions(sdk: Int): Array<String> = required(sdk) + Manifest.permission.ACCESS_FINE_LOCATION
+
+    /** 시작 권한이 모두 허용돼 있다. */
     fun canStart(ctx: Context): Boolean = required(Build.VERSION.SDK_INT).all {
         ContextCompat.checkSelfPermission(ctx, it) == PackageManager.PERMISSION_GRANTED
     }
@@ -31,8 +36,20 @@ object ServiceStartGate {
             cd or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION else cd
     }
 
+    /** 현재 기기·권한 기준 fgsType. */
     fun fgsType(ctx: Context): Int = fgsType(
         Build.VERSION.SDK_INT,
         ContextCompat.checkSelfPermission(ctx, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
     )
+
+    /**
+     * Android 11 에서 백그라운드 복원(재부팅·업데이트·재시작)으로 시작된 인스턴스는 위치 '항상 허용'이 없으면
+     * 스캔 결과를 받지 못할 수 있다. 화면에서 시작한 인스턴스는 해당 없음.
+     */
+    fun bgLocationLimited(sdk: Int, fine: Boolean, background: Boolean, bgStarted: Boolean): Boolean =
+        sdk == Build.VERSION_CODES.R && fine && !background && bgStarted
+
+    /** Android 10~11 에서 시작 뒤 정밀 위치가 생겨 적용한 유형과 지금 유형이 다르면 다시 지정한다. */
+    fun needsRetype(sdk: Int, appliedType: Int, fine: Boolean): Boolean =
+        (sdk == Build.VERSION_CODES.Q || sdk == Build.VERSION_CODES.R) && fgsType(sdk, fine) != appliedType
 }

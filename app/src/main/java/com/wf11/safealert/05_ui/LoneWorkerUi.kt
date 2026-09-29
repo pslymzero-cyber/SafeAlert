@@ -12,7 +12,6 @@ import android.provider.Settings
 import android.view.View
 import android.widget.TextView
 import android.widget.Toast
-import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.wf11.safealert.service.BleService
@@ -36,25 +35,12 @@ object LoneWorkerUi {
 
     /** Android 11 에서 백그라운드 위치가 없을 때의 경고 끝말. 이 끝말로 끝나는 경고도 다시 판정해 지운다. */
     private const val BG_LOC_TAIL = "위치 권한을 '항상 허용'으로 바꾸세요."
-    private const val REQ_BG_LOC = 4730
 
-    /**
-     * 메인 화면이 요청하는 권한 목록(위치 포함). 서비스 시작 판정은 ServiceStartGate 가 따로 한다.
-     */
-    val runPermissions: Array<String> = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-        arrayOf(
-            Manifest.permission.BLUETOOTH_SCAN,
-            Manifest.permission.BLUETOOTH_ADVERTISE,
-            Manifest.permission.BLUETOOTH_CONNECT,
-            Manifest.permission.ACCESS_FINE_LOCATION
-        )
-    } else {
-        arrayOf(
-            Manifest.permission.BLUETOOTH,
-            Manifest.permission.BLUETOOTH_ADMIN,
-            Manifest.permission.ACCESS_FINE_LOCATION
-        )
-    }
+    /** 신체 활동 권한이 없을 때의 경고 끝말. 이 끝말로 끝나는 경고도 다시 판정해 지운다. */
+    private const val ACT_TAIL = "앱 설정에서 신체 활동을 허용하세요."
+
+    /** 메인 화면이 요청하는 필수 권한 목록: 서비스 시작 권한 + 정밀 위치(ServiceStartGate 에서 파생). */
+    val runPermissions: Array<String> = ServiceStartGate.screenPermissions(Build.VERSION.SDK_INT)
 
     private fun runningMode(ctx: Context): String? = runCatching {
         ctx.getSharedPreferences("safealert_prefs", Context.MODE_PRIVATE).getString("running_mode", null)
@@ -67,6 +53,16 @@ object LoneWorkerUi {
      */
     fun reviveIfStoredSos(ctx: Context): Boolean {
         if (LoneWorkerMonitor.current != null || !LoneWorkerSosSync.hasStoredSos(ctx)) return false
+        if (runningMode(ctx) == null || !ServiceStartGate.canStart(ctx)) return false
+        return runCatching { ContextCompat.startForegroundService(ctx, Intent(ctx, BleService::class.java)) }.isSuccess
+    }
+
+    /**
+     * 실행 상태(running_mode)가 남았는데 서비스가 돌지 않으면 다시 띄운다(시작 실패·강제 종료 뒤 화면 복귀).
+     * 시작 권한이 없으면 아무것도 하지 않는다. 시작을 요청했으면 true.
+     */
+    fun reviveIfStopped(ctx: Context): Boolean {
+        if (BleService.isRunning || LoneWorkerMonitor.current != null) return false
         if (runningMode(ctx) == null || !ServiceStartGate.canStart(ctx)) return false
         return runCatching { ContextCompat.startForegroundService(ctx, Intent(ctx, BleService::class.java)) }.isSuccess
     }
@@ -120,26 +116,28 @@ object LoneWorkerUi {
         }
     }
 
-    /** Android 11 에서 정밀 위치는 있는데 '항상 허용'이 아니면 경고 문구. 재시작 뒤 스캔이 멈출 수 있다. */
-    private fun backgroundLocationWarning(ctx: Context): String? {
-        if (Build.VERSION.SDK_INT != Build.VERSION_CODES.R) return null
-        fun granted(p: String) = ContextCompat.checkSelfPermission(ctx, p) == PackageManager.PERMISSION_GRANTED
-        if (!granted(Manifest.permission.ACCESS_FINE_LOCATION) || granted(Manifest.permission.ACCESS_BACKGROUND_LOCATION)) return null
-        return "위치 권한이 '앱 사용 중에만'이라 재시작·재부팅 뒤 근접 감지가 멈출 수 있습니다. $BG_LOC_TAIL"
-    }
+    private fun granted(ctx: Context, p: String) = ContextCompat.checkSelfPermission(ctx, p) == PackageManager.PERMISSION_GRANTED
 
-    private fun requestBackgroundLocation(activity: Activity) = runCatching {
-        ActivityCompat.requestPermissions(activity, arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION), REQ_BG_LOC)
-    }
+    /** Android 11 에서 정밀 위치는 있는데 '항상 허용'이 아니다. 메인 화면이 권한 요청 뒤 이어서 요청한다. */
+    fun needsBackgroundLocation(ctx: Context): Boolean = Build.VERSION.SDK_INT == Build.VERSION_CODES.R &&
+        granted(ctx, Manifest.permission.ACCESS_FINE_LOCATION) && !granted(ctx, Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+
+    /** '항상 허용'이 아니면 경고 문구. 재시작 뒤 스캔이 멈출 수 있다. */
+    private fun backgroundLocationWarning(ctx: Context): String? = if (!needsBackgroundLocation(ctx)) null else
+        "위치 권한이 '앱 사용 중에만'이라 재시작·재부팅 뒤 근접 감지가 멈출 수 있습니다. $BG_LOC_TAIL"
+
+    /** 걸음 센서는 있는데 신체 활동 권한이 없으면 경고 문구. 감시가 돌 때만 판정한다. */
+    private fun activityWarning(): String? =
+        if (DevSettings.lwEnabled && LoneWorkerMonitor.current?.stepPermissionMissing == true)
+            "신체 활동 권한이 없어 걸음을 감지하지 못합니다(강한 움직임으로 대신 판단). $ACT_TAIL" else null
+
+    private fun appInfo(activity: Activity) =
+        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${activity.packageName}"))
 
     /** 고른 설정 화면을 연다. 열지 못하면 앱 정보 화면으로 대신한다. */
     private fun open(activity: Activity, intent: Intent) {
         val ok = runCatching { activity.startActivity(intent) }.isSuccess
-        if (!ok) runCatching {
-            activity.startActivity(
-                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${activity.packageName}"))
-            )
-        }
+        if (!ok) runCatching { activity.startActivity(appInfo(activity)) }
     }
 
     /** 확인·구조 요청·동료 경보가 떠 있으면 화면을 연다. 메인 화면이 보이는 동안의 폴링에서 부른다. */
@@ -155,7 +153,7 @@ object LoneWorkerUi {
 
     /**
      * 메인 화면 800ms 폴링에서 한 번에 부른다: 알림 화면 진입, 정지 경합 복구, 거치 중 안내, 도달성 경고 재판정.
-     * 도달성·백그라운드 위치(Android 11) 경고는 매번 다시 판정한다 — 막혀 있으면 띄우고 풀렸으면 지운다. 블루투스 권한 경고는 건드리지 않는다.
+     * 도달성·백그라운드 위치(Android 11)·신체 활동 경고는 매번 다시 판정한다 — 막혀 있으면 띄우고 풀렸으면 지운다. 블루투스 권한 경고는 건드리지 않는다.
      * stopped 는 메인 화면이 실행 상태를 지운 상태(currentMode == null)다. 그런데 서비스가 구조 요청 때문에
      * 정지를 무시했다면 서비스가 running_mode 를 되살렸으므로 실행 카드로 돌아간다.
      */
@@ -164,12 +162,12 @@ object LoneWorkerUi {
         stopped: Boolean, warn: (String, () -> Unit) -> Unit, restore: () -> Unit
     ) {
         openIfAlerting(activity)
-        // 도달성 경고가 먼저, 없으면 Android 11 백그라운드 위치 경고 (문구, 버튼 동작)
+        // 도달성 → Android 11 백그라운드 위치 → 신체 활동 경고 순 (문구, 버튼 동작)
         val w: Pair<String, () -> Unit>? = if (stopped) null else
             reachabilityWarning(activity)?.let { (t, i) -> t to { open(activity, i) } }
-                ?: backgroundLocationWarning(activity)?.let { t -> t to { requestBackgroundLocation(activity); Unit } }
+                ?: (backgroundLocationWarning(activity) ?: activityWarning())?.let { t -> t to { open(activity, appInfo(activity)) } }
         val cur = if (warnBox.visibility == View.VISIBLE) warnMsg.text.toString() else null
-        val ours = cur != null && (cur.endsWith(REACH_TAIL) || cur.endsWith(BG_LOC_TAIL))
+        val ours = cur != null && (cur.endsWith(REACH_TAIL) || cur.endsWith(BG_LOC_TAIL) || cur.endsWith(ACT_TAIL))
         // 다른 경고(블루투스 권한 등)가 떠 있으면 덮어쓰지 않는다 — 비어 있거나 우리 경고일 때만 갱신
         if (w != null && cur != w.first && (cur == null || ours)) warn(w.first, w.second)
         if (w == null && ours) warnBox.visibility = View.GONE

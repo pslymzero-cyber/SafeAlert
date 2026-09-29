@@ -67,6 +67,8 @@ class LoneWorkerMonitor(
         { render() })
 
     private var started = false
+    /** 걸음 센서는 있는데 신체 활동 권한이 없다(메인 화면 경고용). */
+    val stepPermissionMissing: Boolean get() = started && sensors.stepPermissionMissing
     private var name = ""
     private var roleName = ""
     private var lastMode = LoneWorkerLogic.Mode.WATCHING
@@ -141,7 +143,7 @@ class LoneWorkerMonitor(
         prefsListener?.let { DevSettings.unregisterOnChange(it) }
         prefsListener = null
         sync.stopListening()
-        alarm.stop()
+        alarm.stop(final = true)
         releaseWakeLock()
         handler.removeCallbacksAndMessages(null)
         loopOn = false
