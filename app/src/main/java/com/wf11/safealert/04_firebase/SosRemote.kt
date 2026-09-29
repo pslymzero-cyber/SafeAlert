@@ -33,7 +33,8 @@ object SosRemote {
         val createdAt: Long,
         val active: Boolean,
         val uid: String,          // 작성자 uid(없으면 ""). 내 기록 걸러내기에 쓴다
-        val ep: Int = 0           // SOS 회차 1..255(0 = 없음). BLE 광고 회차와 같은 값이다
+        val ep: Int = 0,          // SOS 회차 1..255(0 = 없음). BLE 광고 회차와 같은 값이다
+        val resolvedAt: Long = 0L // 해제 서버 시각(없으면 0)
     )
 
     private const val SOS_STR_MAX = 64
@@ -42,6 +43,10 @@ object SosRemote {
     /** 규칙(database.rules.json)의 beaconRssi 허용 범위와 같다. 벗어나면 기록 전체가 거부되므로 필드를 뺀다. */
     const val BEACON_RSSI_MIN = -150
     const val BEACON_RSSI_MAX = 20
+
+    /** 동료 기록 시각을 서버 시각으로 바꾸는 데 쓰는 서버 시각 오프셋. listen() 이 읽으며 모르면 null 이다. */
+    @Volatile var serverOffsetMs: Long? = null
+        private set
 
     /** 수신 재생 창: 시작 전 30분 이내에 만들어진 기록까지 받는다 (R1). */
     const val REPLAY_WINDOW_MS = 30 * 60_000L
@@ -65,7 +70,8 @@ object SosRemote {
             createdAt = createdAt,
             active = status == "active",
             uid = (m["uid"] as? String).orEmpty().take(SOS_STR_MAX),
-            ep = (m["ep"] as? Number)?.toInt()?.takeIf { it in 1..255 } ?: 0
+            ep = (m["ep"] as? Number)?.toInt()?.takeIf { it in 1..255 } ?: 0,
+            resolvedAt = (m["resolvedAt"] as? Number)?.toLong() ?: 0L
         )
     }
 
@@ -170,8 +176,15 @@ object SosRemote {
         }
         FirebaseDatabase.getInstance().getReference(".info/serverTimeOffset")
             .addListenerForSingleValueEvent(object : ValueEventListener {
-                override fun onDataChange(s: DataSnapshot) { attach((s.value as? Number)?.toLong() ?: 0L) }
-                override fun onCancelled(e: DatabaseError) { attach(0L) }
+                override fun onDataChange(s: DataSnapshot) {
+                    val off = (s.value as? Number)?.toLong()?.takeIf { it != 0L }
+                    serverOffsetMs = off
+                    attach(off ?: 0L)
+                }
+                override fun onCancelled(e: DatabaseError) {
+                    serverOffsetMs = null
+                    attach(0L)
+                }
             })
         return {
             stopped = true

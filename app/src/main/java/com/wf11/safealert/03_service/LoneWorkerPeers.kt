@@ -7,8 +7,11 @@ package com.wf11.safealert.service
  * - 서버 기록과 BLE 광고가 같은 회차면 한 항목, 회차나 서버 키가 다르면 다른 항목이다.
  *   다른 항목은 이름·비콘·묵음·해제를 각자 가진다.
  * - 회차 0 기록은 서버 키로만 다룬다(BLE 항목을 가져가거나 끝내지 않는다).
- * - 30초 공백 규칙: 회차와 무관하게, 서버 기록이 없는 항목에서 광고가 30초 이상 끊겼다 다시 들리면
+ * - 30초 공백 규칙: 서버 기록 유무와 무관하게, 광고가 처음 들리거나 30초 이상 끊겼다 다시 들리면
  *   묵음만 푼다(발생 시각 유지). 같은 ID·같은 회차를 쓰는 다른 폰은 이 규칙과 해제 뒤 30초 가드가 맡는다.
+ * - 서버 기록이 BLE 항목을 가져갈 때 묵음은 넘겨받지 않는다(이름과 함께 다시 울린다).
+ * - 추적하지 않는 서버 해제 기록은 같은 회차 BLE 항목을, 광고가 15초 이상 들리지 않았고 해제 시각이
+ *   그 항목을 처음 들은 시각(서버 시각 환산)보다 늦을 때만 끝낸다. 재생된 옛 해제는 들리는 항목을 끝내지 않는다.
  * - BLE 전용 항목은 false 가 10초 연속으로 보여야 해제한다.
  * - 해제된 항목은 60초 보관한다. 그동안 같은 회차 광고 잔상(해제 뒤 30초 이내)은 무시한다.
  * - 확인은 넘겨받은 회차 ID 만 묵음으로 만든다. 아직 항목이 없는 ID 는 60초 안에 생기는 그 항목만 묵음이다.
@@ -45,6 +48,10 @@ class LoneWorkerPeers {
         const val PEER_BLE_GAP_MS = 30_000L
         const val PEER_BLE_FALL_MS = 10_000L
         const val PENDING_SILENCE_MS = 60_000L
+        /** 추적하지 않는 해제로 BLE 항목을 끝내려면 광고가 이만큼 끊겨 있어야 한다. */
+        const val PEER_LIVE_AD_MS = 15_000L
+        /** 서버 시각 오프셋을 모를 때 시각 비교에 더하는 여유. */
+        const val CLOCK_SLACK_MS = 10_000L
     }
 
     private val map = LinkedHashMap<String, Peer>()
@@ -57,7 +64,8 @@ class LoneWorkerPeers {
 
     fun onServer(
         key: String, bleId: String, name: String, role: String, trigger: String,
-        beacon: String, createdAtMs: Long, active: Boolean, nowMs: Long, ep: Int
+        beacon: String, createdAtMs: Long, active: Boolean, nowMs: Long, ep: Int,
+        resolvedAtMs: Long = 0L, serverNowMs: Long = 0L, slackMs: Long = 0L
     ) {
         val kId = "k:$key"
         val bId = "b:$bleId#$ep"
@@ -67,7 +75,9 @@ class LoneWorkerPeers {
                 map[kId] = resolve(cur, nowMs)
             } else if (ep != 0) {
                 val b = map[bId]
-                if (b != null && b.active) map[bId] = resolve(b, nowMs)
+                if (b != null && b.active && resolveFits(b, resolvedAtMs, serverNowMs, slackMs, nowMs)) {
+                    map[bId] = resolve(b, nowMs)
+                }
             }
             // 추적하지 않는 해제(접속 때 재생된 옛 기록)는 항목을 만들지 않는다.
             return
@@ -85,11 +95,11 @@ class LoneWorkerPeers {
         }
         val b = if (ep != 0) map[bId] else null
         if (b != null) {
-            // 같은 회차를 BLE 로 먼저 봤다: 서버 키를 붙인다. BLE 로 해제됐어도 서버가 켜져 있다면 다시 울린다.
+            // 같은 회차를 BLE 로 먼저 봤다: 서버 키를 붙이고 이름과 함께 다시 울린다. BLE 로 해제됐어도 서버가 켜져 있으면 울린다.
             map.remove(bId)
             map[kId] = Peer(
                 bleId, key, name, role, trigger, beacon.ifEmpty { b.beacon }, createdAtMs,
-                firstSeenMs = b.firstSeenMs, active = true, silenced = b.active && b.silenced,
+                firstSeenMs = b.firstSeenMs, active = true, silenced = false,
                 resolvedAtMs = 0L, episode = ep, lastBleMs = b.lastBleMs
             )
             return
@@ -113,7 +123,7 @@ class LoneWorkerPeers {
         if (matches.any { it.active }) {
             for (p in matches) {
                 if (!p.active) continue
-                val gap = p.key == null && p.lastBleMs != Long.MIN_VALUE && nowMs - p.lastBleMs >= PEER_BLE_GAP_MS
+                val gap = p.lastBleMs == Long.MIN_VALUE || nowMs - p.lastBleMs >= PEER_BLE_GAP_MS
                 map[p.id] = p.copy(
                     lastBleMs = nowMs,
                     silenced = p.silenced && !gap,
@@ -163,6 +173,13 @@ class LoneWorkerPeers {
             if (p.bleId == bleId && p.key == null && p.active) map[p.id] = resolve(p, nowMs)
         }
         falseSince.remove(bleId)
+    }
+
+    /** 광고가 끊긴 지 15초가 넘었고 해제 시각이 처음 들은 시각(서버 시각 환산 + 여유) 이후인가. */
+    private fun resolveFits(b: Peer, resolvedAtMs: Long, serverNowMs: Long, slackMs: Long, nowMs: Long): Boolean {
+        if (resolvedAtMs <= 0L || serverNowMs <= 0L) return false
+        if (b.lastBleMs != Long.MIN_VALUE && nowMs - b.lastBleMs < PEER_LIVE_AD_MS) return false
+        return resolvedAtMs >= serverNowMs - (nowMs - b.firstSeenMs) + slackMs
     }
 
     /** 해제 시 묵음을 풀어 '해제됨' 줄이 보이게 한다. */

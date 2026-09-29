@@ -16,8 +16,9 @@ class LoneWorkerPeerTest {
 
     private fun LoneWorkerLogic.srv(
         key: String, id: String, ep: Int, active: Boolean, created: Long, now: Long,
-        name: String = "n", beacon: String = ""
-    ) = onPeerServer(key, id, name, "WALKER", "still", beacon, created, active, now, ep)
+        name: String = "n", beacon: String = "",
+        resolvedAt: Long = 0L, serverNow: Long = 0L, slack: Long = 0L
+    ) = onPeerServer(key, id, name, "WALKER", "still", beacon, created, active, now, ep, resolvedAt, serverNow, slack)
 
     private fun LoneWorkerLogic.peer(id: String, ep: Int? = null) =
         peers.single { it.bleId == id && (ep == null || it.episode == ep) }
@@ -82,6 +83,9 @@ class LoneWorkerPeerTest {
         l.srv("k1", "P", 3, true, 1_000, 1_000)
         l.silencePeers(1_100)
         l.onPeerBle("P", true, 2_000, 3)
+        assertEquals(1, l.audiblePeers().size)
+        l.silencePeers(2_100)
+        l.onPeerBle("P", true, 2_500, 3)
         assertEquals(0, l.audiblePeers().size)
         l.onPeerBle("P", true, 3_000, 4)
         assertEquals(2, l.peers.size)
@@ -95,13 +99,14 @@ class LoneWorkerPeerTest {
         assertTrue(l.peer("P", 4).active)
     }
 
-    @Test fun ble_entry_adopts_server_key_only_for_same_episode() {
+    @Test fun adopted_entry_sounds_again_with_name() {
         val a = newLogic()
         a.onPeerBle("P", true, 1_000, 4)
         a.silencePeers(1_100)
         a.srv("k1", "P", 4, true, 1_100, 1_200)
         assertEquals("k1", a.peer("P").key)
-        assertTrue(a.peer("P").silenced)
+        assertFalse(a.peer("P").silenced)
+        assertEquals("n", a.audiblePeers().single().name)
 
         val b = newLogic()
         b.onPeerBle("P", true, 1_000, 4)
@@ -127,14 +132,56 @@ class LoneWorkerPeerTest {
         assertTrue(l.peer("P", 3).silenced)
     }
 
-    @Test fun same_episode_server_resolve_ends_ble_entry() {
+    @Test fun replayed_old_resolve_does_not_end_live_ble_entry() {
         val l = newLogic()
         l.onPeerBle("P", true, 1_000, 3)
-        l.srv("k1", "P", 3, false, 900, 2_000)
-        assertFalse(l.peer("P", 3).active)
-        l.onPeerBle("P", true, 2_500, 3)
+        l.onPeerBle("P", true, 20_000, 3)
+        l.srv("k1", "P", 3, false, 900, 25_000, resolvedAt = 990_000, serverNow = 1_000_000)
+        assertTrue(l.peer("P", 3).active)
+        assertEquals(1, l.audiblePeers().size)
+        l.srv("k1", "P", 3, false, 900, 40_000, resolvedAt = 950_000, serverNow = 1_000_000)
+        assertTrue(l.peer("P", 3).active)
+    }
+
+    @Test fun out_of_range_later_resolve_ends_ble_entry() {
+        val l = newLogic()
+        l.onPeerBle("P", true, 1_000, 3)
+        l.srv("k1", "P", 3, false, 900, 40_000, resolvedAt = 970_000, serverNow = 1_000_000)
         assertFalse(l.peer("P", 3).active)
         assertEquals(0, l.audiblePeers().size)
+        l.onPeerBle("P", true, 40_500, 3)
+        assertFalse(l.peer("P", 3).active)
+
+        val m = newLogic()
+        m.onPeerBle("P", true, 1_000, 3)
+        m.srv("k1", "P", 3, false, 900, 40_000, resolvedAt = 950_000, serverNow = 1_000_000)
+        assertTrue(m.peer("P", 3).active)
+        m.srv("k1", "P", 3, false, 900, 40_000, resolvedAt = 0L, serverNow = 1_000_000)
+        assertTrue(m.peer("P", 3).active)
+    }
+
+    @Test fun unknown_offset_uses_slack() {
+        val l = newLogic()
+        l.onPeerBle("P", true, 1_000, 3)
+        l.srv("k1", "P", 3, false, 900, 40_000, resolvedAt = 965_000, serverNow = 1_000_000, slack = 10_000)
+        assertTrue(l.peer("P", 3).active)
+        l.srv("k1", "P", 3, false, 900, 40_000, resolvedAt = 975_000, serverNow = 1_000_000, slack = 10_000)
+        assertFalse(l.peer("P", 3).active)
+    }
+
+    @Test fun server_entry_first_ble_hearing_and_30s_gap_resound() {
+        val l = newLogic()
+        l.srv("k1", "P", 1, true, 1_000, 1_000)
+        l.silencePeers(1_100)
+        assertEquals(0, l.audiblePeers().size)
+        l.onPeerBle("P", true, 2_000, 1)
+        assertEquals(1, l.audiblePeers().size)
+        l.silencePeers(2_100)
+        l.onPeerBle("P", true, 22_000, 1)
+        assertEquals(0, l.audiblePeers().size)
+        l.onPeerBle("P", true, 53_000, 1)
+        assertEquals(1, l.audiblePeers().size)
+        assertEquals(1_000L, l.peer("P").firstSeenMs)
     }
 
     @Test fun shared_bleid_two_phones_keep_separate_entries() {

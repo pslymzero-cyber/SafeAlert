@@ -23,6 +23,7 @@ import com.wf11.safealert.service.LoneWorkerNotifier
  * 유예·휴식 버튼이 없고 뒤로가기는 확인·구조 요청 중에 화면을 닫지 않는다 — 확인 창은 [근무 중],
  * 구조 요청은 본인 [괜찮음]으로만 닫힌다. [괜찮음]은 언제나 "정말 괜찮으신가요?" 확인을 거치며,
  * 잠금 화면 알림의 [괜찮음]도 같은 확인 창을 연다(EXTRA_CONFIRM_OK).
+ * 동료 [확인]/[닫기]는 이 화면이 마지막으로 그린 항목만 묵음으로 만들며, 진행 중 항목이 막 바뀐 직후의 탭은 무시한다.
  */
 class LoneWorkerActivity : AppCompatActivity() {
 
@@ -30,6 +31,7 @@ class LoneWorkerActivity : AppCompatActivity() {
     private var confirmDialog: AlertDialog? = null
     private var pendingConfirm = false
     private var waitUntil = 0L   // 서비스 복원 대기 마감(elapsedRealtime), 0 = 대기 안 함
+    private val ackGate = PeerAckGate()
     private val retry = Runnable { render() }
     private val listener: () -> Unit = { runOnUiThread { render() } }
 
@@ -121,6 +123,7 @@ class LoneWorkerActivity : AppCompatActivity() {
             finish()
             return
         }
+        ackGate.onRender(st.peerIds, st.activePeerIds, SystemClock.elapsedRealtime())
         b.btnLwPeer.visibility = View.GONE
         val own = st.mode != LoneWorkerLogic.Mode.WATCHING
         val bg: Int
@@ -147,12 +150,12 @@ class LoneWorkerActivity : AppCompatActivity() {
                 b.tvLwTitle.text = if (st.peerActive) "구조 요청" else "해제됨"
                 b.tvLwBody.text = st.peerLines.joinToString("\n\n")
                 b.btnLwPrimary.text = if (st.peerActive) "확인" else "닫기"
-                b.btnLwPrimary.setOnClickListener { mon.silencePeers() }
+                b.btnLwPrimary.setOnClickListener { ackPeers(mon) }
             }
         }
         if (own && st.peerActive) {
             b.btnLwPeer.text = "확인(다른 작업자)"
-            b.btnLwPeer.setOnClickListener { mon.silencePeers() }
+            b.btnLwPeer.setOnClickListener { ackPeers(mon) }
             b.btnLwPeer.visibility = View.VISIBLE
         }
         st.alarmFault?.let { b.tvLwBody.text = "${b.tvLwBody.text}\n\n${it}" }
@@ -164,4 +167,32 @@ class LoneWorkerActivity : AppCompatActivity() {
         b.tvLwTitle.setTextColor(fg)
         b.tvLwBody.setTextColor(fg)
     }
+
+    /** 마지막으로 그린 항목만 묵음으로 만든다. 진행 중 항목이 막 바뀐 직후면 탭을 무시한다. */
+    private fun ackPeers(mon: LoneWorkerMonitor) {
+        ackGate.onTap(SystemClock.elapsedRealtime())?.let { mon.silencePeers(it) }
+    }
+}
+
+/** 화면 확인 대상: 마지막으로 그린 회차 ID 만 넘기고, 진행 중 ID 집합이 바뀐 뒤 SETTLE_MS 안의 탭은 무시(null)한다. */
+internal class PeerAckGate {
+    companion object {
+        const val SETTLE_MS = 700L
+    }
+
+    private var shown: List<String> = emptyList()
+    private var active: Set<String> = emptySet()
+    private var changedAt = Long.MIN_VALUE
+
+    fun onRender(shown: List<String>, activeIds: Set<String>, nowMs: Long) {
+        if (activeIds != active) {
+            active = activeIds
+            changedAt = nowMs
+        }
+        this.shown = shown
+    }
+
+    /** null = 이 탭은 무시한다. 빈 목록은 아무것도 묵음으로 만들지 않는다. */
+    fun onTap(nowMs: Long): List<String>? =
+        if (changedAt != Long.MIN_VALUE && nowMs - changedAt < SETTLE_MS) null else shown
 }

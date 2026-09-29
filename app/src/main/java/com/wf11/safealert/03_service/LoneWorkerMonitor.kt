@@ -36,7 +36,9 @@ class LoneWorkerMonitor(
         val peerLines: List<String>,
         val peerActive: Boolean,
         val serverStatus: String?, // 내 SOS 서버 전송 상태(SOS 가 아니면 null)
-        val alarmFault: String? = null // 경보음 볼륨을 올리지 못했을 때의 안내(v1.1.99)
+        val alarmFault: String? = null, // 경보음 볼륨을 올리지 못했을 때의 안내(v1.1.99)
+        val peerIds: List<String> = emptyList(),       // 그린 동료 항목의 회차 ID(그린 순서)
+        val activePeerIds: Set<String> = emptySet()    // 그중 진행 중인 항목의 회차 ID
     )
 
     companion object {
@@ -59,7 +61,8 @@ class LoneWorkerMonitor(
     private val sync = LoneWorkerSosSync(ctx, handler,
         { rec ->
             if (started) {
-                logic.onPeerServer(rec.key, rec.bleId, rec.name, rec.role, rec.trigger, rec.beacon, rec.createdAt, rec.active, now(), rec.ep)
+                logic.onPeerServer(rec.key, rec.bleId, rec.name, rec.role, rec.trigger, rec.beacon, rec.createdAt, rec.active, now(), rec.ep,
+                    rec.resolvedAt, LoneWorkerSosSync.serverNowMs(), LoneWorkerSosSync.clockSlackMs())
                 render()
             }
         },
@@ -326,8 +329,8 @@ class LoneWorkerMonitor(
         render()
     }
 
-    /** ids(bleId#ep) 가 없으면 지금 목록의 모든 항목, 있으면 알림에 보였던 회차만 묵음으로 만든다. */
-    fun silencePeers(ids: List<String>? = null) {
+    /** ids(bleId#ep) 의 회차만 묵음으로 만든다. null 이면 지금 목록의 모든 항목이다(화면은 쓰지 않는다). */
+    fun silencePeers(ids: List<String>?) {
         if (!started) return
         logic.silencePeers(now(), ids)
         render()
@@ -356,7 +359,9 @@ class LoneWorkerMonitor(
             lines,
             shown.any { it.active },
             if (logic.mode == LoneWorkerLogic.Mode.SOS) sync.statusText() else null,
-            alarm.volumeFault
+            alarm.volumeFault,
+            shown.map { it.epId },
+            shown.filter { it.active }.mapTo(HashSet()) { it.epId }
         )
     }
 

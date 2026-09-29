@@ -32,6 +32,12 @@ class LoneWorkerSosSync(
         fun hasStoredSos(ctx: Context): Boolean = runCatching {
             ctx.getSharedPreferences(FILE, Context.MODE_PRIVATE).getString(SosLedger.K_TRIGGER, null) != null
         }.getOrDefault(false)
+
+        /** 서버 시각 추정: 벽시계 + 서버 오프셋(모르면 벽시계 그대로). */
+        fun serverNowMs(): Long = System.currentTimeMillis() + (SosRemote.serverOffsetMs ?: 0L)
+
+        /** 서버 오프셋을 모를 때 동료 해제 시각 비교에 더하는 여유. */
+        fun clockSlackMs(): Long = if (SosRemote.serverOffsetMs != null) 0L else LoneWorkerPeers.CLOCK_SLACK_MS
     }
 
     private val prefs: SharedPreferences by lazy { ctx.getSharedPreferences(FILE, Context.MODE_PRIVATE) }

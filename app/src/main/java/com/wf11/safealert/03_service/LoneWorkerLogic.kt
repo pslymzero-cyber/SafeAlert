@@ -311,8 +311,10 @@ class LoneWorkerLogic(var myBleId: String) {
 
     fun onPeerServer(
         key: String, bleId: String, name: String, role: String, trigger: String,
-        beacon: String, createdAtMs: Long, active: Boolean, nowMs: Long, ep: Int = 0
-    ) = peerStore.onServer(key, bleId, name, role, trigger, beacon, createdAtMs, active, nowMs, ep)
+        beacon: String, createdAtMs: Long, active: Boolean, nowMs: Long, ep: Int = 0,
+        resolvedAtMs: Long = 0L, serverNowMs: Long = 0L, slackMs: Long = 0L
+    ) = peerStore.onServer(key, bleId, name, role, trigger, beacon, createdAtMs, active, nowMs, ep,
+        resolvedAtMs, serverNowMs, slackMs)
 
     fun onPeerBle(bleId: String, sos: Boolean, nowMs: Long, episode: Int = 0, beacon: String = "") =
         peerStore.onBle(bleId, sos, nowMs, episode, beacon)
