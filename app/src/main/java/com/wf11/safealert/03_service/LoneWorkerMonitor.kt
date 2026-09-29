@@ -65,7 +65,7 @@ class LoneWorkerMonitor(
     }
 
     private var logic = LoneWorkerLogic("")
-    private val analyzer = MotionAnalyzer()
+    private var analyzer = MotionAnalyzer() // 센서 등록마다 새로 만든다(충격 임계값 주입)
     private val alarm = LoneWorkerAlarm(ctx, setAlarmVolume)
     private val handler = Handler(Looper.getMainLooper())
     private val sync = LoneWorkerSosSync(ctx, handler,
@@ -109,6 +109,7 @@ class LoneWorkerMonitor(
         // 저장된 본인 SOS 가 있으면 첫 렌더 전에 되살린다 — 같은 서버 키로 사이렌·광고 bit1 이 다시 켜진다 (v1.1.99, R3)
         sync.restoredTrigger()?.let { logic.restoreSos(it, now()) }
         createChannel()
+        SirenGenerator.prewarm() // 사이렌·확인음 PCM 을 백그라운드에서 미리 만든다 (v1.1.99)
         val l = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
             if (key == DevSettings.KEY_LW_ENABLED || key == DevSettings.KEY_LW_STILL_MIN ||
                 key == DevSettings.KEY_LW_RESPONSE_MIN) handler.post { applySettings() }
@@ -125,6 +126,7 @@ class LoneWorkerMonitor(
         override fun run() {
             if (!started) return
             sync.tick()
+            if (DevSettings.lwEnabled && !sensorRegistered) applySettings() // 센서 등록 재시도 (v1.1.99)
             handler.postDelayed(this, SYNC_TICK_MS)
         }
     }
@@ -184,8 +186,9 @@ class LoneWorkerMonitor(
             Log.w(TAG, "가속도 센서 없음 — 무동작 판정 끔")
             return
         }
-        Log.i(TAG, "가속도 센서 wakeUp=${s.isWakeUpSensor} fifoMax=${s.fifoMaxEventCount} fifoReserved=${s.fifoReservedEventCount}")
-        analyzer.reset()
+        val impactG = MotionAnalyzer.impactGFor(s.maximumRange)
+        Log.i(TAG, "가속도 센서 wakeUp=${s.isWakeUpSensor} fifoMax=${s.fifoMaxEventCount} fifoReserved=${s.fifoReservedEventCount} range=${s.maximumRange} impactG=$impactG")
+        analyzer = MotionAnalyzer(impactG)
         val ok = sm.registerListener(this, s, 20_000, 5_000_000, handler)
         if (!ok) {
             Log.w(TAG, "가속도 센서 등록 실패 — 무동작 판정 끔")
@@ -206,7 +209,9 @@ class LoneWorkerMonitor(
         if (!started) return
         val v = event.values
         val t = now()
-        when (analyzer.add(event.timestamp / 1_000_000L, v[0], v[1], v[2])) {
+        val evMs = event.timestamp / 1_000_000L
+        // 이 앱의 진동+200ms 동안의 표본은 뺀다 — 공백은 정지로 채워진다 (v1.1.99, F07)
+        if (!VibrationHelper.window.covers(evMs)) when (analyzer.add(evMs, v[0], v[1], v[2])) {
             MotionAnalyzer.Signal.MOVED -> logic.onMoved(t)
             MotionAnalyzer.Signal.FALL -> logic.onFall(t)
             MotionAnalyzer.Signal.NONE -> {}
@@ -377,11 +382,13 @@ class LoneWorkerMonitor(
         val resolved = logic.peers.values.filter { !it.active }
         val loud = mode != LoneWorkerLogic.Mode.WATCHING || audible.isNotEmpty()
         val nm = runCatching { ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager }.getOrNull() ?: return
-        if (!loud && resolved.isEmpty()) {
+        // 감시를 켰는데 센서를 못 쓰면 조용한 알림(무동작 감시 불가). 큰 알림·해제됨이 우선 (v1.1.99, F10)
+        val noSensor = !loud && resolved.isEmpty() && DevSettings.lwEnabled && !sensorRegistered
+        if (!loud && resolved.isEmpty() && !noSensor) {
             if (lastNotifKey != null) { nm.cancel(NOTIF_ID); lastNotifKey = null }
             return
         }
-        val key = "$mode|${audible.joinToString(",") { it.bleId }}|${resolved.joinToString(",") { it.bleId }}"
+        val key = "$noSensor|$mode|${audible.joinToString(",") { it.bleId }}|${resolved.joinToString(",") { it.bleId }}"
         if (key == lastNotifKey) return
         lastNotifKey = key
         val (title, text, act) = when {
@@ -389,6 +396,8 @@ class LoneWorkerMonitor(
                 Triple("구조 요청 중", "[괜찮음]을 눌러야 해제됩니다", "괜찮음" to servicePi(41, BleService.ACTION_LW_CANCEL))
             mode == LoneWorkerLogic.Mode.CHECKING ->
                 Triple("근무 중이신가요?", "응답하지 않으면 같은 사업장에 구조 요청이 나갑니다", "근무 중" to servicePi(40, BleService.ACTION_LW_ACK))
+            noSensor ->
+                Triple("무동작 감시 불가", "가속도 센서를 쓸 수 없어 무동작·낙상 확인이 꺼져 있습니다. 계속 다시 등록을 시도합니다", null)
             audible.isNotEmpty() ->
                 Triple("구조 요청", audible.joinToString(", ") { displayName(it) }, "확인" to servicePi(42, BleService.ACTION_LW_SILENCE))
             else -> Triple("해제됨", resolved.joinToString(", ") { displayName(it) }, null)
@@ -406,7 +415,8 @@ class LoneWorkerMonitor(
             b.setOngoing(true)
             if (Build.VERSION.SDK_INT < 34 || nm.canUseFullScreenIntent()) b.setFullScreenIntent(activityPi(), true)
         } else {
-            b.setSilent(true).setTimeoutAfter(RESOLVED_NOTIF_MS)
+            b.setSilent(true)
+            if (!noSensor) b.setTimeoutAfter(RESOLVED_NOTIF_MS)
         }
         act?.let { b.addAction(0, it.first, it.second) }
         runCatching { nm.notify(NOTIF_ID, b.build()) }

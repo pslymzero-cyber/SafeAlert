@@ -5,7 +5,8 @@ import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioTrack
-import android.os.VibrationEffect
+import android.media.ToneGenerator
+import android.os.SystemClock
 import android.util.Log
 import com.wf11.safealert.utils.DevSettings
 
@@ -24,23 +25,50 @@ class LoneWorkerAlarm(
 
     companion object {
         private const val TAG = "LoneWorkerAlarm"
+        private const val RETRY_MS = 5_000L
+        private const val FALLBACK_TONE_MS = 6_000
     }
 
     private var track: AudioTrack? = null
     private var playing: Pattern? = null
     private var savedVolume = -1
+    private var fallback: ToneGenerator? = null
+    private var fallbackFor: Pattern? = null
+    private var failedAt = 0L
 
     private val audio: AudioManager?
         get() = runCatching { ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager }.getOrNull()
 
     fun play(p: Pattern) {
         if (playing == p) return
+        val t0 = SystemClock.elapsedRealtime()
+        // 대체음이 나는 동안에는 5초에 한 번만 트랙을 다시 시도한다
+        if (fallbackFor == p && t0 - failedAt < RETRY_MS) {
+            applyVolume(p)
+            vibrate()
+            return
+        }
         releaseTrack()
         playing = p
         applyVolume(p)
+        if (startTrack(p)) {
+            stopFallback()
+        } else {
+            Log.e(TAG, "사이렌 트랙 재생 실패 — 대체음·진동 유지, 5초 뒤 재시도")
+            releaseTrack()
+            playing = null
+            failedAt = t0
+            startFallback(p)
+        }
+        vibrate()
+    }
+
+    /** 정적 트랙은 쓰기 전에는 초기화 상태가 아니다 — 만들고, 쓰고, 상태를 확인한 뒤 반복 지정·재생한다 (v1.1.99, F01). */
+    private fun startTrack(p: Pattern): Boolean {
         val pcm = if (p == Pattern.SIREN) SirenGenerator.wailCycle() else SirenGenerator.checkBeepCycle()
-        runCatching {
-            val t = AudioTrack.Builder()
+        var t: AudioTrack? = null
+        return try {
+            t = AudioTrack.Builder()
                 .setAudioAttributes(
                     AudioAttributes.Builder()
                         .setUsage(AudioAttributes.USAGE_ALARM)
@@ -57,31 +85,55 @@ class LoneWorkerAlarm(
                 .setBufferSizeInBytes(pcm.size * 2)
                 .setTransferMode(AudioTrack.MODE_STATIC)
                 .build()
-            if (t.state != AudioTrack.STATE_INITIALIZED) {
-                Log.e(TAG, "사이렌 트랙 초기화 실패 — 진동·화면만 유지")
+            val ok = t.write(pcm, 0, pcm.size) == pcm.size &&
+                t.state == AudioTrack.STATE_INITIALIZED &&
+                t.setLoopPoints(0, pcm.size, -1) == AudioTrack.SUCCESS
+            if (ok) {
+                t.play()
+                track = t
+            } else {
                 t.release()
-                return@runCatching
             }
-            t.write(pcm, 0, pcm.size)
-            t.setLoopPoints(0, pcm.size, -1)
-            t.play()
-            track = t
-        }.onFailure { Log.e(TAG, "사이렌 재생 실패: ${it.message}") }
-        vibrate()
+            ok
+        } catch (e: Exception) {
+            Log.e(TAG, "사이렌 트랙 예외: ${e.message}")
+            runCatching { t?.release() }
+            false
+        }
     }
 
-    /** 5초마다: 다른 곳에서 취소된 진동을 다시 걸고, 충돌 경보가 낮춘 볼륨을 되돌린다. */
+    private fun startFallback(p: Pattern) {
+        stopFallback()
+        fallbackFor = p
+        val type = if (p == Pattern.SIREN) ToneGenerator.TONE_CDMA_EMERGENCY_RINGBACK else ToneGenerator.TONE_PROP_BEEP2
+        fallback = runCatching {
+            ToneGenerator(AudioManager.STREAM_ALARM, 100).also { it.startTone(type, FALLBACK_TONE_MS) }
+        }.getOrNull()
+    }
+
+    private fun stopFallback() {
+        fallback?.let { g ->
+            runCatching { g.stopTone() }
+            runCatching { g.release() }
+        }
+        fallback = null
+        fallbackFor = null
+    }
+
+    /** 5초마다: 다른 곳에서 취소된 진동을 다시 걸고, 충돌 경보가 낮춘 볼륨을 되돌린다. 트랙 실패 중이면 재시도한다. */
     fun refresh() {
-        val p = playing ?: return
+        val p = playing ?: fallbackFor ?: return
+        if (playing == null) { play(p); return }
         vibrate()
         applyVolume(p)
     }
 
     fun stop() {
-        if (playing == null && track == null && savedVolume < 0) return
+        if (playing == null && track == null && fallbackFor == null && savedVolume < 0) return
         releaseTrack()
+        stopFallback()
         playing = null
-        runCatching { VibrationHelper.vibrator(ctx)?.cancel() }
+        VibrationHelper.stopVibration(ctx)
         if (savedVolume >= 0) {
             val cur = audio?.getStreamVolume(AudioManager.STREAM_ALARM)
             if (cur != null && cur != savedVolume) setAlarmVolume(savedVolume)
@@ -109,16 +161,5 @@ class LoneWorkerAlarm(
         if (cur != target) setAlarmVolume(target)
     }
 
-    @Suppress("DEPRECATION")
-    private fun vibrate() {
-        runCatching {
-            VibrationHelper.vibrator(ctx)?.vibrate(
-                VibrationEffect.createWaveform(longArrayOf(0, 700, 300), 0),
-                AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_ALARM)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                    .build()
-            )
-        }
-    }
+    private fun vibrate() = VibrationHelper.vibrateAlarmLoop(ctx)
 }
