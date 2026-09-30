@@ -15,15 +15,15 @@ import org.junit.Test
  * elapsed time and the saved wall clock. On the same boot the elapsed values are used as they are
  * (a wall clock change does not move them); on another boot (or an unknown boot count) they move by
  * the wall clock time that passed (never negative). The safe zone state (settled, entry time) is
- * kept and held for ZONE_RESUME_HOLD_MS until a zone report arrives. The monitor starts the power
- * debounce on the saved charging value and feeds the current raw value, so a difference applies as a
- * real plug/unplug at the restart time only after 2 s of stable power. From the restart until the
- * debounce reports, at most RestartHold.POWER_HOLD_MS (a fixed window: a bounce neither ends nor
- * extends it), no check opens and a restored check is held; the held check follows the open check's
- * close rules (plug, distinct motion, settling, turning off, a restored own SOS), an unplug opens it
- * with the full response time. A change whose first edge falls in that window is a restart change even
- * when reported later: neither a docking motion nor a cradle unplug. A restored zone settles only on
- * an inside report. A stored own SOS wins after.
+ * kept and held for ZONE_RESUME_HOLD_MS until a zone report arrives. The logic starts its power
+ * debounce on the saved charging value and feeds the current raw value at the restart time, so a
+ * difference applies as a real plug/unplug at the restart time only after 2 s of stable power. Until
+ * the debounce reports, at most RestartHold.POWER_HOLD_MS (extended once while a wait that started in
+ * that window is pending), no check opens and a restored check is held; the held check follows the
+ * open check's close rules (plug, distinct motion, settling, turning off, a restored own SOS), an
+ * unplug opens it with the full response time. Only the first change reported during the hold is a
+ * restart change: neither a docking motion nor a cradle unplug. A restored zone settles only on an
+ * inside report. A stored own SOS wins after.
  */
 class LoneWorkerResumeTest : RestartKit() {
 
@@ -280,8 +280,8 @@ class LoneWorkerResumeTest : RestartKit() {
         assertEquals(listOf(Mode.WATCHING, Mode.WATCHING), beforePower)
         assertEquals(Mode.WATCHING, l.mode)
         assertEquals(end, l.nextCheckAt(5_000 + PowerDebounce.CONFIRM_MS))
-        assertEquals(Mode.WATCHING, l.monitorTick(end - 1))
-        assertEquals(Mode.CHECKING, l.monitorTick(end))
+        assertEquals(Mode.WATCHING, l.modeAt(end - 1))
+        assertEquals(Mode.CHECKING, l.seenAt(end))
         assertEquals("fall", l.trigger)
         assertEquals(Rest.NONE, l.rest)
         assertEquals(LoneWorkerLogic.ACCIDENT_RESPONSE_MS, l.responseLeftMs(end))
@@ -293,16 +293,13 @@ class LoneWorkerResumeTest : RestartKit() {
         for (gapTick in listOf(false, true)) {
             val m = "gapTick=$gapTick"
             val l = restart(accidentCheck(), 41_000, 5_000, 20_000, charging = true)
-            assertEquals(m, Mode.WATCHING, l.monitorTick(5_000))
-            power.raw(false, 5_500)
-            if (gapTick) assertEquals(m, Mode.WATCHING, l.monitorTick(5_600))
-            power.raw(true, 5_800)
-            assertEquals(m, end, l.nextCheckAt(5_900))
-            assertEquals(m, Mode.WATCHING, l.monitorTick(7_799))
-            assertEquals(m, Mode.WATCHING, l.monitorTick(7_800))
+            l.rebounce(now = true, gapTick = gapTick, m = m)
+            assertEquals(m, 5_800 + PowerDebounce.CONFIRM_MS, l.nextCheckAt(5_900))
+            assertEquals(m, Mode.WATCHING, l.modeAt(5_800 + PowerDebounce.DEBOUNCE_MS - 1))
+            assertEquals(m, Mode.WATCHING, l.modeAt(5_800 + PowerDebounce.DEBOUNCE_MS))
             assertEquals(m, Rest.DOCKED, l.rest)
-            assertNull(m, l.snapshot(7_800).accidentHold)
-            assertEquals(m, Mode.WATCHING, l.monitorTick(end))
+            assertNull(m, l.snapshot(5_800 + PowerDebounce.DEBOUNCE_MS).accidentHold)
+            assertEquals(m, Mode.WATCHING, l.modeAt(end))
             // the restart plug is not a docking motion
             l.onAccident(9_000)
             assertEquals(m, Mode.WATCHING, l.seenAt(38_999))

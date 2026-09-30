@@ -110,8 +110,9 @@ class LoneWorkerLogic(var myBleId: String) {
     private var accidentUntil = Long.MIN_VALUE
     private var lastPlugAt = Long.MIN_VALUE
     private var lastUnplugAt = Long.MIN_VALUE
-    /** 동료 사이렌이 이 기기에서 진동하는 동안의 무동작 셈 멈춤(C2)과 재시작 뒤 전원·구역 보류. */
+    /** 동료 사이렌 진동 중 무동작 셈 멈춤(C2), 전원 디바운스, 재시작 뒤 전원·구역 보류. */
     private val siren = SirenPause()
+    private val power = PowerDebounce()
     private val hold = RestartHold()
 
     /** 무동작 확인을 쉬는 이유. */
@@ -139,6 +140,7 @@ class LoneWorkerLogic(var myBleId: String) {
         lastPlugAt = Long.MIN_VALUE
         lastUnplugAt = Long.MIN_VALUE
         siren.reset()
+        power.seed(charging)
         hold.reset()
         mode = Mode.WATCHING
         trigger = ""
@@ -161,9 +163,8 @@ class LoneWorkerLogic(var myBleId: String) {
     }
 
     /**
-     * 디바운스를 통과한 실제 전원 변화. atMs 는 디바운스 전 첫 변화 시각.
-     * 연결: 새 거치 — 지님을 지우고, 열린 확인 창은 응답으로 보고 닫으며, SOS 가 아니면 사고 의심을 끝낸다
-     * (꽂는 행위 = 사람이 있음). 해제: 첫 뚜렷한 움직임 대기(확정 전 해제 뒤 걸음으로 이미 성립했으면 그 걸음부터 지님). SOS 는 전원 변화로 끝나지 않는다.
+     * 디바운스를 통과한 실제 전원 변화(atMs = 디바운스 전 첫 변화 시각). 연결: 새 거치 — 지님을 지우고, 열린 확인 창은 응답으로 보고 닫으며,
+     * SOS 가 아니면 사고 의심을 끝낸다(꽂는 행위 = 사람이 있음). 해제: 첫 뚜렷한 움직임 대기(확정 전 해제 뒤 걸음으로 이미 성립했으면 그 걸음부터 지님). SOS 는 전원 변화로 끝나지 않는다.
      */
     fun setCharging(on: Boolean, atMs: Long) {
         if (on == charging) return
@@ -171,7 +172,7 @@ class LoneWorkerLogic(var myBleId: String) {
         charging = on
         chargeAt = atMs
         carried = false
-        // 재시작 때 적용한 변화는 거치 동작·크래들 낙하 기준이 아니다(H4·K1)
+        // 재시작 때 적용한 변화는 거치 동작·크래들 낙하 기준이 아니다(H4·L2)
         if (on) {
             if (!restart) lastPlugAt = atMs
             closeCheck(atMs)
@@ -258,6 +259,7 @@ class LoneWorkerLogic(var myBleId: String) {
     }
 
     fun tick(nowMs: Long) {
+        settlePower(nowMs) // 2초 안정된 전원 변화를 먼저 확정한다 — 확정 소비는 settlePower 한 곳(tick·powerRaw 첫머리)
         stillBase = siren.update(alarmVibrates, nowMs, stillBase, stillMs)
         updateSettle(nowMs)
         // 정착한 안전구역에서는 무동작을 세지 않는다(기준을 계속 지금으로, C3)
@@ -310,16 +312,22 @@ class LoneWorkerLogic(var myBleId: String) {
         )
     }
 
-    /**
-     * 시작하고 저장 상태가 있으면 이어간다. 시작한 충전 값(저장값, 없으면 plugged)을 돌려준다 — 디바운스 시작값이다.
-     * 지금 전원과 다르면 그 차이는 디바운스 뒤 재시작 시각의 실제 변화로 적용되고 그동안 전원 보류다(RestartHold, E9).
-     */
-    fun startFrom(nowMs: Long, zoneInside: Boolean, plugged: Boolean, saved: LoneWorkerResume.State?): Boolean {
-        val charging = saved?.charging ?: plugged
-        start(nowMs, zoneInside, charging)
+    /** 시작하고 저장 상태가 있으면 이어간다. 저장한 충전 값과 지금 전원(plugged)이 다르면 재시작 전원 보류다(RestartHold). */
+    fun startFrom(nowMs: Long, zoneInside: Boolean, plugged: Boolean, saved: LoneWorkerResume.State?) {
+        start(nowMs, zoneInside, saved?.charging ?: plugged)
         if (saved != null && saved.charging != plugged) hold.holdPower(nowMs)
+        powerRaw(plugged, nowMs)
         saved?.let { resume(it, nowMs) }
-        return charging
+    }
+
+    /** 전원 원시 값(sticky = 스티키 배터리 보정, 대기 중이면 버림). 2초 안정된 변화를 먼저 확정하고, 대기가 바뀌었으면 true(모니터가 다시 예약). */
+    fun powerRaw(on: Boolean, tMs: Long, sticky: Boolean = false): Boolean {
+        settlePower(tMs)
+        return power.raw(on, tMs, sticky).also { if (it) hold.powerWait(power.pendingAt, tMs) }
+    }
+
+    private fun settlePower(t: Long) {
+        power.poll(t)?.let { (on, at) -> setCharging(on, at) }
     }
 
     /**
@@ -346,9 +354,9 @@ class LoneWorkerLogic(var myBleId: String) {
 
     fun responseLeftMs(nowMs: Long): Long = sosAt()?.let { (it - nowMs).coerceAtLeast(0L) } ?: 0L
 
-    /** 다음에 tick 이 필요한 시각: 재시작 전원 보류 끝, 없으면 기다리는 마감(아직 안 됐으면 그 시각, 지났으면 LATE_MS 뒤) 중 가장 이른 것. */
-    fun nextCheckAt(nowMs: Long): Long? = hold.powerEnd(nowMs) ?:
-        deadlines(nowMs).map { if (nowMs < it) it else it + LATE_MS }.filter { it > nowMs }.minOrNull()
+    /** 다음에 tick 이 필요한 시각: 전원 확정 확인, 재시작 전원 보류 끝, 보류가 없으면 기다리는 마감(아직 안 됐으면 그 시각, 지났으면 LATE_MS 뒤) 중 가장 이른 것. */
+    fun nextCheckAt(nowMs: Long): Long? = listOfNotNull(power.confirmAt, hold.powerEnd(nowMs) ?:
+        deadlines(nowMs).map { if (nowMs < it) it else it + LATE_MS }.filter { it > nowMs }.minOrNull()).minOrNull()
 
     /** 지난 마감이 센서 데이터를 기다리고 있다(모니터가 flush 를 요청한다). */
     fun waitingOnSensors(nowMs: Long): Boolean = deadlines(nowMs).any { nowMs >= it && !due(it, nowMs) }

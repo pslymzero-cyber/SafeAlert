@@ -272,6 +272,24 @@ class LoneWorkerChargeTest {
         assertEquals(true to 1_000L, d.poll(3_050))
     }
 
+    /** A change already stable for 2 s is reported before a later raw value, with or without a tick in between. */
+    @Test fun stable_power_change_is_applied_before_a_later_raw() {
+        val l = newLogic(charging = true)
+        l.powerRaw(false, 10_000)
+        assertEquals(10_000 + PowerDebounce.CONFIRM_MS, l.nextCheckAt(10_000))
+        l.powerRaw(true, 12_500)
+        assertEquals(Rest.WAIT, l.rest)
+        l.modeAt(12_500 + PowerDebounce.DEBOUNCE_MS)
+        assertEquals(Rest.DOCKED, l.rest)
+        // a flap shorter than 2 s is dropped
+        val d = newLogic(charging = true)
+        d.powerRaw(false, 10_000)
+        d.powerRaw(true, 11_500)
+        assertEquals(Rest.DOCKED, d.rest)
+        d.modeAt(20_000)
+        assertEquals(Rest.DOCKED, d.rest)
+    }
+
     // Carrying while charging = 10 steps within the last 30 s.
 
     @Test fun ten_steps_within_30s_while_charging_carry() {

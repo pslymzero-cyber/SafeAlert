@@ -72,15 +72,13 @@ internal fun LoneWorkerLogic.peerSiren(from: Long, to: Long, id: String = "P") {
 }
 
 /**
- * Restart like the monitor. Each monitor tick first polls the power debounce (a confirmed change is
- * applied there and nowhere else), then ticks.
+ * Restart like the monitor: startFrom feeds the current raw power to the logic's own debounce, and every
+ * tick first applies a change stable for 2 s (modeAt = a monitor tick without sensor data, seenAt = with
+ * data up to t).
  */
 abstract class RestartKit {
     protected val wall0 = 1_000_000_000L
     protected val boot = 7
-
-    /** The monitor debounce of the last restart. */
-    protected var power = PowerDebounce()
 
     /** Modes seen by the two ticks before the debounce reports (the monitor ticks on sensor data and its 10 s loop). */
     protected var beforePower: List<Mode> = emptyList()
@@ -101,35 +99,37 @@ abstract class RestartKit {
         assertEquals("fall", trigger)
     }
 
-    /** startFrom, seed the debounce with the started charging value and feed the raw power (charging). No tick. */
+    /** startFrom with the current raw power (charging). No tick. */
     protected fun restart(old: LoneWorkerLogic, savedAt: Long, now: Long, wallGap: Long, charging: Boolean = false,
-                          bootNow: Int = boot + 1, bootSaved: Int = boot, zoneInside: Boolean = false): LoneWorkerLogic {
-        val l = LoneWorkerLogic("SAFEALERT_WALKER_ME")
-        power = PowerDebounce()
-        power.seed(l.startFrom(now, zoneInside, charging, saved(old, savedAt, now, wallGap, bootNow, bootSaved)))
-        power.raw(charging, now)
-        return l
-    }
-
-    /** One monitor tick at t. */
-    protected fun LoneWorkerLogic.monitorTick(t: Long): Mode {
-        power.poll(t)?.let { (on, at) -> setCharging(on, at) }
-        return modeAt(t)
-    }
+                          bootNow: Int = boot + 1, bootSaved: Int = boot, zoneInside: Boolean = false): LoneWorkerLogic =
+        LoneWorkerLogic("SAFEALERT_WALKER_ME").apply {
+            startFrom(now, zoneInside, charging, saved(old, savedAt, now, wallGap, bootNow, bootSaved))
+        }
 
     /**
      * restart, tick at the restart, flip the raw power at each of flips (between now and the next tick),
-     * tick 1 ms before the debounce can report, then tick when the monitor polls it (CONFIRM_MS).
+     * tick 1 ms before the debounce can report, then tick at its confirm check (CONFIRM_MS).
      */
     protected fun reboot(old: LoneWorkerLogic, savedAt: Long, now: Long, wallGap: Long, charging: Boolean = false,
                          bootNow: Int = boot + 1, bootSaved: Int = boot, zoneInside: Boolean = false,
                          flips: List<Long> = emptyList()): LoneWorkerLogic {
         val l = restart(old, savedAt, now, wallGap, charging, bootNow, bootSaved, zoneInside)
-        val first = l.monitorTick(now)
+        val first = l.modeAt(now)
         var raw = charging
-        for (f in flips) { raw = !raw; power.raw(raw, f) }
-        beforePower = listOf(first, l.monitorTick(now + PowerDebounce.DEBOUNCE_MS - 1))
-        l.monitorTick(now + PowerDebounce.CONFIRM_MS)
+        for (f in flips) { raw = !raw; l.powerRaw(raw, f) }
+        beforePower = listOf(first, l.modeAt(now + PowerDebounce.DEBOUNCE_MS - 1))
+        l.modeAt(now + PowerDebounce.CONFIRM_MS)
         return l
+    }
+
+    /**
+     * The raw power at the restart (now) bounces back to the saved value at 5.5 s and to now again at 5.8 s;
+     * with gapTick the logic ticks at 5.6 s in between. Watching throughout.
+     */
+    protected fun LoneWorkerLogic.rebounce(now: Boolean, gapTick: Boolean, m: String) {
+        assertEquals(m, Mode.WATCHING, modeAt(5_000))
+        powerRaw(!now, 5_500)
+        if (gapTick) assertEquals(m, Mode.WATCHING, modeAt(5_600))
+        powerRaw(now, 5_800)
     }
 }

@@ -87,7 +87,7 @@ class LoneWorkerMonitor(
     val sosHint: Int get() = if (sosActive) sync.hint() else 0
     private val sidLabels = HashMap<Int, String>()   // (v1.1.99) 짧은 ID → 비콘 라벨 캐시(찾은 것만 저장), stop 에서 비움
     private val sidMissUntil = HashMap<Int, Long>()  // 라벨 없는 짧은 ID → 다시 찾을 수 있는 시각
-    private val power = LoneWorkerPower(ctx, handler) { tickNow() }
+    private val power = LoneWorkerPower(ctx) { onPowerRaw(it, false) }
     private val sensors = LoneWorkerSensors(ctx, handler, { logic }) { onSensorEvent(it) }
     private val resume = LoneWorkerResume(ctx)
     private var lastRest = LoneWorkerLogic.Rest.NONE
@@ -116,7 +116,7 @@ class LoneWorkerMonitor(
         // 저장 상태로 이어가고, 지금 전원과의 차이는 2초 디바운스 뒤 재시작 시각의 실제 변화로 적용한다 (v1.1.99, B6)
         // 진동기가 없으면 사이렌 진동도 그 동안의 무동작 셈 멈춤도 없다 (v1.1.99, D2)
         logic.canVibrate = VibrationHelper.vibrator(ctx)?.hasVibrator() == true
-        power.seed(logic.startFrom(t0, zoneInside, plugged, resume.load(t0)), plugged)
+        logic.startFrom(t0, zoneInside, plugged, resume.load(t0))
         // 저장된 본인 SOS 가 있으면 첫 렌더 전에 되살린다 — 같은 서버 키로 사이렌·광고 bit1 이 다시 켜진다 (v1.1.99, R3)
         sync.restoredTrigger()?.let { logic.restoreSos(it, now()) }
         notifier.createChannel()
@@ -132,6 +132,7 @@ class LoneWorkerMonitor(
         applySettings()
         handler.post(syncRunnable)
         current = this
+        tickNow() // 첫 판정 tick 으로 전원 확정 확인·보류 끝을 예약한다 (v1.1.99)
     }
 
     /** 10초마다: 동료 수신 재연결·내 SOS 전송 재시도·센서 공백 검사(등록 실패도 백오프로 재시도) (v1.1.99). */
@@ -139,7 +140,7 @@ class LoneWorkerMonitor(
         override fun run() {
             if (!started) return
             sync.tick()
-            power.pollSticky()     // 방송을 놓쳐도 스티키 배터리 상태로 보정(같은 2초 디바운스)
+            onPowerRaw(power.plugged(), true) // 방송을 놓쳐도 스티키 배터리 상태로 보정(대기 중이면 버림, 같은 2초 디바운스)
             sensors.refreshSteps() // 신체 활동 권한이 바뀌었으면 걸음 센서 등록을 맞춘다
             checkStall(now())
             handler.postDelayed(this, SYNC_TICK_MS)
@@ -208,8 +209,6 @@ class LoneWorkerMonitor(
      * tick 이 한 번 더 돌도록 예약한다 (v1.1.99).
      */
     private fun tick(t: Long) {
-        // 깊은 잠에서 uptime 예약이 늦어도 전원 확정을 elapsed 로 먼저 반영한다 — 확정 소비는 여기 한 곳 (v1.1.99)
-        power.poll(t)?.let { (on, at) -> logic.setCharging(on, at) }
         logic.tick(t)
         val next = logic.nextCheckAt(t)
         val waiting = logic.waitingOnSensors(t)
@@ -229,6 +228,11 @@ class LoneWorkerMonitor(
     }
 
     private val deadlineRunnable = Runnable { tickNow() }
+
+    /** 전원 원시 값을 판정에 넣고, 디바운스 대기가 바뀌었으면 판정 tick 으로 확정 확인 시각을 다시 예약한다 (v1.1.99). */
+    private fun onPowerRaw(on: Boolean, sticky: Boolean) {
+        if (started && logic.powerRaw(on, now(), sticky)) tickNow()
+    }
 
     /**
      * 센서 신호 공백 검사 (RR08). 끊긴 동안에도 움직임이 없는 것으로 보고 무동작 시간을 계속 센다.

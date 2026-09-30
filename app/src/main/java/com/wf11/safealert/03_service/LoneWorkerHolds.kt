@@ -47,9 +47,11 @@ class SirenPause {
 
 /**
  * 서비스 재시작 뒤의 보류(순수, v1.1.99).
- * 전원 보류: 저장한 충전 값과 지금 전원이 다르면 재시작 ~ 재시작 + POWER_HOLD_MS 고정 창 동안 확인 창을 새로 열지도,
- * 복원한 확인 창을 띄우지도 않는다(E9). 디바운스가 확정하면 그때 끝나고, 확정이 안 되면 창 끝에 끝난다 — 흔들림으로
- * 일찍 끝나거나 늘지 않는다(K1). 확정된 변화의 첫 변화 시각이 창 안이면 보류가 이미 끝났어도 재시작 변화다.
+ * 전원 보류: 저장한 충전 값과 지금 전원이 다르면 재시작 ~ 재시작 + POWER_HOLD_MS 창 동안 확인 창을 새로 열지도,
+ * 복원한 확인 창을 띄우지도 않는다(E9). 디바운스가 확정하면 그 확정 시각(첫 변화 + DEBOUNCE_MS)에 끝나고, 아니면
+ * 창 끝에 끝난다 — 창 끝에 창 안에서 시작한 대기가 남아 있으면 그 대기가 확정되거나 버려질 때까지 한 번 늘린다
+ * (늦어도 창 끝 + CONFIRM_MS 전, 창 끝 뒤 시작한 대기로는 늘리지 않음, L1). 재시작 변화는 보류 중에 확정된
+ * 첫 변화 하나이고 그 뒤 변화는 창 안이라도 실제 변화다(L2).
  * 복원한 창은 종류만 들고 있다가 보류 끝에 연다 — 들고 있는 창은 열린 창과 같은 규칙으로 버린다.
  * 구역 보류: 복원한 안전구역 안 상태를 구역 보고 없이 유지하는 한도(C3). 보류 중에는 정착으로 올리지 않는다.
  */
@@ -59,9 +61,10 @@ class RestartHold {
         const val POWER_HOLD_MS = PowerDebounce.CONFIRM_MS + 1_000L
     }
 
+    /** 전원 보류 끝(연장·확정·버림으로 바뀜). 끝난 뒤에도 그 시각을 남긴다. */
     private var powerUntil = Long.MIN_VALUE
     private var zoneUntil = Long.MIN_VALUE
-    /** 재시작 전원 창 끝(고정) — 첫 변화가 이보다 이르면 재시작 변화. reset 에서만 지운다. */
+    /** 재시작 전원 창 끝 — 연장 기준, 첫 확정에서 지운다. */
     private var powerWindowEnd = Long.MIN_VALUE
 
     /** 전원 보류 중 들고 있는 복원 확인 창 종류("still"·"fall"). 없으면 빈 문자열. */
@@ -88,10 +91,19 @@ class RestartHold {
 
     fun powerEnd(nowMs: Long): Long? = if (powerHeld(nowMs)) powerUntil else null
 
-    /** 디바운스가 확정한 전원 변화(atMs = 첫 변화 시각): 보류를 끝내고, 재시작 변화(첫 변화가 고정 창 안)인지 돌려준다. */
+    /** 원시 값으로 디바운스 대기가 바뀌었다(pendingAt 없으면 MIN_VALUE) — 보류 중일 때만 끝을 다시 정한다. */
+    fun powerWait(pendingAt: Long, tMs: Long) {
+        if (!powerHeld(tMs)) return
+        val inWindow = pendingAt != Long.MIN_VALUE && pendingAt < powerWindowEnd
+        powerUntil = maxOf(powerWindowEnd, if (inWindow) pendingAt + PowerDebounce.CONFIRM_MS else tMs)
+    }
+
+    /** 디바운스가 확정한 전원 변화(atMs = 첫 변화 시각) — 첫 확정이고 첫 변화가 창 안이면 재시작 변화로 true, 보류는 atMs + DEBOUNCE_MS 에 끝난다. */
     fun powerSettled(atMs: Long): Boolean {
-        powerUntil = Long.MIN_VALUE
-        return atMs < powerWindowEnd
+        val restart = atMs < powerWindowEnd
+        powerWindowEnd = Long.MIN_VALUE
+        if (restart) powerUntil = atMs + PowerDebounce.DEBOUNCE_MS
+        return restart
     }
 
     /** 들고 있던 확인 창 종류를 한 번 돌려주고 비운다. */
