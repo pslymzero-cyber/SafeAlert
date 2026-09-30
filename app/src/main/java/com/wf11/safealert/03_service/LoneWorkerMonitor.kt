@@ -208,6 +208,9 @@ class LoneWorkerMonitor(
      * tick 이 한 번 더 돌도록 예약한다 (v1.1.99).
      */
     private fun tick(t: Long) {
+        // 깊은 잠에서 uptime 예약이 늦어도 전원 확정을 elapsed 로 먼저 반영하고, 디바운스 대기로 재시작 전원 보류를 끝내거나 잇는다 (v1.1.99)
+        power.poll(t)?.let { (on, at) -> logic.setCharging(on, at) }
+        logic.powerPending(power.pendingSince)
         logic.tick(t)
         waited = logic.waitingOnSensors(t)
         if (waited) sensors.flush()

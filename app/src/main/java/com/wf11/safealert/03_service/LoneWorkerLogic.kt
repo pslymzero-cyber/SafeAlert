@@ -10,7 +10,7 @@ package com.wf11.safealert.service
  *
  * 규칙 1(사고): 낙상 신호 하나로 그 충격 시각부터 5분 동안 사고를 의심한다(직전 움직임 조건 없음).
  * 그 안에서 뚜렷한 움직임이 30초 동안 없으면 사고 확인 창("fall", 1분)을 연다. 거치·안전구역과 무관하지만,
- * 안전구역 안(들어서자마자, 원시 안쪽)에서 충전 중이면(트리거 앞뒤 10초 안 실제 해제 포함, 재시작 때 적용한 해제는 빼고 — 크래들에서 떨어짐)
+ * 안전구역 안(들어서자마자, 원시 안쪽)에서 충전 중이면(트리거 앞뒤 10초 안 실제 해제 포함, 재시작 때 적용한 해제는 빼고 — 크래들에서 떨어짐, 재시작 전원 보류 중이면 재시작 때 전원으로)
  * 낙상을 무시한다. 트리거 전 10초 안의 실제 전원 연결은 거치대에 꽂는 동작으로 보고 그 트리거를 버린다.
  * 의심 중 실제 연결은 사람이 있다는 뜻이라 의심을 끝낸다.
  * 사고 확인 창을 [괜찮음]으로 닫으면 의심이 끝나고, 뚜렷한 움직임으로 닫히면 5분이 끝날 때까지 계속 지켜본다.
@@ -149,7 +149,7 @@ class LoneWorkerLogic(var myBleId: String) {
         zoneInsideSince = nowMs
     }
 
-    /** 기능 끄기: 열린 확인 창과 사고 의심은 거두고, 진행 중인 SOS 는 유지한다 (D-05). */
+    /** 기능 끄기: 열린 확인 창(들고 있는 복원 창 포함)과 사고 의심은 거두고, 진행 중인 SOS 는 유지한다 (D-05). */
     fun setEnabled(on: Boolean, nowMs: Long) {
         if (on == enabled) return
         enabled = on
@@ -157,7 +157,7 @@ class LoneWorkerLogic(var myBleId: String) {
             raiseStillBase(nowMs)
         } else {
             clearAccident()
-            if (mode == Mode.CHECKING) toWatching(nowMs)
+            closeCheck(nowMs)
         }
     }
 
@@ -168,16 +168,16 @@ class LoneWorkerLogic(var myBleId: String) {
      */
     fun setCharging(on: Boolean, atMs: Long) {
         if (on == charging) return
-        val restart = hold.powerSettled(on, atMs)
+        val restart = hold.powerSettled(atMs)
         charging = on
         chargeAt = atMs
         carried = false
+        // 재시작 때 적용한 변화는 거치 동작·크래들 낙하 기준이 아니다(H4)
         if (on) {
-            lastPlugAt = atMs
-            if (mode == Mode.CHECKING) closeCheck(atMs)
+            if (!restart) lastPlugAt = atMs
+            closeCheck(atMs)
             if (mode != Mode.SOS) clearAccident()
         } else {
-            // 재시작 때 적용한 해제는 크래들 낙하 기준이 아니다(S1)
             if (!restart) lastUnplugAt = atMs
             floorAt = atMs
         }
@@ -223,13 +223,13 @@ class LoneWorkerLogic(var myBleId: String) {
 
     /**
      * 낙상(trigMs = 충격 표본 시각). 꺼짐·SOS·사고 확인 중이거나, 안전구역 안에서 충전 중(재시작 때 적용한 해제를 뺀 실제 해제가 트리거 앞뒤
-     * 10초 안이면 충전 중으로 본다)이거나, 트리거 전 10초 안(또는 트리거 뒤)에 실제 전원 연결이 있었으면 무시한다.
+     * 10초 안이면 충전 중으로, 재시작 전원 보류 중이면 재시작 때 전원으로 본다)이거나, 트리거 전 10초 안(또는 트리거 뒤)에 실제 전원 연결이 있었으면 무시한다.
      * 의심 중 새 트리거는 의심 끝만 늘린다.
      */
     fun onAccident(trigMs: Long) {
         if (!enabled || mode == Mode.SOS) return
         if (mode == Mode.CHECKING && trigger == "fall") return
-        if (zoneInside && (charging ||
+        if (zoneInside && (hold.chargingAt(trigMs, charging) ||
                 (lastUnplugAt != Long.MIN_VALUE && kotlin.math.abs(trigMs - lastUnplugAt) <= UNPLUG_FALL_MS))) return
         if (lastPlugAt != Long.MIN_VALUE && trigMs - lastPlugAt <= PLUG_EXCEPT_MS) return
         if (accidentUntil == Long.MIN_VALUE) accidentFrom = trigMs
@@ -237,7 +237,7 @@ class LoneWorkerLogic(var myBleId: String) {
         if (trigMs > floorAt) floorAt = trigMs
     }
 
-    /** 구역 보고. 재시작 구역 보류는 여기서 풀리고, 보류가 막 풀린 안쪽 보고는 저장한 진입 시각으로 정착을 본다. */
+    /** 구역 보고. 재시작 구역 보류는 여기서 풀리고, 한도 안에 보류가 막 풀린 안쪽 보고는 저장한 진입 시각으로 정착을 본다(한도가 지났으면 한도 시각에 먼저 벗어난다). */
     fun onZone(inside: Boolean, nowMs: Long) {
         updateSettle(nowMs)
         hold.zoneReported()
@@ -263,8 +263,6 @@ class LoneWorkerLogic(var myBleId: String) {
 
     fun tick(nowMs: Long) {
         stillBase = siren.update(alarmVibrates, nowMs, stillBase, stillMs)
-        // 재시작 뒤 구역 보고가 한도 안에 없으면 그 시각에 정착 계산 없이 벗어난 것으로 본다(C3)
-        hold.zoneExpired(nowMs)?.let { leaveZone(it) }
         updateSettle(nowMs)
         // 정착한 안전구역에서는 무동작을 세지 않는다(기준을 계속 지금으로, C3)
         if (zoneSettled) raiseStillBase(nowMs)
@@ -290,15 +288,16 @@ class LoneWorkerLogic(var myBleId: String) {
     /** SOS 진입 때 의심은 이미 지워졌고 SOS 중 낙상은 버리므로 의심을 따로 끝낼 것이 없다. */
     fun cancelSos(nowMs: Long): Boolean {
         if (mode != Mode.SOS) return false
-        closeCheck(nowMs)
+        toWatching(nowMs)
         return true
     }
 
     /**
      * 저장된 본인 SOS 로 복원한다 (서비스 재시작·프로세스 사망 뒤). start() 뒤에 호출한다.
-     * SOS 는 cancelSos 로만 끝나므로 구역 정착·기능 끄기·ackWorking 으로는 벗어나지 않는다 (v1.1.99).
+     * SOS 는 cancelSos 로만 끝나므로 구역 정착·기능 끄기·ackWorking 으로는 벗어나지 않는다. 들고 있거나 연 확인 창은 버린다 (v1.1.99).
      */
     fun restoreSos(trigger: String, nowMs: Long) {
+        closeCheck(nowMs)
         this.trigger = trigger
         toSos(nowMs)
     }
@@ -315,15 +314,18 @@ class LoneWorkerLogic(var myBleId: String) {
         )
     }
 
+    /** 모니터가 tick 마다 디바운스 대기(시작 시각, 없으면 null)를 넘긴다 — 재시작 전원 보류를 끝내거나 잇는다. */
+    fun powerPending(since: Long?) = hold.powerPending(since)
+
     /**
      * 시작하고 저장 상태가 있으면 이어간다. 모니터와 테스트가 같은 조립을 쓴다. 시작한 충전 값(저장값, 없으면 plugged)을
      * 돌려준다 — 디바운스 시작값이다. 지금 전원과의 차이는 디바운스가 2초 뒤 재시작 시각의 실제 변화로 적용한다(E9).
-     * 그 차이가 있으면 전원이 확정될 때까지(최대 RestartHold.POWER_HOLD_MS) 확인 창 열기와 복원한 창 표시를 미룬다.
+     * 그 차이가 있으면 전원이 확정될 때까지(디바운스가 확정하거나 버릴 때까지, 안전망 RestartHold.POWER_HOLD_MS) 확인 창 열기와 복원한 창 표시를 미룬다.
      */
     fun startFrom(nowMs: Long, zoneInside: Boolean, plugged: Boolean, saved: LoneWorkerResume.State?): Boolean {
         val charging = saved?.charging ?: plugged
         start(nowMs, zoneInside, charging)
-        if (saved != null && saved.charging != plugged) hold.holdPower(nowMs)
+        if (saved != null && saved.charging != plugged) hold.holdPower(nowMs, plugged)
         saved?.let { resume(it, nowMs) }
         return charging
     }
@@ -347,6 +349,7 @@ class LoneWorkerLogic(var myBleId: String) {
             zoneSettled = s.zoneSettled
         }
         if (hold.powerHeld(nowMs)) hold.holdCheck(s.check) else if (s.check.isNotEmpty()) toChecking(s.check, nowMs, nowMs)
+        if (zoneSettled) closeCheck(nowMs, "still") // 정착 상태 복원이면 무동작 창을 열지도 들지도 않는다
     }
 
     fun responseLeftMs(nowMs: Long): Long = sosAt()?.let { (it - nowMs).coerceAtLeast(0L) } ?: 0L
@@ -420,7 +423,7 @@ class LoneWorkerLogic(var myBleId: String) {
         raiseStillBase(t)
         floorAt = t
         if (!charging) carried = true
-        if (mode == Mode.CHECKING) closeCheck(t)
+        closeCheck(t)
     }
 
     private fun carry(t: Long) {
@@ -432,10 +435,10 @@ class LoneWorkerLogic(var myBleId: String) {
         if (t > stillBase) stillBase = t
     }
 
-    /** 확인 창·SOS 를 닫는다. 사고 의심을 끝낼 호출처는 clearAccident 를 따로 부른다. */
-    private fun closeCheck(t: Long) {
-        raiseStillBase(t)
-        toWatching(t)
+    /** 닫힘 규칙 한 곳: 열린 확인 창(kind 가 있으면 그 종류만)과 전원 보류 중 들고 있는 복원 창을 같이 닫는다. SOS 는 cancelSos 로만, 사고 의심은 호출처가 끝낸다. */
+    private fun closeCheck(t: Long, kind: String = "") {
+        hold.dropCheck(kind)
+        if (mode == Mode.CHECKING && (kind.isEmpty() || trigger == kind)) toWatching(t)
     }
 
     private fun clearAccident() {
@@ -443,15 +446,17 @@ class LoneWorkerLogic(var myBleId: String) {
         accidentUntil = Long.MIN_VALUE
     }
 
-    /** 재시작 구역 보류 중에는 정착으로 올리지 않는다 — 정착은 안쪽 보고로만. */
+    /** 재시작 구역 보류 한도가 지났으면 그 시각에 정착 계산 없이 벗어난 것으로 먼저 보고(C3), 보류 중에는 정착으로 올리지 않는다 — 정착은 안쪽 보고로만. */
     private fun updateSettle(nowMs: Long) {
+        hold.zoneExpired(nowMs)?.let { leaveZone(it) }
         if (!hold.zoneHeld && zoneInside &&!zoneSettled && nowMs - zoneInsideSince >= ZONE_SETTLE_MS) {
             zoneSettled = true
-            if (mode == Mode.CHECKING && trigger == "still") toWatching(nowMs)
+            closeCheck(nowMs, "still")
         }
     }
 
     private fun toWatching(nowMs: Long) {
+        raiseStillBase(nowMs)
         mode = Mode.WATCHING
         trigger = ""
         modeSinceMs = nowMs

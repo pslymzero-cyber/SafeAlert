@@ -15,6 +15,8 @@ import android.os.SystemClock
 class PowerDebounce(private val ms: Long = DEBOUNCE_MS) {
     companion object {
         const val DEBOUNCE_MS = 2_000L
+        /** 확정을 확인하는 시각 — 첫 변화 뒤 이만큼(경계 여유 50ms). */
+        const val CONFIRM_MS = DEBOUNCE_MS + 50
     }
 
     /** 마지막으로 확정한 값. */
@@ -25,6 +27,9 @@ class PowerDebounce(private val ms: Long = DEBOUNCE_MS) {
 
     /** 확정되지 않은 변화가 있다. */
     val pending: Boolean get() = pendingAt != Long.MIN_VALUE
+
+    /** 대기 중이면 대기 시작 시각, 아니면 null. */
+    val pendingSince: Long? get() = if (pending) pendingAt else null
 
     fun seed(on: Boolean) {
         reported = on
@@ -63,8 +68,14 @@ class LoneWorkerPower(
     private var receiver: BroadcastReceiver? = null
     private val debounce = PowerDebounce()
     private val pollRunnable = Runnable {
-        debounce.poll(SystemClock.elapsedRealtime())?.let { (on, at) -> onChange(on, at) }
+        poll(SystemClock.elapsedRealtime())?.let { (on, at) -> onChange(on, at) }
     }
+
+    /** elapsed 로 지금 확정할 변화가 있으면 한 번 — 깊은 잠에서 예약이 늦을 때 모니터 tick 이 먼저 본다. */
+    fun poll(tMs: Long): Pair<Boolean, Long>? = debounce.poll(tMs)
+
+    /** 디바운스 대기 시작 시각(대기가 없으면 null). */
+    val pendingSince: Long? get() = debounce.pendingSince
 
     /** 수신을 시작하고 지금 전원이 연결돼 있는지(원시값) 돌려준다. 디바운스는 seed 로 시작한다. */
     fun start(): Boolean {
@@ -99,7 +110,7 @@ class LoneWorkerPower(
 
     private fun raw(on: Boolean) {
         debounce.raw(on, SystemClock.elapsedRealtime())
-        if (debounce.pending) handler.postDelayed(pollRunnable, PowerDebounce.DEBOUNCE_MS + 50)
+        if (debounce.pending) handler.postDelayed(pollRunnable, PowerDebounce.CONFIRM_MS)
     }
 
     /** 배터리 스티키 인텐트로 지금 상태를 읽는다. 읽지 못하면 연결 안 됨. */
