@@ -17,13 +17,13 @@ import org.junit.Test
  * the wall clock time that passed (never negative). The safe zone state (settled, entry time) is
  * kept and held for ZONE_RESUME_HOLD_MS until a zone report arrives. The monitor starts the power
  * debounce on the saved charging value and feeds the current raw value, so a difference applies as a
- * real plug/unplug at the restart time only after 2 s of stable power. Until the debounce reports or
- * drops the change (a timing restarted by a bounce extends it, at most RestartHold.POWER_HOLD_MS after
- * it started) no check opens and a restored check is held; the held check follows the open check's
+ * real plug/unplug at the restart time only after 2 s of stable power. From the restart until the
+ * debounce reports, at most RestartHold.POWER_HOLD_MS (a fixed window: a bounce neither ends nor
+ * extends it), no check opens and a restored check is held; the held check follows the open check's
  * close rules (plug, distinct motion, settling, turning off, a restored own SOS), an unplug opens it
- * with the full response time. A restart plug or unplug is neither a docking motion nor a cradle
- * unplug, and a fall during the hold uses the raw power at the restart. A restored zone settles only
- * on an inside report. A stored own SOS wins after.
+ * with the full response time. A change whose first edge falls in that window is a restart change even
+ * when reported later: neither a docking motion nor a cradle unplug. A restored zone settles only on
+ * an inside report. A stored own SOS wins after.
  */
 class LoneWorkerResumeTest : RestartKit() {
 
@@ -32,12 +32,6 @@ class LoneWorkerResumeTest : RestartKit() {
         assertEquals(Mode.WATCHING, seenAt(61_000))
         assertTrue(zoneSettled)
         assertEquals(Mode.WATCHING, seenAt(100_000))
-    }
-
-    private fun accidentCheck(): LoneWorkerLogic = newLogic(carried = true).apply {
-        onAccident(1_000)
-        assertEquals(Mode.CHECKING, seenAt(31_000))
-        assertEquals("fall", trigger)
     }
 
     @Test fun resume_reopens_accident_check_with_full_response() {
@@ -280,23 +274,41 @@ class LoneWorkerResumeTest : RestartKit() {
     // -- power at the restart --
 
     @Test fun restart_power_bounce_keeps_check() {
-        // cradle contact bounced back at the restart: the debounce drops the change, the hold ends on the next tick and the check opens
+        // cradle contact bounced back at the restart: the debounce drops the change, the hold still runs to the window end, then the check opens
+        val end = 5_000 + RestartHold.POWER_HOLD_MS
         val l = reboot(accidentCheck(), 41_000, 5_000, 20_000, charging = true, flips = listOf(5_500))
-        assertEquals(listOf(Mode.WATCHING, Mode.CHECKING), beforePower)
-        assertEquals("fall", l.trigger)
-        assertEquals(Rest.NONE, l.rest)
-        assertEquals(LoneWorkerLogic.ACCIDENT_RESPONSE_MS, l.responseLeftMs(5_000 + PowerDebounce.DEBOUNCE_MS - 1))
-    }
-
-    @Test fun restart_power_rebounce_extends_hold() {
-        // the contact came back, then the new power again: the hold follows the new timing, then the plug drops the held check
-        val l = reboot(accidentCheck(), 41_000, 5_000, 20_000, charging = true, flips = listOf(5_500, 5_800))
         assertEquals(listOf(Mode.WATCHING, Mode.WATCHING), beforePower)
         assertEquals(Mode.WATCHING, l.mode)
-        assertEquals(5_800 + RestartHold.POWER_HOLD_MS, l.nextCheckAt(7_050))
-        assertEquals(Mode.WATCHING, l.monitorTick(7_800))
-        assertEquals(Rest.DOCKED, l.rest)
-        assertNull(l.snapshot(7_800).accidentHold)
+        assertEquals(end, l.nextCheckAt(5_000 + PowerDebounce.CONFIRM_MS))
+        assertEquals(Mode.WATCHING, l.monitorTick(end - 1))
+        assertEquals(Mode.CHECKING, l.monitorTick(end))
+        assertEquals("fall", l.trigger)
+        assertEquals(Rest.NONE, l.rest)
+        assertEquals(LoneWorkerLogic.ACCIDENT_RESPONSE_MS, l.responseLeftMs(end))
+    }
+
+    @Test fun restart_plug_rebounce_ignores_gap_ticks() {
+        // the contact came back, then the new power again: a tick in the gap changes nothing, the plug drops the held check
+        val end = 5_000 + RestartHold.POWER_HOLD_MS
+        for (gapTick in listOf(false, true)) {
+            val m = "gapTick=$gapTick"
+            val l = restart(accidentCheck(), 41_000, 5_000, 20_000, charging = true)
+            assertEquals(m, Mode.WATCHING, l.monitorTick(5_000))
+            power.raw(false, 5_500)
+            if (gapTick) assertEquals(m, Mode.WATCHING, l.monitorTick(5_600))
+            power.raw(true, 5_800)
+            assertEquals(m, end, l.nextCheckAt(5_900))
+            assertEquals(m, Mode.WATCHING, l.monitorTick(7_799))
+            assertEquals(m, Mode.WATCHING, l.monitorTick(7_800))
+            assertEquals(m, Rest.DOCKED, l.rest)
+            assertNull(m, l.snapshot(7_800).accidentHold)
+            assertEquals(m, Mode.WATCHING, l.monitorTick(end))
+            // the restart plug is not a docking motion
+            l.onAccident(9_000)
+            assertEquals(m, Mode.WATCHING, l.seenAt(38_999))
+            assertEquals(m, Mode.CHECKING, l.seenAt(39_000))
+            assertEquals(m, "fall", l.trigger)
+        }
     }
 
     @Test fun restart_power_change_applies_after_debounce() {
@@ -305,7 +317,7 @@ class LoneWorkerResumeTest : RestartKit() {
         assertEquals(listOf(Mode.WATCHING, Mode.WATCHING), beforePower)
         assertEquals(Mode.WATCHING, l.mode)
         assertEquals(Rest.DOCKED, l.rest)
-        assertNull(l.snapshot(7_050).accidentHold)
+        assertNull(l.snapshot(5_000 + PowerDebounce.CONFIRM_MS).accidentHold)
     }
 
     @Test fun restart_on_dock_after_dead_battery_opens_no_check() {
@@ -314,7 +326,7 @@ class LoneWorkerResumeTest : RestartKit() {
         assertEquals(listOf(Mode.WATCHING, Mode.WATCHING), beforePower)
         assertEquals(Mode.WATCHING, l.mode)
         assertEquals(Rest.DOCKED, l.rest)
-        assertEquals("", l.snapshot(7_050).check)
+        assertEquals("", l.snapshot(5_000 + PowerDebounce.CONFIRM_MS).check)
     }
 
     @Test fun restart_after_power_bank_unplug_waits_without_check() {
@@ -339,7 +351,7 @@ class LoneWorkerResumeTest : RestartKit() {
         assertEquals(Mode.CHECKING, l.mode)
         assertEquals("still", l.trigger)
         assertEquals(Rest.WAIT, l.rest)
-        assertEquals(l.responseMs, l.responseLeftMs(7_050))
+        assertEquals(l.responseMs, l.responseLeftMs(5_000 + PowerDebounce.CONFIRM_MS))
     }
 
     @Test fun restart_unplug_is_not_a_cradle_fall() {

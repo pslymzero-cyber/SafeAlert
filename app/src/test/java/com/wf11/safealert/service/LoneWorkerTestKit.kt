@@ -1,6 +1,7 @@
 package com.wf11.safealert.service
 
 import com.wf11.safealert.service.LoneWorkerLogic.Mode
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 
 /*
@@ -61,7 +62,7 @@ internal fun LoneWorkerLogic.seenAt(t: Long): Mode { sensed(t); return modeAt(t)
 
 /**
  * Restart like the monitor. Each monitor tick first polls the power debounce (a confirmed change is
- * applied), then passes the pending debounce start to the logic, then ticks.
+ * applied there and nowhere else), then ticks.
  */
 abstract class RestartKit {
     protected val wall0 = 1_000_000_000L
@@ -82,6 +83,13 @@ abstract class RestartKit {
         return s!!
     }
 
+    /** Carried, fall at 1 s, accident check open at 31 s. */
+    protected fun accidentCheck(): LoneWorkerLogic = newLogic(carried = true).apply {
+        onAccident(1_000)
+        assertEquals(Mode.CHECKING, seenAt(31_000))
+        assertEquals("fall", trigger)
+    }
+
     /** startFrom, seed the debounce with the started charging value and feed the raw power (charging). No tick. */
     protected fun restart(old: LoneWorkerLogic, savedAt: Long, now: Long, wallGap: Long, charging: Boolean = false,
                           bootNow: Int = boot + 1, bootSaved: Int = boot, zoneInside: Boolean = false): LoneWorkerLogic {
@@ -95,7 +103,6 @@ abstract class RestartKit {
     /** One monitor tick at t. */
     protected fun LoneWorkerLogic.monitorTick(t: Long): Mode {
         power.poll(t)?.let { (on, at) -> setCharging(on, at) }
-        powerPending(power.pendingSince)
         return modeAt(t)
     }
 

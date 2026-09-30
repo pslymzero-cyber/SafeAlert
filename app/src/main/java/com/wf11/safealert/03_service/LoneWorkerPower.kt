@@ -9,10 +9,10 @@ import android.os.Handler
 import android.os.SystemClock
 
 /**
- * 전원 연결 값 디바운스 (순수, v1.1.99). 원시 값이 ms 동안 그대로 바뀐 채 있어야 확정한다 —
+ * 전원 연결 값 디바운스 (순수, v1.1.99). 원시 값이 DEBOUNCE_MS 동안 그대로 바뀐 채 있어야 확정한다 —
  * 거치대 접점이 1~2초 끊겼다 붙는 흔들림은 확정 이벤트를 만들지 않는다.
  */
-class PowerDebounce(private val ms: Long = DEBOUNCE_MS) {
+class PowerDebounce {
     companion object {
         const val DEBOUNCE_MS = 2_000L
         /** 확정을 확인하는 시각 — 첫 변화 뒤 이만큼(경계 여유 50ms). */
@@ -28,9 +28,6 @@ class PowerDebounce(private val ms: Long = DEBOUNCE_MS) {
     /** 확정되지 않은 변화가 있다. */
     val pending: Boolean get() = pendingAt != Long.MIN_VALUE
 
-    /** 대기 중이면 대기 시작 시각, 아니면 null. */
-    val pendingSince: Long? get() = if (pending) pendingAt else null
-
     fun seed(on: Boolean) {
         reported = on
         lastRaw = on
@@ -44,9 +41,9 @@ class PowerDebounce(private val ms: Long = DEBOUNCE_MS) {
         else if (!pending) pendingAt = tMs
     }
 
-    /** ms 동안 안정됐으면 (새 값, 첫 변화 시각) 을 한 번 돌려준다. */
+    /** DEBOUNCE_MS 동안 안정됐으면 (새 값, 첫 변화 시각) 을 한 번 돌려준다. */
     fun poll(tMs: Long): Pair<Boolean, Long>? {
-        if (!pending || tMs - pendingAt < ms || lastRaw == reported) return null
+        if (!pending || tMs - pendingAt < DEBOUNCE_MS || lastRaw == reported) return null
         val at = pendingAt
         reported = lastRaw
         pendingAt = Long.MIN_VALUE
@@ -57,25 +54,21 @@ class PowerDebounce(private val ms: Long = DEBOUNCE_MS) {
 /**
  * 외부 전원(PDA 충전 거치대·보조배터리) 연결 여부를 알려 주는 수신부 (v1.1.99).
  *
- * 시스템이 보내는 POWER_CONNECTED/DISCONNECTED 를 2초 디바운스한 뒤 (값, 첫 변화 elapsed 시각) 으로 넘긴다.
+ * 시스템이 보내는 POWER_CONNECTED/DISCONNECTED 를 2초 디바운스하고, 확정할 때가 되면 onDue 로 모니터를 깨운다
+ * (모니터 tick 이 poll 로 (값, 첫 변화 elapsed 시각)을 받는다).
  * 메인 스레드에서만 부른다.
  */
 class LoneWorkerPower(
     private val ctx: Context,
     private val handler: Handler,
-    private val onChange: (Boolean, Long) -> Unit
+    private val onDue: () -> Unit
 ) {
     private var receiver: BroadcastReceiver? = null
     private val debounce = PowerDebounce()
-    private val pollRunnable = Runnable {
-        poll(SystemClock.elapsedRealtime())?.let { (on, at) -> onChange(on, at) }
-    }
+    private val pollRunnable = Runnable { onDue() }
 
-    /** elapsed 로 지금 확정할 변화가 있으면 한 번 — 깊은 잠에서 예약이 늦을 때 모니터 tick 이 먼저 본다. */
+    /** elapsed 로 지금 확정할 변화가 있으면 한 번 — 확정 소비는 모니터 tick 첫머리 한 곳이다. */
     fun poll(tMs: Long): Pair<Boolean, Long>? = debounce.poll(tMs)
-
-    /** 디바운스 대기 시작 시각(대기가 없으면 null). */
-    val pendingSince: Long? get() = debounce.pendingSince
 
     /** 수신을 시작하고 지금 전원이 연결돼 있는지(원시값) 돌려준다. 디바운스는 seed 로 시작한다. */
     fun start(): Boolean {
@@ -97,7 +90,7 @@ class LoneWorkerPower(
         return plugged()
     }
 
-    /** 디바운스를 reported(저장 상태의 충전 값)로 시작하고 원시값 now 를 넣는다 — 다르면 2초 안정 뒤 onChange. */
+    /** 디바운스를 reported(저장 상태의 충전 값)로 시작하고 원시값 now 를 넣는다 — 다르면 2초 안정 뒤 onDue. */
     fun seed(reported: Boolean, now: Boolean) {
         debounce.seed(reported)
         raw(now)

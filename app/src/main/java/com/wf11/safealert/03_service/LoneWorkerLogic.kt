@@ -10,8 +10,8 @@ package com.wf11.safealert.service
  *
  * 규칙 1(사고): 낙상 신호 하나로 그 충격 시각부터 5분 동안 사고를 의심한다(직전 움직임 조건 없음).
  * 그 안에서 뚜렷한 움직임이 30초 동안 없으면 사고 확인 창("fall", 1분)을 연다. 거치·안전구역과 무관하지만,
- * 안전구역 안(들어서자마자, 원시 안쪽)에서 충전 중이면(트리거 앞뒤 10초 안 실제 해제 포함, 재시작 때 적용한 해제는 빼고 — 크래들에서 떨어짐, 재시작 전원 보류 중이면 재시작 때 전원으로)
- * 낙상을 무시한다. 트리거 전 10초 안의 실제 전원 연결은 거치대에 꽂는 동작으로 보고 그 트리거를 버린다.
+ * 안전구역 안(들어서자마자, 원시 안쪽)에서 충전 중이면(트리거 앞뒤 10초 안 실제 해제 포함, 재시작 때 적용한 해제는 빼고 — 크래들에서 떨어짐)
+ * 낙상을 무시한다. 트리거 전 10초 안(또는 트리거 뒤)의 실제 전원 연결(재시작 때 적용한 연결은 빼고)은 거치대에 꽂는 동작으로 보고 그 트리거를 버린다.
  * 의심 중 실제 연결은 사람이 있다는 뜻이라 의심을 끝낸다.
  * 사고 확인 창을 [괜찮음]으로 닫으면 의심이 끝나고, 뚜렷한 움직임으로 닫히면 5분이 끝날 때까지 계속 지켜본다.
  *
@@ -26,8 +26,7 @@ package com.wf11.safealert.service
  * 확인 창(두 종류)은 [괜찮음]·뚜렷한 움직임·실제 전원 연결로 닫힌다. 실제 연결은 사고 의심도 끝낸다.
  * 무동작 stillMs→확인 창, 사고 30초 무움직임→확인 창, 확인 창→SOS 마감은 마감 시각까지의 센서 데이터가 들어온 뒤(없으면 LATE_MS 뒤) 판정한다.
  * SOS 는 구역 진입·기능 끄기·전원 변화로 끝나지 않고 오직 cancelSos 로만 끝난다.
- * 재시작 뒤 저장한 충전 값과 지금 전원이 다르면 전원이 확정될 때까지 확인 창을 새로 열지도 복원한 창을 띄우지도 않고,
- * 복원한 안전구역 안 상태는 안쪽 보고로만 정착한다(RestartHold).
+ * 재시작 뒤 전원·구역 보류는 RestartHold.
  * 동료 SOS 수신은 LoneWorkerPeers 가 회차(bleId, ep) 단위 항목으로 다룬다(서버 기록과 BLE 비트가 같은 회차면 한 항목).
  *
  * 내 서버 기록은 작성자 uid 로 LoneWorkerSosSync 가 걸러내고, BLE 스캐너는 자기 광고를 받지 못한다.
@@ -172,7 +171,7 @@ class LoneWorkerLogic(var myBleId: String) {
         charging = on
         chargeAt = atMs
         carried = false
-        // 재시작 때 적용한 변화는 거치 동작·크래들 낙하 기준이 아니다(H4)
+        // 재시작 때 적용한 변화는 거치 동작·크래들 낙하 기준이 아니다(H4·K1)
         if (on) {
             if (!restart) lastPlugAt = atMs
             closeCheck(atMs)
@@ -221,15 +220,11 @@ class LoneWorkerLogic(var myBleId: String) {
         raiseStillBase(nowMs)
     }
 
-    /**
-     * 낙상(trigMs = 충격 표본 시각). 꺼짐·SOS·사고 확인 중이거나, 안전구역 안에서 충전 중(재시작 때 적용한 해제를 뺀 실제 해제가 트리거 앞뒤
-     * 10초 안이면 충전 중으로, 재시작 전원 보류 중이면 재시작 때 전원으로 본다)이거나, 트리거 전 10초 안(또는 트리거 뒤)에 실제 전원 연결이 있었으면 무시한다.
-     * 의심 중 새 트리거는 의심 끝만 늘린다.
-     */
+    /** 낙상(trigMs = 충격 표본 시각). 꺼짐·SOS·사고 확인 중이면 버리고, 그 밖의 무시 조건은 규칙 1(클래스 KDoc). 의심 중 새 트리거는 의심 끝만 늘린다. */
     fun onAccident(trigMs: Long) {
         if (!enabled || mode == Mode.SOS) return
         if (mode == Mode.CHECKING && trigger == "fall") return
-        if (zoneInside && (hold.chargingAt(trigMs, charging) ||
+        if (zoneInside && (charging ||
                 (lastUnplugAt != Long.MIN_VALUE && kotlin.math.abs(trigMs - lastUnplugAt) <= UNPLUG_FALL_MS))) return
         if (lastPlugAt != Long.MIN_VALUE && trigMs - lastPlugAt <= PLUG_EXCEPT_MS) return
         if (accidentUntil == Long.MIN_VALUE) accidentFrom = trigMs
@@ -314,18 +309,14 @@ class LoneWorkerLogic(var myBleId: String) {
         )
     }
 
-    /** 모니터가 tick 마다 디바운스 대기(시작 시각, 없으면 null)를 넘긴다 — 재시작 전원 보류를 끝내거나 잇는다. */
-    fun powerPending(since: Long?) = hold.powerPending(since)
-
     /**
-     * 시작하고 저장 상태가 있으면 이어간다. 모니터와 테스트가 같은 조립을 쓴다. 시작한 충전 값(저장값, 없으면 plugged)을
-     * 돌려준다 — 디바운스 시작값이다. 지금 전원과의 차이는 디바운스가 2초 뒤 재시작 시각의 실제 변화로 적용한다(E9).
-     * 그 차이가 있으면 전원이 확정될 때까지(디바운스가 확정하거나 버릴 때까지, 안전망 RestartHold.POWER_HOLD_MS) 확인 창 열기와 복원한 창 표시를 미룬다.
+     * 시작하고 저장 상태가 있으면 이어간다. 시작한 충전 값(저장값, 없으면 plugged)을 돌려준다 — 디바운스 시작값이다.
+     * 지금 전원과 다르면 그 차이는 디바운스 뒤 재시작 시각의 실제 변화로 적용되고 그동안 전원 보류다(RestartHold, E9).
      */
     fun startFrom(nowMs: Long, zoneInside: Boolean, plugged: Boolean, saved: LoneWorkerResume.State?): Boolean {
         val charging = saved?.charging ?: plugged
         start(nowMs, zoneInside, charging)
-        if (saved != null && saved.charging != plugged) hold.holdPower(nowMs, plugged)
+        if (saved != null && saved.charging != plugged) hold.holdPower(nowMs)
         saved?.let { resume(it, nowMs) }
         return charging
     }

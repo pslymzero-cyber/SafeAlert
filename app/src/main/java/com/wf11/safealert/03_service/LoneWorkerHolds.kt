@@ -12,7 +12,7 @@ class SirenPause {
     /** 상한으로 멈춤을 끝냈고 진동이 아직 꺼지지 않았다. */
     private var spent = false
 
-    val active: Boolean get() = at != Long.MIN_VALUE
+    private val active: Boolean get() = at != Long.MIN_VALUE
 
     /** 이 마감을 멈춤이 가린다 — 멈춤 시작 이하의 지난 마감은 가리지 않는다(S1, 데이터를 기다려 판정). */
     fun covers(deadline: Long): Boolean = active && deadline > at
@@ -47,21 +47,22 @@ class SirenPause {
 
 /**
  * 서비스 재시작 뒤의 보류(순수, v1.1.99).
- * 전원 보류: 저장한 충전 값과 지금 전원이 다르면 디바운스가 재시작 차이를 확정하거나 버릴 때까지(대기가 다시 시작되면
- * 그 시작부터 POWER_HOLD_MS 안에서 이어감) 확인 창을 새로 열지도, 복원한 확인 창을 띄우지도 않는다(E9).
- * 복원한 창은 종류만 들고 있다가 보류가 끝난 뒤 연다 — 들고 있는 창은 열린 창과 같은 규칙으로 버린다(Logic.closeCheck).
+ * 전원 보류: 저장한 충전 값과 지금 전원이 다르면 재시작 ~ 재시작 + POWER_HOLD_MS 고정 창 동안 확인 창을 새로 열지도,
+ * 복원한 확인 창을 띄우지도 않는다(E9). 디바운스가 확정하면 그때 끝나고, 확정이 안 되면 창 끝에 끝난다 — 흔들림으로
+ * 일찍 끝나거나 늘지 않는다(K1). 확정된 변화의 첫 변화 시각이 창 안이면 보류가 이미 끝났어도 재시작 변화다.
+ * 복원한 창은 종류만 들고 있다가 보류 끝에 연다 — 들고 있는 창은 열린 창과 같은 규칙으로 버린다.
  * 구역 보류: 복원한 안전구역 안 상태를 구역 보고 없이 유지하는 한도(C3). 보류 중에는 정착으로 올리지 않는다.
  */
 class RestartHold {
     companion object {
-        /** 대기 시작마다의 안전망. 보통은 디바운스 확정·버림 신호로 먼저 끝난다. */
+        /** 재시작 전원 창 길이: 디바운스 확인 시각(CONFIRM_MS) + 여유 1초. */
         const val POWER_HOLD_MS = PowerDebounce.CONFIRM_MS + 1_000L
     }
 
     private var powerUntil = Long.MIN_VALUE
     private var zoneUntil = Long.MIN_VALUE
-    /** 재시작 때 원시 전원(보류 중 낙상의 세이프존 충전 판정). */
-    private var plugged = false
+    /** 재시작 전원 창 끝(고정) — 첫 변화가 이보다 이르면 재시작 변화. reset 에서만 지운다. */
+    private var powerWindowEnd = Long.MIN_VALUE
 
     /** 전원 보류 중 들고 있는 복원 확인 창 종류("still"·"fall"). 없으면 빈 문자열. */
     var check = ""
@@ -70,26 +71,14 @@ class RestartHold {
     fun reset() {
         powerUntil = Long.MIN_VALUE
         zoneUntil = Long.MIN_VALUE
+        powerWindowEnd = Long.MIN_VALUE
         check = ""
-        plugged = false
     }
 
-    fun holdPower(nowMs: Long, plugged: Boolean) {
+    fun holdPower(nowMs: Long) {
         powerUntil = nowMs + POWER_HOLD_MS
-        this.plugged = plugged
+        powerWindowEnd = powerUntil
     }
-
-    /**
-     * 디바운스 대기(시작 시각, 없으면 null). 대기가 없으면(버렸거나 확정) 보류를 끝내고, 보류 안에서 시작한 대기면
-     * 그 시작부터 POWER_HOLD_MS 까지 잇는다. 보류 끝 뒤에 시작한 대기는 재시작 차이가 아니다.
-     */
-    fun powerPending(since: Long?) {
-        if (powerUntil == Long.MIN_VALUE) return
-        powerUntil = if (since == null || since >= powerUntil) Long.MIN_VALUE else maxOf(powerUntil, since + POWER_HOLD_MS)
-    }
-
-    /** 시각 atMs 의 충전 값: 전원 보류 중이면 재시작 때 원시 전원, 아니면 charging. */
-    fun chargingAt(atMs: Long, charging: Boolean): Boolean = if (atMs < powerUntil) plugged else charging
 
     fun holdCheck(kind: String) {
         check = kind
@@ -99,21 +88,17 @@ class RestartHold {
 
     fun powerEnd(nowMs: Long): Long? = if (powerHeld(nowMs)) powerUntil else null
 
-    /**
-     * 디바운스가 확정한 전원 변화(atMs = 첫 변화 시각). 보류 중 시작된 변화(재시작 때 적용한 변화)인지 돌려주고
-     * 보류를 끝낸다. 들고 있던 창을 연결로 버리는 것은 Logic.closeCheck 한 곳이다.
-     */
+    /** 디바운스가 확정한 전원 변화(atMs = 첫 변화 시각): 보류를 끝내고, 재시작 변화(첫 변화가 고정 창 안)인지 돌려준다. */
     fun powerSettled(atMs: Long): Boolean {
-        val restart = atMs < powerUntil
         powerUntil = Long.MIN_VALUE
-        return restart
+        return atMs < powerWindowEnd
     }
 
     /** 들고 있던 확인 창 종류를 한 번 돌려주고 비운다. */
     fun takeCheck(): String? = check.ifEmpty { null }?.also { check = "" }
 
-    /** 들고 있던 확인 창을 버린다(kind 가 있으면 그 종류만). Logic.closeCheck 만 부른다. */
-    fun dropCheck(kind: String = "") {
+    /** 들고 있던 확인 창을 버린다(kind 가 있으면 그 종류만). */
+    fun dropCheck(kind: String) {
         if (kind.isEmpty() || check == kind) check = ""
     }
 

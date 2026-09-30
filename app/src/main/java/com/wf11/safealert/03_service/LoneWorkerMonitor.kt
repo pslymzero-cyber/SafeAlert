@@ -87,7 +87,7 @@ class LoneWorkerMonitor(
     val sosHint: Int get() = if (sosActive) sync.hint() else 0
     private val sidLabels = HashMap<Int, String>()   // (v1.1.99) 짧은 ID → 비콘 라벨 캐시(찾은 것만 저장), stop 에서 비움
     private val sidMissUntil = HashMap<Int, Long>()  // 라벨 없는 짧은 ID → 다시 찾을 수 있는 시각
-    private val power = LoneWorkerPower(ctx, handler) { on, at -> onPower(on, at) }
+    private val power = LoneWorkerPower(ctx, handler) { tickNow() }
     private val sensors = LoneWorkerSensors(ctx, handler, { logic }) { onSensorEvent(it) }
     private val resume = LoneWorkerResume(ctx)
     private var lastRest = LoneWorkerLogic.Rest.NONE
@@ -208,9 +208,8 @@ class LoneWorkerMonitor(
      * tick 이 한 번 더 돌도록 예약한다 (v1.1.99).
      */
     private fun tick(t: Long) {
-        // 깊은 잠에서 uptime 예약이 늦어도 전원 확정을 elapsed 로 먼저 반영하고, 디바운스 대기로 재시작 전원 보류를 끝내거나 잇는다 (v1.1.99)
+        // 깊은 잠에서 uptime 예약이 늦어도 전원 확정을 elapsed 로 먼저 반영한다 — 확정 소비는 여기 한 곳 (v1.1.99)
         power.poll(t)?.let { (on, at) -> logic.setCharging(on, at) }
-        logic.powerPending(power.pendingSince)
         logic.tick(t)
         val next = logic.nextCheckAt(t)
         val waiting = logic.waitingOnSensors(t)
@@ -220,14 +219,16 @@ class LoneWorkerMonitor(
         next?.let { handler.postDelayed(deadlineRunnable, (it - t).coerceAtLeast(0L)) }
     }
 
-    private val deadlineRunnable = Runnable {
-        if (started) {
-            val t = now()
-            lastTickAt = t
-            tick(t)
-            render()
-        }
+    /** 예약한 마감·전원 확정 시각에 판정 tick 과 렌더를 한 번 (v1.1.99). */
+    private fun tickNow() {
+        if (!started) return
+        val t = now()
+        lastTickAt = t
+        tick(t)
+        render()
     }
+
+    private val deadlineRunnable = Runnable { tickNow() }
 
     /**
      * 센서 신호 공백 검사 (RR08). 끊긴 동안에도 움직임이 없는 것으로 보고 무동작 시간을 계속 센다.
@@ -247,15 +248,6 @@ class LoneWorkerMonitor(
         if (!started) return
         checkStall(now())
         if (DevSettings.lwEnabled && !sensors.noSensor) watchdog.arm()
-    }
-
-    /** 디바운스를 통과한 외부 전원 연결·해제 (atMs = 첫 변화 시각) (v1.1.99). */
-    private fun onPower(on: Boolean, atMs: Long) {
-        if (!started) return
-        logic.setCharging(on, atMs)
-        val t = now()
-        tick(t)
-        render()
     }
 
     /** 알림을 쓸어 내렸다: 큰 알림이면 다시 올린다 (RR13). */
