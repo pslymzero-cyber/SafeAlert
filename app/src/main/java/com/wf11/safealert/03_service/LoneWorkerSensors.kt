@@ -35,6 +35,8 @@ class LoneWorkerSensors(
         private const val SKEW_OK_MS = 60_000L
         /** 끝나지 않은 flush 요청은 이만큼 지나면 다시 요청한다. */
         private const val FLUSH_RETRY_MS = 2_000L
+        /** 센서 배치 최대 지연(us). */
+        private const val MAX_BATCH_US = 5_000_000
     }
 
     private var sm: SensorManager? = null
@@ -56,12 +58,12 @@ class LoneWorkerSensors(
         private set
     var registered = false
         private set
-    /** 웨이크업 가속도 센서가 없어 일반 센서로 대신 등록했다. */
-    private var fallbackWake = false
+    /** 등록한 가속도 센서가 웨이크업 센서다(없어서 일반 센서로 대신 등록했으면 false). */
+    private var accelWake = false
     val stalled: Boolean get() = stall.stalled
     /** 등록된 센서 가운데 비웨이크업이 있어 감시 중 CPU 를 깨워 둬야 한다. */
     val needsWake: Boolean
-        get() = sensorsNeedCpuWake(registered, !fallbackWake, stepRegistered, stepSensor?.isWakeUpSensor == true)
+        get() = sensorsNeedCpuWake(registered, accelWake, stepRegistered, stepSensor?.isWakeUpSensor == true)
     /** 걸음 센서는 있는데 신체 활동 권한이 없다. */
     var stepPermissionMissing = false
         private set
@@ -107,19 +109,19 @@ class LoneWorkerSensors(
         val impactG = MotionAnalyzer.impactGFor(s.maximumRange)
         Log.i(TAG, "가속도 센서 wakeUp=${s.isWakeUpSensor} fifoMax=${s.fifoMaxEventCount} range=${s.maximumRange} impactG=$impactG")
         analyzer = MotionAnalyzer(impactG) { w -> logic().onWindow(w.copy(endMs = w.endMs + accelSkew)) }
-        if (!m.registerListener(this, s, 20_000, 5_000_000, handler)) {
+        if (!m.registerListener(this, s, 20_000, MAX_BATCH_US, handler)) {
             Log.w(TAG, "가속도 센서 등록 실패 — 판정 유지, 다시 등록")
             return
         }
         accel = s
         registered = true
-        fallbackWake = !wake
+        accelWake = wake
     }
 
     private fun unregisterAccel() {
         if (registered) runCatching { sm?.unregisterListener(this, accel) }
         registered = false
-        fallbackWake = false
+        accelWake = false
     }
 
     /** 걸음 센서 등록을 권한·기능 상태에 맞춘다(권한이 새로 생기면 등록, 사라지면 해제). */
@@ -133,7 +135,7 @@ class LoneWorkerSensors(
         stepPermissionMissing = s != null && !perm
         val want = on && s != null && perm
         if (want && !stepRegistered) {
-            stepRegistered = m?.registerListener(this, s, SensorManager.SENSOR_DELAY_NORMAL, 5_000_000, handler) == true
+            stepRegistered = m?.registerListener(this, s, SensorManager.SENSOR_DELAY_NORMAL, MAX_BATCH_US, handler) == true
             if (stepLogged != stepRegistered) {
                 stepLogged = stepRegistered
                 Log.i(TAG, "걸음 센서 등록=$stepRegistered wakeUp=${s?.isWakeUpSensor} " +

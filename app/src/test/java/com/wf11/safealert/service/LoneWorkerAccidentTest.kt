@@ -2,6 +2,8 @@ package com.wf11.safealert.service
 
 import com.wf11.safealert.service.LoneWorkerLogic.Mode
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -363,6 +365,32 @@ class LoneWorkerAccidentTest {
         assertEquals("still", later.trigger)
         assertEquals(Mode.SOS, later.seenAt(300_000))
         assertEquals("still", later.trigger)
+    }
+
+    @Test fun accident_deadline_that_cannot_beat_still_check_is_not_pending() {
+        val l = rule1()
+        l.stillMs = 180_000L
+        assertEquals(Mode.CHECKING, l.seenAt(180_000))
+        l.onAccident(215_000)
+        assertEquals(300_000L, l.nextCheckAt(230_000))
+        assertFalse(l.waitingOnSensors(245_000))
+        l.sensed(245_000)
+        assertFalse(l.dueNow(245_000))
+        assertEquals(Mode.CHECKING, l.modeAt(245_000))
+        assertEquals("still", l.trigger)
+
+        val early = rule1()
+        early.stillMs = 180_000L
+        early.seenAt(180_000)
+        early.onAccident(175_000)
+        assertEquals(205_000L, early.nextCheckAt(190_000))
+        assertTrue(early.waitingOnSensors(205_000))
+        assertFalse(early.dueNow(205_000))
+        early.sensed(205_000)
+        assertTrue(early.dueNow(205_000))
+        assertEquals(Mode.CHECKING, early.modeAt(205_000))
+        assertEquals("fall", early.trigger)
+        assertFalse(early.dueNow(205_000))
     }
 
     @Test fun sos_in_progress_ignores_new_triggers() {

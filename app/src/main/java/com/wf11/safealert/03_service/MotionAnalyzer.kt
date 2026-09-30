@@ -42,17 +42,22 @@ class MotionAnalyzer(
         const val FREE_FALL_G = 0.5
         const val FREE_FALL_MIN_MS = 60L
         const val IMPACT_G = 2.5
-        /** 측정 범위가 이보다 작다고 보고하면 오보고로 보고 IMPACT_G 를 쓴다. 현장 보정 대상. */
+        /** 측정 범위를 G 로 나눈 값이 이보다 작으면 g 단위로 보고한 것으로 해석한다. 현장 보정 대상. */
         const val MIN_RANGE_G = 1.5
+        /** 움직임·걷는 모양 판정 창 길이(센서 시각 ms). */
+        const val WINDOW_MS = 1_000L
         const val IMPACT_WINDOW_MS = 1000L
         const val POST_START_MS = 2000L
         const val POST_END_MS = 12000L
         const val POSTURE_DEG = 45.0
         const val POST_MAX_ACTIVE = 3
 
-        /** 센서 최대 범위(m/s^2)가 MIN_RANGE_G 이상 IMPACT_G 미만이면 범위의 90% 를 낙상 충격 임계로 쓴다. 아니면 IMPACT_G. */
+        /**
+         * 센서 최대 범위(m/s^2)가 MIN_RANGE_G 이상 IMPACT_G 미만이면 범위의 90% 를 낙상 충격 임계로 쓴다. 아니면 IMPACT_G.
+         * 범위를 G 로 나눈 값이 MIN_RANGE_G 보다 작으면 g 단위로 보고한 것으로 해석한다.
+         */
         fun impactGFor(maxRangeMs2: Float): Double {
-            val rangeG = maxRangeMs2 / G
+            val rangeG = (maxRangeMs2 / G).let { if (it < MIN_RANGE_G) maxRangeMs2.toDouble() else it }
             return if (rangeG >= MIN_RANGE_G && rangeG < IMPACT_G) 0.9 * rangeG else IMPACT_G
         }
     }
@@ -115,7 +120,7 @@ class MotionAnalyzer(
         val mag = sqrt(ax * ax + ay * ay + az * az)
 
         var moved = false
-        val idx = tMs / 1000
+        val idx = tMs / WINDOW_MS
         if (curIdx < 0) {
             curIdx = idx
         } else if (idx > curIdx) {
@@ -144,7 +149,7 @@ class MotionAnalyzer(
         val std = if (has) sqrt((sumM2 / cnt - mm * mm).coerceAtLeast(0.0)) else 0.0
         var active = has && std >= ACTIVE_STD
         if (!active && has && hasPrev) active = angleDeg(mx, my, mz, prevX, prevY, prevZ) >= ACTIVE_ANGLE_DEG
-        onWindow(Window((curIdx + 1) * 1000, has && std >= STRONG_STD))
+        onWindow(Window((curIdx + 1) * WINDOW_MS, has && std >= STRONG_STD))
 
         if (lastClosedIdx >= 0) {
             val gap = curIdx - lastClosedIdx
@@ -156,8 +161,8 @@ class MotionAnalyzer(
         if (empty > 0) activeMask = if (empty >= 64) 0L else activeMask shl empty.toInt()
 
         if (candidate) {
-            val start = curIdx * 1000
-            if (active && start >= impactT + POST_START_MS && start + 1000 <= impactT + POST_END_MS) postActive++
+            val start = curIdx * WINDOW_MS
+            if (active && start >= impactT + POST_START_MS && start + WINDOW_MS <= impactT + POST_END_MS) postActive++
         }
 
         if (has) { hasPrev = true; prevX = mx; prevY = my; prevZ = mz }

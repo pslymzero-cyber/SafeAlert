@@ -333,13 +333,13 @@ class LoneWorkerLogic(var myBleId: String) {
 
     /** 다음에 tick 이 필요한 시각: 기다리는 마감(아직 안 됐으면 그 시각, 지났으면 LATE_MS 뒤) 중 가장 이른 것. */
     fun nextCheckAt(nowMs: Long): Long? =
-        deadlines().map { if (nowMs < it) it else it + LATE_MS }.filter { it > nowMs }.minOrNull()
+        deadlines(nowMs).map { if (nowMs < it) it else it + LATE_MS }.filter { it > nowMs }.minOrNull()
 
     /** 지난 마감이 센서 데이터를 기다리고 있다(모니터가 flush 를 요청한다). */
-    fun waitingOnSensors(nowMs: Long): Boolean = deadlines().any { nowMs >= it && !due(it, nowMs) }
+    fun waitingOnSensors(nowMs: Long): Boolean = deadlines(nowMs).any { nowMs >= it && !due(it, nowMs) }
 
     /** 지난 마감 가운데 지금 판정할 수 있는 것이 있다(모니터가 스로틀 중 즉시 판정을 예약할 때 쓴다). */
-    fun dueNow(nowMs: Long): Boolean = deadlines().any { due(it, nowMs) }
+    fun dueNow(nowMs: Long): Boolean = deadlines(nowMs).any { due(it, nowMs) }
 
     private fun respFor(trig: String): Long = if (trig == "fall") ACCIDENT_RESPONSE_MS else responseMs
 
@@ -359,9 +359,16 @@ class LoneWorkerLogic(var myBleId: String) {
     /** 확인 창 → SOS 마감. */
     private fun sosAt(): Long? = if (mode == Mode.CHECKING) modeSinceMs + respFor(trigger) else null
 
-    /** 사고 확인 창을 여는 마감(지켜보는 중이거나 무동작 확인 창이 열려 있을 때). */
-    private fun fallOpenAt(): Long? =
-        if (mode == Mode.WATCHING || (mode == Mode.CHECKING && trigger == "still")) accidentOpenAt() else null
+    /**
+     * 사고 확인 창을 여는 마감: 지켜보는 중이거나, 무동작 확인 창이 열려 있고 사고 확인 창의 SOS 마감(여는 시각 +
+     * ACCIDENT_RESPONSE_MS)이 그 창의 SOS 마감보다 이를 때만(열 수 없는 마감은 판정·대기 대상이 아니다).
+     */
+    private fun fallOpenAt(nowMs: Long): Long? {
+        val at = accidentOpenAt() ?: return null
+        val open = mode == Mode.WATCHING || (mode == Mode.CHECKING && trigger == "still" &&
+            maxOf(nowMs, at) + ACCIDENT_RESPONSE_MS < modeSinceMs + responseMs)
+        return if (open) at else null
+    }
 
     /** 무동작 확인 창을 여는 마감: 지님, 정착 구역 밖, 사이렌 멈춤 없음, 지켜보는 중일 때 기준 + stillMs. */
     private fun stillOpenAt(): Long? =
@@ -369,7 +376,7 @@ class LoneWorkerLogic(var myBleId: String) {
             stillBase + stillMs
         } else null
 
-    private fun deadlines(): List<Long> = listOfNotNull(stillOpenAt(), fallOpenAt(), sosAt())
+    private fun deadlines(nowMs: Long): List<Long> = listOfNotNull(stillOpenAt(), fallOpenAt(nowMs), sosAt())
 
     /**
      * 사고 의심 판정. 사고 마감이 되면 사고 확인 창을 연다. 무동작 확인 창이 이미 열려 있으면 두 마감 중
@@ -381,11 +388,8 @@ class LoneWorkerLogic(var myBleId: String) {
             if (nowMs >= accidentUntil) clearAccident()
             return
         }
-        val openAt = fallOpenAt() ?: return
-        if (!due(openAt, nowMs)) return
-        if (mode == Mode.WATCHING || nowMs + ACCIDENT_RESPONSE_MS < modeSinceMs + responseMs) {
-            toChecking("fall", openAt, nowMs)
-        }
+        val openAt = fallOpenAt(nowMs) ?: return
+        if (due(openAt, nowMs)) toChecking("fall", openAt, nowMs)
     }
 
     /** 뚜렷한 움직임: 대기를 끝내고, 무동작 시간을 새로 세며, 열린 확인 창을 닫는다(사고 의심은 계속). */

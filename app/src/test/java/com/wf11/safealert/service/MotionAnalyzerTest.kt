@@ -169,6 +169,13 @@ class MotionAnalyzerTest {
         assertEquals(MotionAnalyzer.IMPACT_G, MotionAnalyzer.impactGFor(2.6f * g), 1e-9)
     }
 
+    @Test fun range_reported_in_g_units_uses_90_percent() {
+        assertEquals(1.8, MotionAnalyzer.impactGFor(2.0f), 0.01)
+        assertEquals(2.16, MotionAnalyzer.impactGFor(2.4f), 0.01)
+        assertEquals(MotionAnalyzer.IMPACT_G, MotionAnalyzer.impactGFor(1.4f), 1e-9)
+        assertEquals(MotionAnalyzer.IMPACT_G, MotionAnalyzer.impactGFor(2.6f), 1e-9)
+    }
+
     @Test fun clipped_two_g_sensor_needs_the_range_based_threshold() {
         fun trace(a: MotionAnalyzer): Run {
             val r = Run(a)

@@ -174,8 +174,8 @@ class LoneWorkerAlarm(
     /** 5초마다: 다른 곳에서 취소된 진동을 다시 걸고(동료 사이렌일 때만), 충돌 경보가 낮춘 볼륨을 되돌린다. 트랙 실패 중이면 재시도한다. */
     fun refresh() {
         val p = playing ?: fallbackFor ?: return
-        if (playing == null) { play(p, vibrating); return }
         if (vibrating) vibrate()
+        if (playing == null) { play(p, vibrating); return }
         applyVolume(p)
     }
 

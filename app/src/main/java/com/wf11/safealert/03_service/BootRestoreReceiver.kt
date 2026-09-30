@@ -36,6 +36,7 @@ class BootRestoreReceiver : BroadcastReceiver() {
          * 시작 시각을 모르면(sinceMs <= 0) 판정하지 않고 복원한다. Android 11~13 은 업데이트 종료도
          * 사용자 요청으로 남을 수 있어 앱 갱신 시각(updatedAtMs) 앞뒤 60초 안 기록은 세지 않는다.
          * 이 여유는 갱신이 마지막 시작보다 뒤일 때만 둔다(시작 뒤 갱신이 없었으면 모든 기록을 센다).
+         * Android 11~13 에서 판정 키가 없으면 판정하지 않는다(업데이트 종료가 사용자 요청으로 남을 수 있음, 따로 기록되는 REASON_PACKAGE_UPDATED 는 Android 14 부터).
          */
         fun userStopped(sdk: Int, exits: List<Pair<Int, Long>>, sinceMs: Long, updatedAtMs: Long): Boolean {
             if (sdk < Build.VERSION_CODES.R || sinceMs <= 0L) return false
@@ -46,8 +47,15 @@ class BootRestoreReceiver : BroadcastReceiver() {
             }
         }
 
-        /** 사용자 중지 판정 기준 시각 — 판정 전용 키가 없으면(옛 버전에서 시작) 표시용 시작 시각으로 대신한다. */
-        fun startedAt(newKey: Long, runningSince: Long): Long = if (newKey > 0L) newKey else runningSince
+        /**
+         * 사용자 중지 판정 기준 시각 — 판정 전용 키가 없으면(옛 버전에서 시작) Android 14 이상에서만 표시용 시작 시각으로 대신한다.
+         * Android 11~13 은 0(판정하지 않고 복원) — 업데이트 종료가 사용자 요청으로 남을 수 있음, 따로 기록되는 REASON_PACKAGE_UPDATED 는 Android 14 부터.
+         */
+        fun startedAt(newKey: Long, runningSince: Long, sdk: Int): Long = when {
+            newKey > 0L -> newKey
+            sdk >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE -> runningSince
+            else -> 0L
+        }
     }
 
     override fun onReceive(ctx: Context, intent: Intent) {
@@ -55,7 +63,7 @@ class BootRestoreReceiver : BroadcastReceiver() {
         if (action != Intent.ACTION_BOOT_COMPLETED && action != Intent.ACTION_MY_PACKAGE_REPLACED) return
         val prefs = runCatching { ctx.getSharedPreferences("safealert_prefs", Context.MODE_PRIVATE) }.getOrNull() ?: return
         val running = prefs.getString("running_mode", null) ?: return
-        val since = startedAt(prefs.getLong(K_STARTED_AT, 0L), prefs.getLong("running_since", 0L))
+        val since = startedAt(prefs.getLong(K_STARTED_AT, 0L), prefs.getLong("running_since", 0L), Build.VERSION.SDK_INT)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && since > 0L && !LoneWorkerSosSync.hasStoredSos(ctx)) {
             val exits = runCatching {
                 ctx.getSystemService(ActivityManager::class.java)

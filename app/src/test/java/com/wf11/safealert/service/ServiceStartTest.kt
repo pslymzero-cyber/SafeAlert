@@ -98,10 +98,17 @@ class ServiceStartTest {
     }
 
     @Test
-    fun started_at_falls_back_to_running_since() {
-        assertEquals(7_000L, BootRestoreReceiver.startedAt(0L, 7_000L))
-        assertEquals(9_000L, BootRestoreReceiver.startedAt(9_000L, 7_000L))
-        assertEquals(0L, BootRestoreReceiver.startedAt(0L, 0L))
+    fun started_at_falls_back_to_running_since_only_on_api34() {
+        assertEquals(7_000L, BootRestoreReceiver.startedAt(0L, 7_000L, 34))
+        assertEquals(0L, BootRestoreReceiver.startedAt(0L, 7_000L, 33))
+        assertEquals(9_000L, BootRestoreReceiver.startedAt(9_000L, 7_000L, 30))
+        assertEquals(0L, BootRestoreReceiver.startedAt(0L, 0L, 34))
+    }
+
+    @Test
+    fun old_key_boot_on_api33_restores_without_judging() {
+        val since = BootRestoreReceiver.startedAt(0L, 7_000L, 33)
+        assertFalse(stopped(33, listOf(user to 100_000L), since = since, updatedAt = 50_000L))
     }
 
     private fun limited(sdk: Int, fine: Boolean, background: Boolean, bgStarted: Boolean) =
