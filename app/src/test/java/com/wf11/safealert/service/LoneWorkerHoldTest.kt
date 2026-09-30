@@ -227,6 +227,20 @@ class LoneWorkerHoldTest : RestartKit() {
         assertEquals(Mode.WATCHING, k.seenAt(10_000))
     }
 
+    /** Steps after the restart arriving late still count from the restart: they drop the held check (X2). */
+    @Test fun restart_bounce_late_steps_drop_the_held_check() {
+        val l = heldStill()
+        l.rebounce(now = false, gapTick = false, m = "late steps")
+        for (t in listOf(5_200L, 5_500L, 5_700L, 6_000L, 6_400L)) l.onStep(t)
+        assertEquals(Mode.WATCHING, l.modeAt(5_800 + PowerDebounce.DEBOUNCE_MS))
+        assertEquals("still", l.snapshot(5_800 + PowerDebounce.DEBOUNCE_MS).check)
+        l.onWindow(MotionAnalyzer.Window(6_000, true))
+        l.onWindow(MotionAnalyzer.Window(7_000, true))
+        assertEquals("", l.snapshot(7_000).check)
+        assertEquals(Mode.WATCHING, l.seenAt(8_000))
+        assertEquals(Rest.WAIT, l.rest)
+    }
+
     @Test fun zone_report_after_hold_expiry_leaves_first() {
         val old = newLogic(carried = true)
         old.onMoved(100_000)

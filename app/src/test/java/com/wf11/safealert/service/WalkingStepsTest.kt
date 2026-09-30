@@ -18,10 +18,10 @@ class WalkingStepsTest {
         val w = WalkingSteps()
         for (t in listOf(1_100L, 1_300L, 1_500L, 1_700L, 1_900L)) w.onStep(t, false)
         w.onWindow(2_000, true)
-        assertTrue(w.distinct(1_000, 1_900))
-        assertFalse(w.distinct(1_100, 1_900))
-        assertEquals(1_900L, w.firstDistinct(1_000))
-        assertNull(w.firstDistinct(1_100))
+        assertTrue(w.within(1_000, 1_900, LoneWorkerLogic.DISTINCT_STEPS, LoneWorkerLogic.DISTINCT_STEP_WINDOW_MS))
+        assertFalse(w.within(1_100, 1_900, LoneWorkerLogic.DISTINCT_STEPS, LoneWorkerLogic.DISTINCT_STEP_WINDOW_MS))
+        assertEquals(1_900L, w.firstWithin(1_000, LoneWorkerLogic.DISTINCT_STEPS, LoneWorkerLogic.DISTINCT_STEP_WINDOW_MS))
+        assertNull(w.firstWithin(1_100, LoneWorkerLogic.DISTINCT_STEPS, LoneWorkerLogic.DISTINCT_STEP_WINDOW_MS))
     }
 
     @Test fun step_before_its_window_is_accepted_when_the_window_closes_walking() {
@@ -125,6 +125,20 @@ class WalkingStepsTest {
         assertEquals(1_000L, w.runSince(0))
         w.onWindow(8_000, false)
         assertEquals(0L, w.runSince(0))
+    }
+
+    @Test fun first_run_end_is_where_a_run_from_the_floor_reaches_the_length() {
+        val w = WalkingSteps()
+        w.onWindow(1_000, true)
+        w.onWindow(2_000, true)
+        w.onWindow(3_000, false)
+        for (e in listOf(4_000L, 5_000L, 6_000L, 7_000L)) w.onWindow(e, true)
+        w.onWindow(9_000, true) // 8 s had no samples: the run breaks
+        assertEquals(6_000L, w.firstRunEnd(0, 3_000))
+        assertEquals(7_000L, w.firstRunEnd(3_500, 3_000))
+        assertEquals(7_000L, w.firstRunEnd(0, 4_000))
+        assertNull(w.firstRunEnd(5_000, 3_000))
+        assertEquals(1_000L, w.firstRunEnd(0, 1_000))
     }
 
     @Test fun delivered_times_follow_windows_steps_and_flushes() {

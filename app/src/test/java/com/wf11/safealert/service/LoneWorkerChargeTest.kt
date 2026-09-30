@@ -11,7 +11,9 @@ import org.junit.Test
 /**
  * Rule 2 (no motion) runs only while the device is carried:
  *  - not charging: carried from the first distinct motion after start or unplug (or after 1 min of
- *    sensor silence); before that it waits.
+ *    sensor silence); before that it waits. It is counted from the unplug edge whether the steps (or
+ *    walking windows) are accepted before or after the report; a check's own step count starts when it
+ *    opens and an unplug does not restart it.
  *  - charging: docked until 10 walking-shaped steps within 30 s (no step sensor: 5 walking-shaped
  *    windows within 30 s), then carried until the next real plug.
  *  - off in a settled zone. Power flaps shorter than 2 s are ignored; a real plug resets carrying
@@ -81,6 +83,78 @@ class LoneWorkerChargeTest {
         for (i in 0..4) early.step(9_300L + i * 400)
         early.setCharging(false, 10_000)
         assertEquals(Rest.WAIT, early.rest)
+    }
+
+    /** Four steps after the unplug edge and one after the fall check opened: carried, the check stays open (X1). */
+    @Test fun unplug_steps_carry_whenever_they_are_accepted() {
+        for (late in listOf(false, true)) {
+            val m = "late=$late"
+            val l = newLogic(charging = true)
+            l.onAccident(1_000)
+            l.powerRaw(false, 29_000)
+            for (t in listOf(29_200L, 29_600L, 30_000L, 30_400L)) if (late) l.onStep(t) else l.step(t)
+            if (late) {
+                assertEquals(m, Mode.WATCHING, l.modeAt(31_000))
+                l.onWindow(MotionAnalyzer.Window(30_000, true))
+                l.onWindow(MotionAnalyzer.Window(31_000, true))
+            }
+            assertEquals(m, Mode.CHECKING, l.seenAt(31_000))
+            assertEquals(m, "fall", l.trigger)
+            assertEquals(m, Rest.WAIT, l.rest)
+            l.step(31_300)
+            assertEquals(m, Mode.CHECKING, l.mode)
+            assertEquals(m, "fall", l.trigger)
+            assertEquals(m, Rest.NONE, l.rest)
+        }
+    }
+
+    /** Three steps after the still check opened, an unplug, then two more: five steps close it in either arrival order (X3). */
+    @Test fun unplug_after_the_check_opened_keeps_its_step_count() {
+        for (late in listOf(false, true)) {
+            val m = "late=$late"
+            val l = carriedWhileCharging()
+            val open = 10_000 + l.stillMs
+            assertEquals(m, Mode.CHECKING, l.seenAt(open))
+            assertEquals(m, "still", l.trigger)
+            l.step(open + 200)
+            l.step(open + 500)
+            l.step(open + 800)
+            l.powerRaw(false, open + 1_100)
+            if (!late) {
+                l.step(open + 1_300)
+                l.step(open + 1_700)
+                l.modeAt(open + 1_100 + PowerDebounce.DEBOUNCE_MS)
+            } else {
+                l.onStep(open + 1_300)
+                l.onStep(open + 1_700)
+                assertEquals(m, Mode.CHECKING, l.modeAt(open + 1_100 + PowerDebounce.DEBOUNCE_MS))
+                assertEquals(m, Rest.WAIT, l.rest)
+                l.onWindow(MotionAnalyzer.Window(open + 2_000, true))
+            }
+            assertEquals(m, Mode.WATCHING, l.mode)
+            assertEquals(m, Rest.WAIT, l.rest)
+        }
+    }
+
+    /** Without a step sensor, a 3 s walking run after the unplug edge carries from its end in either arrival order (M2). */
+    @Test fun without_step_sensor_unplug_run_carries_whenever_it_is_accepted() {
+        for (late in listOf(false, true)) {
+            val m = "late=$late"
+            val l = newLogic(charging = true)
+            l.stepsAvailable = false
+            l.powerRaw(false, 10_000)
+            if (late) {
+                l.modeAt(10_000 + PowerDebounce.DEBOUNCE_MS)
+                l.strongRun(11_000, 3)
+            } else {
+                l.strongRun(11_000, 3)
+                l.modeAt(13_000)
+            }
+            assertEquals(m, Rest.NONE, l.rest)
+            assertEquals(m, Mode.WATCHING, l.seenAt(13_000 + stillMs - 1))
+            assertEquals(m, Mode.CHECKING, l.seenAt(13_000 + stillMs))
+            assertEquals(m, "still", l.trigger)
+        }
     }
 
     /**

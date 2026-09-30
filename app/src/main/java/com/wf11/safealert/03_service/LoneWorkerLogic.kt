@@ -22,7 +22,7 @@ package com.wf11.safealert.service
  * 동료 사이렌이 이 기기에서 진동하는 동안도 셈을 멈추고, 끝나면 쌓인 시간에 이어서 센다(멈춘 시간이 stillMs 에 이르면 사이렌이 계속 울려도 다시 세고, 진동기가 없는 기기는 멈추지 않는다).
  *
  * 걸음: 걸음 센서가 낸 걸음 가운데 그 시각을 덮는 1초 가속도 창이 걷는 모양이고 앱 진동 구간이 아닌 것(WalkingSteps).
- * 뚜렷한 움직임: 최근 10초 안 5걸음. 걸음 센서를 쓸 수 없으면 3초 이상 이어진 걷는 모양 창.
+ * 뚜렷한 움직임: 최근 10초 안 5걸음. 걸음 센서를 쓸 수 없으면 3초 이상 이어진 걷는 모양 창. 확인 창을 닫는 셈은 창이 뜬 뒤 것만(전원 해제로 다시 세지 않음), 해제 뒤 지님은 뺀 시각 뒤 것으로 따로 센다(M2).
  * 확인 창(두 종류)은 [괜찮음]·뚜렷한 움직임·실제 전원 연결로 닫힌다. 실제 연결은 사고 의심도 끝낸다.
  * 무동작 stillMs→확인 창, 사고 30초 무움직임→확인 창, 확인 창→SOS 마감은 마감 시각까지의 센서 데이터가 들어온 뒤(없으면 LATE_MS 뒤), 그리고 그 전(같은 시각 포함)에 시작한 전원 변화가 확정되거나 버려진 뒤(최대 약 2초, 확정이면 첫 변화 시각부터 적용) 판정한다(M1).
  * SOS 는 구역 진입·기능 끄기·전원 변화로 끝나지 않고 오직 cancelSos 로만 끝난다.
@@ -99,7 +99,7 @@ class LoneWorkerLogic(var myBleId: String) {
     private var chargeAt = 0L
     private var carried = false
 
-    // 걸음·걷는 모양 창 기록. 뚜렷한 움직임은 floorAt 뒤 걸음만 센다
+    // 걸음·걷는 모양 창 기록. floorAt = 창 닫기·사고 리셋 걸음 셈 기준(시작·트리거·창 열림·뚜렷한 움직임), 지님은 chargeAt 기준(M2)
     private val walk = WalkingSteps()
     private var floorAt = Long.MIN_VALUE
     private var lastDistinctAt = Long.MIN_VALUE
@@ -163,7 +163,7 @@ class LoneWorkerLogic(var myBleId: String) {
 
     /**
      * 디바운스를 통과한 실제 전원 변화(atMs = 디바운스 전 첫 변화 시각). 연결: 새 거치 — 지님을 지우고, 열린 확인 창은 응답으로 보고 닫으며,
-     * SOS 가 아니면 사고 의심을 끝낸다(꽂는 행위 = 사람이 있음). 해제: 첫 뚜렷한 움직임 대기(확정 전 해제 뒤 걸음으로 이미 성립했으면 그 걸음부터 지님). SOS 는 전원 변화로 끝나지 않는다.
+     * SOS 가 아니면 사고 의심을 끝낸다(꽂는 행위 = 사람이 있음). 해제: 첫 뚜렷한 움직임 대기(확정 전 해제 뒤 걸음으로 이미 성립했으면 그 걸음부터 지님, 걸음 셈 기준은 바꾸지 않는다). SOS 는 전원 변화로 끝나지 않는다.
      */
     fun setCharging(on: Boolean, atMs: Long) {
         if (on == charging) return
@@ -178,9 +178,8 @@ class LoneWorkerLogic(var myBleId: String) {
             if (mode != Mode.SOS) clearAccident()
         } else {
             if (!restart) lastUnplugAt = atMs
-            // 열린 확인 창의 걸음 셈 기준은 내리지 않는다 — 창을 닫는 셈은 창이 열린 뒤 걸음만(W1)
-            floorAt = if (mode == Mode.CHECKING) maxOf(floorAt, atMs) else atMs
-            walk.firstDistinct(atMs)?.let { carry(it) }
+            // 확정 전에 받은 뺀 뒤 걸음(걸음 센서가 없으면 걷는 모양 창 3초)으로 이미 뚜렷했으면 그때부터 지님, 걸음 셈 기준(floorAt)은 그대로(M2)
+            (if (stepsAvailable) walk.firstWithin(atMs, DISTINCT_STEPS, DISTINCT_STEP_WINDOW_MS) else walk.firstRunEnd(atMs, STRONG_RUN_MS))?.let { carry(it) }
         }
     }
 
@@ -190,9 +189,9 @@ class LoneWorkerLogic(var myBleId: String) {
         for (t in accepted) acceptStep(t)
         if (stepsAvailable || !w.strong) return
         val end = w.endMs
+        if (!carried && (if (charging) walk.strongIn(maxOf(chargeAt, end - CARRY_STEP_WINDOW_MS), end) >= CARRY_FALLBACK_WINDOWS
+            else walk.runSince(chargeAt) >= STRONG_RUN_MS)) carry(end)
         if (walk.runSince(floorAt) >= STRONG_RUN_MS) onDistinct(end)
-        if (charging && !carried &&
-            walk.strongIn(maxOf(chargeAt, end - CARRY_STEP_WINDOW_MS), end) >= CARRY_FALLBACK_WINDOWS) carry(end)
     }
 
     /** 걸음 감지 1건(센서 시각을 바꾼 값). vibrating = 그 시각이 앱 진동 구간이다. 걷는 모양일 때만 센다. */
@@ -203,12 +202,13 @@ class LoneWorkerLogic(var myBleId: String) {
     /** 걸음 센서 flush 완료: 요청 시각(tMs)까지의 걸음은 다 들어왔다. */
     fun stepsFlushed(tMs: Long) = walk.stepsFlushed(tMs)
 
-    /** 받아들인 걸음. 연결 시각·floorAt(트리거·확인 창 열림 등) 이하의 걸음은 세지 않는다. */
+    /** 받아들인 걸음. 지님은 chargeAt 뒤 걸음(충전 중 30초 안 10걸음, 뺀 뒤 첫 뚜렷한 움직임), 창 닫기·사고 리셋은 floorAt 뒤 걸음으로 센다(M2). */
     private fun acceptStep(t: Long) {
-        if (charging && !carried && t > chargeAt &&
-            walk.stepsIn(maxOf(chargeAt + 1, t - CARRY_STEP_WINDOW_MS), t) >= CARRY_STEPS) carry(t)
-        if (walk.distinct(floorAt, t)) onDistinct(t)
+        if (!carried && (if (charging) walk.within(chargeAt, t, CARRY_STEPS, CARRY_STEP_WINDOW_MS) else distinct(chargeAt, t))) carry(t)
+        if (distinct(floorAt, t)) onDistinct(t)
     }
+
+    private fun distinct(after: Long, t: Long) = walk.within(after, t, DISTINCT_STEPS, DISTINCT_STEP_WINDOW_MS)
 
     /** 움직임(MOVED)은 무동작 타이머만 갱신한다. 열린 확인 창은 닫지 않는다 (D-02, D-07). */
     fun onMoved(nowMs: Long) = raiseStillBase(nowMs)
@@ -415,12 +415,11 @@ class LoneWorkerLogic(var myBleId: String) {
         if (due(openAt, nowMs)) toChecking("fall", openAt, nowMs)
     }
 
-    /** 뚜렷한 움직임: 대기를 끝내고, 무동작 시간을 새로 세며, 열린 확인 창을 닫는다(사고 의심은 계속). */
+    /** 뚜렷한 움직임: 무동작 시간을 새로 세고, 열린 확인 창을 닫는다(사고 의심은 계속). 대기 끝(지님)은 chargeAt 기준 규칙이 따로 본다. */
     private fun onDistinct(t: Long) {
         if (t > lastDistinctAt) lastDistinctAt = t
         raiseStillBase(t)
         floorAt = t
-        if (!charging) carried = true
         closeCheck(t)
     }
 

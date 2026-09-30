@@ -69,12 +69,12 @@ class WalkingSteps {
     /** 받아들인 걸음 중 from..to(양 끝 포함). */
     fun stepsIn(from: Long, to: Long): Int = steps.count { it in from..to }
 
-    /** 뚜렷한 움직임 — after 보다 뒤 걸음으로 t 까지 최근 DISTINCT_STEP_WINDOW_MS 안 DISTINCT_STEPS 걸음(after 는 세지 않는 기준 시각). */
-    fun distinct(after: Long, t: Long): Boolean = t > after &&
-        stepsIn(maxOf(after + 1, t - LoneWorkerLogic.DISTINCT_STEP_WINDOW_MS), t) >= LoneWorkerLogic.DISTINCT_STEPS
+    /** after 보다 뒤 걸음으로 t 까지 최근 windowMs 안 n 걸음(after 는 세지 않는 기준 시각). */
+    fun within(after: Long, t: Long, n: Int, windowMs: Long): Boolean =
+        t > after && stepsIn(maxOf(after + 1, t - windowMs), t) >= n
 
-    /** after 뒤 걸음으로 뚜렷한 움직임이 처음 찬 걸음 시각. 없으면 null. */
-    fun firstDistinct(after: Long): Long? = steps.firstOrNull { distinct(after, it) }
+    /** after 뒤 걸음으로 within 이 처음 찬 걸음 시각. 없으면 null. */
+    fun firstWithin(after: Long, n: Int, windowMs: Long): Long? = steps.firstOrNull { within(after, it, n, windowMs) }
 
     /** 시작이 from 이상이고 끝이 to 이하인 걷는 모양 창 수. */
     fun strongIn(from: Long, to: Long): Int =
@@ -92,6 +92,18 @@ class WalkingSteps {
             next = w.endMs
         }
         return n * WINDOW_MS
+    }
+
+    /** 시작이 from 이상인 걷는 모양 창이 끊김 없이 이어져 ms 에 처음 이른 창 끝. 없으면 null. */
+    fun firstRunEnd(from: Long, ms: Long): Long? {
+        var n = 0
+        var prev = Long.MIN_VALUE
+        for (w in windows) {
+            n = if (!w.walking || w.endMs - WINDOW_MS < from) 0 else if (w.endMs == prev + WINDOW_MS) n + 1 else 1
+            prev = w.endMs
+            if (n * WINDOW_MS >= ms) return w.endMs
+        }
+        return null
     }
 
     private fun keep(t: Long) {
