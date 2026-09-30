@@ -51,4 +51,14 @@ class SensorStallTest {
         assertNull(g.add(500L, 0f, 3f, 4f))
         assertEquals("gyro 1s n=2 mean=3.000 max=5.000 rad/s", g.add(1_000L, 0f, 0f, 2f))
     }
+
+    /** Turning the gyro log off flushes the open second once (I10). */
+    @Test
+    fun gyro_stats_flush_emits_the_open_second_once() {
+        val g = GyroStats()
+        assertNull(g.flush())
+        assertNull(g.add(0L, 0f, 3f, 4f))
+        assertEquals("gyro 1s n=1 mean=5.000 max=5.000 rad/s", g.flush())
+        assertNull(g.flush())
+    }
 }

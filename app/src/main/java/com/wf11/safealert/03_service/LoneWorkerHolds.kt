@@ -14,6 +14,9 @@ class SirenPause {
 
     val active: Boolean get() = at != Long.MIN_VALUE
 
+    /** 이 마감을 멈춤이 가린다 — 멈춤 시작 이하의 지난 마감은 가리지 않는다(S1, 데이터를 기다려 판정). */
+    fun covers(deadline: Long): Boolean = active && deadline > at
+
     fun reset() {
         at = Long.MIN_VALUE
         spent = false

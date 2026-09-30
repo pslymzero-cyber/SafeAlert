@@ -395,4 +395,23 @@ class LoneWorkerResumeTest : RestartKit() {
         for (t in 5_000L..124_000L step 1_000L) assertEquals(Mode.WATCHING, l.seenAt(t))
         assertEquals(Mode.CHECKING, l.seenAt(125_000))
     }
+
+    /**
+     * F1: a siren that goes on after a restart starts a new pause with a new cap. Restart base -55 s (60 s
+     * still), pause at 8 s (63 s still), cap at 188 s moves the base to 125 s, deadline 305 s.
+     */
+    @Test fun siren_after_restart_starts_a_new_pause() {
+        val old = newLogic(carried = true)
+        for (t in 60_000L..230_000L step 1_000L) {
+            old.onPeerBle("P", true, t)
+            assertEquals(Mode.WATCHING, old.seenAt(t))
+        }
+        val l = reboot(old, 230_000, 5_000, 0)
+        for (t in 8_000L..304_000L step 1_000L) {
+            l.onPeerBle("P", true, t)
+            assertEquals(Mode.WATCHING, l.seenAt(t))
+        }
+        assertEquals(Mode.CHECKING, l.seenAt(305_000))
+        assertEquals("still", l.trigger)
+    }
 }

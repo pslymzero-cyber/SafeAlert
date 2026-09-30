@@ -175,4 +175,19 @@ class LoneWorkerStillCountTest {
         assertEquals(Mode.CHECKING, l.modeAt(180_000))
         assertFalse(l.dueNow(180_000))
     }
+
+    /** A still deadline that passed before the siren started is still judged once sensor data covers it (S1). */
+    @Test fun siren_does_not_swallow_a_passed_still_deadline() {
+        val l = newLogic(carried = true)
+        l.sensed(178_000)
+        assertEquals(Mode.WATCHING, l.modeAt(180_000))
+        assertTrue(l.waitingOnSensors(180_000))
+        l.onPeerBle("P", true, 181_000)
+        assertEquals(Mode.WATCHING, l.modeAt(181_000))
+        assertTrue(l.alarmVibrates)
+        assertTrue(l.waitingOnSensors(181_000))
+        l.sensed(181_000)
+        assertEquals(Mode.CHECKING, l.modeAt(181_000))
+        assertEquals("still", l.trigger)
+    }
 }

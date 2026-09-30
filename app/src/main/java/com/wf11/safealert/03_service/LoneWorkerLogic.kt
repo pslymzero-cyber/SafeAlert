@@ -393,9 +393,9 @@ class LoneWorkerLogic(var myBleId: String) {
         return if (open) at else null
     }
 
-    /** 무동작 확인 창을 여는 마감: 지님, 정착 구역 밖, 사이렌 멈춤 없음, 지켜보는 중일 때 기준 + stillMs. */
+    /** 무동작 확인 창을 여는 마감: 지님, 정착 구역 밖, 사이렌 멈춤이 가리지 않을 때(멈춤 전에 지난 마감은 판정), 지켜보는 중일 때 기준 + stillMs. */
     private fun stillOpenAt(): Long? =
-        if (enabled && !zoneSettled && !siren.active && rest == Rest.NONE && mode == Mode.WATCHING) {
+        if (enabled && !zoneSettled && !siren.covers(stillBase + stillMs) && rest == Rest.NONE && mode == Mode.WATCHING) {
             stillBase + stillMs
         } else null
 

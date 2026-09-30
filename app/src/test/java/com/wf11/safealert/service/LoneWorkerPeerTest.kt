@@ -1,5 +1,7 @@
 package com.wf11.safealert.service
 
+import com.wf11.safealert.service.LoneWorkerAlarm.Pattern
+import com.wf11.safealert.service.LoneWorkerLogic.Mode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -376,5 +378,26 @@ class LoneWorkerPeerTest {
         assertEquals(0, l.audiblePeers().size)
         l.onPeerBle("X", true, 50_000, 1)
         assertEquals(1, l.audiblePeers().size)
+    }
+
+    /** Sound priority (F2): own SOS siren, then the check tone, then a peer siren; the check has no vibration. */
+    @Test fun check_tone_wins_over_peer_siren() {
+        assertEquals(Pattern.SIREN, Pattern.of(Mode.SOS, false))
+        assertEquals(Pattern.SIREN, Pattern.of(Mode.SOS, true))
+        assertEquals(Pattern.CHECK, Pattern.of(Mode.CHECKING, true))
+        assertEquals(Pattern.CHECK, Pattern.of(Mode.CHECKING, false))
+        assertEquals(Pattern.SIREN, Pattern.of(Mode.WATCHING, true))
+        assertNull(Pattern.of(Mode.WATCHING, false))
+
+        val l = newLogic(carried = true)
+        assertEquals(Mode.CHECKING, l.seenAt(180_000))
+        l.onPeerBle("P", true, 181_000)
+        assertEquals(Mode.CHECKING, l.seenAt(181_000))
+        assertEquals(Pattern.CHECK, Pattern.of(l.mode, l.audiblePeers().isNotEmpty()))
+        assertFalse(l.alarmVibrates)
+        l.ackWorking(182_000)
+        l.tick(182_000)
+        assertEquals(Pattern.SIREN, Pattern.of(l.mode, l.audiblePeers().isNotEmpty()))
+        assertTrue(l.alarmVibrates)
     }
 }

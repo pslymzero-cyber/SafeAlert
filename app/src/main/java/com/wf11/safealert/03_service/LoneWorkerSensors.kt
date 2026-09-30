@@ -144,8 +144,8 @@ class LoneWorkerSensors(
         logic().stepsAvailable = stepRegistered
     }
 
-    /** 등록한 자이로(측정 로그 중일 때만). */
-    private var gyro: Sensor? = null
+    /** 측정 로그 요청 상태 — 등록 실패·자이로 없음이어도 이번 사이렌 동안 다시 시도하지 않는다. */
+    private var gyroOn = false
     private val gyroStats = GyroStats()
     private val gyroListener = object : SensorEventListener {
         override fun onSensorChanged(event: SensorEvent) {
@@ -159,20 +159,21 @@ class LoneWorkerSensors(
     /**
      * 동료 사이렌이 이 기기에서 진동하는 동안만 자이로 측정 로그를 1초마다 남긴다(D3). 판정에 쓰지 않고,
      * 로그는 표본 수·평균·최대 각속도뿐이다(개인정보·위치 없음). 자이로가 없으면 조용히 건너뛴다.
+     * 끌 때 남은 구간 한 줄, 켤 때 등록 결과 한 줄(성공 여부·센서 범위·해상도)을 남긴다.
      */
     fun gyroLog(enable: Boolean) {
-        if (enable == (gyro != null)) return
+        if (enable == gyroOn) return
+        gyroOn = enable
         if (!enable) {
             runCatching { sm?.unregisterListener(gyroListener) }
-            gyro = null
+            gyroStats.flush()?.let { Log.i(TAG, it) }
             return
         }
         val m = manager() ?: return
         val s = m.getDefaultSensor(Sensor.TYPE_GYROSCOPE) ?: return
-        if (m.registerListener(gyroListener, s, SensorManager.SENSOR_DELAY_GAME, handler)) {
-            gyro = s
-            gyroStats.reset()
-        }
+        gyroStats.reset()
+        val ok = m.registerListener(gyroListener, s, SensorManager.SENSOR_DELAY_GAME, handler)
+        Log.i(TAG, String.format(Locale.US, "gyro register ok=%b range=%.3f res=%.5f rad/s", ok, s.maximumRange, s.resolution))
     }
 
     /** 가속도 신호 공백 검사: 끊겼으면 같은 백오프로 다시 등록한다 (RR08). */
@@ -257,14 +258,20 @@ class GyroStats {
         val s = tMs / 1_000L
         var line: String? = null
         if (s != sec) {
-            if (n > 0) line = String.format(Locale.US, "gyro 1s n=%d mean=%.3f max=%.3f rad/s", n, sum / n, max)
-            reset()
+            line = flush()
             sec = s
         }
         val m = sqrt((x * x + y * y + z * z).toDouble())
         n++
         sum += m
         max = maxOf(max, m)
+        return line
+    }
+
+    /** 표본이 있으면 지금 구간 한 줄을 돌려주고 비운다 — 구간이 바뀔 때와 측정을 끌 때. */
+    fun flush(): String? {
+        val line = if (n > 0) String.format(Locale.US, "gyro 1s n=%d mean=%.3f max=%.3f rad/s", n, sum / n, max) else null
+        reset()
         return line
     }
 }

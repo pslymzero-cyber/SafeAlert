@@ -74,8 +74,8 @@ class LoneWorkerMonitor(
     private val watchdog = LoneWorkerWatchdog(ctx, { onWatchdog() }, { onNotificationDismissed() })
     private val notifier = LoneWorkerNotifier(ctx) { watchdog.dismissPi() }
     private var lastTickAt = 0L
-    /** 직전 tick 에서 지난 마감이 센서 데이터를 기다렸다 — 그때만 스로틀 중 즉시 판정을 본다 (v1.1.99). */
-    private var waited = false
+    /** 스로틀 중에도 즉시 판정을 보는 시각 — 직전 tick 에서 지난 마감이 데이터를 기다렸으면 그 tick, 아니면 그때의 nextCheckAt (v1.1.99). */
+    private var dueFrom = Long.MAX_VALUE
     private var wakeLock: PowerManager.WakeLock? = null
     private var loopOn = false
     private var prefsListener: SharedPreferences.OnSharedPreferenceChangeListener? = null
@@ -191,13 +191,13 @@ class LoneWorkerMonitor(
     // ── 센서 ──────────────────────────────────────────────────
 
     /**
-     * 센서 콜백 뒤: 상태·쉼 이유가 바뀌었으면 바로, 아니면 1초에 한 번 tick·render 한다. 기다리던 마감을 센서 데이터가
-     * 덮으면 스로틀과 무관하게 이 자리에서 판정한다 — 같은 배치의 뒤 데이터보다 먼저(C5) (v1.1.99).
+     * 센서 콜백 뒤: 상태·쉼 이유가 바뀌었으면 바로, 아니면 1초에 한 번 tick·render 한다. 마감 시각이 지난 뒤(깊은 잠으로
+     * 예약이 늦어도) 그 마감을 센서 데이터가 덮으면 스로틀과 무관하게 이 자리에서 판정한다 — 같은 배치의 뒤 데이터보다 먼저(C5) (v1.1.99).
      */
     private fun onSensorEvent(t: Long) {
         if (!started) return
         if (logic.mode == lastMode && logic.rest == lastRest && t - lastTickAt < TICK_MIN_MS &&
-            !(waited && logic.dueNow(t))) return
+            !(t >= dueFrom && logic.dueNow(t))) return
         lastTickAt = t
         tick(t)
         render()
@@ -212,10 +212,12 @@ class LoneWorkerMonitor(
         power.poll(t)?.let { (on, at) -> logic.setCharging(on, at) }
         logic.powerPending(power.pendingSince)
         logic.tick(t)
-        waited = logic.waitingOnSensors(t)
-        if (waited) sensors.flush()
+        val next = logic.nextCheckAt(t)
+        val waiting = logic.waitingOnSensors(t)
+        if (waiting) sensors.flush()
+        dueFrom = if (waiting) t else next ?: Long.MAX_VALUE
         handler.removeCallbacks(deadlineRunnable)
-        logic.nextCheckAt(t)?.let { handler.postDelayed(deadlineRunnable, (it - t).coerceAtLeast(0L)) }
+        next?.let { handler.postDelayed(deadlineRunnable, (it - t).coerceAtLeast(0L)) }
     }
 
     private val deadlineRunnable = Runnable {
@@ -406,12 +408,11 @@ class LoneWorkerMonitor(
         if (ids.any { it !in lastAudible }) showScreen = true
         lastAudible = ids
 
-        when {
-            mode == LoneWorkerLogic.Mode.SOS || audible.isNotEmpty() -> alarm.play(LoneWorkerAlarm.Pattern.SIREN, logic.alarmVibrates)
-            mode == LoneWorkerLogic.Mode.CHECKING -> alarm.play(LoneWorkerAlarm.Pattern.CHECK)
-            else -> alarm.stop()
-        }
-        sensors.gyroLog(logic.alarmVibrates)
+        // 소리 우선순위: 본인 SOS > 확인 창(확인음, 진동 없음) > 동료 사이렌 (v1.1.99, F2)
+        val vibrates = logic.alarmVibrates
+        val p = LoneWorkerAlarm.Pattern.of(mode, audible.isNotEmpty())
+        if (p != null) alarm.play(p, vibrates) else alarm.stop()
+        sensors.gyroLog(vibrates)
 
         notifier.update(mode, audible, logic.peers.filter { !it.active && !it.silenced }, notice(), showScreen)
         if (showScreen) notifier.openScreen()
