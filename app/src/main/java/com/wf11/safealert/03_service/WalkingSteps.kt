@@ -69,9 +69,12 @@ class WalkingSteps {
     /** 받아들인 걸음 중 from..to(양 끝 포함). */
     fun stepsIn(from: Long, to: Long): Int = steps.count { it in from..to }
 
-    /** from 이상 걸음으로 windowMs 안 n 걸음이 처음 찬 걸음 시각. 없으면 null. */
-    fun firstRun(from: Long, n: Int, windowMs: Long): Long? =
-        steps.firstOrNull { it >= from && stepsIn(maxOf(from, it - windowMs), it) >= n }
+    /** 뚜렷한 움직임 — after 보다 뒤 걸음으로 t 까지 최근 DISTINCT_STEP_WINDOW_MS 안 DISTINCT_STEPS 걸음(after 는 세지 않는 기준 시각). */
+    fun distinct(after: Long, t: Long): Boolean = t > after &&
+        stepsIn(maxOf(after + 1, t - LoneWorkerLogic.DISTINCT_STEP_WINDOW_MS), t) >= LoneWorkerLogic.DISTINCT_STEPS
+
+    /** after 뒤 걸음으로 뚜렷한 움직임이 처음 찬 걸음 시각. 없으면 null. */
+    fun firstDistinct(after: Long): Long? = steps.firstOrNull { distinct(after, it) }
 
     /** 시작이 from 이상이고 끝이 to 이하인 걷는 모양 창 수. */
     fun strongIn(from: Long, to: Long): Int =

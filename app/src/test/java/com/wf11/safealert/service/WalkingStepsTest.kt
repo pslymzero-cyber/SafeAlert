@@ -13,6 +13,17 @@ import org.junit.Test
  */
 class WalkingStepsTest {
 
+    /** Distinct motion counts only steps after the floor time (the floor step itself does not count). */
+    @Test fun distinct_motion_counts_only_steps_after_the_floor() {
+        val w = WalkingSteps()
+        for (t in listOf(1_100L, 1_300L, 1_500L, 1_700L, 1_900L)) w.onStep(t, false)
+        w.onWindow(2_000, true)
+        assertTrue(w.distinct(1_000, 1_900))
+        assertFalse(w.distinct(1_100, 1_900))
+        assertEquals(1_900L, w.firstDistinct(1_000))
+        assertNull(w.firstDistinct(1_100))
+    }
+
     @Test fun step_before_its_window_is_accepted_when_the_window_closes_walking() {
         val w = WalkingSteps()
         assertNull(w.onStep(1_200, false))

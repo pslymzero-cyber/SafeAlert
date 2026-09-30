@@ -343,7 +343,7 @@ class LoneWorkerResumeTest : RestartKit() {
         val l = reboot(old, 200_000, 5_000, 20_000)
         assertEquals(listOf(Mode.WATCHING, Mode.WATCHING), beforePower)
         // the unplug keeps the check (E9): it opens once the power is confirmed, the response counts from there
-        assertEquals(Mode.CHECKING, l.mode)
+        assertEquals(Mode.CHECKING, l.seenAt(5_000 + PowerDebounce.CONFIRM_MS))
         assertEquals("still", l.trigger)
         assertEquals(Rest.WAIT, l.rest)
         assertEquals(l.responseMs, l.responseLeftMs(5_000 + PowerDebounce.CONFIRM_MS))

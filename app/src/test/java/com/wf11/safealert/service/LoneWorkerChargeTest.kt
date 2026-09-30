@@ -62,9 +62,14 @@ class LoneWorkerChargeTest {
         assertEquals(Rest.NONE, l.rest)
     }
 
-    /** Steps after the unplug edge reported before the debounce confirms it carry from the distinct motion. */
+    /**
+     * Steps after the unplug edge reported before the debounce confirms it carry from the distinct motion;
+     * the still deadline counts from the distinct motion after the unplug edge, not from one made with earlier steps.
+     */
     @Test fun steps_before_unplug_report_carry_from_the_distinct_motion() {
         val l = newLogic(charging = true)
+        l.step(9_300)
+        l.step(9_700)
         for (i in 0..4) l.step(10_100L + i * 400)
         l.setCharging(false, 10_000)
         assertEquals(Rest.NONE, l.rest)
@@ -76,6 +81,31 @@ class LoneWorkerChargeTest {
         for (i in 0..4) early.step(9_300L + i * 400)
         early.setCharging(false, 10_000)
         assertEquals(Rest.WAIT, early.rest)
+    }
+
+    /** An unplug report does not lower the open check's step floor: steps before the check opened do not close it. */
+    @Test fun unplug_report_keeps_the_open_check_floor() {
+        val l = carriedWhileCharging()
+        val open = 10_000 + l.stillMs
+        l.powerRaw(false, open - 1_000)
+        for (i in 0..3) l.step(open - 900 + i * 200)
+        assertEquals(Mode.CHECKING, l.seenAt(open))
+        assertEquals("still", l.trigger)
+        assertEquals(Mode.CHECKING, l.seenAt(open - 1_000 + PowerDebounce.CONFIRM_MS))
+        assertEquals(Rest.WAIT, l.rest)
+        l.step(open + 1_500)
+        assertEquals(Mode.CHECKING, l.seenAt(open + 2_000))
+        // the same for an open accident check
+        val f = newLogic(charging = true)
+        f.onAccident(1_000)
+        f.powerRaw(false, 30_000)
+        for (i in 0..3) f.step(30_100 + i * 200L)
+        assertEquals(Mode.CHECKING, f.seenAt(31_000))
+        assertEquals("fall", f.trigger)
+        assertEquals(Mode.CHECKING, f.seenAt(30_000 + PowerDebounce.CONFIRM_MS))
+        f.step(32_500)
+        assertEquals(Mode.CHECKING, f.seenAt(33_000))
+        assertEquals("fall", f.trigger)
     }
 
     @Test fun sensor_silence_ends_wait_and_counts_from_there() {

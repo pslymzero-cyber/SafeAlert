@@ -14,7 +14,9 @@ import org.junit.Test
  * restart change, else at the window end; a wait that started in the window and is still pending at the
  * window end extends it once until it reports or drops. Only the first change reported during the hold is
  * a restart change. A fall is reported 12 s after the impact, after the hold, so it sees the confirmed
- * power. A zone report after the zone hold limit first leaves the zone at the limit.
+ * power. A zone report after the zone hold limit first leaves the zone at the limit. The held check opens
+ * only after sensor data up to the hold end has arrived (at most LATE_MS later), counting steps from the
+ * hold end.
  */
 class LoneWorkerHoldTest : RestartKit() {
 
@@ -191,6 +193,38 @@ class LoneWorkerHoldTest : RestartKit() {
         assertEquals(Mode.WATCHING, l.seenAt(38_999))
         assertEquals(Mode.CHECKING, l.seenAt(39_000))
         assertEquals("fall", l.trigger)
+    }
+
+    /** The held check opens only after data up to the hold end arrives, counting steps from the hold end. */
+    @Test fun held_check_opens_after_data_to_the_hold_end() {
+        // a fifth step after the unplug edge is accepted late: the held check drops and the unplug carries
+        val l = heldStill()
+        assertEquals(Mode.WATCHING, l.modeAt(5_000))
+        l.step(5_100)
+        l.step(5_400)
+        l.step(5_700)
+        l.step(5_900)
+        l.onStep(6_500)
+        val report = 5_000 + PowerDebounce.CONFIRM_MS
+        assertEquals(Mode.WATCHING, l.modeAt(report))
+        assertEquals("still", l.snapshot(report).check)
+        assertTrue(l.waitingOnSensors(report))
+        assertEquals(Rest.WAIT, l.rest)
+        l.onWindow(MotionAnalyzer.Window(7_000, true))
+        l.stepsFlushed(7_100)
+        assertEquals(Mode.WATCHING, l.modeAt(7_100))
+        assertEquals(Rest.NONE, l.rest)
+        assertEquals("", l.snapshot(7_100).check)
+        // a step after the hold end but before the check opens counts toward closing it
+        val k = heldStill()
+        k.modeAt(5_000)
+        assertEquals(Mode.WATCHING, k.modeAt(report))
+        k.step(7_300)
+        assertEquals(Mode.CHECKING, k.modeAt(8_000))
+        assertEquals("still", k.trigger)
+        assertEquals(k.responseMs, k.responseLeftMs(8_000))
+        k.walk(10_000, 4)
+        assertEquals(Mode.WATCHING, k.seenAt(10_000))
     }
 
     @Test fun zone_report_after_hold_expiry_leaves_first() {

@@ -179,8 +179,9 @@ class LoneWorkerLogic(var myBleId: String) {
             if (mode != Mode.SOS) clearAccident()
         } else {
             if (!restart) lastUnplugAt = atMs
-            floorAt = atMs
-            walk.firstRun(atMs + 1, DISTINCT_STEPS, DISTINCT_STEP_WINDOW_MS)?.let { carry(it) }
+            // 열린 확인 창의 걸음 셈 기준은 내리지 않는다 — 창을 닫는 셈은 창이 열린 뒤 걸음만(W1)
+            floorAt = if (mode == Mode.CHECKING) maxOf(floorAt, atMs) else atMs
+            walk.firstDistinct(atMs)?.let { carry(it) }
         }
     }
 
@@ -207,9 +208,7 @@ class LoneWorkerLogic(var myBleId: String) {
     private fun acceptStep(t: Long) {
         if (charging && !carried && t > chargeAt &&
             walk.stepsIn(maxOf(chargeAt + 1, t - CARRY_STEP_WINDOW_MS), t) >= CARRY_STEPS) carry(t)
-        if (t > floorAt && walk.stepsIn(maxOf(floorAt + 1, t - DISTINCT_STEP_WINDOW_MS), t) >= DISTINCT_STEPS) {
-            onDistinct(t)
-        }
+        if (walk.distinct(floorAt, t)) onDistinct(t)
     }
 
     /** 움직임(MOVED)은 무동작 타이머만 갱신한다. 열린 확인 창은 닫지 않는다 (D-02, D-07). */
@@ -264,9 +263,10 @@ class LoneWorkerLogic(var myBleId: String) {
         updateSettle(nowMs)
         // 정착한 안전구역에서는 무동작을 세지 않는다(기준을 계속 지금으로, C3)
         if (zoneSettled) raiseStillBase(nowMs)
-        // 재시작 뒤 전원이 확정될 때까지 확인 창을 새로 열지도 복원한 창을 띄우지도 않는다(E9)
-        if (!hold.powerHeld(nowMs)) {
-            hold.takeCheck()?.let { if (enabled && mode == Mode.WATCHING) toChecking(it, nowMs, nowMs) }
+        // 재시작 전원 보류 중, 그리고 보류 끝까지의 센서 데이터가 들어와 들고 있던 창을 열기 전에는 확인 창을 새로 열지 않는다(E9·L3)
+        val held = hold.checkAt(nowMs)
+        if (!hold.powerHeld(nowMs) && held?.let { due(it, nowMs) } != false) {
+            if (held != null) hold.takeCheck()?.let { if (enabled && mode == Mode.WATCHING) toChecking(it, held, nowMs) }
             accidentTick(nowMs)
             stillOpenAt()?.let { if (due(it, nowMs)) toChecking("still", it, nowMs) }
         }
@@ -397,9 +397,9 @@ class LoneWorkerLogic(var myBleId: String) {
     private fun stillOpenAt(): Long? = (stillBase + stillMs).takeIf {
         enabled && !zoneSettled && !siren.covers(it) && rest == Rest.NONE && mode == Mode.WATCHING }
 
-    /** 판정을 기다리는 마감. 재시작 전원 보류 중에는 없다(보류 중엔 확인 창이 없어 SOS 마감도 없다). */
-    private fun deadlines(nowMs: Long): List<Long> =
-        if (hold.powerHeld(nowMs)) emptyList() else listOfNotNull(stillOpenAt(), fallOpenAt(nowMs), sosAt())
+    /** 판정을 기다리는 마감. 재시작 전원 보류 중에는 없고, 들고 있는 복원 창이 있으면 그 창을 여는 마감(보류 끝)뿐이다. */
+    private fun deadlines(nowMs: Long): List<Long> = if (hold.powerHeld(nowMs)) emptyList()
+        else hold.checkAt(nowMs)?.let { listOf(it) } ?: listOfNotNull(stillOpenAt(), fallOpenAt(nowMs), sosAt())
 
     /**
      * 사고 의심 판정. 사고 마감이 되면 사고 확인 창을 연다. 무동작 확인 창이 이미 열려 있으면 두 마감 중

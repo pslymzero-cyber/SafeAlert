@@ -52,7 +52,8 @@ class SirenPause {
  * 창 끝에 끝난다 — 창 끝에 창 안에서 시작한 대기가 남아 있으면 그 대기가 확정되거나 버려질 때까지 한 번 늘린다
  * (늦어도 창 끝 + CONFIRM_MS 전, 창 끝 뒤 시작한 대기로는 늘리지 않음, L1). 재시작 변화는 보류 중에 확정된
  * 첫 변화 하나이고 그 뒤 변화는 창 안이라도 실제 변화다(L2).
- * 복원한 창은 종류만 들고 있다가 보류 끝에 연다 — 들고 있는 창은 열린 창과 같은 규칙으로 버린다.
+ * 복원한 창은 종류만 들고 있다가, 보류 끝 시각까지의 센서 데이터가 들어온 뒤(최대 LATE_MS) 그 시각을 걸음 셈 기준으로
+ * 연다(L3) — 들고 있는 창은 열린 창과 같은 규칙으로 버린다.
  * 구역 보류: 복원한 안전구역 안 상태를 구역 보고 없이 유지하는 한도(C3). 보류 중에는 정착으로 올리지 않는다.
  */
 class RestartHold {
@@ -105,6 +106,9 @@ class RestartHold {
         if (restart) powerUntil = atMs + PowerDebounce.DEBOUNCE_MS
         return restart
     }
+
+    /** 보류가 끝났고 들고 있는 창이 있으면 그 창을 여는 마감 = 보류 끝 시각(L3), 아니면 null. */
+    fun checkAt(nowMs: Long): Long? = powerUntil.takeIf { check.isNotEmpty() && !powerHeld(nowMs) }
 
     /** 들고 있던 확인 창 종류를 한 번 돌려주고 비운다. */
     fun takeCheck(): String? = check.ifEmpty { null }?.also { check = "" }
