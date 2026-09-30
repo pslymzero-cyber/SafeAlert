@@ -89,12 +89,45 @@ class ServiceStartTest {
     }
 
     @Test
+    fun update_slack_applies_only_when_update_is_after_last_start() {
+        for (sdk in listOf(30, 33)) {
+            assertFalse(stopped(sdk, listOf(user to 100_000L), since = 50_000L, updatedAt = 90_000L))
+            assertTrue(stopped(sdk, listOf(user to 100_000L), since = 90_000L, updatedAt = 90_000L))
+            assertTrue(stopped(sdk, listOf(user to 100_000L), since = 95_000L, updatedAt = 90_000L))
+        }
+    }
+
+    @Test
+    fun started_at_falls_back_to_running_since() {
+        assertEquals(7_000L, BootRestoreReceiver.startedAt(0L, 7_000L))
+        assertEquals(9_000L, BootRestoreReceiver.startedAt(9_000L, 7_000L))
+        assertEquals(0L, BootRestoreReceiver.startedAt(0L, 0L))
+    }
+
+    private fun limited(sdk: Int, fine: Boolean, background: Boolean, bgStarted: Boolean) =
+        ServiceStartGate.bgLocationLimited(sdk, fine, bgStarted) { background }
+
+    @Test
     fun bg_location_limit_only_for_background_started_api30() {
-        assertTrue(ServiceStartGate.bgLocationLimited(30, fine = true, background = false, bgStarted = true))
-        assertFalse(ServiceStartGate.bgLocationLimited(30, fine = true, background = false, bgStarted = false))
-        assertFalse(ServiceStartGate.bgLocationLimited(30, fine = true, background = true, bgStarted = true))
-        assertFalse(ServiceStartGate.bgLocationLimited(29, fine = true, background = false, bgStarted = true))
-        assertFalse(ServiceStartGate.bgLocationLimited(31, fine = true, background = false, bgStarted = true))
+        assertTrue(limited(30, fine = true, background = false, bgStarted = true))
+        assertFalse(limited(30, fine = true, background = false, bgStarted = false))
+        assertFalse(limited(30, fine = true, background = true, bgStarted = true))
+        assertFalse(limited(29, fine = true, background = false, bgStarted = true))
+        assertFalse(limited(31, fine = true, background = false, bgStarted = true))
+    }
+
+    @Test
+    fun bg_limit_does_not_query_permission_unless_needed() {
+        var asked = 0
+        val probe = { asked++; false }
+        assertFalse(ServiceStartGate.bgLocationLimited(31, true, true, probe))
+        assertFalse(ServiceStartGate.bgLocationLimited(30, true, false, probe))
+        assertFalse(ServiceStartGate.bgLocationLimited(30, false, true, probe))
+        assertEquals(0, asked)
+        assertTrue(ServiceStartGate.bgLocationLimited(30, true, true, probe))
+        assertEquals(1, asked)
+        assertFalse(ServiceStartGate.bgLocationLimited(30, true, true) { asked++; true })
+        assertEquals(2, asked)
     }
 
     @Test

@@ -75,7 +75,6 @@ class BleService : LifecycleService() {
         const val BROADCAST_LOCAL_STATE = "com.wf11.safealert.LOCAL_STATE"   // [v1.0.42 Req2] 내 장비(Local) 상태 전파
         private const val CHANNEL_ID   = "safealert_channel"
         private const val NOTIF_ID     = 1001
-        private const val NOTIF_ID_STOPPED = 1002   // (v1.1.99) 감시 시작 실패 안내
 
         @Volatile var lastStatus: String   = ""
         @Volatile var bleScanCount: Int    = 0
@@ -661,7 +660,8 @@ class BleService : LifecycleService() {
                     if (savedMode == "DEVICE") BleConstants.CAT_FORKLIFT else BleConstants.CAT_WALKER)
                 if (!startForegroundTyped("${categoryRoleName(myCategory)} 실행 중", "재시작됨")) return failStart(startId)
                 myMode = savedMode
-                bgStarted = intent == null || lwAction || intent.getBooleanExtra(BootRestoreReceiver.EXTRA_BOOT_RESTORE, false)
+                // (v1.1.99) 알림 버튼으로 시작한 인스턴스는 사용 중 권한 제한 예외라 백그라운드 시작으로 세지 않는다
+                bgStarted = intent == null || intent.getBooleanExtra(BootRestoreReceiver.EXTRA_BOOT_RESTORE, false)
                 prefs.edit().putLong(BootRestoreReceiver.K_STARTED_AT, System.currentTimeMillis()).apply()
                 applyMode()
                 if (intent?.action == null) return START_STICKY   // (v1.1.99) 알림 동작이면 아래 when 으로 이어간다
@@ -671,7 +671,7 @@ class BleService : LifecycleService() {
                 // (v1.1.99) 시작 권한이 빠진 복원도 여기서 멈춘다. 포그라운드 시작 요청으로 떴을 수 있어 가능하면 먼저 올렸다 내린다.
                 if (savedMode == null && canStart && startForegroundTyped("SafeAlert", "중지됨")) stopForeground(STOP_FOREGROUND_REMOVE)
                 Log.w(TAG, if (savedMode == null) "복원할 실행 상태 없음 — 중지" else "서비스 시작 권한 없음 — 복원 중지")
-                if (savedMode != null) return failStart(startId)
+                if (savedMode != null) return failStart(startId, permission = true)
                 stopSelf(startId)
                 return START_NOT_STICKY
             }
@@ -758,7 +758,7 @@ class BleService : LifecycleService() {
         val type = ServiceStartGate.fgsType(this)
         androidx.core.app.ServiceCompat.startForeground(this, NOTIF_ID, buildNotification(title, sub), type)
         fgsApplied = type
-        (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).cancel(NOTIF_ID_STOPPED)
+        ServiceStopNotice.cancel(this)
         true
     } catch (e: RuntimeException) {
         Log.w(TAG, "포그라운드 시작 실패: ${e.javaClass.simpleName}")
@@ -766,16 +766,8 @@ class BleService : LifecycleService() {
     }
 
     /** 시작 실패(포그라운드 시작 실패·시작 권한 없는 복원): 탭하면 앱을 여는 안내 알림을 올리고 멈춘다. 화면 복귀가 다시 시작한다. */
-    private fun failStart(startId: Int): Int {
-        createNotificationChannel()
-        val pi = android.app.PendingIntent.getActivity(this, 5, Intent(this, MainActivity::class.java)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), android.app.PendingIntent.FLAG_IMMUTABLE)
-        runCatching {
-            (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).notify(NOTIF_ID_STOPPED,
-                NotificationCompat.Builder(this, CHANNEL_ID).setSmallIcon(android.R.drawable.stat_sys_warning)
-                    .setContentTitle("감시가 중지됐습니다").setContentText("눌러서 다시 시작")
-                    .setContentIntent(pi).setAutoCancel(true).build())
-        }
+    private fun failStart(startId: Int, permission: Boolean = false): Int {
+        ServiceStopNotice.show(this, permission)
         stopSelf(startId)
         return START_NOT_STICKY
     }
@@ -2089,8 +2081,8 @@ class BleService : LifecycleService() {
             }
             // (v1.1.99) 시작 뒤 생긴 정밀 위치를 포그라운드 유형에 반영하고 알림 문구는 현재 상태로 다시 그린다
             if (ServiceStartGate.needsRetype(Build.VERSION.SDK_INT, fgsApplied, true) && startForegroundTyped("SafeAlert", "")) refreshNotification()
-            if (ServiceStartGate.bgLocationLimited(Build.VERSION.SDK_INT, true,
-                    hasPermission(Manifest.permission.ACCESS_BACKGROUND_LOCATION), bgStarted)) {
+            if (ServiceStartGate.bgLocationLimited(Build.VERSION.SDK_INT, true, bgStarted) {
+                    hasPermission(Manifest.permission.ACCESS_BACKGROUND_LOCATION) }) {
                 setSystemFault("위치 '항상 허용' 꺼짐 — 재시작 뒤 감지 제한"); return
             }
         }

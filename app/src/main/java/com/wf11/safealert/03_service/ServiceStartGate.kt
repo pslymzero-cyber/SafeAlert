@@ -44,10 +44,10 @@ object ServiceStartGate {
 
     /**
      * Android 11 에서 백그라운드 복원(재부팅·업데이트·재시작)으로 시작된 인스턴스는 위치 '항상 허용'이 없으면
-     * 스캔 결과를 받지 못할 수 있다. 화면에서 시작한 인스턴스는 해당 없음.
+     * 스캔 결과를 받지 못할 수 있다. 화면에서 시작한 인스턴스는 해당 없음. 항상 허용 조회(background)는 앞 조건이 맞을 때만 한다.
      */
-    fun bgLocationLimited(sdk: Int, fine: Boolean, background: Boolean, bgStarted: Boolean): Boolean =
-        sdk == Build.VERSION_CODES.R && fine && !background && bgStarted
+    fun bgLocationLimited(sdk: Int, fine: Boolean, bgStarted: Boolean, background: () -> Boolean): Boolean =
+        sdk == Build.VERSION_CODES.R && bgStarted && fine && !background()
 
     /** Android 10~11 에서 시작 뒤 정밀 위치가 생겨 적용한 유형과 지금 유형이 다르면 다시 지정한다. */
     fun needsRetype(sdk: Int, appliedType: Int, fine: Boolean): Boolean =

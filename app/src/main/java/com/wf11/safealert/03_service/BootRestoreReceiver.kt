@@ -35,15 +35,19 @@ class BootRestoreReceiver : BroadcastReceiver() {
          * 마지막 시작(sinceMs) 뒤에 사용자가 요청한 종료가 있으면 true. exits = (reason, timestamp).
          * 시작 시각을 모르면(sinceMs <= 0) 판정하지 않고 복원한다. Android 11~13 은 업데이트 종료도
          * 사용자 요청으로 남을 수 있어 앱 갱신 시각(updatedAtMs) 앞뒤 60초 안 기록은 세지 않는다.
+         * 이 여유는 갱신이 마지막 시작보다 뒤일 때만 둔다(시작 뒤 갱신이 없었으면 모든 기록을 센다).
          */
         fun userStopped(sdk: Int, exits: List<Pair<Int, Long>>, sinceMs: Long, updatedAtMs: Long): Boolean {
             if (sdk < Build.VERSION_CODES.R || sinceMs <= 0L) return false
-            val checkUpdate = sdk < Build.VERSION_CODES.UPSIDE_DOWN_CAKE
+            val checkUpdate = sdk < Build.VERSION_CODES.UPSIDE_DOWN_CAKE && sinceMs < updatedAtMs
             return exits.any { (reason, at) ->
                 reason == ApplicationExitInfo.REASON_USER_REQUESTED && at > sinceMs &&
                     !(checkUpdate && abs(at - updatedAtMs) <= UPDATE_EXIT_SLACK_MS)
             }
         }
+
+        /** 사용자 중지 판정 기준 시각 — 판정 전용 키가 없으면(옛 버전에서 시작) 표시용 시작 시각으로 대신한다. */
+        fun startedAt(newKey: Long, runningSince: Long): Long = if (newKey > 0L) newKey else runningSince
     }
 
     override fun onReceive(ctx: Context, intent: Intent) {
@@ -51,7 +55,7 @@ class BootRestoreReceiver : BroadcastReceiver() {
         if (action != Intent.ACTION_BOOT_COMPLETED && action != Intent.ACTION_MY_PACKAGE_REPLACED) return
         val prefs = runCatching { ctx.getSharedPreferences("safealert_prefs", Context.MODE_PRIVATE) }.getOrNull() ?: return
         val running = prefs.getString("running_mode", null) ?: return
-        val since = prefs.getLong(K_STARTED_AT, 0L)
+        val since = startedAt(prefs.getLong(K_STARTED_AT, 0L), prefs.getLong("running_since", 0L))
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && since > 0L && !LoneWorkerSosSync.hasStoredSos(ctx)) {
             val exits = runCatching {
                 ctx.getSystemService(ActivityManager::class.java)

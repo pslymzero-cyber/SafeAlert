@@ -39,6 +39,9 @@ object LoneWorkerUi {
     /** 신체 활동 권한이 없을 때의 경고 끝말. 이 끝말로 끝나는 경고도 다시 판정해 지운다. */
     private const val ACT_TAIL = "앱 설정에서 신체 활동을 허용하세요."
 
+    /** 시작 권한이 없어 감시가 멈췄을 때의 경고 끝말. 이 끝말로 끝나는 경고도 다시 판정해 지운다. */
+    private const val PERM_TAIL = "눌러서 권한 설정"
+
     /** 메인 화면이 요청하는 필수 권한 목록: 서비스 시작 권한 + 정밀 위치(ServiceStartGate 에서 파생). */
     val runPermissions: Array<String> = ServiceStartGate.screenPermissions(Build.VERSION.SDK_INT)
 
@@ -131,6 +134,11 @@ object LoneWorkerUi {
         if (DevSettings.lwEnabled && LoneWorkerMonitor.current?.stepPermissionMissing == true)
             "신체 활동 권한이 없어 걸음을 감지하지 못합니다(강한 움직임으로 대신 판단). $ACT_TAIL" else null
 
+    /** 실행 상태가 남았는데 서비스·모니터가 없고 시작 권한이 빠졌으면 경고 문구(중지 안내 알림을 탭해 들어온 경우). */
+    private fun permissionStopWarning(ctx: Context): String? =
+        if (runningMode(ctx) != null && !BleService.isRunning && LoneWorkerMonitor.current == null &&
+            !ServiceStartGate.canStart(ctx)) "권한이 없어 감시가 멈췄습니다 — $PERM_TAIL" else null
+
     private fun appInfo(activity: Activity) =
         Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${activity.packageName}"))
 
@@ -153,7 +161,9 @@ object LoneWorkerUi {
 
     /**
      * 메인 화면 800ms 폴링에서 한 번에 부른다: 알림 화면 진입, 정지 경합 복구, 거치 중 안내, 도달성 경고 재판정.
-     * 도달성·백그라운드 위치(Android 11)·신체 활동 경고는 매번 다시 판정한다 — 막혀 있으면 띄우고 풀렸으면 지운다. 블루투스 권한 경고는 건드리지 않는다.
+     * 권한 부족 중지·도달성·백그라운드 위치(Android 11)·신체 활동 경고는 매번 다시 판정한다 — 막혀 있으면 띄우고 풀렸으면 지운다. 블루투스 권한 경고는 건드리지 않는다.
+     * 권한 부족 중지 경고의 버튼은 앱 정보(권한) 화면이며, 권한을 켜고 돌아오면 화면 복귀가 다시 시작하고 이 경고는 지워진다.
+     * 백그라운드 위치와 신체 활동 경고가 함께 필요하면 두 줄로 같이 보인다.
      * stopped 는 메인 화면이 실행 상태를 지운 상태(currentMode == null)다. 그런데 서비스가 구조 요청 때문에
      * 정지를 무시했다면 서비스가 running_mode 를 되살렸으므로 실행 카드로 돌아간다.
      */
@@ -162,12 +172,15 @@ object LoneWorkerUi {
         stopped: Boolean, warn: (String, () -> Unit) -> Unit, restore: () -> Unit
     ) {
         openIfAlerting(activity)
-        // 도달성 → Android 11 백그라운드 위치 → 신체 활동 경고 순 (문구, 버튼 동작)
+        // 권한 부족 중지 → 도달성 → Android 11 백그라운드 위치·신체 활동 경고 순 (문구, 버튼 동작)
         val w: Pair<String, () -> Unit>? = if (stopped) null else
-            reachabilityWarning(activity)?.let { (t, i) -> t to { open(activity, i) } }
-                ?: (backgroundLocationWarning(activity) ?: activityWarning())?.let { t -> t to { open(activity, appInfo(activity)) } }
+            permissionStopWarning(activity)?.let { t -> t to { open(activity, appInfo(activity)) } }
+                ?: reachabilityWarning(activity)?.let { (t, i) -> t to { open(activity, i) } }
+                ?: listOfNotNull(backgroundLocationWarning(activity), activityWarning()).joinToString("\n").ifEmpty { null }
+                    ?.let { t -> t to { open(activity, appInfo(activity)) } }
         val cur = if (warnBox.visibility == View.VISIBLE) warnMsg.text.toString() else null
-        val ours = cur != null && (cur.endsWith(REACH_TAIL) || cur.endsWith(BG_LOC_TAIL) || cur.endsWith(ACT_TAIL))
+        val ours = cur != null && (cur.endsWith(REACH_TAIL) || cur.endsWith(BG_LOC_TAIL) || cur.endsWith(ACT_TAIL) ||
+            cur.endsWith(PERM_TAIL))
         // 다른 경고(블루투스 권한 등)가 떠 있으면 덮어쓰지 않는다 — 비어 있거나 우리 경고일 때만 갱신
         if (w != null && cur != w.first && (cur == null || ours)) warn(w.first, w.second)
         if (w == null && ours) warnBox.visibility = View.GONE
