@@ -14,7 +14,7 @@ import kotlin.math.abs
  * 시각은 저장 시점 elapsedRealtime 그대로 두고 부팅 수·저장 elapsed·저장 벽시계를 함께 적는다. 같은 부팅이면
  * elapsed 값을 그대로 쓰고(벽시계 변경과 무관), 다른 부팅(또는 부팅 수를 모름)이면 벽시계 경과(음수는 0)만큼 옮긴다.
  * 재시작 때 확인 창은 다시 띄우고 응답 시간은 처음부터, 트리거 뒤 5분이 지난 사고 의심은 버린다(LoneWorkerLogic.startFrom).
- * 저장된 충전 여부와 지금 전원이 다르면 2초 디바운스 뒤 재시작 시각의 실제 변화로 적용한다(LoneWorkerPower.seed).
+ * 저장된 충전 여부와 지금 전원이 다르면 재시작 전원 보류다(RestartHold).
  * [중지]·사용자 중지 판정이면 clearOnUserStop 으로 지운다. 시스템 종료·재시작 대비로 감시 정지만으로는 지우지 않는다.
  */
 class LoneWorkerResume(private val ctx: Context) {

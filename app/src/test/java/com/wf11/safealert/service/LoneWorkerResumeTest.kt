@@ -280,7 +280,7 @@ class LoneWorkerResumeTest : RestartKit() {
         assertEquals(listOf(Mode.WATCHING, Mode.WATCHING), beforePower)
         assertEquals(Mode.WATCHING, l.mode)
         assertEquals(end, l.nextCheckAt(5_000 + PowerDebounce.CONFIRM_MS))
-        assertEquals(Mode.WATCHING, l.modeAt(end - 1))
+        assertEquals(Mode.WATCHING, l.seenAt(end - 1))
         assertEquals(Mode.CHECKING, l.seenAt(end))
         assertEquals("fall", l.trigger)
         assertEquals(Rest.NONE, l.rest)
@@ -295,11 +295,11 @@ class LoneWorkerResumeTest : RestartKit() {
             val l = restart(accidentCheck(), 41_000, 5_000, 20_000, charging = true)
             l.rebounce(now = true, gapTick = gapTick, m = m)
             assertEquals(m, 5_800 + PowerDebounce.CONFIRM_MS, l.nextCheckAt(5_900))
-            assertEquals(m, Mode.WATCHING, l.modeAt(5_800 + PowerDebounce.DEBOUNCE_MS - 1))
-            assertEquals(m, Mode.WATCHING, l.modeAt(5_800 + PowerDebounce.DEBOUNCE_MS))
+            assertEquals(m, Mode.WATCHING, l.seenAt(5_800 + PowerDebounce.DEBOUNCE_MS - 1))
+            assertEquals(m, Mode.WATCHING, l.seenAt(5_800 + PowerDebounce.DEBOUNCE_MS))
             assertEquals(m, Rest.DOCKED, l.rest)
             assertNull(m, l.snapshot(5_800 + PowerDebounce.DEBOUNCE_MS).accidentHold)
-            assertEquals(m, Mode.WATCHING, l.modeAt(end))
+            assertEquals(m, Mode.WATCHING, l.seenAt(end))
             // the restart plug is not a docking motion
             l.onAccident(9_000)
             assertEquals(m, Mode.WATCHING, l.seenAt(38_999))
@@ -309,10 +309,11 @@ class LoneWorkerResumeTest : RestartKit() {
     }
 
     @Test fun restart_power_change_applies_after_debounce() {
-        val l = reboot(accidentCheck(), 41_000, 5_000, 20_000, charging = true)
-        // the restored accident check is not shown before the plug is confirmed, then the plug drops it
-        assertEquals(listOf(Mode.WATCHING, Mode.WATCHING), beforePower)
-        assertEquals(Mode.WATCHING, l.mode)
+        val l = restart(accidentCheck(), 41_000, 5_000, 20_000, charging = true)
+        // the restored accident check is not shown before the plug is confirmed, even with sensor data, then the plug drops it
+        assertEquals(Mode.WATCHING, l.seenAt(5_000))
+        assertEquals(Mode.WATCHING, l.seenAt(5_000 + PowerDebounce.DEBOUNCE_MS - 1))
+        assertEquals(Mode.WATCHING, l.seenAt(5_000 + PowerDebounce.CONFIRM_MS))
         assertEquals(Rest.DOCKED, l.rest)
         assertNull(l.snapshot(5_000 + PowerDebounce.CONFIRM_MS).accidentHold)
     }

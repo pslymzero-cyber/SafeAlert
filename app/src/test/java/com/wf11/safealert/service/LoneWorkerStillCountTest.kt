@@ -94,7 +94,7 @@ class LoneWorkerStillCountTest {
         assertEquals(1, l.audiblePeers().size)
         assertFalse(l.alarmVibrates)
         // a real plug ends the suspicion: the siren vibrates again
-        l.setCharging(true, 12_000)
+        l.reportPower(true, 12_000)
         assertEquals(Mode.WATCHING, l.modeAt(12_000))
         assertTrue(l.alarmVibrates)
     }

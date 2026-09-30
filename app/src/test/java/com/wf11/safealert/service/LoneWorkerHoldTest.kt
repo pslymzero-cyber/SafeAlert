@@ -37,7 +37,7 @@ class LoneWorkerHoldTest : RestartKit() {
         assertEquals(Mode.WATCHING, l.modeAt(5_000))
         assertTrue(l.zoneSettled)
         assertEquals("", l.snapshot(5_000).check)
-        assertEquals(Mode.WATCHING, l.modeAt(7_600))
+        assertEquals(Mode.WATCHING, l.seenAt(7_600))
     }
 
     @Test fun held_still_dropped_by_distinct_motion() {
@@ -45,7 +45,7 @@ class LoneWorkerHoldTest : RestartKit() {
         assertEquals("still", l.snapshot(5_000).check)
         l.walk(7_500, 5)
         assertEquals("", l.snapshot(7_500).check)
-        assertEquals(Mode.WATCHING, l.modeAt(7_600))
+        assertEquals(Mode.WATCHING, l.seenAt(7_600))
         // five steps after the restart unplug edge (5 s): carried from the distinct motion once the unplug is confirmed
         assertEquals(Rest.NONE, l.rest)
     }
@@ -57,7 +57,7 @@ class LoneWorkerHoldTest : RestartKit() {
         assertEquals("fall", old.trigger)
         val l = restart(old, 41_000, 5_000, 20_000)
         l.walk(7_500, 5)
-        assertEquals(Mode.WATCHING, l.modeAt(7_600))
+        assertEquals(Mode.WATCHING, l.seenAt(7_600))
         assertEquals(7_500L, l.snapshot(7_600).accidentHold)
         assertEquals(Mode.WATCHING, l.seenAt(37_499))
         assertEquals(Mode.CHECKING, l.seenAt(37_500))
@@ -69,14 +69,15 @@ class LoneWorkerHoldTest : RestartKit() {
         l.setEnabled(false, 6_000)
         assertEquals("", l.snapshot(6_000).check)
         l.setEnabled(true, 6_500)
-        assertEquals(Mode.WATCHING, l.modeAt(7_600))
+        assertEquals(Mode.WATCHING, l.seenAt(7_600))
     }
 
     @Test fun held_check_dropped_by_restored_sos() {
         val l = heldStill()
         l.restoreSos("still", 5_000)
         assertTrue(l.cancelSos(6_000))
-        assertEquals(Mode.WATCHING, l.modeAt(7_600))
+        assertEquals("", l.snapshot(6_000).check)
+        assertEquals(Mode.WATCHING, l.seenAt(7_600))
     }
 
     @Test fun settled_resume_does_not_open_still_check() {
@@ -111,7 +112,7 @@ class LoneWorkerHoldTest : RestartKit() {
             val m = "gapTick=$gapTick"
             val l = heldStill()
             l.rebounce(now = false, gapTick = gapTick, m = m)
-            assertEquals(m, Mode.WATCHING, l.modeAt(5_800 + PowerDebounce.DEBOUNCE_MS - 1))
+            assertEquals(m, Mode.WATCHING, l.seenAt(5_800 + PowerDebounce.DEBOUNCE_MS - 1))
             assertEquals(m, Mode.CHECKING, l.seenAt(5_800 + PowerDebounce.DEBOUNCE_MS))
             assertEquals(m, "still", l.trigger)
             assertEquals(m, l.responseMs, l.responseLeftMs(5_800 + PowerDebounce.DEBOUNCE_MS))
@@ -131,7 +132,6 @@ class LoneWorkerHoldTest : RestartKit() {
             l.powerRaw(false, 5_500)
             l.powerRaw(true, 7_000)
             assertEquals(m, 7_000 + PowerDebounce.CONFIRM_MS, l.nextCheckAt(7_000))
-            assertTrue(m, 7_000 + PowerDebounce.CONFIRM_MS < end + PowerDebounce.CONFIRM_MS)
             if (gapTick) assertEquals(m, Mode.WATCHING, l.seenAt(end))
             assertEquals(m, Mode.WATCHING, l.seenAt(7_000 + PowerDebounce.DEBOUNCE_MS - 1))
             // the restart plug reports: the held accident check and the suspicion end
@@ -225,6 +225,22 @@ class LoneWorkerHoldTest : RestartKit() {
         assertEquals(k.responseMs, k.responseLeftMs(8_000))
         k.walk(10_000, 4)
         assertEquals(Mode.WATCHING, k.seenAt(10_000))
+    }
+
+    /** Without sensor data the held check opens at the hold end + LATE_MS with the full response time. */
+    @Test fun held_check_opens_at_the_backstop_without_data() {
+        val l = heldStill()
+        assertEquals(Mode.WATCHING, l.modeAt(5_000))
+        val report = 5_000 + PowerDebounce.CONFIRM_MS
+        assertEquals(Mode.WATCHING, l.modeAt(report))
+        val holdEnd = 5_000 + PowerDebounce.DEBOUNCE_MS
+        assertTrue(l.waitingToJudge(report))
+        assertTrue(l.waitingOnSensors(report))
+        assertEquals(holdEnd + LoneWorkerLogic.LATE_MS, l.nextCheckAt(report))
+        assertEquals(Mode.WATCHING, l.modeAt(holdEnd + LoneWorkerLogic.LATE_MS - 1))
+        assertEquals(Mode.CHECKING, l.modeAt(holdEnd + LoneWorkerLogic.LATE_MS))
+        assertEquals("still", l.trigger)
+        assertEquals(l.responseMs, l.responseLeftMs(holdEnd + LoneWorkerLogic.LATE_MS))
     }
 
     /** Steps after the restart arriving late still count from the restart: they drop the held check (X2). */

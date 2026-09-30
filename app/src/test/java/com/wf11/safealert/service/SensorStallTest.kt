@@ -5,7 +5,6 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.io.File
 
 /** SensorStall: accelerometer silence detection (v1.1.99, RR08). Pure JVM. */
 class SensorStallTest {
@@ -94,19 +93,32 @@ class SensorStallTest {
      */
     @Test
     fun gyro_log_is_turned_off_only_by_the_siren_or_the_monitor_stop() {
-        fun src(name: String) = listOf(
-            File("src/main/java/com/wf11/safealert/03_service/$name"),
-            File("app/src/main/java/com/wf11/safealert/03_service/$name")
-        ).first { it.exists() }.readText().replace("\r\n", "\n")
-        fun block(s: String, head: String): String {
-            val i = s.indexOf(head)
-            assertTrue(head, i >= 0)
-            return s.substring(i, s.indexOf("\n    }", i))
-        }
-        assertFalse(block(src("LoneWorkerSensors.kt"), "fun unregister()").contains("gyroLog("))
-        val stop = block(src("LoneWorkerMonitor.kt"), "fun stop()")
+        assertFalse(sourceBlock(serviceSource("LoneWorkerSensors.kt"), "fun unregister()").contains("gyroLog("))
+        val stop = sourceBlock(serviceSource("LoneWorkerMonitor.kt"), "fun stop()")
         val off = stop.indexOf("sensors.gyroLog(false, false)")
         assertTrue(off >= 0)
         assertTrue(off < stop.indexOf("sensors.unregister()"))
+    }
+
+    /**
+     * The monitor feeds broadcasts (not sticky) and the 10 s sticky check to the logic, confirms a stable change first,
+     * schedules its first tick at the end of start, holds the wake lock for any passed deadline and flushes only for
+     * missing data (X5, X7, M1).
+     */
+    @Test
+    fun monitor_feeds_raw_power_and_waits_awake_only_as_needed() {
+        val m = serviceSource("LoneWorkerMonitor.kt")
+        assertTrue(m.contains("LoneWorkerPower(ctx) { onPowerRaw(it, false) }"))
+        assertTrue(sourceBlock(m, "private val syncRunnable").contains("onPowerRaw(power.plugged(), true)"))
+        val start = sourceBlock(m, "fun start(bleId: String").lines().last { it.isNotBlank() }
+        assertTrue(start, start.trim().startsWith("tickNow()"))
+        val r = sourceBlock(m, "private fun onPowerRaw(")
+        val settle = r.indexOf("logic.settlePower(t)")
+        assertTrue(settle >= 0)
+        assertTrue(settle < r.indexOf("logic.powerRaw(on, t, sticky)"))
+        assertTrue(sourceBlock(m, "private fun updateWakeLock(").contains("logic.waitingToJudge(now())"))
+        val tick = sourceBlock(m, "private fun tick(t: Long)")
+        assertTrue(tick.contains("logic.waitingOnSensors(t)"))
+        assertTrue(tick.contains("if (waiting) sensors.flush()"))
     }
 }

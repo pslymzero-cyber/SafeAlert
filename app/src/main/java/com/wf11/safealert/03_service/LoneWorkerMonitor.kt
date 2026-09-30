@@ -113,7 +113,7 @@ class LoneWorkerMonitor(
         // 충전 중이면 거치로, 아니면 첫 뚜렷한 움직임 대기로 시작한다 (v1.1.99)
         val plugged = power.start()
         val t0 = now()
-        // 저장 상태로 이어가고, 지금 전원과의 차이는 2초 디바운스 뒤 재시작 시각의 실제 변화로 적용한다 (v1.1.99, B6)
+        // 저장 상태로 이어간다 — 지금 전원과 다르면 재시작 전원 보류(RestartHold) (v1.1.99, B6)
         // 진동기가 없으면 사이렌 진동도 그 동안의 무동작 셈 멈춤도 없다 (v1.1.99, D2)
         logic.canVibrate = VibrationHelper.vibrator(ctx)?.hasVibrator() == true
         logic.startFrom(t0, zoneInside, plugged, resume.load(t0))

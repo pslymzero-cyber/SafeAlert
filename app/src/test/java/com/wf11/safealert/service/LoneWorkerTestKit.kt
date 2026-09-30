@@ -3,6 +3,8 @@ package com.wf11.safealert.service
 import com.wf11.safealert.service.LoneWorkerLogic.Mode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
+import java.io.File
 
 /*
  * Shared helpers for the lone worker logic tests. Times are ms on one clock. Accelerometer windows
@@ -16,6 +18,15 @@ internal fun newLogic(charging: Boolean = false, zoneInside: Boolean = false, ca
         start(0L, zoneInside, charging)
         if (carried) sensorSilent(0L)
     }
+
+/**
+ * The raw power changes to on at `at` and stays for the debounce; the logic confirms it without a tick, applied
+ * from `at` (the product path of a later raw or tick).
+ */
+internal fun LoneWorkerLogic.reportPower(on: Boolean, at: Long) {
+    powerRaw(on, at)
+    settlePower(at + PowerDebounce.DEBOUNCE_MS)
+}
 
 private const val WIN = MotionAnalyzer.WINDOW_MS
 
@@ -69,6 +80,19 @@ internal fun LoneWorkerLogic.peerSiren(from: Long, to: Long, id: String = "P") {
         onPeerBle(id, true, t)
         assertEquals(Mode.WATCHING, seenAt(t))
     }
+}
+
+/** Source of a file in 03_service, LF line ends (the test runs from the module or the root). */
+internal fun serviceSource(name: String): String = listOf(
+    File("src/main/java/com/wf11/safealert/03_service/$name"),
+    File("app/src/main/java/com/wf11/safealert/03_service/$name")
+).first { it.exists() }.readText().replace("\r\n", "\n")
+
+/** From head to the end of its 4-space-indented block. */
+internal fun sourceBlock(s: String, head: String): String {
+    val i = s.indexOf(head)
+    assertTrue(head, i >= 0)
+    return s.substring(i, s.indexOf("\n    }", i))
 }
 
 /**

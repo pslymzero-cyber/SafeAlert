@@ -56,7 +56,7 @@ class LoneWorkerChargeTest {
         val l = newLogic(charging = true)
         assertEquals(Rest.DOCKED, l.rest)
         l.walk(9_000, 4)
-        l.setCharging(false, 10_000)
+        l.reportPower(false, 10_000)
         assertEquals(Rest.WAIT, l.rest)
         l.step(11_000)
         assertEquals(Rest.WAIT, l.rest)
@@ -73,7 +73,7 @@ class LoneWorkerChargeTest {
         l.step(9_300)
         l.step(9_700)
         for (i in 0..4) l.step(10_100L + i * 400)
-        l.setCharging(false, 10_000)
+        l.reportPower(false, 10_000)
         assertEquals(Rest.NONE, l.rest)
         assertEquals(Mode.WATCHING, l.seenAt(11_700 + stillMs - 1))
         assertEquals(Mode.CHECKING, l.seenAt(11_700 + stillMs))
@@ -81,7 +81,7 @@ class LoneWorkerChargeTest {
         // only three steps after the unplug edge: steps before the unplug do not count
         val early = newLogic(charging = true)
         for (i in 0..4) early.step(9_300L + i * 400)
-        early.setCharging(false, 10_000)
+        early.reportPower(false, 10_000)
         assertEquals(Rest.WAIT, early.rest)
     }
 
@@ -216,16 +216,16 @@ class LoneWorkerChargeTest {
     @Test fun steps_before_the_plug_do_not_count_toward_carrying() {
         val l = newLogic()
         l.walk(9_000, 9)
-        l.setCharging(true, 10_000)
+        l.reportPower(true, 10_000)
         l.step(11_000)
         assertEquals(Rest.DOCKED, l.rest)
     }
 
     @Test fun replug_resets_step_carry() {
         val l = carriedWhileCharging()
-        l.setCharging(false, 20_000)
+        l.reportPower(false, 20_000)
         assertEquals(Rest.WAIT, l.rest)
-        l.setCharging(true, 30_000)
+        l.reportPower(true, 30_000)
         assertEquals(Rest.DOCKED, l.rest)
     }
 
@@ -268,7 +268,7 @@ class LoneWorkerChargeTest {
         val l = newLogic()
         l.stepsAvailable = false
         l.strongWindows(2_000, 4_000, 6_000, 8_000, 10_500)
-        l.setCharging(true, 10_000)
+        l.reportPower(true, 10_000)
         assertEquals(Rest.DOCKED, l.rest)
         l.strongWindows(11_000)
         assertEquals(Rest.DOCKED, l.rest)
@@ -298,7 +298,7 @@ class LoneWorkerChargeTest {
         val l = newLogic()
         l.sensorSilent(0)
         assertEquals(Mode.CHECKING, l.seenAt(stillMs))
-        l.setCharging(true, stillMs + 1_000)
+        l.reportPower(true, stillMs + 1_000)
         assertEquals(Mode.WATCHING, l.mode)
         assertEquals(Rest.DOCKED, l.rest)
         assertEquals(Mode.WATCHING, l.modeAt(stillMs + responseMs + 10_000))
@@ -307,7 +307,7 @@ class LoneWorkerChargeTest {
     @Test fun unplug_during_still_check_keeps_it_running_to_sos() {
         val l = carriedWhileCharging()
         assertEquals(Mode.CHECKING, l.seenAt(10_000 + stillMs))
-        l.setCharging(false, 200_000)
+        l.reportPower(false, 200_000)
         assertEquals(Rest.WAIT, l.rest)
         assertEquals(Mode.CHECKING, l.modeAt(10_000 + stillMs + responseMs - 1))
         assertEquals(Mode.SOS, l.seenAt(10_000 + stillMs + responseMs))

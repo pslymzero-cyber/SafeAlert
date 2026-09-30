@@ -162,10 +162,10 @@ class LoneWorkerLogic(var myBleId: String) {
     }
 
     /**
-     * 디바운스를 통과한 실제 전원 변화(atMs = 디바운스 전 첫 변화 시각). 연결: 새 거치 — 지님을 지우고, 열린 확인 창은 응답으로 보고 닫으며,
+     * 디바운스가 확정한 실제 전원 변화(settlePower 만 부른다, atMs = 디바운스 전 첫 변화 시각). 연결: 새 거치 — 지님을 지우고, 열린 확인 창은 응답으로 보고 닫으며,
      * SOS 가 아니면 사고 의심을 끝낸다(꽂는 행위 = 사람이 있음). 해제: 첫 뚜렷한 움직임 대기(확정 전 해제 뒤 걸음으로 이미 성립했으면 그 걸음부터 지님, 걸음 셈 기준은 바꾸지 않는다). SOS 는 전원 변화로 끝나지 않는다.
      */
-    fun setCharging(on: Boolean, atMs: Long) {
+    private fun setCharging(on: Boolean, atMs: Long) {
         if (on == charging) return
         val restart = hold.powerSettled(atMs)
         charging = on

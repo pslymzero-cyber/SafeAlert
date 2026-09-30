@@ -67,12 +67,12 @@ class LoneWorkerAccidentTest {
 
     @Test fun plug_within_10s_before_trigger_ignores_it() {
         val l = rule1()
-        l.setCharging(true, 10_000)
+        l.reportPower(true, 10_000)
         l.onAccident(20_000)
         for (t in 50_000L..330_000L step 10_000L) assertEquals(Mode.WATCHING, l.seenAt(t))
 
         val early = rule1()
-        early.setCharging(true, 9_999)
+        early.reportPower(true, 9_999)
         early.onAccident(20_000)
         assertEquals(Mode.CHECKING, early.seenAt(50_000))
     }
@@ -81,7 +81,7 @@ class LoneWorkerAccidentTest {
         val l = rule1()
         l.onAccident(10_000)
         assertEquals(Mode.WATCHING, l.seenAt(29_000))
-        l.setCharging(true, 30_000)
+        l.reportPower(true, 30_000)
         for (t in 40_000L..400_000L step 10_000L) assertEquals(Mode.WATCHING, l.seenAt(t))
     }
 
@@ -91,7 +91,7 @@ class LoneWorkerAccidentTest {
         assertEquals(Mode.CHECKING, l.seenAt(40_000))
         l.walk(45_000, 5)
         assertEquals(Mode.WATCHING, l.mode)
-        l.setCharging(true, 50_000)
+        l.reportPower(true, 50_000)
         for (t in 60_000L..400_000L step 10_000L) assertEquals(Mode.WATCHING, l.seenAt(t))
     }
 
@@ -99,7 +99,7 @@ class LoneWorkerAccidentTest {
         val l = rule1()
         l.onAccident(10_000)
         assertEquals(Mode.CHECKING, l.seenAt(40_000))
-        l.setCharging(true, 50_000)
+        l.reportPower(true, 50_000)
         assertEquals(Mode.WATCHING, l.mode)
         for (t in 60_000L..400_000L step 10_000L) assertEquals(Mode.WATCHING, l.seenAt(t))
     }
@@ -108,7 +108,7 @@ class LoneWorkerAccidentTest {
         val l = rule1(charging = true)
         l.onAccident(10_000)
         assertEquals(Mode.CHECKING, l.seenAt(40_000))
-        l.setCharging(false, 45_000)
+        l.reportPower(false, 45_000)
         assertEquals(Mode.CHECKING, l.seenAt(99_999))
         assertEquals(Mode.SOS, l.seenAt(100_000))
     }
@@ -118,10 +118,10 @@ class LoneWorkerAccidentTest {
         l.onAccident(10_000)
         assertEquals(Mode.CHECKING, l.seenAt(40_000))
         assertEquals(Mode.SOS, l.seenAt(100_000))
-        l.setCharging(true, 110_000)
+        l.reportPower(true, 110_000)
         assertEquals(Mode.SOS, l.mode)
         assertEquals(Mode.SOS, l.seenAt(120_000))
-        l.setCharging(false, 130_000)
+        l.reportPower(false, 130_000)
         assertEquals(Mode.SOS, l.mode)
         for (t in 140_000L..600_000L step 20_000L) assertEquals(Mode.SOS, l.seenAt(t))
         assertEquals("fall", l.trigger)
@@ -421,28 +421,28 @@ class LoneWorkerAccidentTest {
 
     @Test fun fall_just_after_unplug_in_safe_zone_is_ignored() {
         val l = rule1(charging = true, zoneInside = true)
-        l.setCharging(false, 100_000)
+        l.reportPower(false, 100_000)
         l.onAccident(100_400)
         for (t in 130_400L..430_400L step 10_000L) assertEquals(Mode.WATCHING, l.seenAt(t))
     }
 
     @Test fun unplug_just_after_fall_in_safe_zone_is_ignored() {
         val l = rule1(charging = true, zoneInside = true)
-        l.setCharging(false, 101_000)
+        l.reportPower(false, 101_000)
         l.onAccident(100_000)
         for (t in 130_000L..430_000L step 10_000L) assertEquals(Mode.WATCHING, l.seenAt(t))
     }
 
     @Test fun fall_11s_from_unplug_counts() {
         val after = rule1(charging = true, zoneInside = true)
-        after.setCharging(false, 100_000)
+        after.reportPower(false, 100_000)
         after.onAccident(111_000)
         assertEquals(Mode.WATCHING, after.seenAt(140_999))
         assertEquals(Mode.CHECKING, after.seenAt(141_000))
         assertEquals("fall", after.trigger)
 
         val before = rule1(charging = true, zoneInside = true)
-        before.setCharging(false, 100_000)
+        before.reportPower(false, 100_000)
         before.onAccident(89_000)
         assertEquals(Mode.CHECKING, before.seenAt(119_000))
         assertEquals("fall", before.trigger)
@@ -450,7 +450,7 @@ class LoneWorkerAccidentTest {
 
     @Test fun unplug_fall_window_only_inside_safe_zone() {
         val l = rule1(charging = true)
-        l.setCharging(false, 100_000)
+        l.reportPower(false, 100_000)
         l.onAccident(100_400)
         assertEquals(Mode.CHECKING, l.seenAt(130_400))
         assertEquals("fall", l.trigger)
