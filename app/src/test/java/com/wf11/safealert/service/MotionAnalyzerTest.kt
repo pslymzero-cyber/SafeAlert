@@ -160,6 +160,15 @@ class MotionAnalyzerTest {
         assertEquals(MotionAnalyzer.IMPACT_G, MotionAnalyzer.impactGFor(0f), 1e-9)
     }
 
+    @Test fun implausibly_small_range_uses_default_threshold() {
+        val g = MotionAnalyzer.G.toFloat()
+        assertEquals(MotionAnalyzer.IMPACT_G, MotionAnalyzer.impactGFor(1.4f * g), 1e-9)
+        assertEquals(MotionAnalyzer.IMPACT_G, MotionAnalyzer.impactGFor(-1f), 1e-9)
+        assertEquals(1.35, MotionAnalyzer.impactGFor(1.5f * g), 0.01)
+        assertEquals(2.16, MotionAnalyzer.impactGFor(2.4f * g), 0.01)
+        assertEquals(MotionAnalyzer.IMPACT_G, MotionAnalyzer.impactGFor(2.6f * g), 1e-9)
+    }
+
     @Test fun clipped_two_g_sensor_needs_the_range_based_threshold() {
         fun trace(a: MotionAnalyzer): Run {
             val r = Run(a)
@@ -194,7 +203,7 @@ class MotionAnalyzerTest {
         assertEquals(1, r.times(Signal.FALL).size)
     }
 
-    @Test fun window_reports_activity_per_second() {
+    @Test fun window_reports_walking_shape_per_second() {
         val windows = ArrayList<MotionAnalyzer.Window>()
         val r = Run(MotionAnalyzer { windows.add(it) })
         val tilt = 40.0 * PI / 180.0
@@ -203,42 +212,12 @@ class MotionAnalyzerTest {
         r.span(6000, 9000, walking(3.0, 2.0))
         r.span(9000, 12_020) { floatArrayOf(0f, (9.81 * sin(tilt)).toFloat(), (9.81 * cos(tilt)).toFloat()) }
         fun w(end: Long) = windows.single { it.endMs == end }
-        for (e in listOf(1000L, 2000L, 3000L)) {
-            assertTrue(w(e).has)
-            assertFalse(w(e).active)
-            assertFalse(w(e).strong)
-        }
-        // vibration: active but below walking level
-        for (e in listOf(4000L, 5000L, 6000L)) {
-            assertTrue(w(e).active)
-            assertFalse(w(e).strong)
-        }
+        for (e in listOf(1000L, 2000L, 3000L)) assertFalse(w(e).strong)
+        // vibration: activity but below walking level
+        for (e in listOf(4000L, 5000L, 6000L)) assertFalse(w(e).strong)
         for (e in listOf(7000L, 8000L, 9000L)) assertTrue(w(e).strong)
-        // a posture change alone is activity, never strong motion
-        assertTrue(w(10_000L).active)
+        // a posture change alone is never walking-shaped
         assertFalse(w(10_000L).strong)
-    }
-
-    @Test fun impact_at_4g_emits_impact_with_sample_time() {
-        val r = Run()
-        r.span(0, 3000, still)
-        r.sample(3000, 0f, 0f, 39.3f)
-        assertEquals(listOf(3000L), r.times(Signal.IMPACT))
-        assertEquals(3000L, r.a.eventMs)
-
-        val weak = Run()
-        weak.span(0, 3000, still)
-        weak.sample(3000, 0f, 0f, 38.2f)
-        assertTrue(weak.times(Signal.IMPACT).isEmpty())
-    }
-
-    @Test fun impact_threshold_is_90pct_of_small_range() {
-        assertEquals(2.7, MotionAnalyzer.impactGFor(3 * 9.80665f, MotionAnalyzer.SHOCK_G), 0.01)
-        assertEquals(4.0, MotionAnalyzer.impactGFor(8 * 9.80665f, MotionAnalyzer.SHOCK_G), 1e-9)
-        val small = Run(MotionAnalyzer(shockG = 2.7))
-        small.span(0, 3000, still)
-        small.sample(3000, 0f, 0f, 27f)
-        assertEquals(listOf(3000L), small.times(Signal.IMPACT))
     }
 
     @Test fun fall_reports_impact_time_not_decision_time() {

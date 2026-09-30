@@ -22,7 +22,7 @@ class LoneWorkerLogicTest {
         peers.single { it.bleId == id && (ep == null || it.episode == ep) }
 
     private fun LoneWorkerLogic.toChecking() { tick(stillMs) }
-    private fun LoneWorkerLogic.toSos() { tick(stillMs); tick(stillMs + responseMs) }
+    private fun LoneWorkerLogic.toSos() { tick(stillMs); seenAt(stillMs + responseMs) }
 
     private fun LoneWorkerLogic.server(
         key: String, id: String, active: Boolean, now: Long, name: String = "Hong"
@@ -49,9 +49,9 @@ class LoneWorkerLogicTest {
     @Test fun unanswered_check_escalates_to_sos() {
         val l = newLogic()
         l.toChecking()
-        l.tick(180_000 + responseMs - 1)
+        l.seenAt(180_000 + responseMs - 1)
         assertEquals(Mode.CHECKING, l.mode)
-        l.tick(180_000 + responseMs)
+        l.seenAt(180_000 + responseMs)
         assertEquals(Mode.SOS, l.mode)
         assertTrue(l.sosActive)
     }
@@ -125,9 +125,8 @@ class LoneWorkerLogicTest {
         assertEquals(Mode.WATCHING, l.mode)
         l.tick(900_000)
         assertEquals(Mode.WATCHING, l.mode)
-        l.onWindow(MotionAnalyzer.Window(900_000, true, true, false))
         l.onAccident(900_100)
-        l.tick(930_100)
+        l.seenAt(930_100)
         assertEquals(Mode.CHECKING, l.mode)
         assertEquals("fall", l.trigger)
         l.tick(931_000)

@@ -185,8 +185,28 @@ class LoneWorkerMonitor(
         if (!started) return
         if (logic.mode == lastMode && logic.rest == lastRest && t - lastTickAt < TICK_MIN_MS) return
         lastTickAt = t
-        logic.tick(t)
+        tick(t)
         render()
+    }
+
+    /**
+     * 판정 tick 한 곳. 지난 마감이 센서 데이터를 기다리면 flush 를 요청하고, 다음 마감(없으면 LATE_MS 백스톱)에
+     * tick 이 한 번 더 돌도록 예약한다 (v1.1.99).
+     */
+    private fun tick(t: Long) {
+        logic.tick(t)
+        if (logic.waitingOnSensors(t)) sensors.flush()
+        handler.removeCallbacks(deadlineRunnable)
+        logic.nextCheckAt(t)?.let { handler.postDelayed(deadlineRunnable, (it - t).coerceAtLeast(0L)) }
+    }
+
+    private val deadlineRunnable = Runnable {
+        if (started) {
+            val t = now()
+            lastTickAt = t
+            tick(t)
+            render()
+        }
     }
 
     /**
@@ -199,7 +219,7 @@ class LoneWorkerMonitor(
         // 등록에 실패해 센서가 없는 동안에도 같은 백오프로 다시 등록한다
         if (DevSettings.lwEnabled && !sensors.noSensor) sensors.checkStall(t)
         if (sensors.stalled) logic.sensorSilent(t)
-        logic.tick(t)
+        tick(t)
         render()
     }
 
@@ -214,7 +234,7 @@ class LoneWorkerMonitor(
         if (!started) return
         logic.setCharging(on, atMs)
         val t = now()
-        logic.tick(t)
+        tick(t)
         render()
     }
 
@@ -231,7 +251,7 @@ class LoneWorkerMonitor(
         if (!started) return
         val t = now()
         logic.onZone(inside, t)
-        logic.tick(t)
+        tick(t)
         render()
     }
 
@@ -398,7 +418,7 @@ class LoneWorkerMonitor(
             if (!started) return
             val t = now()
             lastTickAt = t
-            logic.tick(t)
+            tick(t)
             render()
             alarm.refresh()
             updateWakeLock(true)

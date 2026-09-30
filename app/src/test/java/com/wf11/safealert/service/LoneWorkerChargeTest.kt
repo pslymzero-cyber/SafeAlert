@@ -12,8 +12,8 @@ import org.junit.Test
  * Rule 2 (no motion) runs only while the device is carried:
  *  - not charging: carried from the first distinct motion after start or unplug (or after 1 min of
  *    sensor silence); before that it waits.
- *  - charging: docked until 10 steps (no step sensor: 30 s of continuous strong motion), then
- *    carried until the next real plug.
+ *  - charging: docked until 10 walking-shaped steps within 30 s (no step sensor: 5 walking-shaped
+ *    windows within 30 s), then carried until the next real plug.
  *  - off in a settled zone. Power flaps shorter than 2 s are ignored; a real plug resets carrying
  *    and withdraws open checks.
  */
@@ -22,27 +22,14 @@ class LoneWorkerChargeTest {
     private val stillMs = 180_000L
     private val responseMs = 120_000L
 
-    private fun newLogic(charging: Boolean = false, zoneInside: Boolean = false) =
-        LoneWorkerLogic("SAFEALERT_WALKER_ME").apply { start(0L, zoneInside, charging) }
-
-    private fun LoneWorkerLogic.steps(lastMs: Long, n: Int) {
-        for (i in n - 1 downTo 0) onStep(lastMs - i * 500L)
-    }
-
-    private fun LoneWorkerLogic.strongRun(firstEnd: Long, count: Int) {
-        for (i in 0 until count) onWindow(MotionAnalyzer.Window(firstEnd + i * 1000L, true, true, true))
-    }
-
-    private fun LoneWorkerLogic.modeAt(t: Long): Mode { tick(t); return mode }
-
     /** Charging, then carried by 10 steps ending at 10 s. */
-    private fun carriedWhileCharging() = newLogic(charging = true).apply { steps(10_000, 10) }
+    private fun carriedWhileCharging() = newLogic(charging = true).apply { walk(10_000, 10) }
 
     @Test fun start_without_charging_waits_for_first_distinct_motion() {
         val l = newLogic()
         assertEquals(Rest.WAIT, l.rest)
         assertEquals(Mode.WATCHING, l.modeAt(600_000))
-        l.steps(600_000, 5)
+        l.walk(600_000, 5)
         assertEquals(Rest.NONE, l.rest)
         assertEquals(Mode.WATCHING, l.modeAt(600_000 + stillMs - 1))
         assertEquals(Mode.CHECKING, l.modeAt(600_000 + stillMs))
@@ -51,7 +38,7 @@ class LoneWorkerChargeTest {
 
     @Test fun four_steps_do_not_end_the_wait() {
         val l = newLogic()
-        l.steps(10_000, 4)
+        l.walk(10_000, 4)
         assertEquals(Rest.WAIT, l.rest)
         assertEquals(Mode.WATCHING, l.modeAt(600_000))
     }
@@ -69,12 +56,12 @@ class LoneWorkerChargeTest {
     @Test fun unplug_waits_for_first_distinct_motion() {
         val l = newLogic(charging = true)
         assertEquals(Rest.DOCKED, l.rest)
-        l.steps(9_000, 4)
+        l.walk(9_000, 4)
         l.setCharging(false, 10_000)
         assertEquals(Rest.WAIT, l.rest)
-        l.onStep(11_000)
+        l.step(11_000)
         assertEquals(Rest.WAIT, l.rest)
-        l.steps(15_000, 5)
+        l.walk(15_000, 5)
         assertEquals(Rest.NONE, l.rest)
     }
 
@@ -88,7 +75,7 @@ class LoneWorkerChargeTest {
 
     @Test fun charging_without_steps_is_docked_and_never_checks_still() {
         val l = newLogic(charging = true)
-        l.steps(10_000, 9)
+        l.walk(10_000, 9)
         assertEquals(Rest.DOCKED, l.rest)
         for (t in 60_000L..3_600_000L step 60_000L) assertEquals(Mode.WATCHING, l.modeAt(t))
     }
@@ -104,9 +91,9 @@ class LoneWorkerChargeTest {
 
     @Test fun steps_before_the_plug_do_not_count_toward_carrying() {
         val l = newLogic()
-        l.steps(9_000, 9)
+        l.walk(9_000, 9)
         l.setCharging(true, 10_000)
-        l.onStep(11_000)
+        l.step(11_000)
         assertEquals(Rest.DOCKED, l.rest)
     }
 
@@ -118,20 +105,61 @@ class LoneWorkerChargeTest {
         assertEquals(Rest.DOCKED, l.rest)
     }
 
-    @Test fun fallback_30s_strong_motion_carries_only_when_steps_unavailable() {
-        val short = newLogic(charging = true)
-        short.stepsAvailable = false
-        short.strongRun(1_000, 29)
-        assertEquals(Rest.DOCKED, short.rest)
+    // No step sensor: carrying while charging = 5 walking-shaped windows within the last 30 s, not
+    // necessarily in a row, all started after the plug.
 
-        val long = newLogic(charging = true)
-        long.stepsAvailable = false
-        long.strongRun(1_000, 30)
-        assertEquals(Rest.NONE, long.rest)
+    @Test fun fallback_five_walking_windows_within_30s_carry_while_charging() {
+        val l = newLogic(charging = true)
+        l.stepsAvailable = false
+        l.strongWindows(5_000, 11_000, 17_000, 23_000)
+        assertEquals(Rest.DOCKED, l.rest)
+        l.strongWindows(29_000)
+        assertEquals(Rest.NONE, l.rest)
 
         val withSteps = newLogic(charging = true)
-        withSteps.strongRun(1_000, 30)
+        withSteps.strongWindows(5_000, 11_000, 17_000, 23_000, 29_000)
         assertEquals(Rest.DOCKED, withSteps.rest)
+    }
+
+    @Test fun fallback_four_walking_windows_do_not_carry() {
+        val l = newLogic(charging = true)
+        l.stepsAvailable = false
+        l.strongWindows(5_000, 11_000, 17_000, 23_000)
+        for (t in 24_000L..60_000L step 1_000L) {
+            l.onWindow(MotionAnalyzer.Window(t, false))
+            assertEquals(Rest.DOCKED, l.rest)
+        }
+    }
+
+    @Test fun fallback_windows_spread_over_more_than_30s_do_not_carry() {
+        val l = newLogic(charging = true)
+        l.stepsAvailable = false
+        for (i in 0 until 20) {
+            l.strongWindows(5_000 + i * 8_000L)
+            assertEquals(Rest.DOCKED, l.rest)
+        }
+    }
+
+    @Test fun fallback_windows_before_the_plug_do_not_count() {
+        val l = newLogic()
+        l.stepsAvailable = false
+        l.strongWindows(2_000, 4_000, 6_000, 8_000, 10_500)
+        l.setCharging(true, 10_000)
+        assertEquals(Rest.DOCKED, l.rest)
+        l.strongWindows(11_000)
+        assertEquals(Rest.DOCKED, l.rest)
+        l.strongWindows(14_000, 16_000, 18_000)
+        assertEquals(Rest.DOCKED, l.rest)
+        l.strongWindows(20_000)
+        assertEquals(Rest.NONE, l.rest)
+    }
+
+    @Test fun charging_with_ten_non_walking_steps_stays_docked() {
+        val l = newLogic(charging = true)
+        l.shuffle(10_000, 10)
+        assertEquals(Rest.DOCKED, l.rest)
+        l.shuffle(20_000, 20)
+        assertEquals(Rest.DOCKED, l.rest)
     }
 
     @Test fun still_rule_is_off_in_settled_zone() {
@@ -158,7 +186,7 @@ class LoneWorkerChargeTest {
         l.setCharging(false, 200_000)
         assertEquals(Rest.WAIT, l.rest)
         assertEquals(Mode.CHECKING, l.modeAt(10_000 + stillMs + responseMs - 1))
-        assertEquals(Mode.SOS, l.modeAt(10_000 + stillMs + responseMs))
+        assertEquals(Mode.SOS, l.seenAt(10_000 + stillMs + responseMs))
     }
 
     @Test fun still_check_closed_by_ok_or_distinct_motion_not_by_moved() {
@@ -166,13 +194,13 @@ class LoneWorkerChargeTest {
         moved.sensorSilent(0)
         moved.tick(stillMs)
         moved.onMoved(stillMs + 1_000)
-        moved.steps(stillMs + 5_000, 4)
+        moved.walk(stillMs + 5_000, 4)
         assertEquals(Mode.CHECKING, moved.modeAt(stillMs + 6_000))
 
         val walked = newLogic()
         walked.sensorSilent(0)
         walked.tick(stillMs)
-        walked.steps(stillMs + 5_000, 5)
+        walked.walk(stillMs + 5_000, 5)
         assertEquals(Mode.WATCHING, walked.mode)
         assertEquals(Mode.WATCHING, walked.modeAt(stillMs + 5_000 + stillMs - 1))
         assertEquals(Mode.CHECKING, walked.modeAt(stillMs + 5_000 + stillMs))
@@ -235,14 +263,14 @@ class LoneWorkerChargeTest {
 
     @Test fun ten_steps_within_30s_while_charging_carry() {
         val l = newLogic(charging = true)
-        for (i in 0 until 10) l.onStep(1_000 + i * 3_000L)
+        for (i in 0 until 10) l.step(1_000 + i * 3_000L)
         assertEquals(Rest.NONE, l.rest)
     }
 
     @Test fun ten_steps_spread_over_more_than_30s_do_not_carry() {
         val l = newLogic(charging = true)
         for (i in 0 until 60) {
-            l.onStep(1_000 + i * 3_500L)
+            l.step(1_000 + i * 3_500L)
             assertEquals(Rest.DOCKED, l.rest)
         }
     }
@@ -252,9 +280,9 @@ class LoneWorkerChargeTest {
         l.sensorSilent(0L)
         assertEquals(Mode.CHECKING, l.modeAt(stillMs))
         for (t in stillMs + 1_000 until stillMs + responseMs step 3_000L) {
-            l.onStep(t)
+            l.step(t)
             assertEquals(Mode.CHECKING, l.modeAt(t))
         }
-        assertEquals(Mode.SOS, l.modeAt(stillMs + responseMs))
+        assertEquals(Mode.SOS, l.seenAt(stillMs + responseMs))
     }
 }

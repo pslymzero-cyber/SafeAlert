@@ -4,34 +4,32 @@ import kotlin.math.acos
 import kotlin.math.sqrt
 
 /**
- * 가속도 샘플(중력 포함, m/s^2)로 활동 초·강한 움직임·충격·낙상을 판정한다 (v1.1.99).
+ * 가속도 샘플(중력 포함, m/s^2)로 활동 초·걷는 모양 창·낙상을 판정한다 (v1.1.99).
  *
  * 순수 JVM 로직. 활동 초: 1초 창의 |a| 표준편차가 ACTIVE_STD 이상이거나, 직전 창 평균 벡터와의
  * 각도 차가 ACTIVE_ANGLE_DEG 이상이면 활동. 최근 10개 창 중 3개 이상 활동이면 MOVED.
  * 샘플이 없는 창은 정지로 센다 (D-07). 샘플 공백은 MOVED 판정 전에 빈 창으로 밀어 넣는다 (v1.1.99).
- * 강한 움직임 창: |a| 표준편차가 걷기 수준(STRONG_STD) 이상. 각도는 보지 않는다 — 쓰러진 채 뒤척임·자세 변화는 제외.
+ * 걷는 모양 창: |a| 표준편차가 걷기 수준(STRONG_STD) 이상. 각도는 보지 않는다 — 쓰러진 채 뒤척임·자세 변화는 제외.
  *
- * 충격(IMPACT): 중력 포함 크기 표본 하나가 shockG(기본 4 G, 센서 범위가 더 작으면 범위의 90%) 이상.
- * 낙상(FALL): 자유낙하(0.5 G 미만 60 ms 이상) 직후 1초 안의 충격(2.5 G 초과), 충격 2~12초 뒤 구간에서
- * 자세가 45도 이상 바뀌었고 활동 초가 3개 미만. 임계값은 문헌 범위의 보수값이라 현장 보정 대상이다.
- * 낙상 충격 임계값도 센서 측정 범위가 2.5 G 미만인 기기(2 G 센서)에서는 범위에 맞춰 낮춘다 (impactGFor).
- * 두 신호 모두 eventMs 에 충격 표본의 센서 시각을 남긴다(낙상은 판정 시각이 아니라 충격 시각).
+ * 낙상(FALL)이 사고 감지의 유일한 신호다: 자유낙하(0.5 G 미만 60 ms 이상) 직후 1초 안의 충격(2.5 G 초과),
+ * 충격 2~12초 뒤 구간에서 자세가 45도 이상 바뀌었고 활동 초가 3개 미만. 임계값은 문헌 범위의 보수값이라 현장 보정 대상이다.
+ * 낙상 충격 임계값은 센서 측정 범위가 2.5 G 미만인 기기(2 G 센서)에서는 범위에 맞춰 낮춘다 (impactGFor).
+ * eventMs 에 충격 표본의 센서 시각을 남긴다(판정 시각이 아니라 충격 시각).
  *
- * 이 앱 자신의 진동 구간 표본(masked)은 활동 통계에서만 뺀다. 낙상·충격 판정은 모든 표본을 본다 —
+ * 이 앱 자신의 진동 구간 표본(masked)은 활동 통계에서만 뺀다. 낙상 판정은 모든 표본을 본다 —
  * 진동 모터 가속도는 충격 임계값보다 훨씬 작고, 알람 중 낙상을 놓치는 쪽이 더 나쁘다 (v1.1.99).
  *
- * 닫힌 1초 창마다 활동·강한 움직임 여부를 onWindow 로 알린다.
+ * 닫힌 1초 창마다 걷는 모양 여부를 onWindow 로 알린다.
  */
 class MotionAnalyzer(
     private val impactG: Double = IMPACT_G,
-    private val shockG: Double = SHOCK_G,
     private val onWindow: (Window) -> Unit = {}
 ) {
 
-    enum class Signal { NONE, MOVED, IMPACT, FALL }
+    enum class Signal { NONE, MOVED, FALL }
 
-    /** 닫힌 1초 창: endMs(센서 시각), 표본 유무, 활동 여부, 걷기 수준 강한 움직임 여부. */
-    data class Window(val endMs: Long, val has: Boolean, val active: Boolean, val strong: Boolean)
+    /** 닫힌 1초 창: endMs(센서 시각), 표본이 있고 걷기 수준으로 흔들렸는지(걷는 모양). */
+    data class Window(val endMs: Long, val strong: Boolean)
 
     companion object {
         const val G = 9.80665
@@ -44,22 +42,22 @@ class MotionAnalyzer(
         const val FREE_FALL_G = 0.5
         const val FREE_FALL_MIN_MS = 60L
         const val IMPACT_G = 2.5
-        const val SHOCK_G = 4.0
+        /** 측정 범위가 이보다 작다고 보고하면 오보고로 보고 IMPACT_G 를 쓴다. 현장 보정 대상. */
+        const val MIN_RANGE_G = 1.5
         const val IMPACT_WINDOW_MS = 1000L
         const val POST_START_MS = 2000L
         const val POST_END_MS = 12000L
         const val POSTURE_DEG = 45.0
         const val POST_MAX_ACTIVE = 3
 
-        /** 센서 최대 범위(m/s^2)가 limitG 미만이면 범위의 90% 를 임계로 쓴다. 아니면 limitG. */
-        fun impactGFor(maxRangeMs2: Float, limitG: Double = IMPACT_G): Double {
-            if (maxRangeMs2 <= 0f) return limitG
+        /** 센서 최대 범위(m/s^2)가 MIN_RANGE_G 이상 IMPACT_G 미만이면 범위의 90% 를 낙상 충격 임계로 쓴다. 아니면 IMPACT_G. */
+        fun impactGFor(maxRangeMs2: Float): Double {
             val rangeG = maxRangeMs2 / G
-            return if (rangeG < limitG) 0.9 * rangeG else limitG
+            return if (rangeG >= MIN_RANGE_G && rangeG < IMPACT_G) 0.9 * rangeG else IMPACT_G
         }
     }
 
-    /** 마지막 IMPACT·FALL 신호의 충격 표본 센서 시각(ms). */
+    /** 마지막 FALL 신호의 충격 표본 센서 시각(ms). */
     var eventMs = 0L
         private set
 
@@ -131,10 +129,6 @@ class MotionAnalyzer(
             eventMs = impactT
             return Signal.FALL
         }
-        if (mag >= shockG * G) {
-            eventMs = tMs
-            return Signal.IMPACT
-        }
         return if (moved) Signal.MOVED else Signal.NONE
     }
 
@@ -150,7 +144,7 @@ class MotionAnalyzer(
         val std = if (has) sqrt((sumM2 / cnt - mm * mm).coerceAtLeast(0.0)) else 0.0
         var active = has && std >= ACTIVE_STD
         if (!active && has && hasPrev) active = angleDeg(mx, my, mz, prevX, prevY, prevZ) >= ACTIVE_ANGLE_DEG
-        onWindow(Window((curIdx + 1) * 1000, has, active, has && std >= STRONG_STD))
+        onWindow(Window((curIdx + 1) * 1000, has && std >= STRONG_STD))
 
         if (lastClosedIdx >= 0) {
             val gap = curIdx - lastClosedIdx
