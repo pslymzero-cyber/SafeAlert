@@ -64,12 +64,14 @@ class LoneWorkerAlarm(
         CHECK, SIREN;
 
         companion object {
-            /** 소리 우선순위(F2, 순수): 본인 SOS → 사이렌, 확인 창 → 확인음, 동료 SOS 들림 → 사이렌, 아니면 없음. */
-            fun of(mode: LoneWorkerLogic.Mode, peerAudible: Boolean): Pattern? = when {
-                mode == LoneWorkerLogic.Mode.SOS -> SIREN
-                mode == LoneWorkerLogic.Mode.CHECKING -> CHECK
-                peerAudible -> SIREN
-                else -> null
+            /**
+             * 소리 우선순위(F2, 순수): 본인 SOS → 사이렌, 확인 창 → 확인음, 지켜보는 중 동료 SOS 들림 → 사이렌, 아니면 없음.
+             * 진동은 지켜보는 중 동료 사이렌에서만(LoneWorkerLogic.alarmVibrates). Mode 가 늘면 여기서 컴파일 오류가 난다.
+             */
+            fun of(mode: LoneWorkerLogic.Mode, peerAudible: Boolean): Pattern? = when (mode) {
+                LoneWorkerLogic.Mode.SOS -> SIREN
+                LoneWorkerLogic.Mode.CHECKING -> CHECK
+                LoneWorkerLogic.Mode.WATCHING -> if (peerAudible) SIREN else null
             }
         }
     }

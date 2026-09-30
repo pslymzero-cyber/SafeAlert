@@ -20,16 +20,14 @@ class LoneWorkerHoldTest : RestartKit() {
 
     /** Carried on the dock, still check open at 190 s, restarted unplugged: the still check is held. */
     private fun heldStill(): LoneWorkerLogic {
-        val old = newLogic(charging = true)
-        old.walk(10_000, 10)
+        val old = carriedWhileCharging()
         assertEquals(Mode.CHECKING, old.seenAt(190_000))
         assertEquals("still", old.trigger)
         return restart(old, 200_000, 5_000, 20_000)
     }
 
     @Test fun held_check_dropped_when_zone_settles() {
-        val old = newLogic(charging = true)
-        old.walk(10_000, 10)
+        val old = carriedWhileCharging()
         old.onZone(true, 150_000)
         assertEquals(Mode.CHECKING, old.seenAt(190_000))
         assertFalse(old.zoneSettled)
@@ -46,7 +44,8 @@ class LoneWorkerHoldTest : RestartKit() {
         l.walk(7_500, 5)
         assertEquals("", l.snapshot(7_500).check)
         assertEquals(Mode.WATCHING, l.monitorTick(7_600))
-        assertEquals(Rest.WAIT, l.rest)
+        // five steps after the restart unplug edge (5 s): carried from the distinct motion once the unplug is confirmed
+        assertEquals(Rest.NONE, l.rest)
     }
 
     @Test fun held_fall_dropped_by_motion_keeps_suspicion() {

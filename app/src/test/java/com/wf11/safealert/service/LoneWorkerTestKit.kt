@@ -60,6 +60,17 @@ internal fun LoneWorkerLogic.modeAt(t: Long): Mode { tick(t); return mode }
 /** Sensor data covers t, then tick at t. */
 internal fun LoneWorkerLogic.seenAt(t: Long): Mode { sensed(t); return modeAt(t) }
 
+/** Charging, then carried by 10 steps ending at 10 s. */
+internal fun carriedWhileCharging() = newLogic(charging = true).apply { walk(10_000, 10) }
+
+/** Peer id sounds its siren every second from..to and the logic keeps watching with sensor data each second. */
+internal fun LoneWorkerLogic.peerSiren(from: Long, to: Long, id: String = "P") {
+    for (t in from..to step 1_000L) {
+        onPeerBle(id, true, t)
+        assertEquals(Mode.WATCHING, seenAt(t))
+    }
+}
+
 /**
  * Restart like the monitor. Each monitor tick first polls the power debounce (a confirmed change is
  * applied there and nowhere else), then ticks.

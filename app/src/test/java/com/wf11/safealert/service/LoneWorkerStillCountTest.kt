@@ -17,10 +17,7 @@ class LoneWorkerStillCountTest {
 
     @Test fun peer_siren_pauses_still_count_and_resumes_after() {
         val l = newLogic(carried = true)
-        for (t in 60_000L..230_000L step 1_000L) {
-            l.onPeerBle("P", true, t)
-            assertEquals(Mode.WATCHING, l.seenAt(t))
-        }
+        l.peerSiren(60_000L, 230_000L)
         assertTrue(l.alarmVibrates)
         l.ackAll(230_000)
         assertFalse(l.alarmVibrates)
@@ -33,10 +30,7 @@ class LoneWorkerStillCountTest {
 
     @Test fun siren_pause_ends_after_still_ms() {
         val l = newLogic(carried = true)
-        for (t in 60_000L..359_000L step 1_000L) {
-            l.onPeerBle("P", true, t)
-            assertEquals(Mode.WATCHING, l.seenAt(t))
-        }
+        l.peerSiren(60_000L, 359_000L)
         assertTrue(l.alarmVibrates)
         // the pause ran 60 s .. 240 s (stillMs) and ended there: 60 s before it, 120 s after it
         l.onPeerBle("P", true, 360_000)
@@ -46,17 +40,11 @@ class LoneWorkerStillCountTest {
 
     @Test fun siren_pause_starts_again_for_a_new_siren() {
         val l = newLogic(carried = true)
-        for (t in 60_000L..250_000L step 1_000L) {
-            l.onPeerBle("P", true, t)
-            assertEquals(Mode.WATCHING, l.seenAt(t))
-        }
+        l.peerSiren(60_000L, 250_000L)
         // capped at 240 s: base 180 s; the vibration stops, so the next siren pauses again
         l.ackAll(250_000)
         assertEquals(Mode.WATCHING, l.seenAt(250_000))
-        for (t in 260_000L..400_000L step 1_000L) {
-            l.onPeerBle("Q", true, t)
-            assertEquals(Mode.WATCHING, l.seenAt(t))
-        }
+        l.peerSiren(260_000L, 400_000L, "Q")
         l.ackAll(400_000)
         // 80 s before Q, 100 s after it
         assertEquals(Mode.WATCHING, l.seenAt(400_000))
@@ -66,10 +54,7 @@ class LoneWorkerStillCountTest {
 
     @Test fun no_vibrator_does_not_pause_still_count() {
         val l = newLogic(carried = true).apply { canVibrate = false }
-        for (t in 60_000L..179_000L step 1_000L) {
-            l.onPeerBle("P", true, t)
-            assertEquals(Mode.WATCHING, l.seenAt(t))
-        }
+        l.peerSiren(60_000L, 179_000L)
         assertFalse(l.alarmVibrates)
         assertEquals(1, l.audiblePeers().size)
         assertEquals(Mode.CHECKING, l.seenAt(180_000))
@@ -77,10 +62,7 @@ class LoneWorkerStillCountTest {
 
     @Test fun siren_end_by_resolve_also_resumes() {
         val l = newLogic(carried = true)
-        for (t in 60_000L..200_000L step 1_000L) {
-            l.onPeerBle("P", true, t)
-            assertEquals(Mode.WATCHING, l.seenAt(t))
-        }
+        l.peerSiren(60_000L, 200_000L)
         l.onPeerBle("P", false, 200_000)
         l.tick(210_000)
         assertTrue(l.audiblePeers().isEmpty())
@@ -188,6 +170,29 @@ class LoneWorkerStillCountTest {
         assertTrue(l.waitingOnSensors(181_000))
         l.sensed(181_000)
         assertEquals(Mode.CHECKING, l.modeAt(181_000))
+        assertEquals("still", l.trigger)
+    }
+
+    /** A still deadline that passed before the siren keeps its base when the vibration stops before the data comes (S1, C5). */
+    @Test fun siren_stopping_before_data_keeps_a_passed_still_deadline() {
+        val l = newLogic(carried = true)
+        l.sensed(178_000)
+        assertEquals(Mode.WATCHING, l.modeAt(180_000))
+        assertTrue(l.waitingOnSensors(180_000))
+        l.onPeerBle("P", true, 181_000)
+        assertEquals(Mode.WATCHING, l.modeAt(181_000))
+        assertEquals(0L, l.snapshot(181_500).stillBase)
+        // the siren is acknowledged before the data comes: the vibration stops
+        l.ackAll(182_000)
+        assertEquals(Mode.WATCHING, l.modeAt(182_000))
+        assertFalse(l.alarmVibrates)
+        // one batch: data covering the deadline, then a motion after it
+        l.sensed(180_000)
+        assertTrue(l.dueNow(182_000))
+        assertEquals(Mode.CHECKING, l.modeAt(182_000))
+        l.onMoved(180_500)
+        l.sensed(181_000)
+        assertEquals(Mode.CHECKING, l.modeAt(182_000))
         assertEquals("still", l.trigger)
     }
 }

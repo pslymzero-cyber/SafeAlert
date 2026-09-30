@@ -404,7 +404,7 @@ class LoneWorkerMonitor(
         val vibrates = logic.alarmVibrates
         val p = LoneWorkerAlarm.Pattern.of(mode, audible.isNotEmpty())
         if (p != null) alarm.play(p, vibrates) else alarm.stop()
-        sensors.gyroLog(vibrates)
+        sensors.gyroLog(audible.isNotEmpty(), vibrates)
 
         notifier.update(mode, audible, logic.peers.filter { !it.active && !it.silenced }, notice(), showScreen)
         if (showScreen) notifier.openScreen()

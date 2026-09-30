@@ -330,8 +330,7 @@ class LoneWorkerResumeTest : RestartKit() {
     }
 
     @Test fun restart_after_power_bank_unplug_waits_without_check() {
-        val old = newLogic(charging = true)
-        old.walk(10_000, 10)
+        val old = carriedWhileCharging()
         assertEquals(Rest.NONE, old.rest)
         val l = reboot(old, 12_000, 5_000, 600_000)
         assertEquals(listOf(Mode.WATCHING, Mode.WATCHING), beforePower)
@@ -341,8 +340,7 @@ class LoneWorkerResumeTest : RestartKit() {
     }
 
     @Test fun restored_check_waits_for_power_then_opens_with_full_response() {
-        val old = newLogic(charging = true)
-        old.walk(10_000, 10)
+        val old = carriedWhileCharging()
         assertEquals(Mode.CHECKING, old.seenAt(190_000))
         assertEquals("still", old.trigger)
         val l = reboot(old, 200_000, 5_000, 20_000)
@@ -397,10 +395,7 @@ class LoneWorkerResumeTest : RestartKit() {
 
     @Test fun snapshot_during_siren_excludes_paused_time() {
         val old = newLogic(carried = true)
-        for (t in 60_000L..230_000L step 1_000L) {
-            old.onPeerBle("P", true, t)
-            assertEquals(Mode.WATCHING, old.seenAt(t))
-        }
+        old.peerSiren(60_000L, 230_000L)
         assertTrue(old.alarmVibrates)
         // 60 s were still before the siren; restarted without it, 120 s are left
         val l = reboot(old, 230_000, 5_000, 0)
@@ -414,15 +409,9 @@ class LoneWorkerResumeTest : RestartKit() {
      */
     @Test fun siren_after_restart_starts_a_new_pause() {
         val old = newLogic(carried = true)
-        for (t in 60_000L..230_000L step 1_000L) {
-            old.onPeerBle("P", true, t)
-            assertEquals(Mode.WATCHING, old.seenAt(t))
-        }
+        old.peerSiren(60_000L, 230_000L)
         val l = reboot(old, 230_000, 5_000, 0)
-        for (t in 8_000L..304_000L step 1_000L) {
-            l.onPeerBle("P", true, t)
-            assertEquals(Mode.WATCHING, l.seenAt(t))
-        }
+        l.peerSiren(8_000L, 304_000L)
         assertEquals(Mode.CHECKING, l.seenAt(305_000))
         assertEquals("still", l.trigger)
     }

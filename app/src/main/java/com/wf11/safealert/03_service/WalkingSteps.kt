@@ -69,6 +69,10 @@ class WalkingSteps {
     /** 받아들인 걸음 중 from..to(양 끝 포함). */
     fun stepsIn(from: Long, to: Long): Int = steps.count { it in from..to }
 
+    /** from 이상 걸음으로 windowMs 안 n 걸음이 처음 찬 걸음 시각. 없으면 null. */
+    fun firstRun(from: Long, n: Int, windowMs: Long): Long? =
+        steps.firstOrNull { it >= from && stepsIn(maxOf(from, it - windowMs), it) >= n }
+
     /** 시작이 from 이상이고 끝이 to 이하인 걷는 모양 창 수. */
     fun strongIn(from: Long, to: Long): Int =
         windows.count { it.walking && it.endMs - WINDOW_MS >= from && it.endMs <= to }

@@ -22,9 +22,6 @@ class LoneWorkerChargeTest {
     private val stillMs = 180_000L
     private val responseMs = 120_000L
 
-    /** Charging, then carried by 10 steps ending at 10 s. */
-    private fun carriedWhileCharging() = newLogic(charging = true).apply { walk(10_000, 10) }
-
     @Test fun start_without_charging_waits_for_first_distinct_motion() {
         val l = newLogic()
         assertEquals(Rest.WAIT, l.rest)
@@ -63,6 +60,22 @@ class LoneWorkerChargeTest {
         assertEquals(Rest.WAIT, l.rest)
         l.walk(15_000, 5)
         assertEquals(Rest.NONE, l.rest)
+    }
+
+    /** Steps after the unplug edge reported before the debounce confirms it carry from the distinct motion. */
+    @Test fun steps_before_unplug_report_carry_from_the_distinct_motion() {
+        val l = newLogic(charging = true)
+        for (i in 0..4) l.step(10_100L + i * 400)
+        l.setCharging(false, 10_000)
+        assertEquals(Rest.NONE, l.rest)
+        assertEquals(Mode.WATCHING, l.seenAt(11_700 + stillMs - 1))
+        assertEquals(Mode.CHECKING, l.seenAt(11_700 + stillMs))
+        assertEquals("still", l.trigger)
+        // only three steps after the unplug edge: steps before the unplug do not count
+        val early = newLogic(charging = true)
+        for (i in 0..4) early.step(9_300L + i * 400)
+        early.setCharging(false, 10_000)
+        assertEquals(Rest.WAIT, early.rest)
     }
 
     @Test fun sensor_silence_ends_wait_and_counts_from_there() {

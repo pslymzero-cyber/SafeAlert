@@ -61,4 +61,29 @@ class SensorStallTest {
         assertEquals("gyro 1s n=1 mean=5.000 max=5.000 rad/s", g.flush())
         assertNull(g.flush())
     }
+
+    /** The gyro registration is tried and logged once per peer siren, and only while it vibrates (G1, D3). */
+    @Test
+    fun gyro_gate_tries_once_per_siren() {
+        val g = GyroGate()
+        assertFalse(g.update(false, false))
+        assertTrue(g.update(true, true))
+        assertTrue(g.on)
+        assertTrue(g.registered(false))
+        assertFalse(g.on)
+        assertFalse(g.update(true, false))
+        // same siren: no retry after a failure
+        assertFalse(g.update(true, true))
+        assertFalse(g.on)
+        // the siren ended: reset
+        assertFalse(g.update(false, false))
+        assertTrue(g.update(true, true))
+        assertTrue(g.registered(true))
+        // vibration ended: unregister
+        assertTrue(g.update(true, false))
+        assertFalse(g.on)
+        // registered again in the same siren: no second log line
+        assertTrue(g.update(true, true))
+        assertFalse(g.registered(true))
+    }
 }

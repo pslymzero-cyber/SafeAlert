@@ -163,7 +163,7 @@ class LoneWorkerLogic(var myBleId: String) {
     /**
      * 디바운스를 통과한 실제 전원 변화. atMs 는 디바운스 전 첫 변화 시각.
      * 연결: 새 거치 — 지님을 지우고, 열린 확인 창은 응답으로 보고 닫으며, SOS 가 아니면 사고 의심을 끝낸다
-     * (꽂는 행위 = 사람이 있음). 해제: 첫 뚜렷한 움직임 대기. SOS 는 전원 변화로 끝나지 않는다.
+     * (꽂는 행위 = 사람이 있음). 해제: 첫 뚜렷한 움직임 대기(확정 전 해제 뒤 걸음으로 이미 성립했으면 그 걸음부터 지님). SOS 는 전원 변화로 끝나지 않는다.
      */
     fun setCharging(on: Boolean, atMs: Long) {
         if (on == charging) return
@@ -179,6 +179,7 @@ class LoneWorkerLogic(var myBleId: String) {
         } else {
             if (!restart) lastUnplugAt = atMs
             floorAt = atMs
+            walk.firstRun(atMs + 1, DISTINCT_STEPS, DISTINCT_STEP_WINDOW_MS)?.let { carry(it) }
         }
     }
 
@@ -385,10 +386,8 @@ class LoneWorkerLogic(var myBleId: String) {
     }
 
     /** 무동작 확인 창을 여는 마감: 지님, 정착 구역 밖, 사이렌 멈춤이 가리지 않을 때(멈춤 전에 지난 마감은 판정), 지켜보는 중일 때 기준 + stillMs. */
-    private fun stillOpenAt(): Long? =
-        if (enabled && !zoneSettled && !siren.covers(stillBase + stillMs) && rest == Rest.NONE && mode == Mode.WATCHING) {
-            stillBase + stillMs
-        } else null
+    private fun stillOpenAt(): Long? = (stillBase + stillMs).takeIf {
+        enabled && !zoneSettled && !siren.covers(it) && rest == Rest.NONE && mode == Mode.WATCHING }
 
     /** 판정을 기다리는 마감. 재시작 전원 보류 중에는 없다(보류 중엔 확인 창이 없어 SOS 마감도 없다). */
     private fun deadlines(nowMs: Long): List<Long> =

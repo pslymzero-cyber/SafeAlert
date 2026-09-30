@@ -24,10 +24,10 @@ class SirenPause {
 
     /**
      * 멈춤을 지금(상한이 먼저면 상한 시각에) 끝냈다고 본 무동작 기준: 멈춤 전까지 쌓인 시간만 남긴다
-     * (멈춤 중 기준이 올랐으면 끝 시각부터).
+     * (멈춤 중 기준이 올랐으면 끝 시각부터). 멈춤이 가리지 않는 마감(멈춤 전에 지난 마감)이면 기준 그대로(S1).
      */
     fun base(stillBase: Long, nowMs: Long, stillMs: Long): Long =
-        if (!active) stillBase
+        if (!covers(stillBase + stillMs)) stillBase
         else maxOf(stillBase, minOf(nowMs, at + stillMs) - maxOf(0L, at - stillBase))
 
     /** 진동이 켜졌으면 멈춤을 시작하고, 꺼졌거나 상한에 이르렀으면 멈춤을 끝낸다. 새 무동작 기준을 돌려준다. */
