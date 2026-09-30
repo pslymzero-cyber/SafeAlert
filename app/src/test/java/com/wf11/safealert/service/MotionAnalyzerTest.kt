@@ -164,7 +164,8 @@ class MotionAnalyzerTest {
         val g = MotionAnalyzer.G.toFloat()
         assertEquals(MotionAnalyzer.IMPACT_G, MotionAnalyzer.impactGFor(1.4f * g), 1e-9)
         assertEquals(MotionAnalyzer.IMPACT_G, MotionAnalyzer.impactGFor(-1f), 1e-9)
-        assertEquals(1.35, MotionAnalyzer.impactGFor(1.5f * g), 0.01)
+        assertEquals(MotionAnalyzer.IMPACT_G, MotionAnalyzer.impactGFor(1.5f * g), 1e-9)
+        assertEquals(1.62, MotionAnalyzer.impactGFor(1.8f * g), 0.01)
         assertEquals(2.16, MotionAnalyzer.impactGFor(2.4f * g), 0.01)
         assertEquals(MotionAnalyzer.IMPACT_G, MotionAnalyzer.impactGFor(2.6f * g), 1e-9)
     }
@@ -174,6 +175,10 @@ class MotionAnalyzerTest {
         assertEquals(2.16, MotionAnalyzer.impactGFor(2.4f), 0.01)
         assertEquals(MotionAnalyzer.IMPACT_G, MotionAnalyzer.impactGFor(1.4f), 1e-9)
         assertEquals(MotionAnalyzer.IMPACT_G, MotionAnalyzer.impactGFor(2.6f), 1e-9)
+        assertEquals(MotionAnalyzer.IMPACT_G, MotionAnalyzer.impactGFor(4f), 1e-9)
+        assertEquals(MotionAnalyzer.IMPACT_G, MotionAnalyzer.impactGFor(8f), 1e-9)
+        // 16 (g) / G = 1.63: still read as g units, not as a 1.63 g sensor
+        assertEquals(MotionAnalyzer.IMPACT_G, MotionAnalyzer.impactGFor(16f), 1e-9)
     }
 
     @Test fun clipped_two_g_sensor_needs_the_range_based_threshold() {

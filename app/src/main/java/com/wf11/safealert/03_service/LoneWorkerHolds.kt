@@ -3,28 +3,39 @@ package com.wf11.safealert.service
 /**
  * 동료 사이렌이 이 기기에서 진동하는 동안의 무동작 셈 멈춤(C2, 순수, v1.1.99).
  * 시작·끝은 그것을 처음 본 tick 이다.
+ * 상한(D1): 멈춘 시간이 stillMs 에 이르면 사이렌이 계속 울려도 상한 시각에 멈춤을 끝낸 것으로 기준을 옮기고
+ * (멈춤 전 쌓인 시간 유지), 이 기기의 사이렌 진동이 한 번 꺼질 때까지 다시 멈추지 않는다. 다시 켜지면 새 멈춤이다.
  */
 class SirenPause {
     /** 멈춤 시작 시각. 멈춤이 없으면 MIN_VALUE. */
     private var at = Long.MIN_VALUE
+    /** 상한으로 멈춤을 끝냈고 진동이 아직 꺼지지 않았다. */
+    private var spent = false
 
     val active: Boolean get() = at != Long.MIN_VALUE
 
     fun reset() {
         at = Long.MIN_VALUE
+        spent = false
     }
 
-    /** 멈춤을 지금 끝냈다고 본 무동작 기준: 멈춤 전까지 쌓인 시간만 남긴다(멈춤 중 기준이 올랐으면 0부터). */
-    fun base(stillBase: Long, nowMs: Long): Long =
-        if (!active) stillBase else maxOf(stillBase, nowMs - maxOf(0L, at - stillBase))
+    /**
+     * 멈춤을 지금(상한이 먼저면 상한 시각에) 끝냈다고 본 무동작 기준: 멈춤 전까지 쌓인 시간만 남긴다
+     * (멈춤 중 기준이 올랐으면 끝 시각부터).
+     */
+    fun base(stillBase: Long, nowMs: Long, stillMs: Long): Long =
+        if (!active) stillBase
+        else maxOf(stillBase, minOf(nowMs, at + stillMs) - maxOf(0L, at - stillBase))
 
-    /** 진동이 켜졌으면 멈춤을 시작하고, 꺼졌으면 멈춤을 끝낸다. 새 무동작 기준을 돌려준다. */
-    fun update(vibrating: Boolean, nowMs: Long, stillBase: Long): Long {
-        if (vibrating && !active) {
+    /** 진동이 켜졌으면 멈춤을 시작하고, 꺼졌거나 상한에 이르렀으면 멈춤을 끝낸다. 새 무동작 기준을 돌려준다. */
+    fun update(vibrating: Boolean, nowMs: Long, stillBase: Long, stillMs: Long): Long {
+        if (!vibrating) spent = false
+        if (vibrating && !active && !spent) {
             at = nowMs
-        } else if (!vibrating && active) {
-            val b = base(stillBase, nowMs)
+        } else if (active && (!vibrating || nowMs - at >= stillMs)) {
+            val b = base(stillBase, nowMs, stillMs)
             at = Long.MIN_VALUE
+            spent = vibrating
             return b
         }
         return stillBase

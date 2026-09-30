@@ -13,7 +13,7 @@ class WalkingSteps {
     private class Win(val endMs: Long, val walking: Boolean)
 
     private companion object {
-        const val WINDOW_MS = 1_000L
+        const val WINDOW_MS = MotionAnalyzer.WINDOW_MS
         const val KEEP_MS = 60_000L
     }
 

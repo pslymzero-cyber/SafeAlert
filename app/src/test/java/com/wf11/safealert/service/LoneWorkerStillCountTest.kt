@@ -8,28 +8,71 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /*
- * Rule 2 (still) counting: the count pauses while a peer siren vibrates on this device (C2), is not kept
+ * Rule 2 (still) counting: the count pauses while a peer siren vibrates on this device (C2) for at most
+ * stillMs per vibration (D1; a device without a vibrator never pauses, D2), is not kept
  * inside a settled safe zone (C3), and the still check opens on sensor time like the accident deadline (C5).
  * A suspect device (accident suspicion running) does not vibrate for a peer siren (C4).
  */
 class LoneWorkerStillCountTest {
 
-    private fun LoneWorkerLogic.ackAll(now: Long) = silencePeers(now, peers.associate { it.id to it.epId })
-
     @Test fun peer_siren_pauses_still_count_and_resumes_after() {
         val l = newLogic(carried = true)
-        for (t in 60_000L..360_000L step 1_000L) {
+        for (t in 60_000L..230_000L step 1_000L) {
             l.onPeerBle("P", true, t)
             assertEquals(Mode.WATCHING, l.seenAt(t))
         }
         assertTrue(l.alarmVibrates)
-        l.ackAll(360_000)
+        l.ackAll(230_000)
         assertFalse(l.alarmVibrates)
         // 60 s were still before the siren, 120 s remain after it
-        assertEquals(Mode.WATCHING, l.seenAt(360_000))
-        assertEquals(Mode.WATCHING, l.seenAt(479_000))
-        assertEquals(Mode.CHECKING, l.seenAt(480_000))
+        assertEquals(Mode.WATCHING, l.seenAt(230_000))
+        assertEquals(Mode.WATCHING, l.seenAt(349_000))
+        assertEquals(Mode.CHECKING, l.seenAt(350_000))
         assertEquals("still", l.trigger)
+    }
+
+    @Test fun siren_pause_ends_after_still_ms() {
+        val l = newLogic(carried = true)
+        for (t in 60_000L..359_000L step 1_000L) {
+            l.onPeerBle("P", true, t)
+            assertEquals(Mode.WATCHING, l.seenAt(t))
+        }
+        assertTrue(l.alarmVibrates)
+        // the pause ran 60 s .. 240 s (stillMs) and ended there: 60 s before it, 120 s after it
+        l.onPeerBle("P", true, 360_000)
+        assertEquals(Mode.CHECKING, l.seenAt(360_000))
+        assertEquals("still", l.trigger)
+    }
+
+    @Test fun siren_pause_starts_again_for_a_new_siren() {
+        val l = newLogic(carried = true)
+        for (t in 60_000L..250_000L step 1_000L) {
+            l.onPeerBle("P", true, t)
+            assertEquals(Mode.WATCHING, l.seenAt(t))
+        }
+        // capped at 240 s: base 180 s; the vibration stops, so the next siren pauses again
+        l.ackAll(250_000)
+        assertEquals(Mode.WATCHING, l.seenAt(250_000))
+        for (t in 260_000L..400_000L step 1_000L) {
+            l.onPeerBle("Q", true, t)
+            assertEquals(Mode.WATCHING, l.seenAt(t))
+        }
+        l.ackAll(400_000)
+        // 80 s before Q, 100 s after it
+        assertEquals(Mode.WATCHING, l.seenAt(400_000))
+        assertEquals(Mode.WATCHING, l.seenAt(499_000))
+        assertEquals(Mode.CHECKING, l.seenAt(500_000))
+    }
+
+    @Test fun no_vibrator_does_not_pause_still_count() {
+        val l = newLogic(carried = true).apply { canVibrate = false }
+        for (t in 60_000L..179_000L step 1_000L) {
+            l.onPeerBle("P", true, t)
+            assertEquals(Mode.WATCHING, l.seenAt(t))
+        }
+        assertFalse(l.alarmVibrates)
+        assertEquals(1, l.audiblePeers().size)
+        assertEquals(Mode.CHECKING, l.seenAt(180_000))
     }
 
     @Test fun siren_end_by_resolve_also_resumes() {

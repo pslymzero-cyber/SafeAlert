@@ -33,13 +33,11 @@ class LoneWorkerLogicTest {
         created: Long, active: Boolean, now: Long, ep: Int = 0
     ) = onPeerServer(LoneWorkerPeers.ServerRec(key, id, name, role, trigger, beacon, created, active, ep, null), now)
 
-    private fun LoneWorkerLogic.ackAll(now: Long) = silencePeers(now, peers.associate { it.id to it.epId })
-
     // -- own state --
 
     @Test fun still_180s_opens_check_but_not_179_999() {
         val l = carriedLogic()
-        l.tick(179_999)
+        l.seenAt(179_999)
         assertEquals(Mode.WATCHING, l.mode)
         l.seenAt(180_000)
         assertEquals(Mode.CHECKING, l.mode)
@@ -61,7 +59,7 @@ class LoneWorkerLogicTest {
         l.toChecking()
         assertTrue(l.ackWorking(200_000))
         assertEquals(Mode.WATCHING, l.mode)
-        l.tick(200_000 + stillMs - 1)
+        l.seenAt(200_000 + stillMs - 1)
         assertEquals(Mode.WATCHING, l.mode)
         l.seenAt(200_000 + stillMs)
         assertEquals(Mode.CHECKING, l.mode)
@@ -106,7 +104,7 @@ class LoneWorkerLogicTest {
         val l = carriedLogic()
         l.setEnabled(false, 0)
         l.setEnabled(true, 600_000)
-        l.tick(600_000 + stillMs - 1)
+        l.seenAt(600_000 + stillMs - 1)
         assertEquals(Mode.WATCHING, l.mode)
         l.seenAt(600_000 + stillMs)
         assertEquals(Mode.CHECKING, l.mode)
@@ -137,7 +135,7 @@ class LoneWorkerLogicTest {
         val l = carriedLogic()
         l.onZone(true, 100_000)
         l.onZone(false, 159_000)
-        l.tick(179_999)
+        l.seenAt(179_999)
         assertEquals(Mode.WATCHING, l.mode)
         l.seenAt(180_000)
         assertEquals(Mode.CHECKING, l.mode)
@@ -164,7 +162,7 @@ class LoneWorkerLogicTest {
         l.tick(61_000)
         assertTrue(l.zoneSettled)
         l.onZone(false, 300_000)
-        l.tick(479_999)
+        l.seenAt(479_999)
         assertEquals(Mode.WATCHING, l.mode)
         l.seenAt(480_000)
         assertEquals(Mode.CHECKING, l.mode)

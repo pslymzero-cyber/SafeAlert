@@ -42,8 +42,11 @@ class MotionAnalyzer(
         const val FREE_FALL_G = 0.5
         const val FREE_FALL_MIN_MS = 60L
         const val IMPACT_G = 2.5
-        /** 측정 범위를 G 로 나눈 값이 이보다 작으면 g 단위로 보고한 것으로 해석한다. 현장 보정 대상. */
-        const val MIN_RANGE_G = 1.5
+        /**
+         * 측정 범위를 G 로 나눈 값이 이보다 작으면 g 단위로 보고한 것으로 해석한다: g 단위로 흔히 보고되는 2·4·8·16 을
+         * 모두 g 로 읽는다(16 m/s^2 도 16g), 정상 ±2g 보고 19.61 m/s^2 는 그대로. 현장 보정 대상.
+         */
+        const val MIN_RANGE_G = 1.75
         /** 움직임·걷는 모양 판정 창 길이(센서 시각 ms). */
         const val WINDOW_MS = 1_000L
         const val IMPACT_WINDOW_MS = 1000L

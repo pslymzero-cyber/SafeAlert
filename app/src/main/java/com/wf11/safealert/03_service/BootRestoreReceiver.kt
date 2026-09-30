@@ -36,11 +36,10 @@ class BootRestoreReceiver : BroadcastReceiver() {
          * 시작 시각을 모르면(sinceMs <= 0) 판정하지 않고 복원한다. Android 11~13 은 업데이트 종료도
          * 사용자 요청으로 남을 수 있어 앱 갱신 시각(updatedAtMs) 앞뒤 60초 안 기록은 세지 않는다.
          * 이 여유는 갱신이 마지막 시작보다 뒤일 때만 둔다(시작 뒤 갱신이 없었으면 모든 기록을 센다).
-         * Android 11~13 에서 판정 키가 없으면 판정하지 않는다(업데이트 종료가 사용자 요청으로 남을 수 있음, 따로 기록되는 REASON_PACKAGE_UPDATED 는 Android 14 부터).
          */
         fun userStopped(sdk: Int, exits: List<Pair<Int, Long>>, sinceMs: Long, updatedAtMs: Long): Boolean {
             if (sdk < Build.VERSION_CODES.R || sinceMs <= 0L) return false
-            val checkUpdate = sdk < Build.VERSION_CODES.UPSIDE_DOWN_CAKE && sinceMs < updatedAtMs
+            val checkUpdate = !updateExitSeparate(sdk) && sinceMs < updatedAtMs
             return exits.any { (reason, at) ->
                 reason == ApplicationExitInfo.REASON_USER_REQUESTED && at > sinceMs &&
                     !(checkUpdate && abs(at - updatedAtMs) <= UPDATE_EXIT_SLACK_MS)
@@ -53,9 +52,12 @@ class BootRestoreReceiver : BroadcastReceiver() {
          */
         fun startedAt(newKey: Long, runningSince: Long, sdk: Int): Long = when {
             newKey > 0L -> newKey
-            sdk >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE -> runningSince
+            updateExitSeparate(sdk) -> runningSince
             else -> 0L
         }
+
+        /** 업데이트 종료가 REASON_PACKAGE_UPDATED 로 따로 기록된다 — Android 14 부터. */
+        private fun updateExitSeparate(sdk: Int) = sdk >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE
     }
 
     override fun onReceive(ctx: Context, intent: Intent) {

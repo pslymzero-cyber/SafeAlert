@@ -31,7 +31,7 @@ class LoneWorkerChargeTest {
         assertEquals(Mode.WATCHING, l.modeAt(600_000))
         l.walk(600_000, 5)
         assertEquals(Rest.NONE, l.rest)
-        assertEquals(Mode.WATCHING, l.modeAt(600_000 + stillMs - 1))
+        assertEquals(Mode.WATCHING, l.seenAt(600_000 + stillMs - 1))
         assertEquals(Mode.CHECKING, l.seenAt(600_000 + stillMs))
         assertEquals("still", l.trigger)
     }
@@ -69,7 +69,7 @@ class LoneWorkerChargeTest {
         val l = newLogic()
         l.sensorSilent(100_000)
         assertEquals(Rest.NONE, l.rest)
-        assertEquals(Mode.WATCHING, l.modeAt(100_000 + stillMs - 1))
+        assertEquals(Mode.WATCHING, l.seenAt(100_000 + stillMs - 1))
         assertEquals(Mode.CHECKING, l.seenAt(100_000 + stillMs))
     }
 
@@ -83,7 +83,7 @@ class LoneWorkerChargeTest {
     @Test fun charging_with_ten_steps_is_carried_until_replug() {
         val l = carriedWhileCharging()
         assertEquals(Rest.NONE, l.rest)
-        assertEquals(Mode.WATCHING, l.modeAt(10_000 + stillMs - 1))
+        assertEquals(Mode.WATCHING, l.seenAt(10_000 + stillMs - 1))
         assertEquals(Rest.NONE, l.rest)
         assertEquals(Mode.CHECKING, l.seenAt(10_000 + stillMs))
         assertEquals("still", l.trigger)
@@ -202,7 +202,7 @@ class LoneWorkerChargeTest {
         walked.seenAt(stillMs)
         walked.walk(stillMs + 5_000, 5)
         assertEquals(Mode.WATCHING, walked.mode)
-        assertEquals(Mode.WATCHING, walked.modeAt(stillMs + 5_000 + stillMs - 1))
+        assertEquals(Mode.WATCHING, walked.seenAt(stillMs + 5_000 + stillMs - 1))
         assertEquals(Mode.CHECKING, walked.seenAt(stillMs + 5_000 + stillMs))
 
         val ok = newLogic()

@@ -24,8 +24,6 @@ class LoneWorkerPeerTest {
         now
     )
 
-    private fun LoneWorkerLogic.ackAll(now: Long) = silencePeers(now, peers.associate { it.id to it.epId })
-
     private fun LoneWorkerLogic.ack(now: Long, vararg targets: Pair<String, String>) = silencePeers(now, mapOf(*targets))
 
     private fun LoneWorkerLogic.peer(id: String, ep: Int? = null) =

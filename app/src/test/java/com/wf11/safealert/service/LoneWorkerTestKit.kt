@@ -15,7 +15,9 @@ internal fun newLogic(charging: Boolean = false, zoneInside: Boolean = false, ca
         if (carried) sensorSilent(0L)
     }
 
-internal fun coverEnd(t: Long) = t / 1000 * 1000 + 1000
+private const val WIN = MotionAnalyzer.WINDOW_MS
+
+internal fun coverEnd(t: Long) = t / WIN * WIN + WIN
 
 /** One step at t, then the window covering it closes (walking-shaped or not). */
 internal fun LoneWorkerLogic.step(t: Long, walking: Boolean = true, vibrating: Boolean = false) {
@@ -35,7 +37,7 @@ internal fun LoneWorkerLogic.shuffle(lastMs: Long, n: Int) {
 
 /** count consecutive walking-shaped windows, the first ending at firstEnd. */
 internal fun LoneWorkerLogic.strongRun(firstEnd: Long, count: Int) {
-    for (i in 0 until count) onWindow(MotionAnalyzer.Window(firstEnd + i * 1000L, true))
+    for (i in 0 until count) onWindow(MotionAnalyzer.Window(firstEnd + i * WIN, true))
 }
 
 internal fun LoneWorkerLogic.strongWindows(vararg ends: Long) {
@@ -47,6 +49,9 @@ internal fun LoneWorkerLogic.sensed(t: Long) {
     onWindow(MotionAnalyzer.Window(t, false))
     stepsFlushed(t)
 }
+
+/** Acknowledge every peer entry (the [OK] button on all of them). */
+internal fun LoneWorkerLogic.ackAll(now: Long) = silencePeers(now, peers.associate { it.id to it.epId })
 
 internal fun LoneWorkerLogic.modeAt(t: Long): Mode { tick(t); return mode }
 

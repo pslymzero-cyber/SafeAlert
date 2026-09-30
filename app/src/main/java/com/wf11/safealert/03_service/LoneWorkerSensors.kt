@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.hardware.Sensor
 import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
 import android.hardware.SensorEventListener2
 import android.hardware.SensorManager
 import android.os.Build
@@ -12,6 +13,8 @@ import android.os.Handler
 import android.os.SystemClock
 import android.util.Log
 import androidx.core.content.ContextCompat
+import java.util.Locale
+import kotlin.math.sqrt
 
 /**
  * 단독 작업자 감시의 센서 접착부 (v1.1.99): 가속도·걸음 센서 등록, 센서 시각 변환, 가속도 신호 공백 검사, flush.
@@ -20,6 +23,7 @@ import androidx.core.content.ContextCompat
  * 닫힌 1초 창(걷는 모양 여부)은 onWindow 로 LoneWorkerLogic 에 전한다. 걸음(TYPE_STEP_DETECTOR)은 보정 시각과
  * 그 시각의 앱 진동 여부를 onStep 으로 전한다 — 걷는 모양 창에 든 걸음만 센다. 진동 구간 판정은 가속도·걸음 모두
  * elapsed 기준으로 바꾼 시각으로 한다. 걸음 센서는 API 29+ 에서 신체 활동 권한이 있어야 등록한다.
+ * 자이로는 동료 사이렌이 이 기기에서 진동하는 동안만 측정 로그용으로 따로 등록한다(판정에 쓰지 않음, D3).
  * 모든 콜백은 handler(메인) 에서 돈다.
  */
 class LoneWorkerSensors(
@@ -36,7 +40,7 @@ class LoneWorkerSensors(
         /** 끝나지 않은 flush 요청은 이만큼 지나면 다시 요청한다. */
         private const val FLUSH_RETRY_MS = 2_000L
         /** 센서 배치 최대 지연(us). */
-        private const val MAX_BATCH_US = 5_000_000
+        private const val MAX_BATCH_US = (LoneWorkerLogic.MAX_BATCH_MS * 1_000L).toInt()
     }
 
     private var sm: SensorManager? = null
@@ -58,12 +62,10 @@ class LoneWorkerSensors(
         private set
     var registered = false
         private set
-    /** 등록한 가속도 센서가 웨이크업 센서다(없어서 일반 센서로 대신 등록했으면 false). */
-    private var accelWake = false
     val stalled: Boolean get() = stall.stalled
     /** 등록된 센서 가운데 비웨이크업이 있어 감시 중 CPU 를 깨워 둬야 한다. */
     val needsWake: Boolean
-        get() = sensorsNeedCpuWake(registered, accelWake, stepRegistered, stepSensor?.isWakeUpSensor == true)
+        get() = sensorsNeedCpuWake(registered, accel?.isWakeUpSensor == true, stepRegistered, stepSensor?.isWakeUpSensor == true)
     /** 걸음 센서는 있는데 신체 활동 권한이 없다. */
     var stepPermissionMissing = false
         private set
@@ -82,6 +84,7 @@ class LoneWorkerSensors(
         on = false
         unregisterAccel()
         refreshSteps()
+        gyroLog(false)
     }
 
     private fun manager(): SensorManager? =
@@ -95,12 +98,7 @@ class LoneWorkerSensors(
             noSensor = true
             return
         }
-        var s = m.getDefaultSensor(Sensor.TYPE_ACCELEROMETER, true)
-        var wake = true
-        if (s == null) {
-            s = m.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
-            wake = false
-        }
+        val s = m.getDefaultSensor(Sensor.TYPE_ACCELEROMETER, true) ?: m.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
         if (s == null) {
             Log.w(TAG, "가속도 센서 없음 — 사고·무동작 판정 끔")
             noSensor = true
@@ -115,13 +113,11 @@ class LoneWorkerSensors(
         }
         accel = s
         registered = true
-        accelWake = wake
     }
 
     private fun unregisterAccel() {
         if (registered) runCatching { sm?.unregisterListener(this, accel) }
         registered = false
-        accelWake = false
     }
 
     /** 걸음 센서 등록을 권한·기능 상태에 맞춘다(권한이 새로 생기면 등록, 사라지면 해제). */
@@ -146,6 +142,37 @@ class LoneWorkerSensors(
             stepRegistered = false
         }
         logic().stepsAvailable = stepRegistered
+    }
+
+    /** 등록한 자이로(측정 로그 중일 때만). */
+    private var gyro: Sensor? = null
+    private val gyroStats = GyroStats()
+    private val gyroListener = object : SensorEventListener {
+        override fun onSensorChanged(event: SensorEvent) {
+            val v = event.values
+            gyroStats.add(event.timestamp / 1_000_000L, v[0], v[1], v[2])?.let { Log.i(TAG, it) }
+        }
+
+        override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+    }
+
+    /**
+     * 동료 사이렌이 이 기기에서 진동하는 동안만 자이로 측정 로그를 1초마다 남긴다(D3). 판정에 쓰지 않고,
+     * 로그는 표본 수·평균·최대 각속도뿐이다(개인정보·위치 없음). 자이로가 없으면 조용히 건너뛴다.
+     */
+    fun gyroLog(enable: Boolean) {
+        if (enable == (gyro != null)) return
+        if (!enable) {
+            runCatching { sm?.unregisterListener(gyroListener) }
+            gyro = null
+            return
+        }
+        val m = manager() ?: return
+        val s = m.getDefaultSensor(Sensor.TYPE_GYROSCOPE) ?: return
+        if (m.registerListener(gyroListener, s, SensorManager.SENSOR_DELAY_GAME, handler)) {
+            gyro = s
+            gyroStats.reset()
+        }
     }
 
     /** 가속도 신호 공백 검사: 끊겼으면 같은 백오프로 다시 등록한다 (RR08). */
@@ -209,4 +236,35 @@ class LoneWorkerSensors(
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+}
+
+/** 자이로 각속도 크기를 1초 구간(센서 시각의 초)마다 표본 수·평균·최대로 모은다(순수, 측정 로그 전용, D3). */
+class GyroStats {
+    private var sec = Long.MIN_VALUE
+    private var n = 0
+    private var sum = 0.0
+    private var max = 0.0
+
+    fun reset() {
+        sec = Long.MIN_VALUE
+        n = 0
+        sum = 0.0
+        max = 0.0
+    }
+
+    /** 표본 하나(rad/s). 구간이 바뀌면 지난 구간 한 줄을 돌려준다 — 첫 표본·같은 구간은 null. */
+    fun add(tMs: Long, x: Float, y: Float, z: Float): String? {
+        val s = tMs / 1_000L
+        var line: String? = null
+        if (s != sec) {
+            if (n > 0) line = String.format(Locale.US, "gyro 1s n=%d mean=%.3f max=%.3f rad/s", n, sum / n, max)
+            reset()
+            sec = s
+        }
+        val m = sqrt((x * x + y * y + z * z).toDouble())
+        n++
+        sum += m
+        max = maxOf(max, m)
+        return line
+    }
 }

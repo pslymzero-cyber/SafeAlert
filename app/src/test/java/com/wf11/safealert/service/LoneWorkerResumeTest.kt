@@ -393,13 +393,13 @@ class LoneWorkerResumeTest {
 
     @Test fun snapshot_during_siren_excludes_paused_time() {
         val old = newLogic(carried = true)
-        for (t in 60_000L..300_000L step 1_000L) {
+        for (t in 60_000L..230_000L step 1_000L) {
             old.onPeerBle("P", true, t)
             assertEquals(Mode.WATCHING, old.seenAt(t))
         }
         assertTrue(old.alarmVibrates)
         // 60 s were still before the siren; restarted without it, 120 s are left
-        val l = reboot(old, 300_000, 5_000, 0)
+        val l = reboot(old, 230_000, 5_000, 0)
         for (t in 5_000L..124_000L step 1_000L) assertEquals(Mode.WATCHING, l.seenAt(t))
         assertEquals(Mode.CHECKING, l.seenAt(125_000))
     }

@@ -2,6 +2,7 @@ package com.wf11.safealert.service
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -40,5 +41,14 @@ class SensorStallTest {
         assertFalse(s.stalled)
         assertEquals(SensorStall.Action.OK, s.check(810_000L))
         assertEquals(SensorStall.Action.REREGISTER, s.check(811_000L))
+    }
+
+    /** Gyro measurement log (D3): one line per whole sensor second, magnitude mean and max. */
+    @Test
+    fun gyro_stats_log_one_line_per_second() {
+        val g = GyroStats()
+        assertNull(g.add(0L, 1f, 0f, 0f))
+        assertNull(g.add(500L, 0f, 3f, 4f))
+        assertEquals("gyro 1s n=2 mean=3.000 max=5.000 rad/s", g.add(1_000L, 0f, 0f, 2f))
     }
 }

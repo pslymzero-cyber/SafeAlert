@@ -19,7 +19,7 @@ package com.wf11.safealert.service
  * 충전 안 함은 시작·전원 해제 뒤 첫 뚜렷한 움직임(또는 센서 1분 무응답)부터 지님이고 그 전은 대기(WAIT)다.
  * 충전 중은 최근 30초 안 10걸음(걸음 센서가 없으면 30초 안 걷는 모양 창 5개)부터 다음 연결까지 지님, 그 전은 거치(DOCKED)다.
  * 정착한 안전구역(원시 안쪽 60초 연속)에서는 무동작을 세지 않고 벗어난 시각부터 센다. 정착 시 열린 무동작 확인 창은 거둔다.
- * 동료 사이렌이 이 기기에서 진동하는 동안도 셈을 멈추고, 끝나면 쌓인 시간에 이어서 센다.
+ * 동료 사이렌이 이 기기에서 진동하는 동안도 셈을 멈추고, 끝나면 쌓인 시간에 이어서 센다(멈춘 시간이 stillMs 에 이르면 사이렌이 계속 울려도 다시 세고, 진동기가 없는 기기는 멈추지 않는다).
  *
  * 걸음: 걸음 센서가 낸 걸음 가운데 그 시각을 덮는 1초 가속도 창이 걷는 모양이고 앱 진동 구간이 아닌 것(WalkingSteps).
  * 뚜렷한 움직임: 최근 10초 안 5걸음. 걸음 센서를 쓸 수 없으면 3초 이상 이어진 걷는 모양 창.
@@ -59,10 +59,12 @@ class LoneWorkerLogic(var myBleId: String) {
         const val CARRY_STEPS = 10
         const val CARRY_STEP_WINDOW_MS = 30_000L
         /** 걸음 센서를 쓸 수 없을 때: 뚜렷한 움직임 = 걷는 모양 창 3개 연속, 충전 중 지님 = 최근 30초 안 걷는 모양 창 5개. */
-        const val STRONG_RUN_MS = 3_000L
+        const val STRONG_RUN_MS = 3 * MotionAnalyzer.WINDOW_MS
         const val CARRY_FALLBACK_WINDOWS = 5
-        /** 마감 시각까지의 센서 데이터가 이만큼 지나도 오지 않으면 도착한 것만으로 판정한다(배치 지연 5초 + 창 1초). */
-        const val LATE_MS = 6_000L
+        /** 센서 배치 최대 지연 — 가속도·걸음 등록 값과 LATE_MS 의 근거. */
+        const val MAX_BATCH_MS = 5_000L
+        /** 마감 시각까지의 센서 데이터가 이만큼 지나도 오지 않으면 도착한 것만으로 판정한다(배치 지연 + 창 1개). */
+        const val LATE_MS = MAX_BATCH_MS + MotionAnalyzer.WINDOW_MS
         /** 재시작 뒤 복원한 세이프존 안 상태를 구역 보고 없이 유지하는 한도(BleService 신호 두절 이탈 10초와 같은 규칙, C3). */
         const val ZONE_RESUME_HOLD_MS = 10_000L
     }
@@ -72,6 +74,8 @@ class LoneWorkerLogic(var myBleId: String) {
     var responseMs = 120_000L
     /** 걸음 센서가 등록돼 있다(센서·신체 활동 권한 있음). 아니면 걷는 모양 창으로 대신한다. */
     var stepsAvailable = true
+    /** 이 기기에 진동기가 있다 — 없으면 사이렌 진동도, 그 동안의 무동작 셈 멈춤도 없다(D2). */
+    var canVibrate = true
 
     var mode = Mode.WATCHING
         private set
@@ -107,9 +111,8 @@ class LoneWorkerLogic(var myBleId: String) {
     private var accidentUntil = Long.MIN_VALUE
     private var lastPlugAt = Long.MIN_VALUE
     private var lastUnplugAt = Long.MIN_VALUE
-    /** 동료 사이렌이 이 기기에서 진동하는 동안의 무동작 셈 멈춤(C2). */
+    /** 동료 사이렌이 이 기기에서 진동하는 동안의 무동작 셈 멈춤(C2)과 재시작 뒤 전원·구역 보류. */
     private val siren = SirenPause()
-    /** 재시작 뒤 전원·구역 보류. */
     private val hold = RestartHold()
 
     /** 무동작 확인을 쉬는 이유. */
@@ -259,7 +262,7 @@ class LoneWorkerLogic(var myBleId: String) {
     }
 
     fun tick(nowMs: Long) {
-        stillBase = siren.update(alarmVibrates, nowMs, stillBase)
+        stillBase = siren.update(alarmVibrates, nowMs, stillBase, stillMs)
         // 재시작 뒤 구역 보고가 한도 안에 없으면 그 시각에 정착 계산 없이 벗어난 것으로 본다(C3)
         hold.zoneExpired(nowMs)?.let { leaveZone(it) }
         updateSettle(nowMs)
@@ -307,7 +310,7 @@ class LoneWorkerLogic(var myBleId: String) {
             if (suspected) maxOf(accidentFrom, lastDistinctAt) else null,
             if (suspected) accidentUntil else null,
             when (mode) { Mode.CHECKING -> trigger; Mode.WATCHING -> hold.check; else -> "" },
-            charging, carried, siren.base(stillBase, nowMs), zoneSettled,
+            charging, carried, siren.base(stillBase, nowMs, stillMs), zoneSettled,
             if (zoneInside) zoneInsideSince else null
         )
     }
@@ -480,9 +483,9 @@ class LoneWorkerLogic(var myBleId: String) {
 
     fun audiblePeers(): List<LoneWorkerPeers.Peer> = peerStore.audible()
 
-    /** 경보 진동은 동료 구조 요청 사이렌에서만. 확인 창·본인 SOS·사고 의심 중인 요구조자 의심 기기는 진동 없이 소리·화면만 쓴다. */
+    /** 경보 진동은 진동기가 있을 때 동료 구조 요청 사이렌에서만. 확인 창·본인 SOS·사고 의심 중인 요구조자 의심 기기는 진동 없이 소리·화면만 쓴다. */
     val alarmVibrates: Boolean
-        get() = mode == Mode.WATCHING && accidentUntil == Long.MIN_VALUE && peerStore.audible().isNotEmpty()
+        get() = canVibrate && mode == Mode.WATCHING && accidentUntil == Long.MIN_VALUE && peerStore.audible().isNotEmpty()
 
     // ── 최근 가장 강한 비콘 힌트(BeaconHints) ──────────────────
 

@@ -114,6 +114,8 @@ class LoneWorkerMonitor(
         val plugged = power.start()
         val t0 = now()
         // 저장 상태로 이어가고, 지금 전원과의 차이는 2초 디바운스 뒤 재시작 시각의 실제 변화로 적용한다 (v1.1.99, B6)
+        // 진동기가 없으면 사이렌 진동도 그 동안의 무동작 셈 멈춤도 없다 (v1.1.99, D2)
+        logic.canVibrate = VibrationHelper.vibrator(ctx)?.hasVibrator() == true
         power.seed(logic.startFrom(t0, zoneInside, plugged, resume.load(t0)), plugged)
         // 저장된 본인 SOS 가 있으면 첫 렌더 전에 되살린다 — 같은 서버 키로 사이렌·광고 bit1 이 다시 켜진다 (v1.1.99, R3)
         sync.restoredTrigger()?.let { logic.restoreSos(it, now()) }
@@ -406,6 +408,7 @@ class LoneWorkerMonitor(
             mode == LoneWorkerLogic.Mode.CHECKING -> alarm.play(LoneWorkerAlarm.Pattern.CHECK)
             else -> alarm.stop()
         }
+        sensors.gyroLog(logic.alarmVibrates)
 
         notifier.update(mode, audible, logic.peers.filter { !it.active && !it.silenced }, notice(), showScreen)
         if (showScreen) notifier.openScreen()
