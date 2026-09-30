@@ -74,6 +74,8 @@ class LoneWorkerMonitor(
     private val watchdog = LoneWorkerWatchdog(ctx, { onWatchdog() }, { onNotificationDismissed() })
     private val notifier = LoneWorkerNotifier(ctx) { watchdog.dismissPi() }
     private var lastTickAt = 0L
+    /** 직전 tick 에서 지난 마감이 센서 데이터를 기다렸다 — 그때만 스로틀 중 즉시 판정을 본다 (v1.1.99). */
+    private var waited = false
     private var wakeLock: PowerManager.WakeLock? = null
     private var loopOn = false
     private var prefsListener: SharedPreferences.OnSharedPreferenceChangeListener? = null
@@ -186,17 +188,14 @@ class LoneWorkerMonitor(
 
     // ── 센서 ──────────────────────────────────────────────────
 
-    /** 센서 콜백 뒤: 상태·쉼 이유가 바뀌었으면 바로, 아니면 1초에 한 번 tick·render 한다 (v1.1.99). */
+    /**
+     * 센서 콜백 뒤: 상태·쉼 이유가 바뀌었으면 바로, 아니면 1초에 한 번 tick·render 한다. 기다리던 마감을 센서 데이터가
+     * 덮으면 스로틀과 무관하게 이 자리에서 판정한다 — 같은 배치의 뒤 데이터보다 먼저(C5) (v1.1.99).
+     */
     private fun onSensorEvent(t: Long) {
         if (!started) return
-        if (logic.mode == lastMode && logic.rest == lastRest && t - lastTickAt < TICK_MIN_MS) {
-            // 센서 데이터가 지난 마감을 덮었으면 스로틀과 무관하게 바로 판정한다
-            if (logic.dueNow(t)) {
-                handler.removeCallbacks(deadlineRunnable)
-                handler.post(deadlineRunnable)
-            }
-            return
-        }
+        if (logic.mode == lastMode && logic.rest == lastRest && t - lastTickAt < TICK_MIN_MS &&
+            !(waited && logic.dueNow(t))) return
         lastTickAt = t
         tick(t)
         render()
@@ -208,7 +207,8 @@ class LoneWorkerMonitor(
      */
     private fun tick(t: Long) {
         logic.tick(t)
-        if (logic.waitingOnSensors(t)) sensors.flush()
+        waited = logic.waitingOnSensors(t)
+        if (waited) sensors.flush()
         handler.removeCallbacks(deadlineRunnable)
         logic.nextCheckAt(t)?.let { handler.postDelayed(deadlineRunnable, (it - t).coerceAtLeast(0L)) }
     }

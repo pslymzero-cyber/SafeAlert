@@ -17,7 +17,10 @@ import org.junit.Test
  * the wall clock time that passed (never negative). The safe zone state (settled, entry time) is
  * kept and held for ZONE_RESUME_HOLD_MS until a zone report arrives. The monitor starts the power
  * debounce on the saved charging value and feeds the current raw value, so a difference applies as a
- * real plug/unplug at the restart time only after 2 s of stable power. A stored own SOS wins after.
+ * real plug/unplug at the restart time only after 2 s of stable power. Until the debounce reports (at
+ * most RestartHold.POWER_HOLD_MS) no check opens and a restored check is not shown; a plug then drops
+ * it, an unplug opens it with the full response time. A restart unplug is not a cradle unplug, and a
+ * restored zone settles only on an inside report. A stored own SOS wins after.
  */
 class LoneWorkerResumeTest {
 
@@ -33,14 +36,25 @@ class LoneWorkerResumeTest {
         return s!!
     }
 
-    /** Restart like the monitor: startFrom, seed the debounce, feed the raw power, apply what it reports 2 s later. */
+    /** Modes seen by the two ticks before the debounce reports (the monitor ticks on sensor data and its 10 s loop). */
+    private var beforePower: List<Mode> = emptyList()
+
+    /**
+     * Restart like the monitor: startFrom, seed the debounce with the started charging value, feed the raw
+     * power (and a bounce back at bounceAt), tick at the restart and 2 s later, then apply what the debounce
+     * reports 2,050 ms after the restart and tick (onPower).
+     */
     private fun reboot(old: LoneWorkerLogic, savedAt: Long, now: Long, wallGap: Long, charging: Boolean = false,
-                       bootNow: Int = boot + 1, bootSaved: Int = boot): LoneWorkerLogic {
+                       bootNow: Int = boot + 1, bootSaved: Int = boot, bounceAt: Long? = null): LoneWorkerLogic {
         val l = LoneWorkerLogic("SAFEALERT_WALKER_ME")
         val d = PowerDebounce()
         d.seed(l.startFrom(now, false, charging, saved(old, savedAt, now, wallGap, bootNow, bootSaved)))
         d.raw(charging, now)
-        d.poll(now + PowerDebounce.DEBOUNCE_MS + 50)?.let { (on, at) -> l.setCharging(on, at) }
+        bounceAt?.let { d.raw(!charging, it) }
+        beforePower = listOf(l.modeAt(now), l.modeAt(now + PowerDebounce.DEBOUNCE_MS))
+        val polled = now + PowerDebounce.DEBOUNCE_MS + 50
+        d.poll(polled)?.let { (on, at) -> l.setCharging(on, at) }
+        l.tick(polled)
         return l
     }
 
@@ -206,6 +220,36 @@ class LoneWorkerResumeTest {
         for (t in 16_000L..400_000L step 1_000L) assertEquals(Mode.WATCHING, l.seenAt(t))
     }
 
+    @Test fun restored_zone_hold_keeps_open_check_without_settling() {
+        val old = newLogic(carried = true)
+        old.onZone(true, 100_000)
+        assertEquals(Mode.WATCHING, old.seenAt(150_000))
+        assertFalse(old.zoneSettled)
+        // same boot, 50 s later: the still deadline (180 s) passed more than LATE_MS ago, no zone report yet
+        val l = reboot(old, 150_000, 200_000, 50_000, bootNow = boot)
+        assertEquals(Mode.CHECKING, l.mode)
+        assertEquals("still", l.trigger)
+        assertFalse(l.zoneSettled)
+        assertEquals(Mode.CHECKING, l.seenAt(211_000))
+        assertEquals("still", l.trigger)
+        assertFalse(l.zoneSettled)
+    }
+
+    @Test fun restored_zone_hold_expiry_keeps_still_count() {
+        val old = newLogic(carried = true)
+        old.onMoved(100_000)
+        old.onZone(true, 100_000)
+        assertEquals(Mode.WATCHING, old.seenAt(150_000))
+        assertFalse(old.zoneSettled)
+        // no zone report: left at the hold end without settling, still counted from 100 s
+        val l = reboot(old, 150_000, 200_000, 50_000, bootNow = boot)
+        assertEquals(Mode.WATCHING, l.seenAt(211_000))
+        assertFalse(l.zoneSettled)
+        assertEquals(Mode.WATCHING, l.seenAt(279_000))
+        assertEquals(Mode.CHECKING, l.seenAt(280_000))
+        assertEquals("still", l.trigger)
+    }
+
     // -- clock changes --
 
     @Test fun same_boot_ignores_wall_clock_jump_back() {
@@ -252,31 +296,67 @@ class LoneWorkerResumeTest {
     // -- power at the restart --
 
     @Test fun restart_power_bounce_keeps_check() {
-        val l = LoneWorkerLogic("SAFEALERT_WALKER_ME")
-        val d = PowerDebounce()
-        d.seed(l.startFrom(5_000, false, true, saved(accidentCheck(), 41_000, 5_000, 20_000)))
-        d.raw(true, 5_000)
-        d.raw(false, 5_500) // cradle contact bounced at the restart
-        for (t in listOf(7_050L, 9_000L, 20_000L)) d.poll(t)?.let { (on, at) -> l.setCharging(on, at) }
-        assertEquals(Rest.NONE, l.rest)
-        assertEquals(Mode.CHECKING, l.mode)
+        // cradle contact bounced at the restart: nothing is reported, the hold ends and the check opens
+        val l = reboot(accidentCheck(), 41_000, 5_000, 20_000, charging = true, bounceAt = 5_500)
+        assertEquals(listOf(Mode.WATCHING, Mode.WATCHING), beforePower)
+        assertEquals(Mode.WATCHING, l.mode)
+        val end = 5_000 + RestartHold.POWER_HOLD_MS
+        assertEquals(Mode.CHECKING, l.modeAt(end))
         assertEquals("fall", l.trigger)
-        assertEquals(LoneWorkerLogic.ACCIDENT_RESPONSE_MS, l.responseLeftMs(5_000))
+        assertEquals(Rest.NONE, l.rest)
+        assertEquals(LoneWorkerLogic.ACCIDENT_RESPONSE_MS, l.responseLeftMs(end))
     }
 
     @Test fun restart_power_change_applies_after_debounce() {
-        val l = LoneWorkerLogic("SAFEALERT_WALKER_ME")
-        val d = PowerDebounce()
-        d.seed(l.startFrom(5_000, false, true, saved(accidentCheck(), 41_000, 5_000, 20_000)))
-        d.raw(true, 5_000)
-        assertNull(d.poll(6_000))
-        assertEquals(Mode.CHECKING, l.mode)
-        val p = d.poll(7_050)
-        assertEquals(true to 5_000L, p)
-        l.setCharging(p!!.first, p.second)
+        val l = reboot(accidentCheck(), 41_000, 5_000, 20_000, charging = true)
+        // the restored accident check is not shown before the plug is confirmed, then the plug drops it
+        assertEquals(listOf(Mode.WATCHING, Mode.WATCHING), beforePower)
         assertEquals(Mode.WATCHING, l.mode)
         assertEquals(Rest.DOCKED, l.rest)
         assertNull(l.snapshot(7_050).accidentHold)
+    }
+
+    @Test fun restart_on_dock_after_dead_battery_opens_no_check() {
+        // still since 0, restarted 10 min later on the dock: the still deadline has long passed
+        val l = reboot(newLogic(carried = true), 100_000, 5_000, 600_000, charging = true)
+        assertEquals(listOf(Mode.WATCHING, Mode.WATCHING), beforePower)
+        assertEquals(Mode.WATCHING, l.mode)
+        assertEquals(Rest.DOCKED, l.rest)
+        assertEquals("", l.snapshot(7_050).check)
+    }
+
+    @Test fun restart_after_power_bank_unplug_waits_without_check() {
+        val old = newLogic(charging = true)
+        old.walk(10_000, 10)
+        assertEquals(Rest.NONE, old.rest)
+        val l = reboot(old, 12_000, 5_000, 600_000)
+        assertEquals(listOf(Mode.WATCHING, Mode.WATCHING), beforePower)
+        assertEquals(Mode.WATCHING, l.mode)
+        assertEquals(Rest.WAIT, l.rest)
+        assertEquals(Mode.WATCHING, l.seenAt(300_000))
+    }
+
+    @Test fun restored_check_waits_for_power_then_opens_with_full_response() {
+        val old = newLogic(charging = true)
+        old.walk(10_000, 10)
+        assertEquals(Mode.CHECKING, old.seenAt(190_000))
+        assertEquals("still", old.trigger)
+        val l = reboot(old, 200_000, 5_000, 20_000)
+        assertEquals(listOf(Mode.WATCHING, Mode.WATCHING), beforePower)
+        // the unplug keeps the check (E9): it opens once the power is confirmed, the response counts from there
+        assertEquals(Mode.CHECKING, l.mode)
+        assertEquals("still", l.trigger)
+        assertEquals(Rest.WAIT, l.rest)
+        assertEquals(l.responseMs, l.responseLeftMs(7_050))
+    }
+
+    @Test fun restart_unplug_is_not_a_cradle_fall() {
+        // docked in the zone, restarted unplugged: the unplug applied at the restart does not hide a fall
+        val l = reboot(newLogic(charging = true, zoneInside = true), 20_000, 5_000, 20_000)
+        l.onAccident(9_000)
+        assertEquals(Mode.WATCHING, l.seenAt(38_999))
+        assertEquals(Mode.CHECKING, l.seenAt(39_000))
+        assertEquals("fall", l.trigger)
     }
 
     // -- format and saving --
