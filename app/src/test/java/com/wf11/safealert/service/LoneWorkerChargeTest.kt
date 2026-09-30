@@ -32,7 +32,7 @@ class LoneWorkerChargeTest {
         l.walk(600_000, 5)
         assertEquals(Rest.NONE, l.rest)
         assertEquals(Mode.WATCHING, l.modeAt(600_000 + stillMs - 1))
-        assertEquals(Mode.CHECKING, l.modeAt(600_000 + stillMs))
+        assertEquals(Mode.CHECKING, l.seenAt(600_000 + stillMs))
         assertEquals("still", l.trigger)
     }
 
@@ -50,7 +50,7 @@ class LoneWorkerChargeTest {
         assertEquals(Rest.WAIT, l.rest)
         l.strongRun(20_000, 3)
         assertEquals(Rest.NONE, l.rest)
-        assertEquals(Mode.CHECKING, l.modeAt(22_000 + stillMs))
+        assertEquals(Mode.CHECKING, l.seenAt(22_000 + stillMs))
     }
 
     @Test fun unplug_waits_for_first_distinct_motion() {
@@ -70,7 +70,7 @@ class LoneWorkerChargeTest {
         l.sensorSilent(100_000)
         assertEquals(Rest.NONE, l.rest)
         assertEquals(Mode.WATCHING, l.modeAt(100_000 + stillMs - 1))
-        assertEquals(Mode.CHECKING, l.modeAt(100_000 + stillMs))
+        assertEquals(Mode.CHECKING, l.seenAt(100_000 + stillMs))
     }
 
     @Test fun charging_without_steps_is_docked_and_never_checks_still() {
@@ -85,7 +85,7 @@ class LoneWorkerChargeTest {
         assertEquals(Rest.NONE, l.rest)
         assertEquals(Mode.WATCHING, l.modeAt(10_000 + stillMs - 1))
         assertEquals(Rest.NONE, l.rest)
-        assertEquals(Mode.CHECKING, l.modeAt(10_000 + stillMs))
+        assertEquals(Mode.CHECKING, l.seenAt(10_000 + stillMs))
         assertEquals("still", l.trigger)
     }
 
@@ -173,7 +173,7 @@ class LoneWorkerChargeTest {
     @Test fun real_plug_withdraws_open_still_check() {
         val l = newLogic()
         l.sensorSilent(0)
-        assertEquals(Mode.CHECKING, l.modeAt(stillMs))
+        assertEquals(Mode.CHECKING, l.seenAt(stillMs))
         l.setCharging(true, stillMs + 1_000)
         assertEquals(Mode.WATCHING, l.mode)
         assertEquals(Rest.DOCKED, l.rest)
@@ -182,7 +182,7 @@ class LoneWorkerChargeTest {
 
     @Test fun unplug_during_still_check_keeps_it_running_to_sos() {
         val l = carriedWhileCharging()
-        assertEquals(Mode.CHECKING, l.modeAt(10_000 + stillMs))
+        assertEquals(Mode.CHECKING, l.seenAt(10_000 + stillMs))
         l.setCharging(false, 200_000)
         assertEquals(Rest.WAIT, l.rest)
         assertEquals(Mode.CHECKING, l.modeAt(10_000 + stillMs + responseMs - 1))
@@ -192,22 +192,22 @@ class LoneWorkerChargeTest {
     @Test fun still_check_closed_by_ok_or_distinct_motion_not_by_moved() {
         val moved = newLogic()
         moved.sensorSilent(0)
-        moved.tick(stillMs)
+        moved.seenAt(stillMs)
         moved.onMoved(stillMs + 1_000)
         moved.walk(stillMs + 5_000, 4)
         assertEquals(Mode.CHECKING, moved.modeAt(stillMs + 6_000))
 
         val walked = newLogic()
         walked.sensorSilent(0)
-        walked.tick(stillMs)
+        walked.seenAt(stillMs)
         walked.walk(stillMs + 5_000, 5)
         assertEquals(Mode.WATCHING, walked.mode)
         assertEquals(Mode.WATCHING, walked.modeAt(stillMs + 5_000 + stillMs - 1))
-        assertEquals(Mode.CHECKING, walked.modeAt(stillMs + 5_000 + stillMs))
+        assertEquals(Mode.CHECKING, walked.seenAt(stillMs + 5_000 + stillMs))
 
         val ok = newLogic()
         ok.sensorSilent(0)
-        ok.tick(stillMs)
+        ok.seenAt(stillMs)
         assertTrue(ok.ackWorking(stillMs + 1_000))
         assertEquals(Mode.WATCHING, ok.mode)
     }
@@ -278,7 +278,7 @@ class LoneWorkerChargeTest {
     @Test fun sporadic_single_steps_never_close_still_check() {
         val l = newLogic()
         l.sensorSilent(0L)
-        assertEquals(Mode.CHECKING, l.modeAt(stillMs))
+        assertEquals(Mode.CHECKING, l.seenAt(stillMs))
         for (t in stillMs + 1_000 until stillMs + responseMs step 3_000L) {
             l.step(t)
             assertEquals(Mode.CHECKING, l.modeAt(t))

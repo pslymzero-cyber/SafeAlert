@@ -12,7 +12,7 @@ import org.junit.Test
  */
 class LoneWorkerPeerTest {
 
-    private fun newLogic() = LoneWorkerLogic("ME").apply { start(0L, false) }
+    private fun meLogic() = LoneWorkerLogic("ME").apply { start(0L, false) }
 
     private fun LoneWorkerLogic.srv(
         key: String, id: String, ep: Int, active: Boolean, created: Long, now: Long,
@@ -32,7 +32,7 @@ class LoneWorkerPeerTest {
         peers.single { it.bleId == id && (ep == null || it.episode == ep) }
 
     @Test fun server_resolve_then_ble_only_new_episode_sounds() {
-        val l = newLogic()
+        val l = meLogic()
         l.srv("k1", "P", 1, true, 1_000, 1_000)
         l.onPeerBle("P", true, 1_100, 1)
         assertEquals(1, l.peers.size)
@@ -49,7 +49,7 @@ class LoneWorkerPeerTest {
     }
 
     @Test fun pruned_entry_then_same_bit_makes_new_entry() {
-        val l = newLogic()
+        val l = meLogic()
         l.onPeerBle("P", true, 1_000, 1)
         l.onPeerBle("P", false, 2_000)
         l.onPeerBle("P", false, 12_000)
@@ -61,7 +61,7 @@ class LoneWorkerPeerTest {
     }
 
     @Test fun same_bleid_other_phone_same_episode_resounds_after_30s_gap() {
-        val l = newLogic()
+        val l = meLogic()
         l.onPeerBle("P", true, 1_000, 1)
         l.ackAll(1_500)
         l.onPeerBle("P", true, 20_000, 1)
@@ -72,7 +72,7 @@ class LoneWorkerPeerTest {
     }
 
     @Test fun shared_id_flapping_neither_resolves_nor_resounds() {
-        val l = newLogic()
+        val l = meLogic()
         l.onPeerBle("P", true, 1_000, 3)
         l.ackAll(1_100)
         for (i in 1..80) {
@@ -87,7 +87,7 @@ class LoneWorkerPeerTest {
     }
 
     @Test fun other_episode_ble_bit_is_new_entry_and_keeps_server_entry() {
-        val l = newLogic()
+        val l = meLogic()
         l.srv("k1", "P", 3, true, 1_000, 1_000)
         l.ackAll(1_100)
         l.onPeerBle("P", true, 2_000, 3)
@@ -108,7 +108,7 @@ class LoneWorkerPeerTest {
     }
 
     @Test fun adopted_entry_sounds_again_with_name() {
-        val a = newLogic()
+        val a = meLogic()
         a.onPeerBle("P", true, 1_000, 4)
         a.ackAll(1_100)
         a.srv("k1", "P", 4, true, 1_100, 1_200)
@@ -116,7 +116,7 @@ class LoneWorkerPeerTest {
         assertFalse(a.peer("P").silenced)
         assertEquals("n", a.audiblePeers().single().name)
 
-        val b = newLogic()
+        val b = meLogic()
         b.onPeerBle("P", true, 1_000, 4)
         b.srv("k0", "P", 3, true, 900, 1_200)
         assertTrue(b.peer("P", 3).active)
@@ -129,7 +129,7 @@ class LoneWorkerPeerTest {
     }
 
     @Test fun stale_ble_entry_does_not_swallow_new_server_episode() {
-        val l = newLogic()
+        val l = meLogic()
         l.onPeerBle("P", true, 1_000, 3)
         l.ackAll(1_100)
         l.srv("k5", "P", 5, true, 5_000, 5_000)
@@ -141,7 +141,7 @@ class LoneWorkerPeerTest {
     }
 
     @Test fun replayed_old_resolve_does_not_end_live_ble_entry() {
-        val l = newLogic()
+        val l = meLogic()
         l.onPeerBle("P", true, 1_000, 3)
         l.onPeerBle("P", true, 20_000, 3)
         l.srv("k1", "P", 3, false, 900, 25_000, resolvedAt = 990_000, serverNow = 1_000_000)
@@ -152,7 +152,7 @@ class LoneWorkerPeerTest {
     }
 
     @Test fun out_of_range_later_resolve_ends_ble_entry() {
-        val l = newLogic()
+        val l = meLogic()
         l.onPeerBle("P", true, 1_000, 3)
         l.srv("k1", "P", 3, false, 900, 40_000, resolvedAt = 970_000, serverNow = 1_000_000)
         assertFalse(l.peer("P", 3).active)
@@ -160,7 +160,7 @@ class LoneWorkerPeerTest {
         l.onPeerBle("P", true, 40_500, 3)
         assertFalse(l.peer("P", 3).active)
 
-        val m = newLogic()
+        val m = meLogic()
         m.onPeerBle("P", true, 1_000, 3)
         m.srv("k1", "P", 3, false, 900, 40_000, resolvedAt = 950_000, serverNow = 1_000_000)
         assertTrue(m.peer("P", 3).active)
@@ -169,7 +169,7 @@ class LoneWorkerPeerTest {
     }
 
     @Test fun unknown_offset_uses_slack() {
-        val l = newLogic()
+        val l = meLogic()
         l.onPeerBle("P", true, 1_000, 3)
         l.srv("k1", "P", 3, false, 900, 40_000, resolvedAt = 965_000, wall = 1_000_000)
         assertTrue(l.peer("P", 3).active)
@@ -178,7 +178,7 @@ class LoneWorkerPeerTest {
     }
 
     @Test fun server_entry_first_ble_hearing_and_30s_gap_resound() {
-        val l = newLogic()
+        val l = meLogic()
         l.srv("k1", "P", 1, true, 1_000, 1_000)
         l.ackAll(1_100)
         assertEquals(0, l.audiblePeers().size)
@@ -193,7 +193,7 @@ class LoneWorkerPeerTest {
     }
 
     @Test fun shared_bleid_two_phones_keep_separate_entries() {
-        val l = newLogic()
+        val l = meLogic()
         l.srv("kX", "P", 2, true, 1_000, 1_000, name = "X", beacon = "B1")
         l.srv("kY", "P", 5, true, 1_500, 1_500, name = "Y", beacon = "B2")
         l.onPeerBle("P", true, 1_600, 5)
@@ -208,7 +208,7 @@ class LoneWorkerPeerTest {
         l.srv("kX", "P", 2, false, 1_000, 3_000)
         assertFalse(l.peers.single { it.key == "kX" }.active)
 
-        val m = newLogic()
+        val m = meLogic()
         m.srv("kA", "Q", 1, true, 1_000, 1_000, name = "A")
         m.srv("kB", "Q", 1, true, 1_100, 1_100, name = "B")
         assertEquals(2, m.peers.size)
@@ -220,7 +220,7 @@ class LoneWorkerPeerTest {
     }
 
     @Test fun cold_confirm_silences_only_listed_entries() {
-        val l = newLogic()
+        val l = meLogic()
         l.ack(1_000, "k:k1" to "P#3")
         l.srv("k1", "P", 3, true, 2_000, 2_000)
         assertTrue(l.peer("P").active)
@@ -230,12 +230,12 @@ class LoneWorkerPeerTest {
         l.onPeerBle("R", true, 4_000, 2)
         assertEquals(2, l.audiblePeers().size)
 
-        val e = newLogic()
+        val e = meLogic()
         e.ack(1_000, "k:kS" to "S#1")
         e.srv("kS", "S", 1, true, 61_001, 61_001)
         assertEquals(1, e.audiblePeers().size)
 
-        val m = newLogic()
+        val m = meLogic()
         m.srv("k1", "P", 0, true, 1_000, 1_000)
         m.srv("k1", "P", 0, false, 1_000, 2_000)
         m.ackAll(3_000)
@@ -244,7 +244,7 @@ class LoneWorkerPeerTest {
     }
 
     @Test fun notification_confirm_silences_only_listed_entries() {
-        val l = newLogic()
+        val l = meLogic()
         l.onPeerBle("P", true, 1_000, 1)
         l.onPeerBle("Q", true, 2_000, 2)
         l.ack(2_100, "b:P#1" to "P#1")
@@ -252,7 +252,7 @@ class LoneWorkerPeerTest {
     }
 
     @Test fun confirm_right_after_resolve_keeps_the_guard() {
-        val l = newLogic()
+        val l = meLogic()
         l.srv("k1", "P", 1, true, 1_000, 1_000)
         l.srv("k1", "P", 1, false, 1_000, 2_000)
         l.ackAll(2_100)
@@ -280,7 +280,7 @@ class LoneWorkerPeerTest {
     // -- refused resolve is re-judged on tick --
 
     @Test fun untracked_resolve_refused_by_live_ad_is_retried_on_tick() {
-        val l = newLogic()
+        val l = meLogic()
         l.onPeerBle("P", true, 1_000, 3)
         l.onPeerBle("P", true, 20_000, 3)
         l.srv("k1", "P", 3, false, 900, 25_000, resolvedAt = 990_000, serverNow = 1_000_000)
@@ -293,7 +293,7 @@ class LoneWorkerPeerTest {
     }
 
     @Test fun replayed_old_resolve_is_never_retried() {
-        val l = newLogic()
+        val l = meLogic()
         l.onPeerBle("P", true, 1_000, 3)
         l.onPeerBle("P", true, 20_000, 3)
         l.srv("k1", "P", 3, false, 900, 25_000, resolvedAt = 900_000, serverNow = 1_000_000)
@@ -303,7 +303,7 @@ class LoneWorkerPeerTest {
     }
 
     @Test fun pending_resolve_dropped_when_item_ends_otherwise() {
-        val l = newLogic()
+        val l = meLogic()
         l.onPeerBle("P", true, 1_000, 3)
         l.onPeerBle("P", true, 20_000, 3)
         // resolve time lands ahead of now (clock step), refused while the ad is live
@@ -322,7 +322,7 @@ class LoneWorkerPeerTest {
     // -- confirm by item id --
 
     @Test fun ack_silences_only_the_item_id_not_same_episode_sibling() {
-        val l = newLogic()
+        val l = meLogic()
         l.srv("K1", "X", 1, true, 1_000, 1_000)
         l.srv("K2", "X", 1, true, 1_100, 1_100)
         assertEquals(2, l.audiblePeers().size)
@@ -332,7 +332,7 @@ class LoneWorkerPeerTest {
     }
 
     @Test fun cold_ack_of_ble_item_survives_server_absorption() {
-        val l = newLogic()
+        val l = meLogic()
         l.ack(1_000, "b:X#1" to "X#1")
         l.onPeerBle("X", true, 2_000, 1)
         assertTrue(l.peer("X").silenced)
@@ -343,7 +343,7 @@ class LoneWorkerPeerTest {
     }
 
     @Test fun cold_ack_of_server_item_survives_first_ble_hearing() {
-        val l = newLogic()
+        val l = meLogic()
         l.ack(1_000, "k:K1" to "X#1")
         l.srv("K1", "X", 1, true, 2_000, 2_000)
         assertTrue(l.peer("X").silenced)
@@ -353,7 +353,7 @@ class LoneWorkerPeerTest {
     }
 
     @Test fun cold_ack_of_k1_does_not_silence_absorbing_k2() {
-        val l = newLogic()
+        val l = meLogic()
         l.ack(1_000, "k:K1" to "X#1")
         l.onPeerBle("X", true, 2_000, 1)
         assertTrue(l.peer("X").silenced)
@@ -362,7 +362,7 @@ class LoneWorkerPeerTest {
     }
 
     @Test fun live_ble_ack_then_server_absorption_rings_again() {
-        val l = newLogic()
+        val l = meLogic()
         l.onPeerBle("X", true, 1_000, 1)
         l.ack(1_100, "b:X#1" to "X#1")
         assertEquals(0, l.audiblePeers().size)
@@ -371,7 +371,7 @@ class LoneWorkerPeerTest {
     }
 
     @Test fun gap_30s_after_ack_rings_again() {
-        val l = newLogic()
+        val l = meLogic()
         l.onPeerBle("X", true, 1_000, 1)
         l.ack(1_100, "b:X#1" to "X#1")
         l.onPeerBle("X", true, 20_000, 1)

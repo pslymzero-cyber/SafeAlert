@@ -46,7 +46,7 @@ class LoneWorkerResumeTest {
 
     @Test fun resume_reopens_still_check_with_full_response() {
         val old = newLogic(carried = true)
-        assertEquals(Mode.CHECKING, old.modeAt(180_000))
+        assertEquals(Mode.CHECKING, old.seenAt(180_000))
         assertEquals("still", old.trigger)
         val l = reboot(old, 200_000, 5_000, 20_000)
         assertEquals(Mode.CHECKING, l.mode)
@@ -94,7 +94,7 @@ class LoneWorkerResumeTest {
         val due = l.snapshot().stillBase + l.stillMs
         assertEquals(115_000L, due)
         assertEquals(Mode.WATCHING, l.modeAt(due - 1))
-        assertEquals(Mode.CHECKING, l.modeAt(due))
+        assertEquals(Mode.CHECKING, l.seenAt(due))
         assertEquals("still", l.trigger)
     }
 

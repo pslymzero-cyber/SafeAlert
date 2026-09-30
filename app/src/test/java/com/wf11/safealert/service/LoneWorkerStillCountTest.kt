@@ -1,0 +1,135 @@
+package com.wf11.safealert.service
+
+import com.wf11.safealert.service.LoneWorkerLogic.Mode
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+/*
+ * Rule 2 (still) counting: the count pauses while a peer siren vibrates on this device (C2), is not kept
+ * inside a settled safe zone (C3), and the still check opens on sensor time like the accident deadline (C5).
+ * A suspect device (accident suspicion running) does not vibrate for a peer siren (C4).
+ */
+class LoneWorkerStillCountTest {
+
+    private fun LoneWorkerLogic.ackAll(now: Long) = silencePeers(now, peers.associate { it.id to it.epId })
+
+    @Test fun peer_siren_pauses_still_count_and_resumes_after() {
+        val l = newLogic(carried = true)
+        for (t in 60_000L..360_000L step 1_000L) {
+            l.onPeerBle("P", true, t)
+            assertEquals(Mode.WATCHING, l.seenAt(t))
+        }
+        assertTrue(l.alarmVibrates)
+        l.ackAll(360_000)
+        assertFalse(l.alarmVibrates)
+        // 60 s were still before the siren, 120 s remain after it
+        assertEquals(Mode.WATCHING, l.seenAt(360_000))
+        assertEquals(Mode.WATCHING, l.seenAt(479_000))
+        assertEquals(Mode.CHECKING, l.seenAt(480_000))
+        assertEquals("still", l.trigger)
+    }
+
+    @Test fun siren_end_by_resolve_also_resumes() {
+        val l = newLogic(carried = true)
+        for (t in 60_000L..200_000L step 1_000L) {
+            l.onPeerBle("P", true, t)
+            assertEquals(Mode.WATCHING, l.seenAt(t))
+        }
+        l.onPeerBle("P", false, 200_000)
+        l.tick(210_000)
+        assertTrue(l.audiblePeers().isEmpty())
+        assertEquals(Mode.WATCHING, l.seenAt(210_000))
+        assertEquals(Mode.WATCHING, l.seenAt(329_000))
+        assertEquals(Mode.CHECKING, l.seenAt(330_000))
+    }
+
+    @Test fun movement_during_siren_counts_from_siren_end() {
+        val l = newLogic(carried = true)
+        for (t in 60_000L..200_000L step 1_000L) {
+            l.onPeerBle("P", true, t)
+            if (t == 100_000L) l.onMoved(t)
+            assertEquals(Mode.WATCHING, l.seenAt(t))
+        }
+        l.ackAll(200_000)
+        assertEquals(Mode.WATCHING, l.seenAt(200_000))
+        assertEquals(Mode.WATCHING, l.seenAt(379_000))
+        assertEquals(Mode.CHECKING, l.seenAt(380_000))
+    }
+
+    @Test fun suspect_device_does_not_vibrate_for_peer_siren() {
+        val l = newLogic(carried = true)
+        l.onAccident(10_000)
+        l.onPeerBle("P", true, 11_000)
+        assertEquals(Mode.WATCHING, l.modeAt(11_000))
+        assertEquals(1, l.audiblePeers().size)
+        assertFalse(l.alarmVibrates)
+        // a real plug ends the suspicion: the siren vibrates again
+        l.setCharging(true, 12_000)
+        assertEquals(Mode.WATCHING, l.modeAt(12_000))
+        assertTrue(l.alarmVibrates)
+    }
+
+    @Test fun settled_zone_does_not_count_still() {
+        val l = newLogic(zoneInside = true, carried = true)
+        l.tick(60_000)
+        assertTrue(l.zoneSettled)
+        for (t in 60_000L..600_000L step 10_000L) assertEquals(Mode.WATCHING, l.seenAt(t))
+        l.onZone(false, 600_000)
+        assertEquals(Mode.WATCHING, l.seenAt(779_000))
+        assertEquals(Mode.CHECKING, l.seenAt(780_000))
+    }
+
+    @Test fun still_check_waits_for_sensor_data() {
+        val l = newLogic(carried = true)
+        l.sensed(178_000)
+        assertEquals(Mode.WATCHING, l.modeAt(180_000))
+        assertTrue(l.waitingOnSensors(180_000))
+        l.sensed(180_000)
+        assertEquals(Mode.CHECKING, l.modeAt(180_000))
+
+        val silent = newLogic(carried = true)
+        silent.sensed(178_000)
+        assertEquals(Mode.WATCHING, silent.modeAt(185_999))
+        assertEquals(Mode.CHECKING, silent.modeAt(186_000))
+    }
+
+    @Test fun late_movement_before_still_deadline_keeps_watching() {
+        val l = newLogic(carried = true)
+        l.sensed(178_000)
+        assertEquals(Mode.WATCHING, l.modeAt(180_000))
+        l.onMoved(179_500)
+        l.sensed(181_000)
+        assertEquals(Mode.WATCHING, l.modeAt(181_000))
+        assertEquals(Mode.WATCHING, l.seenAt(359_499))
+        assertEquals(Mode.CHECKING, l.seenAt(359_500))
+    }
+
+    @Test fun still_deadline_is_scheduled() {
+        assertEquals(180_000L, newLogic(carried = true).nextCheckAt(0))
+
+        val settled = newLogic(zoneInside = true, carried = true)
+        settled.tick(60_000)
+        assertNull(settled.nextCheckAt(60_000))
+
+        val siren = newLogic(carried = true)
+        siren.onPeerBle("P", true, 1_000)
+        siren.tick(1_000)
+        assertNull(siren.nextCheckAt(1_000))
+
+        assertNull(newLogic().nextCheckAt(0))
+    }
+
+    @Test fun due_now_only_when_passed_deadline_has_data() {
+        val l = newLogic(carried = true)
+        l.sensed(170_000)
+        assertFalse(l.dueNow(179_999))
+        assertFalse(l.dueNow(180_000))
+        l.sensed(180_000)
+        assertTrue(l.dueNow(180_000))
+        assertEquals(Mode.CHECKING, l.modeAt(180_000))
+        assertFalse(l.dueNow(180_000))
+    }
+}

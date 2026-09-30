@@ -10,19 +10,21 @@ package com.wf11.safealert.service
  *
  * 규칙 1(사고): 낙상 신호 하나로 그 충격 시각부터 5분 동안 사고를 의심한다(직전 움직임 조건 없음).
  * 그 안에서 뚜렷한 움직임이 30초 동안 없으면 사고 확인 창("fall", 1분)을 연다. 거치·안전구역과 무관하지만,
- * 안전구역 안(들어서자마자, 원시 안쪽)에서 충전 중이면 낙상을 무시한다. 트리거 전 10초 안의 실제 전원 연결은
- * 거치대에 꽂는 동작으로 보고 그 트리거를 버린다. 의심 중 실제 연결은 사람이 있다는 뜻이라 의심을 끝낸다.
+ * 안전구역 안(들어서자마자, 원시 안쪽)에서 충전 중이면(트리거 앞뒤 10초 안 실제 해제 포함 — 크래들에서 떨어짐)
+ * 낙상을 무시한다. 트리거 전 10초 안의 실제 전원 연결은 거치대에 꽂는 동작으로 보고 그 트리거를 버린다.
+ * 의심 중 실제 연결은 사람이 있다는 뜻이라 의심을 끝낸다.
  * 사고 확인 창을 [괜찮음]으로 닫으면 의심이 끝나고, 뚜렷한 움직임으로 닫히면 5분이 끝날 때까지 계속 지켜본다.
  *
  * 규칙 2(무동작): 지님(Rest.NONE)일 때만 stillMs 무동작이면 무동작 확인 창("still", responseMs)을 연다.
  * 충전 안 함은 시작·전원 해제 뒤 첫 뚜렷한 움직임(또는 센서 1분 무응답)부터 지님이고 그 전은 대기(WAIT)다.
  * 충전 중은 최근 30초 안 10걸음(걸음 센서가 없으면 30초 안 걷는 모양 창 5개)부터 다음 연결까지 지님, 그 전은 거치(DOCKED)다.
- * 정착한 안전구역(원시 안쪽 60초 연속)에서는 무동작 확인 창이 열리지 않고, 정착 시 열린 무동작 확인 창은 거둔다.
+ * 정착한 안전구역(원시 안쪽 60초 연속)에서는 무동작을 세지 않고 벗어난 시각부터 센다. 정착 시 열린 무동작 확인 창은 거둔다.
+ * 동료 사이렌이 이 기기에서 진동하는 동안도 셈을 멈추고, 끝나면 쌓인 시간에 이어서 센다.
  *
  * 걸음: 걸음 센서가 낸 걸음 가운데 그 시각을 덮는 1초 가속도 창이 걷는 모양이고 앱 진동 구간이 아닌 것(WalkingSteps).
  * 뚜렷한 움직임: 최근 10초 안 5걸음. 걸음 센서를 쓸 수 없으면 3초 이상 이어진 걷는 모양 창.
  * 확인 창(두 종류)은 [괜찮음]·뚜렷한 움직임·실제 전원 연결로 닫힌다. 실제 연결은 사고 의심도 끝낸다.
- * 사고 30초 무움직임→확인 창, 확인 창→SOS 마감은 마감 시각까지의 센서 데이터가 들어온 뒤(없으면 LATE_MS 뒤) 판정한다.
+ * 무동작 stillMs→확인 창, 사고 30초 무움직임→확인 창, 확인 창→SOS 마감은 마감 시각까지의 센서 데이터가 들어온 뒤(없으면 LATE_MS 뒤) 판정한다.
  * SOS 는 구역 진입·기능 끄기·전원 변화로 끝나지 않고 오직 cancelSos 로만 끝난다.
  * 동료 SOS 수신은 LoneWorkerPeers 가 회차(bleId, ep) 단위 항목으로 다룬다(서버 기록과 BLE 비트가 같은 회차면 한 항목).
  *
@@ -42,12 +44,13 @@ class LoneWorkerLogic(var myBleId: String) {
 
     companion object {
         const val ZONE_SETTLE_MS = 60_000L
-        const val BEACON_HINT_MS = 60_000L
         const val ACCIDENT_WATCH_MS = 300_000L
         const val ACCIDENT_STILL_MS = 30_000L
         const val ACCIDENT_RESPONSE_MS = 60_000L
         /** 트리거 전 이 시간 안의 실제 전원 연결은 거치대에 꽂는 동작이다. */
         const val PLUG_EXCEPT_MS = 10_000L
+        /** 세이프존 충전 중 낙상 무시를 실제 해제 앞뒤 이 시간까지 넓힌다(크래들에서 떨어지며 빠진 경우, C1). */
+        const val UNPLUG_FALL_MS = 10_000L
         /** 걸음은 미끄러지는 시간 창으로 센다: 뚜렷한 움직임 = 최근 10초 안 5걸음, 충전 중 지님 = 최근 30초 안 10걸음. */
         const val DISTINCT_STEPS = 5
         const val DISTINCT_STEP_WINDOW_MS = 10_000L
@@ -58,7 +61,6 @@ class LoneWorkerLogic(var myBleId: String) {
         const val CARRY_FALLBACK_WINDOWS = 5
         /** 마감 시각까지의 센서 데이터가 이만큼 지나도 오지 않으면 도착한 것만으로 판정한다(배치 지연 5초 + 창 1초). */
         const val LATE_MS = 6_000L
-        private const val BEACON_SAMPLE_CAP = 256
     }
 
     /** 설정에서 라이브로 바꾼다 (기본 3분 / 2분). 무동작 확인 전용 — 사고 확인은 30초 / 1분 고정. */
@@ -100,6 +102,9 @@ class LoneWorkerLogic(var myBleId: String) {
     private var accidentFrom = Long.MIN_VALUE
     private var accidentUntil = Long.MIN_VALUE
     private var lastPlugAt = Long.MIN_VALUE
+    private var lastUnplugAt = Long.MIN_VALUE
+    /** 동료 사이렌이 이 기기에서 진동하기 시작한 시각(C2 무동작 셈 멈춤). 멈춤이 없으면 MIN_VALUE. */
+    private var sirenPauseAt = Long.MIN_VALUE
 
     /** 무동작 확인을 쉬는 이유. */
     val rest: Rest get() = when {
@@ -110,8 +115,7 @@ class LoneWorkerLogic(var myBleId: String) {
 
     private val peerStore = LoneWorkerPeers()
 
-    private class BeaconSample(val label: String, val rssi: Int, val tMs: Long, val sid: Int)
-    private val beaconSamples = ArrayDeque<BeaconSample>()
+    private val beacons = BeaconHints()
 
     // ── 본인 상태 ──────────────────────────────────────────────
 
@@ -125,6 +129,8 @@ class LoneWorkerLogic(var myBleId: String) {
         floorAt = nowMs
         clearAccident()
         lastPlugAt = Long.MIN_VALUE
+        lastUnplugAt = Long.MIN_VALUE
+        sirenPauseAt = Long.MIN_VALUE
         mode = Mode.WATCHING
         trigger = ""
         modeSinceMs = nowMs
@@ -157,9 +163,10 @@ class LoneWorkerLogic(var myBleId: String) {
         carried = false
         if (on) {
             lastPlugAt = atMs
-            if (mode == Mode.CHECKING) closeCheck(atMs, true)
+            if (mode == Mode.CHECKING) closeCheck(atMs)
             if (mode != Mode.SOS) clearAccident()
         } else {
+            lastUnplugAt = atMs
             floorAt = atMs
         }
     }
@@ -203,13 +210,15 @@ class LoneWorkerLogic(var myBleId: String) {
     }
 
     /**
-     * 낙상(trigMs = 충격 표본 시각). 꺼짐·SOS·사고 확인 중이거나, 안전구역 안에서 충전 중이거나,
-     * 트리거 전 10초 안(또는 트리거 뒤)에 실제 전원 연결이 있었으면 무시한다. 의심 중 새 트리거는 의심 끝만 늘린다.
+     * 낙상(trigMs = 충격 표본 시각). 꺼짐·SOS·사고 확인 중이거나, 안전구역 안에서 충전 중(실제 해제가 트리거 앞뒤
+     * 10초 안이면 충전 중으로 본다)이거나, 트리거 전 10초 안(또는 트리거 뒤)에 실제 전원 연결이 있었으면 무시한다.
+     * 의심 중 새 트리거는 의심 끝만 늘린다.
      */
     fun onAccident(trigMs: Long) {
         if (!enabled || mode == Mode.SOS) return
         if (mode == Mode.CHECKING && trigger == "fall") return
-        if (charging && zoneInside) return
+        if (zoneInside && (charging ||
+                (lastUnplugAt != Long.MIN_VALUE && kotlin.math.abs(trigMs - lastUnplugAt) <= UNPLUG_FALL_MS))) return
         if (lastPlugAt != Long.MIN_VALUE && trigMs - lastPlugAt <= PLUG_EXCEPT_MS) return
         if (accidentUntil == Long.MIN_VALUE) accidentFrom = trigMs
         accidentUntil = maxOf(accidentUntil, trigMs + ACCIDENT_WATCH_MS)
@@ -233,26 +242,29 @@ class LoneWorkerLogic(var myBleId: String) {
     }
 
     fun tick(nowMs: Long) {
+        updateSirenPause(nowMs)
         updateSettle(nowMs)
+        // 정착한 안전구역에서는 무동작을 세지 않는다(기준을 계속 지금으로, C3)
+        if (zoneSettled) raiseStillBase(nowMs)
         accidentTick(nowMs)
-        if (enabled && !zoneSettled && rest == Rest.NONE && mode == Mode.WATCHING && nowMs - stillBase >= stillMs) {
-            toChecking("still", stillBase + stillMs, nowMs)
-        }
+        stillOpenAt()?.let { if (due(it, nowMs)) toChecking("still", it, nowMs) }
         // 확인 창 → SOS 는 거치·대기·안전구역과 무관하다
-        if (mode == Mode.CHECKING && due(modeSinceMs + respFor(trigger), nowMs)) toSos(nowMs)
+        sosAt()?.let { if (due(it, nowMs)) toSos(nowMs) }
         peerStore.tick(nowMs)
     }
 
     /** [괜찮음]: 열린 확인 창을 닫고 진행 중인 사고 의심도 끝낸다. */
     fun ackWorking(nowMs: Long): Boolean {
         if (mode != Mode.CHECKING) return false
-        closeCheck(nowMs, true)
+        closeCheck(nowMs)
+        clearAccident()
         return true
     }
 
+    /** SOS 진입 때 의심은 이미 지워졌고 SOS 중 낙상은 버리므로 의심을 따로 끝낼 것이 없다. */
     fun cancelSos(nowMs: Long): Boolean {
         if (mode != Mode.SOS) return false
-        closeCheck(nowMs, true)
+        closeCheck(nowMs)
         return true
     }
 
@@ -295,8 +307,7 @@ class LoneWorkerLogic(var myBleId: String) {
         if (s.check.isNotEmpty()) toChecking(s.check, nowMs, nowMs)
     }
 
-    fun responseLeftMs(nowMs: Long): Long =
-        if (mode == Mode.CHECKING) (respFor(trigger) - (nowMs - modeSinceMs)).coerceAtLeast(0L) else 0L
+    fun responseLeftMs(nowMs: Long): Long = sosAt()?.let { (it - nowMs).coerceAtLeast(0L) } ?: 0L
 
     /** 다음에 tick 이 필요한 시각: 기다리는 마감(아직 안 됐으면 그 시각, 지났으면 LATE_MS 뒤) 중 가장 이른 것. */
     fun nextCheckAt(nowMs: Long): Long? =
@@ -304,6 +315,9 @@ class LoneWorkerLogic(var myBleId: String) {
 
     /** 지난 마감이 센서 데이터를 기다리고 있다(모니터가 flush 를 요청한다). */
     fun waitingOnSensors(nowMs: Long): Boolean = deadlines().any { nowMs >= it && !due(it, nowMs) }
+
+    /** 지난 마감 가운데 지금 판정할 수 있는 것이 있다(모니터가 스로틀 중 즉시 판정을 예약할 때 쓴다). */
+    fun dueNow(nowMs: Long): Boolean = deadlines().any { due(it, nowMs) }
 
     private fun respFor(trig: String): Long = if (trig == "fall") ACCIDENT_RESPONSE_MS else responseMs
 
@@ -320,12 +334,20 @@ class LoneWorkerLogic(var myBleId: String) {
         return if (at <= accidentUntil) at else null
     }
 
-    private fun deadlines(): List<Long> {
-        val out = ArrayList<Long>(2)
-        if (mode == Mode.WATCHING || (mode == Mode.CHECKING && trigger == "still")) accidentOpenAt()?.let { out.add(it) }
-        if (mode == Mode.CHECKING) out.add(modeSinceMs + respFor(trigger))
-        return out
-    }
+    /** 확인 창 → SOS 마감. */
+    private fun sosAt(): Long? = if (mode == Mode.CHECKING) modeSinceMs + respFor(trigger) else null
+
+    /** 사고 확인 창을 여는 마감(지켜보는 중이거나 무동작 확인 창이 열려 있을 때). */
+    private fun fallOpenAt(): Long? =
+        if (mode == Mode.WATCHING || (mode == Mode.CHECKING && trigger == "still")) accidentOpenAt() else null
+
+    /** 무동작 확인 창을 여는 마감: 지님, 정착 구역 밖, 사이렌 멈춤 없음, 지켜보는 중일 때 기준 + stillMs. */
+    private fun stillOpenAt(): Long? =
+        if (enabled && !zoneSettled && sirenPauseAt == Long.MIN_VALUE && rest == Rest.NONE && mode == Mode.WATCHING) {
+            stillBase + stillMs
+        } else null
+
+    private fun deadlines(): List<Long> = listOfNotNull(stillOpenAt(), fallOpenAt(), sosAt())
 
     /**
      * 사고 의심 판정. 사고 마감이 되면 사고 확인 창을 연다. 무동작 확인 창이 이미 열려 있으면 두 마감 중
@@ -333,14 +355,13 @@ class LoneWorkerLogic(var myBleId: String) {
      */
     private fun accidentTick(nowMs: Long) {
         if (accidentUntil == Long.MIN_VALUE) return
-        val openAt = accidentOpenAt()
-        if (openAt == null) {
+        if (accidentOpenAt() == null) {
             if (nowMs >= accidentUntil) clearAccident()
             return
         }
+        val openAt = fallOpenAt() ?: return
         if (!due(openAt, nowMs)) return
-        if (mode == Mode.WATCHING ||
-            (mode == Mode.CHECKING && trigger == "still" && nowMs + ACCIDENT_RESPONSE_MS < modeSinceMs + responseMs)) {
+        if (mode == Mode.WATCHING || nowMs + ACCIDENT_RESPONSE_MS < modeSinceMs + responseMs) {
             toChecking("fall", openAt, nowMs)
         }
     }
@@ -351,7 +372,7 @@ class LoneWorkerLogic(var myBleId: String) {
         raiseStillBase(t)
         floorAt = t
         if (!charging) carried = true
-        if (mode == Mode.CHECKING) closeCheck(t, false)
+        if (mode == Mode.CHECKING) closeCheck(t)
     }
 
     private fun carry(t: Long) {
@@ -363,11 +384,25 @@ class LoneWorkerLogic(var myBleId: String) {
         if (t > stillBase) stillBase = t
     }
 
-    /** 확인 창·SOS 를 닫는다. endSuspicion 이면 사고 의심도 끝낸다(뚜렷한 움직임으로 닫힐 때만 의심 유지). */
-    private fun closeCheck(t: Long, endSuspicion: Boolean) {
+    /** 확인 창·SOS 를 닫는다. 사고 의심을 끝낼 호출처는 clearAccident 를 따로 부른다. */
+    private fun closeCheck(t: Long) {
         raiseStillBase(t)
         toWatching(t)
-        if (endSuspicion) clearAccident()
+    }
+
+    /** 사이렌 멈춤을 지금 끝냈다고 본 무동작 기준: 멈춤 전까지 쌓인 시간만 남긴다(멈춤 중 기준이 올랐으면 0부터). */
+    private fun pausedBase(nowMs: Long): Long =
+        if (sirenPauseAt == Long.MIN_VALUE) stillBase else maxOf(stillBase, nowMs - maxOf(0L, sirenPauseAt - stillBase))
+
+    /** 동료 사이렌이 이 기기에서 진동하는 동안 무동작 셈을 멈춘다(C2). 시작·끝은 그것을 처음 본 tick. */
+    private fun updateSirenPause(nowMs: Long) {
+        val on = alarmVibrates
+        if (on && sirenPauseAt == Long.MIN_VALUE) {
+            sirenPauseAt = nowMs
+        } else if (!on && sirenPauseAt != Long.MIN_VALUE) {
+            stillBase = pausedBase(nowMs)
+            sirenPauseAt = Long.MIN_VALUE
+        }
     }
 
     private fun clearAccident() {
@@ -414,34 +449,13 @@ class LoneWorkerLogic(var myBleId: String) {
 
     fun audiblePeers(): List<LoneWorkerPeers.Peer> = peerStore.audible()
 
-    /** 경보 진동은 동료 구조 요청 사이렌에서만. 확인 창·본인 SOS 중인 요구조자 의심 기기는 소리·화면만 쓴다. */
-    val alarmVibrates: Boolean get() = mode == Mode.WATCHING && peerStore.audible().isNotEmpty()
+    /** 경보 진동은 동료 구조 요청 사이렌에서만. 확인 창·본인 SOS·사고 의심 중인 요구조자 의심 기기는 진동 없이 소리·화면만 쓴다. */
+    val alarmVibrates: Boolean
+        get() = mode == Mode.WATCHING && accidentUntil == Long.MIN_VALUE && peerStore.audible().isNotEmpty()
 
-    // ── 최근 가장 강한 비콘 힌트 ───────────────────────────────
+    // ── 최근 가장 강한 비콘 힌트(BeaconHints) ──────────────────
 
-    fun noteBeacon(label: String, rssi: Int, nowMs: Long, sid: Int = 0) {
-        beaconSamples.addLast(BeaconSample(label, rssi, nowMs, sid))
-        while (beaconSamples.isNotEmpty() &&
-            (beaconSamples.size > BEACON_SAMPLE_CAP || nowMs - beaconSamples.first().tMs > BEACON_HINT_MS)
-        ) beaconSamples.removeFirst()
-    }
-
-    fun beaconHint(nowMs: Long): Pair<String, Int>? {
-        var best: BeaconSample? = null
-        for (s in beaconSamples) {
-            if (nowMs - s.tMs > BEACON_HINT_MS) continue
-            if (best == null || s.rssi > best.rssi) best = s
-        }
-        return best?.let { it.label to it.rssi }
-    }
-
-    /** 최근 60초 안 가장 강한 표본 중 짧은 ID(sid)가 0 이 아닌 것의 sid. 없으면 0. 광고 byte3-4 에 싣는다. */
-    fun beaconSid(nowMs: Long): Int {
-        var best: BeaconSample? = null
-        for (s in beaconSamples) {
-            if (s.sid == 0 || nowMs - s.tMs > BEACON_HINT_MS) continue
-            if (best == null || s.rssi > best.rssi) best = s
-        }
-        return best?.sid ?: 0
-    }
+    fun noteBeacon(label: String, rssi: Int, nowMs: Long, sid: Int = 0) = beacons.noteBeacon(label, rssi, nowMs, sid)
+    fun beaconHint(nowMs: Long): Pair<String, Int>? = beacons.beaconHint(nowMs)
+    fun beaconSid(nowMs: Long): Int = beacons.beaconSid(nowMs)
 }

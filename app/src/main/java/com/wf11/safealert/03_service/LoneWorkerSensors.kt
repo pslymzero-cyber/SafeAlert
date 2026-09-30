@@ -191,7 +191,7 @@ class LoneWorkerSensors(
                 val v = event.values
                 // 이 앱의 진동 구간 표본은 활동 통계에서만 뺀다. 낙상 감지에는 그대로 넣는다 (v1.1.99, F07·RR02)
                 when (analyzer.add(rawMs, v[0], v[1], v[2], masked = VibrationHelper.window.covers(rawMs + accelSkew))) {
-                    MotionAnalyzer.Signal.MOVED -> logic().onMoved(t)
+                    MotionAnalyzer.Signal.MOVED -> logic().onMoved(rawMs + accelSkew)
                     MotionAnalyzer.Signal.FALL -> logic().onAccident(analyzer.eventMs + accelSkew)
                     MotionAnalyzer.Signal.NONE -> {}
                 }

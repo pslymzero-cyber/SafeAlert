@@ -388,4 +388,43 @@ class LoneWorkerAccidentTest {
         chk.setEnabled(true, 42_000)
         for (t in 50_000L..400_000L step 10_000L) assertEquals(Mode.WATCHING, chk.seenAt(t))
     }
+
+    // C1: a real unplug within 10 s of the trigger (either side) counts as charging inside the zone (fell off the cradle)
+
+    @Test fun fall_just_after_unplug_in_safe_zone_is_ignored() {
+        val l = rule1(charging = true, zoneInside = true)
+        l.setCharging(false, 100_000)
+        l.onAccident(100_400)
+        for (t in 130_400L..430_400L step 10_000L) assertEquals(Mode.WATCHING, l.seenAt(t))
+    }
+
+    @Test fun unplug_just_after_fall_in_safe_zone_is_ignored() {
+        val l = rule1(charging = true, zoneInside = true)
+        l.setCharging(false, 101_000)
+        l.onAccident(100_000)
+        for (t in 130_000L..430_000L step 10_000L) assertEquals(Mode.WATCHING, l.seenAt(t))
+    }
+
+    @Test fun fall_11s_from_unplug_counts() {
+        val after = rule1(charging = true, zoneInside = true)
+        after.setCharging(false, 100_000)
+        after.onAccident(111_000)
+        assertEquals(Mode.WATCHING, after.seenAt(140_999))
+        assertEquals(Mode.CHECKING, after.seenAt(141_000))
+        assertEquals("fall", after.trigger)
+
+        val before = rule1(charging = true, zoneInside = true)
+        before.setCharging(false, 100_000)
+        before.onAccident(89_000)
+        assertEquals(Mode.CHECKING, before.seenAt(119_000))
+        assertEquals("fall", before.trigger)
+    }
+
+    @Test fun unplug_fall_window_only_inside_safe_zone() {
+        val l = rule1(charging = true)
+        l.setCharging(false, 100_000)
+        l.onAccident(100_400)
+        assertEquals(Mode.CHECKING, l.seenAt(130_400))
+        assertEquals("fall", l.trigger)
+    }
 }
