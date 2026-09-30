@@ -46,6 +46,8 @@ class LoneWorkerSensors(
     private var accelSkew = 0L
     private var stepSkew = 0L
     private var stepRegistered = false
+    /** 마지막으로 로그에 남긴 걸음 센서 등록 결과. 바뀔 때만 다시 남긴다. */
+    private var stepLogged: Boolean? = null
     /** 끝나기를 기다리는 flush 요청 시각. 없으면 MIN_VALUE. */
     private var flushAt = Long.MIN_VALUE
 
@@ -55,9 +57,11 @@ class LoneWorkerSensors(
     var registered = false
         private set
     /** 웨이크업 가속도 센서가 없어 일반 센서로 대신 등록했다. */
-    var fallbackWake = false
-        private set
+    private var fallbackWake = false
     val stalled: Boolean get() = stall.stalled
+    /** 등록된 센서 가운데 비웨이크업이 있어 감시 중 CPU 를 깨워 둬야 한다. */
+    val needsWake: Boolean
+        get() = sensorsNeedCpuWake(registered, !fallbackWake, stepRegistered, stepSensor?.isWakeUpSensor == true)
     /** 걸음 센서는 있는데 신체 활동 권한이 없다. */
     var stepPermissionMissing = false
         private set
@@ -130,7 +134,11 @@ class LoneWorkerSensors(
         val want = on && s != null && perm
         if (want && !stepRegistered) {
             stepRegistered = m?.registerListener(this, s, SensorManager.SENSOR_DELAY_NORMAL, 5_000_000, handler) == true
-            Log.i(TAG, "걸음 센서 등록=$stepRegistered wakeUp=${s?.isWakeUpSensor}")
+            if (stepLogged != stepRegistered) {
+                stepLogged = stepRegistered
+                Log.i(TAG, "걸음 센서 등록=$stepRegistered wakeUp=${s?.isWakeUpSensor} " +
+                    "fifoMax=${s?.fifoMaxEventCount} fifoReserved=${s?.fifoReservedEventCount}")
+            }
         } else if (!want && stepRegistered) {
             runCatching { m?.unregisterListener(this, s) }
             stepRegistered = false

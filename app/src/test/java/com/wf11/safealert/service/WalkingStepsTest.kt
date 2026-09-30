@@ -2,6 +2,7 @@ package com.wf11.safealert.service
 
 import com.wf11.safealert.service.LoneWorkerLogic.Rest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -131,5 +132,18 @@ class WalkingStepsTest {
         w.reset()
         assertEquals(Long.MIN_VALUE, w.closedTo)
         assertTrue(w.stepsIn(Long.MIN_VALUE, Long.MAX_VALUE) == 0)
+    }
+
+    @Test fun cpu_wake_needed_only_for_non_wakeup_registered_sensors() {
+        // (accelOn, accelWake, stepOn, stepWake)
+        assertFalse(sensorsNeedCpuWake(false, false, false, false))
+        assertFalse(sensorsNeedCpuWake(true, true, false, false))
+        assertFalse(sensorsNeedCpuWake(false, false, true, true))
+        assertFalse(sensorsNeedCpuWake(true, true, true, true))
+        assertTrue(sensorsNeedCpuWake(true, false, false, false))
+        assertTrue(sensorsNeedCpuWake(false, false, true, false))
+        assertTrue(sensorsNeedCpuWake(true, true, true, false))
+        assertTrue(sensorsNeedCpuWake(true, false, true, true))
+        assertTrue(sensorsNeedCpuWake(true, false, true, false))
     }
 }

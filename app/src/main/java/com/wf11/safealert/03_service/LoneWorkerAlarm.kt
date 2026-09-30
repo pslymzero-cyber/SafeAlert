@@ -50,6 +50,8 @@ object AlarmVolumeShare {
 /**
  * 단독 작업자 확인·구조 요청 전용 소리·진동 (v1.1.99).
  *
+ * 진동은 동료 구조 요청 사이렌에서만 건다. 본인 확인 창·본인 SOS(요구조자 의심 기기)는 소리·화면만 쓴다.
+ *
  * 충돌 경보용 소리 재생기와 완전히 분리한다. 코드로 만든 PCM(SirenGenerator)을 정적 AudioTrack 으로
  * 반복 재생하고 USAGE_ALARM 스트림을 쓴다. 앱의 소리 끄기 설정·충돌 경보 음소거와 무관하게 울린다.
  * 볼륨 변경은 setAlarmVolume(BleService 의 보호 setter)로만 하므로 볼륨 버튼 음소거로 오인되지 않는다.
@@ -81,19 +83,21 @@ class LoneWorkerAlarm(
     private var fallback: ToneGenerator? = null
     private var fallbackFor: Pattern? = null
     private var failedAt = 0L
+    private var vibrating = false
     private var restoreWaiting = false   // 볼륨 되돌리기를 충돌 경보 때문에 미루는 중 (재생은 이미 멈춤)
 
     private val audio: AudioManager?
         get() = runCatching { ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager }.getOrNull()
 
-    fun play(p: Pattern) {
+    /** vibrate 는 동료 구조 요청 사이렌일 때만 true(LoneWorkerLogic.alarmVibrates). */
+    fun play(p: Pattern, vibrate: Boolean = false) {
+        setVibration(vibrate)
         if (playing == p) return
         AlarmVolumeShare.sosSounding = true
         val t0 = SystemClock.elapsedRealtime()
         // 대체음이 나는 동안에는 5초에 한 번만 트랙을 다시 시도한다
         if (fallbackFor == p && t0 - failedAt < RETRY_MS) {
             applyVolume(p)
-            vibrate()
             return
         }
         releaseTrack()
@@ -102,13 +106,12 @@ class LoneWorkerAlarm(
         if (startTrack(p)) {
             stopFallback()
         } else {
-            Log.e(TAG, "사이렌 트랙 재생 실패 — 대체음·진동 유지, 5초 뒤 재시도")
+            Log.e(TAG, "사이렌 트랙 재생 실패 — 대체음 유지, 5초 뒤 재시도")
             releaseTrack()
             playing = null
             failedAt = t0
             startFallback(p)
         }
-        vibrate()
     }
 
     /** 정적 트랙은 쓰기 전에는 초기화 상태가 아니다 — 만들고, 쓰고, 상태를 확인한 뒤 반복 지정·재생한다 (v1.1.99, F01). */
@@ -168,11 +171,11 @@ class LoneWorkerAlarm(
         fallbackFor = null
     }
 
-    /** 5초마다: 다른 곳에서 취소된 진동을 다시 걸고, 충돌 경보가 낮춘 볼륨을 되돌린다. 트랙 실패 중이면 재시도한다. */
+    /** 5초마다: 다른 곳에서 취소된 진동을 다시 걸고(동료 사이렌일 때만), 충돌 경보가 낮춘 볼륨을 되돌린다. 트랙 실패 중이면 재시도한다. */
     fun refresh() {
         val p = playing ?: fallbackFor ?: return
-        if (playing == null) { play(p); return }
-        vibrate()
+        if (playing == null) { play(p, vibrating); return }
+        if (vibrating) vibrate()
         applyVolume(p)
     }
 
@@ -188,6 +191,7 @@ class LoneWorkerAlarm(
             releaseTrack()
             stopFallback()
             playing = null
+            vibrating = false
             VibrationHelper.stopAlarmLoop(ctx)
             volumeFault = null
         }
@@ -239,6 +243,12 @@ class LoneWorkerAlarm(
         val fault = if (now < target || silent) FAULT_TEXT else null
         if (fault != volumeFault) Log.w(TAG, "경보음 볼륨 상태 변경: ${fault ?: "정상"} (요청 ${target}, 실제 ${now})")
         volumeFault = fault
+    }
+
+    private fun setVibration(on: Boolean) {
+        if (on == vibrating) return
+        vibrating = on
+        if (on) vibrate() else VibrationHelper.stopAlarmLoop(ctx)
     }
 
     private fun vibrate() = VibrationHelper.vibrateAlarmLoop(ctx)

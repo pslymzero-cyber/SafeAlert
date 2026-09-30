@@ -61,7 +61,7 @@ class BootRestoreReceiver : BroadcastReceiver() {
             val updatedAt = runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).lastUpdateTime }
                 .getOrDefault(0L)
             if (userStopped(Build.VERSION.SDK_INT, exits, since, updatedAt)) {
-                prefs.edit().remove("running_mode").commit()
+                LoneWorkerResume.clearOnUserStop(prefs.edit()).commit()
                 Log.w(TAG, "user stopped after last start, skip restore ($running)")
                 return
             }

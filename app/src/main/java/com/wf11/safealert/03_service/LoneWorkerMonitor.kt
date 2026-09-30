@@ -6,7 +6,6 @@ import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
-import android.util.Log
 import com.wf11.safealert.firebase.SosRemote
 import com.wf11.safealert.utils.BeaconRegistry
 import com.wf11.safealert.utils.DevSettings
@@ -38,7 +37,6 @@ class LoneWorkerMonitor(
     }
 
     companion object {
-        private const val TAG = "LoneWorkerMonitor"
         private const val REFRESH_MS = 5_000L
         private const val TICK_MIN_MS = 1_000L
         private const val BEACON_NOTE_MS = 2_000L
@@ -89,9 +87,14 @@ class LoneWorkerMonitor(
     private val sidMissUntil = HashMap<Int, Long>()  // 라벨 없는 짧은 ID → 다시 찾을 수 있는 시각
     private val power = LoneWorkerPower(ctx, handler) { on, at -> onPower(on, at) }
     private val sensors = LoneWorkerSensors(ctx, handler, { logic }) { onSensorEvent(it) }
+    private val resume = LoneWorkerResume(ctx)
     private var lastRest = LoneWorkerLogic.Rest.NONE
-    /** (v1.1.99) 무동작 확인을 쉬는 이유(거치·움직임 대기). 메인 화면 안내용 */
-    val rest: LoneWorkerLogic.Rest get() = if (started) logic.rest else LoneWorkerLogic.Rest.NONE
+    /** (v1.1.99) 메인 화면 안내 줄: 센서 없음이면 감시 불가, 아니면 무동작 확인을 쉬는 이유(거치·움직임 대기). */
+    val banner: String? get() = when {
+        !started -> null
+        sensors.noSensor -> "사고·무동작 감시 불가 — 가속도 센서 없음 (동료 구조 요청 수신은 계속)"
+        else -> logic.rest.banner
+    }
     private var rendering = false
     private var renderAgain = false
 
@@ -106,7 +109,14 @@ class LoneWorkerMonitor(
         if (started) return
         started = true
         // 충전 중이면 거치로, 아니면 첫 뚜렷한 움직임 대기로 시작한다 (v1.1.99)
-        logic.start(now(), zoneInside, power.start())
+        val plugged = power.start()
+        val t0 = now()
+        logic.start(t0, zoneInside, plugged)
+        // 저장된 감시 상태를 이어가고, 꺼져 있던 동안의 전원 변화는 지금의 실제 연결·해제로 적용한다 (v1.1.99, B6)
+        resume.load(t0)?.let {
+            logic.resume(it, t0)
+            logic.setCharging(plugged, t0)
+        }
         // 저장된 본인 SOS 가 있으면 첫 렌더 전에 되살린다 — 같은 서버 키로 사이렌·광고 bit1 이 다시 켜진다 (v1.1.99, R3)
         sync.restoredTrigger()?.let { logic.restoreSos(it, now()) }
         notifier.createChannel()
@@ -331,7 +341,7 @@ class LoneWorkerMonitor(
 
     private val keepText: String get() = logic.rest.keepText
 
-    /** 조용한 안내 알림. 우선순위: 센서 없음, 센서 등록 실패, 센서 신호 끊김, 걸음 권한 없음, 해제 미전송. */
+    /** 조용한 안내 알림. 우선순위: 센서 없음, 센서 등록 실패, 센서 신호 끊김, 해제 미전송, 걸음 권한 없음. */
     private fun notice(): Pair<String, String>? = when {
         DevSettings.lwEnabled && sensors.noSensor ->
             "무동작 감시 불가" to "이 기기에는 가속도 센서가 없어 사고·무동작 감시를 하지 않습니다. 동료 구조 요청 수신은 계속됩니다"
@@ -339,10 +349,10 @@ class LoneWorkerMonitor(
             "무동작 감시 불가" to "가속도 센서를 등록하지 못했습니다. " + keepText + " 센서를 다시 등록합니다"
         DevSettings.lwEnabled && sensors.stalled ->
             "무동작 감시 불가" to "가속도 센서 신호가 끊겼습니다. " + keepText + " 센서를 다시 등록합니다"
-        DevSettings.lwEnabled && sensors.stepPermissionMissing ->
-            "걸음 감지 꺼짐" to "신체 활동 권한이 없어 걸음 대신 강한 움직임으로 판단합니다. 앱 설정에서 신체 활동을 허용하세요"
         sync.resolveFailing() ->
             "구조 요청 해제 미전송" to "서버에 해제를 기록하지 못했습니다. 계속 다시 보냅니다"
+        DevSettings.lwEnabled && sensors.stepPermissionMissing ->
+            "걸음 감지 꺼짐" to "신체 활동 권한이 없어 걸음 대신 강한 움직임으로 판단합니다. 앱 설정에서 신체 활동을 허용하세요"
         else -> null
     }
 
@@ -389,7 +399,7 @@ class LoneWorkerMonitor(
         lastAudible = ids
 
         when {
-            mode == LoneWorkerLogic.Mode.SOS || audible.isNotEmpty() -> alarm.play(LoneWorkerAlarm.Pattern.SIREN)
+            mode == LoneWorkerLogic.Mode.SOS || audible.isNotEmpty() -> alarm.play(LoneWorkerAlarm.Pattern.SIREN, logic.alarmVibrates)
             mode == LoneWorkerLogic.Mode.CHECKING -> alarm.play(LoneWorkerAlarm.Pattern.CHECK)
             else -> alarm.stop()
         }
@@ -398,13 +408,14 @@ class LoneWorkerMonitor(
         if (showScreen) notifier.openScreen()
         updateWakeLock(false)
         scheduleLoop()
+        resume.save(logic.snapshot(), t)
         uiListener?.invoke()
     }
 
     // ── 5초 갱신·웨이크락 ─────────────────────────────────────
 
     private fun needLoop() =
-        logic.mode != LoneWorkerLogic.Mode.WATCHING || logic.peers.isNotEmpty() || (sensors.fallbackWake && sensors.registered)
+        logic.mode != LoneWorkerLogic.Mode.WATCHING || logic.peers.isNotEmpty() || sensors.needsWake
 
     private fun scheduleLoop() {
         if (loopOn || !needLoop()) return
@@ -427,7 +438,7 @@ class LoneWorkerMonitor(
     }
 
     private fun updateWakeLock(renew: Boolean) {
-        val need = (sensors.fallbackWake && sensors.registered) || logic.mode != LoneWorkerLogic.Mode.WATCHING ||
+        val need = sensors.needsWake || logic.mode != LoneWorkerLogic.Mode.WATCHING ||
             logic.audiblePeers().isNotEmpty()
         if (!need) {
             releaseWakeLock()

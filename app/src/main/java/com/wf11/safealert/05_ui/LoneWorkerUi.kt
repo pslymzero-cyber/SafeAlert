@@ -174,7 +174,7 @@ object LoneWorkerUi {
         if (stopped && LoneWorkerMonitor.current?.sosActive == true) {
             if (runningMode(activity) != null) restore()
         }
-        val text = if (DevSettings.lwEnabled) LoneWorkerMonitor.current?.rest?.banner else null
+        val text = if (DevSettings.lwEnabled) LoneWorkerMonitor.current?.banner else null
         val vis = if (text != null) View.VISIBLE else View.GONE
         if (status.visibility != vis) status.visibility = vis
         if (text != null && status.text.toString() != text) status.text = text

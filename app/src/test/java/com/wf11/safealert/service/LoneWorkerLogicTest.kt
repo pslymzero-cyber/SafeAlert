@@ -424,4 +424,22 @@ class LoneWorkerLogicTest {
         assertTrue(l.cancelSos(73_000))
         assertEquals(Mode.WATCHING, l.mode)
     }
+
+    @Test fun alarm_vibrates_only_for_peer_siren_not_on_the_suspect_device() {
+        val l = newLogic()
+        assertFalse(l.alarmVibrates)
+        l.toChecking()
+        assertEquals(Mode.CHECKING, l.mode)
+        assertFalse(l.alarmVibrates)
+        l.onPeerBle("P", true, stillMs + 1)
+        assertFalse(l.alarmVibrates)
+        l.seenAt(stillMs + responseMs)
+        assertEquals(Mode.SOS, l.mode)
+        assertFalse(l.alarmVibrates)
+
+        val r = newLogic()
+        r.onPeerBle("P", true, 1_000)
+        assertEquals(1, r.audiblePeers().size)
+        assertTrue(r.alarmVibrates)
+    }
 }

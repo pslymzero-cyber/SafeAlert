@@ -711,11 +711,8 @@ class BleService : LifecycleService() {
                 // [v1.0.46 중지버그] 사용자가 직접 중지 → START_STICKY 복원 키를 동기(.commit) 제거.
                 //   stopAll() 내부가 아닌 여기서만 지운다: onDestroy→stopAll() 경로(시스템 킬·앱 종료)는
                 //   prefs 가 남아 있어야 Always-On 복원이 동작한다. device_id 는 사용자 식별자라 보존.
-                getSharedPreferences("safealert_prefs", MODE_PRIVATE).edit()
-                    .remove("running_mode")
-                    .remove("running_since")
-                    .remove("running_category")
-                    .commit()
+                //   (v1.1.99) 단독 작업자 재시작 상태도 함께 지운다.
+                LoneWorkerResume.clearOnUserStop(getSharedPreferences("safealert_prefs", MODE_PRIVATE).edit()).commit()
                 stopAll()
             }
             ACTION_TEST_START -> startTestAlert()

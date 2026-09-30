@@ -265,6 +265,36 @@ class LoneWorkerLogic(var myBleId: String) {
         toSos(nowMs)
     }
 
+    /** 재시작 이어가기 저장값. SOS 는 확인 창으로 저장하지 않는다(본인 SOS 는 SosLedger 가 복원). */
+    fun snapshot(): LoneWorkerResume.State {
+        val suspected = accidentUntil != Long.MIN_VALUE
+        val checking = mode == Mode.CHECKING
+        return LoneWorkerResume.State(
+            if (suspected) accidentFrom else null,
+            if (suspected) accidentUntil else null,
+            if (suspected) maxOf(accidentFrom, lastDistinctAt) else null,
+            if (checking) trigger else "",
+            if (checking) modeSinceMs else null,
+            charging, carried, stillBase
+        )
+    }
+
+    /**
+     * 저장 상태로 이어간다. start() 뒤, 전원 차이 적용·SOS 복원 전에 호출한다.
+     * 끝(트리거 뒤 5분)이 지난 사고 의심은 버리고, 열린 확인 창은 응답 시간을 처음부터 다시 센다.
+     */
+    fun resume(s: LoneWorkerResume.State, nowMs: Long) {
+        if (s.accidentFrom != null && s.accidentUntil != null && s.accidentUntil > nowMs) {
+            accidentFrom = s.accidentFrom
+            accidentUntil = s.accidentUntil
+            lastDistinctAt = s.accidentHold ?: s.accidentFrom
+        }
+        charging = s.charging
+        carried = s.carried
+        stillBase = s.stillBase
+        if (s.check.isNotEmpty()) toChecking(s.check, nowMs, nowMs)
+    }
+
     fun responseLeftMs(nowMs: Long): Long =
         if (mode == Mode.CHECKING) (respFor(trigger) - (nowMs - modeSinceMs)).coerceAtLeast(0L) else 0L
 
@@ -383,6 +413,9 @@ class LoneWorkerLogic(var myBleId: String) {
     fun silencePeers(nowMs: Long, targets: Map<String, String>) = peerStore.silence(nowMs, targets)
 
     fun audiblePeers(): List<LoneWorkerPeers.Peer> = peerStore.audible()
+
+    /** 경보 진동은 동료 구조 요청 사이렌에서만. 확인 창·본인 SOS 중인 요구조자 의심 기기는 소리·화면만 쓴다. */
+    val alarmVibrates: Boolean get() = mode == Mode.WATCHING && peerStore.audible().isNotEmpty()
 
     // ── 최근 가장 강한 비콘 힌트 ───────────────────────────────
 

@@ -148,7 +148,8 @@ class LoneWorkerSosSync(
                     if (gen == generation && !(rec.uid.isNotEmpty() && rec.uid == mine)) onPeer(rec)
                 }
             },
-            { handler.post { if (gen == generation) { remover = null; listenPath = "" } } }
+            // 취소돼도 서버 시각 리스너는 남아 있으므로 떼어 낸 뒤 비운다
+            { handler.post { if (gen == generation) { remover?.invoke(); remover = null; listenPath = "" } } }
         )
     }
 

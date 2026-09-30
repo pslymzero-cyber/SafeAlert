@@ -92,3 +92,10 @@ class WalkingSteps {
         while (t - steps.first() > KEEP_MS) steps.removeFirst()
     }
 }
+
+/**
+ * 감시 중 CPU 를 깨워 둬야 하나: 등록된 센서 가운데 비웨이크업이 하나라도 있으면 화면이 꺼진 동안
+ * 이벤트가 FIFO 에 쌓이거나 버려지므로 PARTIAL_WAKE_LOCK 이 필요하다(웨이크업 센서만이면 불필요).
+ */
+fun sensorsNeedCpuWake(accelOn: Boolean, accelWake: Boolean, stepOn: Boolean, stepWake: Boolean): Boolean =
+    (accelOn && !accelWake) || (stepOn && !stepWake)
