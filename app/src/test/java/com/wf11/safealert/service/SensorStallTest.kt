@@ -101,9 +101,9 @@ class SensorStallTest {
     }
 
     /**
-     * The monitor feeds broadcasts (not sticky) and the 10 s sticky check to the logic, confirms a stable change first,
-     * schedules its first tick at the end of start, holds the wake lock for any passed deadline and flushes only for
-     * missing data (X5, X7, M1).
+     * The monitor feeds broadcasts (not sticky) and the 10 s sticky check to the logic and ticks and renders on one path
+     * when it applied or the wait changed, tells the logic each sensor callback ended, schedules its first tick at the
+     * end of start, holds the wake lock for any passed deadline and flushes only for missing data (X7, M1, N1, Y4, Y16).
      */
     @Test
     fun monitor_feeds_raw_power_and_waits_awake_only_as_needed() {
@@ -112,13 +112,17 @@ class SensorStallTest {
         assertTrue(sourceBlock(m, "private val syncRunnable").contains("onPowerRaw(power.plugged(), true)"))
         val start = sourceBlock(m, "fun start(bleId: String").lines().last { it.isNotBlank() }
         assertTrue(start, start.trim().startsWith("tickNow()"))
-        val r = sourceBlock(m, "private fun onPowerRaw(")
-        val settle = r.indexOf("logic.settlePower(t)")
-        assertTrue(settle >= 0)
-        assertTrue(settle < r.indexOf("logic.powerRaw(on, t, sticky)"))
+        assertEquals(listOf("if (!started) return", "val changed = logic.powerRaw(on, now(), sticky)", "if (changed) tickNow()"),
+            body(m, "private fun onPowerRaw("))
+        assertEquals("render()", body(m, "private fun tickNow()").last())
+        assertEquals(listOf("if (!started) return", "logic.sensorEventEnd(t)"), body(m, "private fun onSensorEvent(").take(2))
         assertTrue(sourceBlock(m, "private fun updateWakeLock(").contains("logic.waitingToJudge(now())"))
         val tick = sourceBlock(m, "private fun tick(t: Long)")
         assertTrue(tick.contains("logic.waitingOnSensors(t)"))
         assertTrue(tick.contains("if (waiting) sensors.flush()"))
     }
+
+    /** Trimmed non-blank lines of a monitor function after its head line. */
+    private fun body(src: String, head: String): List<String> =
+        sourceBlock(src, head).lines().drop(1).map { it.trim() }.filter { it.isNotEmpty() }
 }

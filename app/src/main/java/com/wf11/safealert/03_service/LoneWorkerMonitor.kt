@@ -195,9 +195,11 @@ class LoneWorkerMonitor(
     /**
      * 센서 콜백 뒤: 상태·쉼 이유가 바뀌었으면 바로, 아니면 1초에 한 번 tick·render 한다. 마감 시각이 지난 뒤(깊은 잠으로
      * 예약이 늦어도) 그 마감을 센서 데이터가 덮으면 스로틀과 무관하게 이 자리에서 판정한다 — 같은 배치의 뒤 데이터보다 먼저(C5) (v1.1.99).
+     * 콜백마다 판정 순서 장치에 끝을 알린다 — 전원 대기로만 막힌 마감 뒤 입력은 판정 뒤로(N1).
      */
     private fun onSensorEvent(t: Long) {
         if (!started) return
+        logic.sensorEventEnd(t)
         if (logic.mode == lastMode && logic.rest == lastRest && t - lastTickAt < TICK_MIN_MS &&
             !(t >= dueFrom && logic.dueNow(t))) return
         lastTickAt = t
@@ -230,18 +232,11 @@ class LoneWorkerMonitor(
 
     private val deadlineRunnable = Runnable { tickNow() }
 
-    /**
-     * 전원 원시 값: 2초 안정된 변화를 먼저 확정하고 원시 값을 판정 로직의 디바운스에 넣는다. 확정이 있으면 판정·렌더,
-     * 대기만 바뀌었으면 판정·다음 예약만 하고 모드·쉼 이유가 바뀐 때만 렌더한다 (v1.1.99).
-     */
+    /** 전원 원시 값: 판정 로직 디바운스에 넣고, 적용했거나 대기가 바뀌었으면 판정·렌더 한 경로(tickNow) (v1.1.99). */
     private fun onPowerRaw(on: Boolean, sticky: Boolean) {
         if (!started) return
-        val t = now()
-        val settled = logic.settlePower(t)
-        if (!logic.powerRaw(on, t, sticky) && !settled) return
-        lastTickAt = t
-        tick(t)
-        if (settled || logic.mode != lastMode || logic.rest != lastRest) render() else updateWakeLock(false)
+        val changed = logic.powerRaw(on, now(), sticky)
+        if (changed) tickNow()
     }
 
     /**

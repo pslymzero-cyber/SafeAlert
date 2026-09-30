@@ -92,7 +92,7 @@ class RestartHold {
 
     /**
      * 새 확인 창 게이트(한 곳): 전원 보류 중이거나 들고 있는 복원 창이 있으면 보류 끝 시각(보류 중이면 아직 안 온 시각,
-     * 끝났으면 그 창을 여는 마감), 아니면 null. 판정 시각은 LoneWorkerLogic.due.
+     * 끝났으면 그 창을 여는 마감), 아니면 null. 판정 시각은 JudgeOrder.due.
      */
     fun gate(nowMs: Long): Long? = powerUntil.takeIf { powerHeld(nowMs) || check.isNotEmpty() }
 
@@ -104,11 +104,14 @@ class RestartHold {
 
     /** 디바운스가 확정한 전원 변화(atMs = 첫 변화 시각) — 첫 확정이고 첫 변화가 창 안이면 재시작 변화로 true, 보류는 atMs + DEBOUNCE_MS 에 끝난다. */
     fun powerSettled(atMs: Long): Boolean {
-        val restart = atMs < powerWindowEnd
+        val restart = inWindow(atMs)
         powerWindowEnd = Long.MIN_VALUE
         if (restart) powerUntil = atMs + PowerDebounce.DEBOUNCE_MS
         return restart
     }
+
+    /** 재시작 창 안에서 시작한 변화 — 첫 확정 전까지(E9·L2). */
+    fun inWindow(atMs: Long): Boolean = atMs < powerWindowEnd
 
     /** 들고 있던 확인 창 종류를 한 번 돌려주고 비운다. */
     fun takeCheck(): String? = check.ifEmpty { null }?.also { check = "" }

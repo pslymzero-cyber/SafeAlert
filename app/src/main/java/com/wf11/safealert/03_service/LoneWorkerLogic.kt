@@ -24,7 +24,7 @@ package com.wf11.safealert.service
  * 걸음: 걸음 센서가 낸 걸음 가운데 그 시각을 덮는 1초 가속도 창이 걷는 모양이고 앱 진동 구간이 아닌 것(WalkingSteps).
  * 뚜렷한 움직임: 최근 10초 안 5걸음. 걸음 센서를 쓸 수 없으면 3초 이상 이어진 걷는 모양 창. 확인 창을 닫는 셈은 창이 뜬 뒤 것만(전원 해제로 다시 세지 않음), 해제 뒤 지님은 뺀 시각 뒤 것으로 따로 센다(M2).
  * 확인 창(두 종류)은 [괜찮음]·뚜렷한 움직임·실제 전원 연결로 닫힌다. 실제 연결은 사고 의심도 끝낸다.
- * 무동작 stillMs→확인 창, 사고 30초 무움직임→확인 창, 확인 창→SOS 마감은 마감 시각까지의 센서 데이터가 들어온 뒤(없으면 LATE_MS 뒤), 그리고 그 전(같은 시각 포함)에 시작한 전원 변화가 확정되거나 버려진 뒤(최대 약 2초, 확정이면 첫 변화 시각부터 적용) 판정한다(M1).
+ * 마감 판정(무동작·사고 창 열기, SOS)은 마감까지의 센서 데이터가 들어온 뒤(없으면 LATE_MS 뒤), 그 전(같은 시각 포함)에 시작한 전원 변화가 확정·버림될 때까지 기다리고(M1), 그동안 들어온 센서 입력은 판정 뒤 반영하며(N1), 마감 뒤 시작한 변화는 판정 뒤 적용한다(Q1) — 순서는 JudgeOrder 한 곳.
  * SOS 는 구역 진입·기능 끄기·전원 변화로 끝나지 않고 오직 cancelSos 로만 끝난다.
  * 재시작 뒤 전원·구역 보류는 RestartHold.
  * 동료 SOS 수신은 LoneWorkerPeers 가 회차(bleId, ep) 단위 항목으로 다룬다(서버 기록과 BLE 비트가 같은 회차면 한 항목).
@@ -95,7 +95,7 @@ class LoneWorkerLogic(var myBleId: String) {
     private var zoneInsideSince = 0L
 
     // 지님: 충전 안 함이면 대기가 끝났고, 충전 중이면 걸음으로 지님이 확인됐다
-    private var charging = false
+    private var charging = false // 로직에 적용한 전원 — JudgeOrder 가 마감 순서에 맞춰 옮기므로 디바운스 확정값(PowerDebounce.reported)과 미루는 동안 다르다
     private var chargeAt = 0L
     private var carried = false
 
@@ -109,10 +109,10 @@ class LoneWorkerLogic(var myBleId: String) {
     private var accidentUntil = Long.MIN_VALUE
     private var lastPlugAt = Long.MIN_VALUE
     private var lastUnplugAt = Long.MIN_VALUE
-    /** 동료 사이렌 진동 중 무동작 셈 멈춤(C2), 전원 디바운스, 재시작 뒤 전원·구역 보류. */
+    /** 동료 사이렌 진동 중 무동작 셈 멈춤(C2), 재시작 뒤 전원·구역 보류, 판정 순서(전원 디바운스 포함, JudgeOrder). */
     private val siren = SirenPause()
-    private val power = PowerDebounce()
     private val hold = RestartHold()
+    private val order = JudgeOrder(hold, ::deadlines, ::sensedTo, ::setCharging)
 
     /** 무동작 확인을 쉬는 이유. */
     val rest: Rest get() = when {
@@ -139,7 +139,7 @@ class LoneWorkerLogic(var myBleId: String) {
         lastPlugAt = Long.MIN_VALUE
         lastUnplugAt = Long.MIN_VALUE
         siren.reset()
-        power.seed(charging)
+        order.reset(charging)
         hold.reset()
         mode = Mode.WATCHING
         trigger = ""
@@ -162,11 +162,10 @@ class LoneWorkerLogic(var myBleId: String) {
     }
 
     /**
-     * 디바운스가 확정한 실제 전원 변화(settlePower 만 부른다, atMs = 디바운스 전 첫 변화 시각). 연결: 새 거치 — 지님을 지우고, 열린 확인 창은 응답으로 보고 닫으며,
+     * 디바운스가 확정한 실제 전원 변화(JudgeOrder 가 마감 순서대로 적용한다, atMs = 디바운스 전 첫 변화 시각). 연결: 새 거치 — 지님을 지우고, 열린 확인 창은 응답으로 보고 닫으며,
      * SOS 가 아니면 사고 의심을 끝낸다(꽂는 행위 = 사람이 있음). 해제: 첫 뚜렷한 움직임 대기(확정 전 해제 뒤 걸음으로 이미 성립했으면 그 걸음부터 지님, 걸음 셈 기준은 바꾸지 않는다). SOS 는 전원 변화로 끝나지 않는다.
      */
     private fun setCharging(on: Boolean, atMs: Long) {
-        if (on == charging) return
         val restart = hold.powerSettled(atMs)
         charging = on
         chargeAt = atMs
@@ -185,6 +184,7 @@ class LoneWorkerLogic(var myBleId: String) {
 
     /** 닫힌 1초 가속도 창(endMs 는 이 기준으로 바꾼 시각). 걸음을 판정하고, 걸음 센서가 없으면 걷는 모양 창으로 대신한다. */
     fun onWindow(w: MotionAnalyzer.Window) {
+        if (order.keep { onWindow(w) }) return
         val accepted = walk.onWindow(w.endMs, w.strong) ?: return
         for (t in accepted) acceptStep(t)
         if (stepsAvailable || !w.strong) return
@@ -196,11 +196,14 @@ class LoneWorkerLogic(var myBleId: String) {
 
     /** 걸음 감지 1건(센서 시각을 바꾼 값). vibrating = 그 시각이 앱 진동 구간이다. 걷는 모양일 때만 센다. */
     fun onStep(tMs: Long, vibrating: Boolean = false) {
-        walk.onStep(tMs, vibrating)?.let { acceptStep(it) }
+        if (!order.keep { onStep(tMs, vibrating) }) walk.onStep(tMs, vibrating)?.let { acceptStep(it) }
     }
 
     /** 걸음 센서 flush 완료: 요청 시각(tMs)까지의 걸음은 다 들어왔다. */
-    fun stepsFlushed(tMs: Long) = walk.stepsFlushed(tMs)
+    fun stepsFlushed(tMs: Long) { if (!order.keep { stepsFlushed(tMs) }) walk.stepsFlushed(tMs) }
+
+    /** 센서 콜백 하나가 끝났다(모니터가 콜백마다) — 막힌 마감이 생겼으면 뒤 입력을 보관, 풀렸으면 판정 뒤 재생(N1). */
+    fun sensorEventEnd(nowMs: Long) = order.eventEnd(nowMs, ::decide)
 
     /** 받아들인 걸음. 지님은 chargeAt 뒤 걸음(충전 중 30초 안 10걸음, 뺀 뒤 첫 뚜렷한 움직임), 창 닫기·사고 리셋은 floorAt 뒤 걸음으로 센다(M2). */
     private fun acceptStep(t: Long) {
@@ -211,18 +214,18 @@ class LoneWorkerLogic(var myBleId: String) {
     private fun distinct(after: Long, t: Long) = walk.within(after, t, DISTINCT_STEPS, DISTINCT_STEP_WINDOW_MS)
 
     /** 움직임(MOVED)은 무동작 타이머만 갱신한다. 열린 확인 창은 닫지 않는다 (D-02, D-07). */
-    fun onMoved(nowMs: Long) = raiseStillBase(nowMs)
+    fun onMoved(nowMs: Long) { if (!order.keep { onMoved(nowMs) }) raiseStillBase(nowMs) }
 
     /** 가속도 센서가 1분 동안 응답하지 않았다: 움직임 대기를 끝내고 지님으로 센다. */
     fun sensorSilent(nowMs: Long) {
-        if (charging || carried) return
+        if (order.keep { sensorSilent(nowMs) } || charging || carried) return
         carried = true
         raiseStillBase(nowMs)
     }
 
     /** 낙상(trigMs = 충격 표본 시각). 꺼짐·SOS·사고 확인 중이면 버리고, 그 밖의 무시 조건은 규칙 1(클래스 KDoc). 의심 중 새 트리거는 의심 끝만 늘린다. */
     fun onAccident(trigMs: Long) {
-        if (!enabled || mode == Mode.SOS) return
+        if (order.keep { onAccident(trigMs) } || !enabled || mode == Mode.SOS) return
         if (mode == Mode.CHECKING && trigger == "fall") return
         if (zoneInside && (charging ||
                 (lastUnplugAt != Long.MIN_VALUE && kotlin.math.abs(trigMs - lastUnplugAt) <= UNPLUG_FALL_MS))) return
@@ -257,21 +260,26 @@ class LoneWorkerLogic(var myBleId: String) {
     }
 
     fun tick(nowMs: Long) {
-        settlePower(nowMs) // 2초 안정된 전원 변화를 먼저 확정한다 — 확정 소비는 settlePower 한 곳(tick·powerRaw 첫머리)
+        settlePower(nowMs) // 미룰 것 없는 안정 전원 변화를 먼저 적용한다(JudgeOrder)
         stillBase = siren.update(alarmVibrates, nowMs, stillBase, stillMs)
         updateSettle(nowMs)
         // 정착한 안전구역에서는 무동작을 세지 않는다(기준을 계속 지금으로, C3)
         if (zoneSettled) raiseStillBase(nowMs)
+        order.judge(nowMs, ::decide)
+        peerStore.tick(nowMs)
+    }
+
+    /** 판정 한 벌: 보류 게이트·사고·무동작 창 열기와 SOS 마감 — 순서·반복·재생은 JudgeOrder.judge. */
+    private fun decide(nowMs: Long) {
         // 보류 게이트: 재시작 전원 보류 중, 그리고 들고 있던 창을 열기 전에는 확인 창을 새로 열지 않는다(E9·L3)
         val gate = hold.gate(nowMs)
-        if (gate?.let { due(it, nowMs) } != false) {
+        if (gate?.let { order.due(it, nowMs) } != false) {
             if (gate != null) hold.takeCheck()?.let { if (enabled && mode == Mode.WATCHING) toChecking(it, gate, nowMs) }
             accidentTick(nowMs)
-            stillOpenAt()?.let { if (due(it, nowMs)) toChecking("still", it, nowMs) }
+            stillOpenAt()?.let { if (order.due(it, nowMs)) toChecking("still", it, nowMs) }
         }
         // 확인 창 → SOS 는 거치·대기·안전구역과 무관하다
-        sosAt()?.let { if (due(it, nowMs)) toSos(nowMs) }
-        peerStore.tick(nowMs)
+        sosAt()?.let { if (order.due(it, nowMs)) toSos(nowMs) }
     }
 
     /** [괜찮음]: 열린 확인 창을 닫고 진행 중인 사고 의심도 끝낸다. */
@@ -319,14 +327,11 @@ class LoneWorkerLogic(var myBleId: String) {
         saved?.let { resume(it, nowMs) }
     }
 
-    /** 전원 원시 값(sticky = 스티키 배터리 보정, 대기 중이면 버림). 2초 안정된 변화를 먼저 확정하고, 대기가 바뀌었으면 true(모니터가 다시 예약). */
-    fun powerRaw(on: Boolean, tMs: Long, sticky: Boolean = false): Boolean {
-        settlePower(tMs)
-        return power.raw(on, tMs, sticky).also { if (it) hold.powerWait(power, tMs) }
-    }
+    /** 전원 원시 값(sticky = 스티키 배터리 보정, 대기 중이면 버림). 적용했거나 대기가 바뀌었으면 true(모니터가 판정·렌더). */
+    fun powerRaw(on: Boolean, tMs: Long, sticky: Boolean = false): Boolean = order.raw(on, tMs, sticky)
 
-    /** 2초 안정된 전원 변화를 확정해 적용했으면 true — 확정 소비는 여기 한 곳(tick·powerRaw 첫머리, 모니터 전원 입구). */
-    fun settlePower(t: Long): Boolean = power.poll(t)?.let { (on, at) -> setCharging(on, at); true } ?: false
+    /** 2초 안정된 전원 변화 가운데 미룰 것 없는 것을 적용했으면 true(JudgeOrder.settle). */
+    fun settlePower(t: Long): Boolean = order.settle(t)
 
     /**
      * 끝(트리거 뒤 5분)이 지난 사고 의심은 버리고, 열린 확인 창은 응답 시간을 처음부터 다시 센다.
@@ -352,26 +357,16 @@ class LoneWorkerLogic(var myBleId: String) {
 
     fun responseLeftMs(nowMs: Long): Long = sosAt()?.let { (it - nowMs).coerceAtLeast(0L) } ?: 0L
 
-    /** 다음에 tick 이 필요한 시각: 전원 확정 확인과 기다리는 마감(보류 중이면 보류 끝, 아직 안 됐으면 그 시각, 지났으면 LATE_MS 뒤) 중 가장 이른 것. */
-    fun nextCheckAt(nowMs: Long): Long? = (deadlines(nowMs).map { if (nowMs < it) it else it + LATE_MS }.filter { it > nowMs } +
-        listOfNotNull(power.confirmAt)).minOrNull()
-
-    /** 지난 마감이 판정을 기다린다 — 센서 데이터 또는 그 전에 시작한 전원 대기(모니터가 웨이크락을 잡는다). */
-    fun waitingToJudge(nowMs: Long): Boolean = deadlines(nowMs).any { nowMs >= it && !due(it, nowMs) }
-
-    /** 그 가운데 마감까지의 센서 데이터가 모자란 것이 있다(모니터가 flush 를 요청한다 — 전원 대기만이면 요청하지 않는다). */
-    fun waitingOnSensors(nowMs: Long): Boolean = deadlines(nowMs).any { nowMs >= it && !due(it, nowMs) && sensedTo() < it }
-
-    /** 지난 마감 가운데 지금 판정할 수 있는 것이 있다(모니터가 스로틀 중 즉시 판정을 예약할 때 쓴다). */
-    fun dueNow(nowMs: Long): Boolean = deadlines(nowMs).any { due(it, nowMs) }
+    /** 모니터 예약(nextCheckAt)·웨이크락(waitingToJudge)·flush(waitingOnSensors)·즉시 판정(dueNow) — JudgeOrder. */
+    fun nextCheckAt(nowMs: Long): Long? = order.nextCheckAt(nowMs)
+    fun waitingToJudge(nowMs: Long): Boolean = order.waitingToJudge(nowMs)
+    fun waitingOnSensors(nowMs: Long): Boolean = order.waitingOnSensors(nowMs)
+    fun dueNow(nowMs: Long): Boolean = order.dueNow(nowMs)
 
     private fun respFor(trig: String): Long = if (trig == "fall") ACCIDENT_RESPONSE_MS else responseMs
 
     /** 센서 데이터가 들어온 끝 시각: 닫힌 가속도 창 끝, 걸음 센서를 쓰면 걸음 전달 시각과 둘 중 이른 쪽. */
     private fun sensedTo(): Long = if (stepsAvailable) minOf(walk.closedTo, walk.stepSeenTo) else walk.closedTo
-
-    /** 마감 at 을 지금 판정해도 되나(판정 시각 게이트 한 곳): 지났고, at 이전에 시작한 전원 대기가 없고(M1 — tick 이 먼저 확정하므로 첫 변화 + DEBOUNCE_MS 를 넘겨 막지 않는다), 마감까지의 데이터가 들어왔거나 LATE_MS 가 지났다(C5). */
-    private fun due(at: Long, nowMs: Long): Boolean = nowMs >= at && !power.pendingBy(at) && (sensedTo() >= at || nowMs >= at + LATE_MS)
 
     /** 사고 확인 창을 여는 마감: 마지막 뚜렷한 움직임(없으면 트리거)부터 30초. 의심 5분을 넘으면 없음. */
     private fun accidentOpenAt(): Long? {
@@ -412,7 +407,7 @@ class LoneWorkerLogic(var myBleId: String) {
             return
         }
         val openAt = fallOpenAt(nowMs) ?: return
-        if (due(openAt, nowMs)) toChecking("fall", openAt, nowMs)
+        if (order.due(openAt, nowMs)) toChecking("fall", openAt, nowMs)
     }
 
     /** 뚜렷한 움직임: 무동작 시간을 새로 세고, 열린 확인 창을 닫는다(사고 의심은 계속). 대기 끝(지님)은 chargeAt 기준 규칙이 따로 본다. */

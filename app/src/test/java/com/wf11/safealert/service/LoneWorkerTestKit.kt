@@ -20,12 +20,12 @@ internal fun newLogic(charging: Boolean = false, zoneInside: Boolean = false, ca
     }
 
 /**
- * The raw power changes to on at `at` and stays for the debounce; the logic confirms it without a tick, applied
- * from `at` (the product path of a later raw or tick).
+ * The raw power changes to on at `at` and stays for the debounce; the monitor's confirm tick (CONFIRM_MS later)
+ * applies it from `at`, judges and replays held inputs (the product order).
  */
 internal fun LoneWorkerLogic.reportPower(on: Boolean, at: Long) {
     powerRaw(on, at)
-    settlePower(at + PowerDebounce.DEBOUNCE_MS)
+    tick(at + PowerDebounce.CONFIRM_MS)
 }
 
 private const val WIN = MotionAnalyzer.WINDOW_MS
@@ -61,6 +61,64 @@ internal fun LoneWorkerLogic.strongWindows(vararg ends: Long) {
 internal fun LoneWorkerLogic.sensed(t: Long) {
     onWindow(MotionAnalyzer.Window(t, false))
     stepsFlushed(t)
+}
+
+/** One sensor callback (sense) or one raw power value (on) at `at`, for drive. */
+internal class Feed(val at: Long, val on: Boolean? = null, val sense: (LoneWorkerLogic.() -> Unit)? = null)
+
+/**
+ * Monitor model: tick at from, the scheduled ticks (nextCheckAt) before each feed, a sensor callback then its end and
+ * an immediate tick when a passed deadline is due (C5), a raw power value then a tick when it changed. Sensor feeds
+ * with `at` in late are held back and delivered in order at deliverAt, after the ticks and power feeds up to that
+ * time. Returns each observed change of "mode trigger @modeSinceMs", then "end mode trigger rest".
+ */
+internal fun LoneWorkerLogic.drive(from: Long, feeds: List<Feed>, until: Long,
+                                   late: LongRange = LongRange.EMPTY, deliverAt: Long = Long.MAX_VALUE): List<String> {
+    val seen = mutableListOf<String>()
+    var now = from
+    fun note() {
+        val s = "$mode $trigger @$modeSinceMs"
+        if (seen.lastOrNull() != s) seen += s
+    }
+    fun upTo(t: Long) {
+        while (true) {
+            val n = nextCheckAt(now) ?: break
+            if (n > t) break
+            now = n
+            tick(n)
+            note()
+        }
+        now = maxOf(now, t)
+    }
+    fun sense(f: Feed, t: Long) {
+        f.sense!!.invoke(this)
+        sensorEventEnd(t)
+        if (dueNow(t)) tick(t)
+        note()
+    }
+    val parked = mutableListOf<Feed>()
+    var delivered = deliverAt == Long.MAX_VALUE
+    fun deliver() {
+        upTo(deliverAt)
+        for (f in parked) sense(f, deliverAt)
+        delivered = true
+    }
+    tick(from)
+    note()
+    for (f in feeds) {
+        if (!delivered && (f.at > deliverAt || f.at == deliverAt && f.on == null && f.at !in late)) deliver()
+        upTo(f.at)
+        when {
+            f.on != null -> { if (powerRaw(f.on, f.at)) tick(f.at); note() }
+            f.at in late -> parked += f
+            else -> sense(f, f.at)
+        }
+    }
+    if (!delivered) deliver()
+    upTo(until)
+    tick(until)
+    note()
+    return seen + "end $mode $trigger $rest"
 }
 
 /** Acknowledge every peer entry (the [OK] button on all of them). */

@@ -17,7 +17,7 @@ class PowerDebounce {
         const val CONFIRM_MS = DEBOUNCE_MS + 50
     }
 
-    /** 마지막으로 확정한 값. */
+    /** 2초 안정돼 확정한 값(로직 적용은 JudgeOrder 가 마감 순서에 맞춰 한다). */
     var reported = false
         private set
     /** 확정되지 않은 변화의 첫 변화 시각. 없으면 MIN_VALUE. */
@@ -62,7 +62,7 @@ class PowerDebounce {
 
 /**
  * 외부 전원(PDA 충전 거치대·보조배터리) 연결 방송 수신부 (v1.1.99).
- * 원시 값을 onRaw 로 넘기고, 2초 디바운스·확정은 판정 로직(LoneWorkerLogic.powerRaw, PowerDebounce)이 맡는다.
+ * 원시 값을 onRaw 로 넘기고, 2초 디바운스·확정은 판정 로직(JudgeOrder.raw, PowerDebounce)이 맡는다.
  * 메인 스레드에서만 부른다.
  */
 class LoneWorkerPower(
