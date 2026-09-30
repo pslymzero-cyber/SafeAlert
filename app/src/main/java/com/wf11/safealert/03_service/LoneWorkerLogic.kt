@@ -10,8 +10,8 @@ package com.wf11.safealert.service
  *
  * 규칙 1(사고): 낙상 신호 하나로 그 충격 시각부터 5분 동안 사고를 의심한다(직전 움직임 조건 없음).
  * 그 안에서 뚜렷한 움직임이 30초 동안 없으면 사고 확인 창("fall", 1분)을 연다. 거치·안전구역과 무관하지만,
- * 안전구역 안(들어서자마자, 원시 안쪽)에서 충전 중이면(트리거 앞뒤 10초 안 실제 해제 포함, 재시작 때 적용한 해제는 빼고 — 크래들에서 떨어짐)
- * 낙상을 무시한다. 트리거 전 10초 안(또는 트리거 뒤)의 실제 전원 연결(재시작 때 적용한 연결은 빼고)은 거치대에 꽂는 동작으로 보고 그 트리거를 버린다.
+ * 안전구역 안(들어서자마자, 원시 안쪽)에서 충격 순간 충전 중이었으면(충격 뒤 실제 해제는 충전 중이었다, 충격 전 10초 안 실제 해제도 포함 — 크래들에서 떨어짐,
+ * 재시작 때 적용한 해제는 빼고) 낙상을 무시한다(N2, FALL 처리 시각과 무관). 트리거 전 10초 안(또는 트리거 뒤)의 실제 전원 연결(재시작 때 적용한 연결은 빼고)은 거치대에 꽂는 동작으로 보고 그 트리거를 버린다.
  * 의심 중 실제 연결은 사람이 있다는 뜻이라 의심을 끝낸다.
  * 사고 확인 창을 [괜찮음]으로 닫으면 의심이 끝나고, 뚜렷한 움직임으로 닫히면 5분이 끝날 때까지 계속 지켜본다.
  *
@@ -49,7 +49,7 @@ class LoneWorkerLogic(var myBleId: String) {
         const val ACCIDENT_RESPONSE_MS = 60_000L
         /** 트리거 전 이 시간 안의 실제 전원 연결은 거치대에 꽂는 동작이다. */
         const val PLUG_EXCEPT_MS = 10_000L
-        /** 세이프존 충전 중 낙상 무시를 실제 해제 앞뒤 이 시간까지 넓힌다(크래들에서 떨어지며 빠진 경우, C1). */
+        /** 충격 전 이 시간 안의 실제 해제도 충격 때 충전 중으로 본다(크래들에서 떨어지며 빠진 경우, C1). 충격 뒤 해제는 충격 때 충전 중(N2). */
         const val UNPLUG_FALL_MS = 10_000L
         /** 걸음은 미끄러지는 시간 창으로 센다: 뚜렷한 움직임 = 최근 10초 안 5걸음, 충전 중 지님 = 최근 30초 안 10걸음. */
         const val DISTINCT_STEPS = 5
@@ -178,7 +178,7 @@ class LoneWorkerLogic(var myBleId: String) {
         } else {
             if (!restart) lastUnplugAt = atMs
             // 확정 전에 받은 뺀 뒤 걸음(걸음 센서가 없으면 걷는 모양 창 3초)으로 이미 뚜렷했으면 그때부터 지님, 걸음 셈 기준(floorAt)은 그대로(M2)
-            (if (stepsAvailable) walk.firstWithin(atMs, DISTINCT_STEPS, DISTINCT_STEP_WINDOW_MS) else walk.firstRunEnd(atMs, STRONG_RUN_MS))?.let { carry(it) }
+            firstDistinct(atMs)?.let { carry(it) }
         }
     }
 
@@ -189,9 +189,8 @@ class LoneWorkerLogic(var myBleId: String) {
         for (t in accepted) acceptStep(t)
         if (stepsAvailable || !w.strong) return
         val end = w.endMs
-        if (!carried && (if (charging) walk.strongIn(maxOf(chargeAt, end - CARRY_STEP_WINDOW_MS), end) >= CARRY_FALLBACK_WINDOWS
-            else walk.runSince(chargeAt) >= STRONG_RUN_MS)) carry(end)
-        if (walk.runSince(floorAt) >= STRONG_RUN_MS) onDistinct(end)
+        if (!carried) (if (charging) end.takeIf { walk.strongIn(maxOf(chargeAt, end - CARRY_STEP_WINDOW_MS), end) >= CARRY_FALLBACK_WINDOWS } else firstDistinct(chargeAt))?.let { carry(it) }
+        firstDistinct(floorAt)?.let { onDistinct(it) }
     }
 
     /** 걸음 감지 1건(센서 시각을 바꾼 값). vibrating = 그 시각이 앱 진동 구간이다. 걷는 모양일 때만 센다. */
@@ -207,11 +206,13 @@ class LoneWorkerLogic(var myBleId: String) {
 
     /** 받아들인 걸음. 지님은 chargeAt 뒤 걸음(충전 중 30초 안 10걸음, 뺀 뒤 첫 뚜렷한 움직임), 창 닫기·사고 리셋은 floorAt 뒤 걸음으로 센다(M2). */
     private fun acceptStep(t: Long) {
-        if (!carried && (if (charging) walk.within(chargeAt, t, CARRY_STEPS, CARRY_STEP_WINDOW_MS) else distinct(chargeAt, t))) carry(t)
-        if (distinct(floorAt, t)) onDistinct(t)
+        if (!carried) (if (charging) t.takeIf { walk.within(chargeAt, t, CARRY_STEPS, CARRY_STEP_WINDOW_MS) } else firstDistinct(chargeAt))?.let { carry(it) }
+        firstDistinct(floorAt)?.let { onDistinct(it) }
     }
 
-    private fun distinct(after: Long, t: Long) = walk.within(after, t, DISTINCT_STEPS, DISTINCT_STEP_WINDOW_MS)
+    /** 뚜렷한 움직임(10초 안 5걸음, 걸음 센서가 없으면 3초 연속 걷는 모양 창)이 after 뒤 기록으로 처음 성립한 시각 — 정의 한 곳(창 닫기는 floorAt, 지님은 chargeAt 기준, M2). */
+    private fun firstDistinct(after: Long): Long? =
+        if (stepsAvailable) walk.firstWithin(after, DISTINCT_STEPS, DISTINCT_STEP_WINDOW_MS) else walk.firstRunEnd(after, STRONG_RUN_MS)
 
     /** 움직임(MOVED)은 무동작 타이머만 갱신한다. 열린 확인 창은 닫지 않는다 (D-02, D-07). */
     fun onMoved(nowMs: Long) { if (!order.keep { onMoved(nowMs) }) raiseStillBase(nowMs) }
@@ -228,11 +229,15 @@ class LoneWorkerLogic(var myBleId: String) {
         if (order.keep { onAccident(trigMs) } || !enabled || mode == Mode.SOS) return
         if (mode == Mode.CHECKING && trigger == "fall") return
         if (zoneInside && (charging ||
-                (lastUnplugAt != Long.MIN_VALUE && kotlin.math.abs(trigMs - lastUnplugAt) <= UNPLUG_FALL_MS))) return
+                (lastUnplugAt != Long.MIN_VALUE && trigMs - lastUnplugAt <= UNPLUG_FALL_MS))) return
         if (lastPlugAt != Long.MIN_VALUE && trigMs - lastPlugAt <= PLUG_EXCEPT_MS) return
         if (accidentUntil == Long.MIN_VALUE) accidentFrom = trigMs
         accidentUntil = maxOf(accidentUntil, trigMs + ACCIDENT_WATCH_MS)
-        if (trigMs > floorAt) floorAt = trigMs
+        // 충격 뒤 기록만으로 뚜렷한 움직임을 다시 센다 — 충격 전 걸음에 기댄 성립은 사고 기준에서 빼고 닫힌 창은 그대로(Y5)
+        var base = trigMs
+        while (true) base = firstDistinct(base) ?: break
+        lastDistinctAt = if (base > trigMs) base else minOf(lastDistinctAt, trigMs)
+        if (mode != Mode.CHECKING || floorAt <= trigMs) floorAt = base
     }
 
     /** 구역 보고. 재시작 구역 보류는 여기서 풀리고, 한도 안에 보류가 막 풀린 안쪽 보고는 저장한 진입 시각으로 정착을 본다(한도가 지났으면 한도 시각에 먼저 벗어난다). */

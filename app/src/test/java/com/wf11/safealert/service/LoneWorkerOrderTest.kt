@@ -3,6 +3,7 @@ package com.wf11.safealert.service
 import com.wf11.safealert.service.LoneWorkerLogic.Mode
 import com.wf11.safealert.service.LoneWorkerLogic.Rest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -73,6 +74,49 @@ class LoneWorkerOrderTest : RestartKit() {
             val l = restart(old, 100_000, 5_000, 300_000, charging = plugged)
             assertEquals(m, Mode.WATCHING, l.seenAt(5_000 + RestartHold.POWER_HOLD_MS + 1_000))
             assertEquals(m, if (plugged) Rest.DOCKED else Rest.WAIT, l.rest)
+        }
+    }
+
+    /**
+     * Charging inside the zone, impact at 89 s, unplug at 100 s: the fall happened while charging and is ignored
+     * whether it is processed before or after the unplug confirms (N2). Not charging at the impact, a plug and an
+     * unplug after it do not make it a charging fall (the plug rule drops it).
+     */
+    @Test fun fall_before_an_unplug_is_ignored_whenever_it_is_processed() {
+        bothOrders { late, m ->
+            val l = newLogic(charging = true, zoneInside = true)
+            assertEquals(m, Mode.WATCHING, l.seenAt(89_000))
+            l.powerRaw(false, 100_000)
+            if (!late) l.onAccident(89_000)
+            assertEquals(m, Mode.WATCHING, l.modeAt(101_000))
+            assertEquals(m, Mode.WATCHING, l.modeAt(100_000 + PowerDebounce.CONFIRM_MS))
+            if (late) l.onAccident(89_000)
+            assertEquals(m, Mode.WATCHING, l.seenAt(119_000))
+            assertNull(m, l.snapshot(119_000).accidentUntil)
+        }
+        val l = newLogic(zoneInside = true, carried = true)
+        l.reportPower(true, 25_000)
+        l.reportPower(false, 28_000)
+        l.onAccident(20_000)
+        assertNull(l.snapshot(32_000).accidentUntil)
+        assertEquals(Mode.WATCHING, l.seenAt(60_000))
+    }
+
+    /** Steps before the impact at 20 s do not count for the accident: check at 50 s in either processing order (Y5). */
+    @Test fun fall_counts_only_motion_after_the_impact_in_either_order() {
+        bothOrders { late, m ->
+            val l = newLogic(carried = true)
+            for (t in listOf(17_600L, 18_200L, 18_800L, 19_400L)) l.step(t)
+            if (late) {
+                l.step(27_500)
+                l.onAccident(20_000)
+            } else {
+                l.onAccident(20_000)
+                l.step(27_500)
+            }
+            assertEquals(m, Mode.WATCHING, l.seenAt(49_999))
+            assertEquals(m, Mode.CHECKING, l.seenAt(50_000))
+            assertEquals(m, "fall", l.trigger)
         }
     }
 

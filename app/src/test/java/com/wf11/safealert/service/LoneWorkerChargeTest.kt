@@ -87,16 +87,14 @@ class LoneWorkerChargeTest {
 
     /** Four steps after the unplug edge and one after the fall check opened: carried, the check stays open (X1). */
     @Test fun unplug_steps_carry_whenever_they_are_accepted() {
-        for (late in listOf(false, true)) {
-            val m = "late=$late"
+        bothOrders { late, m ->
             val l = newLogic(charging = true)
             l.onAccident(1_000)
             l.powerRaw(false, 29_000)
             for (t in listOf(29_200L, 29_600L, 30_000L, 30_400L)) if (late) l.onStep(t) else l.step(t)
             if (late) {
                 assertEquals(m, Mode.WATCHING, l.modeAt(31_000))
-                l.onWindow(MotionAnalyzer.Window(30_000, true))
-                l.onWindow(MotionAnalyzer.Window(31_000, true))
+                l.strongRun(30_000, 2)
             }
             assertEquals(m, Mode.CHECKING, l.seenAt(31_000))
             assertEquals(m, "fall", l.trigger)
@@ -110,8 +108,7 @@ class LoneWorkerChargeTest {
 
     /** Three steps after the still check opened, an unplug, then two more: five steps close it in either arrival order (X3). */
     @Test fun unplug_after_the_check_opened_keeps_its_step_count() {
-        for (late in listOf(false, true)) {
-            val m = "late=$late"
+        bothOrders { late, m ->
             val l = carriedWhileCharging()
             val open = 10_000 + l.stillMs
             assertEquals(m, Mode.CHECKING, l.seenAt(open))
@@ -129,31 +126,45 @@ class LoneWorkerChargeTest {
                 l.onStep(open + 1_700)
                 assertEquals(m, Mode.CHECKING, l.modeAt(open + 1_100 + PowerDebounce.DEBOUNCE_MS))
                 assertEquals(m, Rest.WAIT, l.rest)
-                l.onWindow(MotionAnalyzer.Window(open + 2_000, true))
+                l.strongRun(open + 2_000, 1)
             }
             assertEquals(m, Mode.WATCHING, l.mode)
             assertEquals(m, Rest.WAIT, l.rest)
         }
     }
 
-    /** Without a step sensor, a 3 s walking run after the unplug edge carries from its end in either arrival order (M2). */
+    /**
+     * Without a step sensor, a 3 s walking run after the unplug edge (10 s) carries from its end in either arrival
+     * order (M2): a window starting at the unplug counts, one ending at it does not, and a gap or a still window
+     * breaks the run.
+     */
     @Test fun without_step_sensor_unplug_run_carries_whenever_it_is_accepted() {
-        for (late in listOf(false, true)) {
-            val m = "late=$late"
-            val l = newLogic(charging = true)
-            l.stepsAvailable = false
-            l.powerRaw(false, 10_000)
-            if (late) {
-                l.modeAt(10_000 + PowerDebounce.DEBOUNCE_MS)
-                l.strongRun(11_000, 3)
-            } else {
-                l.strongRun(11_000, 3)
-                l.modeAt(13_000)
+        // window ends, a negative end is a still window
+        for ((name, ends, carry) in listOf(
+            Triple("run", listOf(11_000L, 12_000L, 13_000L), 13_000L),
+            Triple("gap", listOf(11_000L, 12_000L, 14_000L, 15_000L, 16_000L), 16_000L),
+            Triple("split", listOf(11_000L, 12_000L, -13_000L, 14_000L, 15_000L, 16_000L), 16_000L),
+            Triple("edge", listOf(10_000L, 11_000L, 12_000L, -13_000L, 14_000L, 15_000L, 16_000L), 16_000L))) {
+            bothOrders { late, o ->
+                val m = "$name $o"
+                val l = newLogic(charging = true)
+                l.stepsAvailable = false
+                fun feed(e: Long) = l.onWindow(MotionAnalyzer.Window(kotlin.math.abs(e), e > 0))
+                ends.filter { kotlin.math.abs(it) <= 10_000 }.forEach(::feed)
+                l.powerRaw(false, 10_000)
+                val after = ends.filter { kotlin.math.abs(it) > 10_000 }
+                if (late) {
+                    l.modeAt(10_000 + PowerDebounce.DEBOUNCE_MS)
+                    after.forEach(::feed)
+                } else {
+                    after.forEach(::feed)
+                    l.modeAt(kotlin.math.abs(after.last()))
+                }
+                assertEquals(m, Rest.NONE, l.rest)
+                assertEquals(m, Mode.WATCHING, l.seenAt(carry + stillMs - 1))
+                assertEquals(m, Mode.CHECKING, l.seenAt(carry + stillMs))
+                assertEquals(m, "still", l.trigger)
             }
-            assertEquals(m, Rest.NONE, l.rest)
-            assertEquals(m, Mode.WATCHING, l.seenAt(13_000 + stillMs - 1))
-            assertEquals(m, Mode.CHECKING, l.seenAt(13_000 + stillMs))
-            assertEquals(m, "still", l.trigger)
         }
     }
 

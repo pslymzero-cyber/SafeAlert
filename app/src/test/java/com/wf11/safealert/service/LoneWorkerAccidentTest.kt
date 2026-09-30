@@ -3,6 +3,7 @@ package com.wf11.safealert.service
 import com.wf11.safealert.service.LoneWorkerLogic.Mode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -417,7 +418,8 @@ class LoneWorkerAccidentTest {
         for (t in 50_000L..400_000L step 10_000L) assertEquals(Mode.WATCHING, chk.seenAt(t))
     }
 
-    // C1: a real unplug within 10 s of the trigger (either side) counts as charging inside the zone (fell off the cradle)
+    // C1, N2: charging at the impact inside the zone ignores the fall - an unplug after the impact means it was charging,
+    // and a real unplug within 10 s before the impact counts too (fell off the cradle)
 
     @Test fun fall_just_after_unplug_in_safe_zone_is_ignored() {
         val l = rule1(charging = true, zoneInside = true)
@@ -433,7 +435,7 @@ class LoneWorkerAccidentTest {
         for (t in 130_000L..430_000L step 10_000L) assertEquals(Mode.WATCHING, l.seenAt(t))
     }
 
-    @Test fun fall_11s_from_unplug_counts() {
+    @Test fun unplug_11s_before_fall_counts_unplug_after_fall_is_ignored() {
         val after = rule1(charging = true, zoneInside = true)
         after.reportPower(false, 100_000)
         after.onAccident(111_000)
@@ -444,8 +446,8 @@ class LoneWorkerAccidentTest {
         val before = rule1(charging = true, zoneInside = true)
         before.reportPower(false, 100_000)
         before.onAccident(89_000)
-        assertEquals(Mode.CHECKING, before.seenAt(119_000))
-        assertEquals("fall", before.trigger)
+        assertEquals(Mode.WATCHING, before.seenAt(119_000))
+        assertNull(before.snapshot(119_000).accidentUntil)
     }
 
     @Test fun unplug_fall_window_only_inside_safe_zone() {

@@ -18,10 +18,10 @@ class WalkingStepsTest {
         val w = WalkingSteps()
         for (t in listOf(1_100L, 1_300L, 1_500L, 1_700L, 1_900L)) w.onStep(t, false)
         w.onWindow(2_000, true)
-        assertTrue(w.within(1_000, 1_900, LoneWorkerLogic.DISTINCT_STEPS, LoneWorkerLogic.DISTINCT_STEP_WINDOW_MS))
-        assertFalse(w.within(1_100, 1_900, LoneWorkerLogic.DISTINCT_STEPS, LoneWorkerLogic.DISTINCT_STEP_WINDOW_MS))
-        assertEquals(1_900L, w.firstWithin(1_000, LoneWorkerLogic.DISTINCT_STEPS, LoneWorkerLogic.DISTINCT_STEP_WINDOW_MS))
-        assertNull(w.firstWithin(1_100, LoneWorkerLogic.DISTINCT_STEPS, LoneWorkerLogic.DISTINCT_STEP_WINDOW_MS))
+        assertTrue(w.within(1_000, 1_900, 5, 10_000L))
+        assertFalse(w.within(1_100, 1_900, 5, 10_000L))
+        assertEquals(1_900L, w.firstWithin(1_000, 5, 10_000L))
+        assertNull(w.firstWithin(1_100, 5, 10_000L))
     }
 
     @Test fun step_before_its_window_is_accepted_when_the_window_closes_walking() {
@@ -112,19 +112,21 @@ class WalkingStepsTest {
         assertEquals(8, w.strongIn(31_000 - 30_000, 31_000))
     }
 
-    @Test fun run_since_counts_consecutive_walking_windows_back_from_the_latest() {
+    @Test fun first_run_end_counts_only_windows_from_the_floor_and_breaks_on_gaps_and_still_windows() {
         val w = WalkingSteps()
         w.onWindow(1_000, true)
         w.onWindow(2_000, false)
         w.onWindow(3_000, true)
         w.onWindow(4_000, true)
         w.onWindow(5_000, true)
-        assertEquals(3_000L, w.runSince(0))
-        assertEquals(2_000L, w.runSince(2_500))
+        assertEquals(5_000L, w.firstRunEnd(0, 3_000))
+        assertEquals(5_000L, w.firstRunEnd(2_500, 2_000))
+        assertNull(w.firstRunEnd(2_500, 3_000))
         w.onWindow(7_000, true) // 5-6 s had no samples: the run breaks
-        assertEquals(1_000L, w.runSince(0))
+        assertNull(w.firstRunEnd(4_000, 2_000))
         w.onWindow(8_000, false)
-        assertEquals(0L, w.runSince(0))
+        assertEquals(7_000L, w.firstRunEnd(6_000, 1_000))
+        assertNull(w.firstRunEnd(7_000, 1_000))
     }
 
     @Test fun first_run_end_is_where_a_run_from_the_floor_reaches_the_length() {

@@ -80,21 +80,10 @@ class WalkingSteps {
     fun strongIn(from: Long, to: Long): Int =
         windows.count { it.walking && it.endMs - WINDOW_MS >= from && it.endMs <= to }
 
-    /** 가장 최근 창부터 거꾸로 이어진 걷는 모양 창 중 시작이 from 이상인 것들의 길이(ms). 최근 창이 걷는 모양 아니면 0. */
-    fun runSince(from: Long): Long {
-        var n = 0
-        var next = Long.MIN_VALUE
-        for (i in windows.indices.reversed()) {
-            val w = windows[i]
-            if (!w.walking || w.endMs - WINDOW_MS < from) break
-            if (next != Long.MIN_VALUE && w.endMs != next - WINDOW_MS) break
-            n++
-            next = w.endMs
-        }
-        return n * WINDOW_MS
-    }
-
-    /** 시작이 from 이상인 걷는 모양 창이 끊김 없이 이어져 ms 에 처음 이른 창 끝. 없으면 null. */
+    /**
+     * 시작이 from 이상인 걷는 모양 창이 끊김 없이 이어져 ms 에 처음 이른 창 끝. 없으면 null.
+     * 실시간(이번 창에서 처음 성립)·해제 따라잡기·FALL 다시 셈이 같은 계산을 쓴다.
+     */
     fun firstRunEnd(from: Long, ms: Long): Long? {
         var n = 0
         var prev = Long.MIN_VALUE

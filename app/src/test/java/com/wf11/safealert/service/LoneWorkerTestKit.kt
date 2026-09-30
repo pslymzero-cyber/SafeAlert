@@ -121,6 +121,11 @@ internal fun LoneWorkerLogic.drive(from: Long, feeds: List<Feed>, until: Long,
     return seen + "end $mode $trigger $rest"
 }
 
+/** Runs body for both arrival orders (late = false, then true) with an assertion message naming the order. */
+internal fun bothOrders(body: (late: Boolean, m: String) -> Unit) {
+    for (late in listOf(false, true)) body(late, "late=$late")
+}
+
 /** Acknowledge every peer entry (the [OK] button on all of them). */
 internal fun LoneWorkerLogic.ackAll(now: Long) = silencePeers(now, peers.associate { it.id to it.epId })
 
