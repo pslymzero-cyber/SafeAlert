@@ -83,29 +83,36 @@ class LoneWorkerChargeTest {
         assertEquals(Rest.WAIT, early.rest)
     }
 
-    /** An unplug report does not lower the open check's step floor: steps before the check opened do not close it. */
-    @Test fun unplug_report_keeps_the_open_check_floor() {
-        val l = carriedWhileCharging()
-        val open = 10_000 + l.stillMs
-        l.powerRaw(false, open - 1_000)
-        for (i in 0..3) l.step(open - 900 + i * 200)
-        assertEquals(Mode.CHECKING, l.seenAt(open))
-        assertEquals("still", l.trigger)
-        assertEquals(Mode.CHECKING, l.seenAt(open - 1_000 + PowerDebounce.CONFIRM_MS))
-        assertEquals(Rest.WAIT, l.rest)
-        l.step(open + 1_500)
-        assertEquals(Mode.CHECKING, l.seenAt(open + 2_000))
-        // the same for an open accident check
+    /**
+     * An unplug that started before the fall deadline makes it wait (M1); the check then opens with its step floor
+     * at the deadline, so steps before it do not close it.
+     */
+    @Test fun unplug_report_keeps_the_fall_check_floor() {
         val f = newLogic(charging = true)
         f.onAccident(1_000)
         f.powerRaw(false, 30_000)
         for (i in 0..3) f.step(30_100 + i * 200L)
-        assertEquals(Mode.CHECKING, f.seenAt(31_000))
-        assertEquals("fall", f.trigger)
+        assertEquals(Mode.WATCHING, f.seenAt(31_000))
         assertEquals(Mode.CHECKING, f.seenAt(30_000 + PowerDebounce.CONFIRM_MS))
+        assertEquals("fall", f.trigger)
+        assertEquals(LoneWorkerLogic.ACCIDENT_RESPONSE_MS, f.responseLeftMs(30_000 + PowerDebounce.CONFIRM_MS))
+        assertEquals(Rest.WAIT, f.rest)
         f.step(32_500)
         assertEquals(Mode.CHECKING, f.seenAt(33_000))
         assertEquals("fall", f.trigger)
+    }
+
+    /** Carried on the dock, the unplug starts 1 s before the still deadline: the deadline waits, the reported unplug is a wait, no check. */
+    @Test fun unplug_started_before_the_still_deadline_rests_instead_of_checking() {
+        val l = carriedWhileCharging()
+        val open = 10_000 + l.stillMs
+        l.powerRaw(false, open - 1_000)
+        for (i in 0..3) l.step(open - 900 + i * 200)
+        assertEquals(Mode.WATCHING, l.seenAt(open))
+        assertEquals(open - 1_000 + PowerDebounce.CONFIRM_MS, l.nextCheckAt(open))
+        assertEquals(Mode.WATCHING, l.seenAt(open - 1_000 + PowerDebounce.CONFIRM_MS))
+        assertEquals(Rest.WAIT, l.rest)
+        assertEquals(Mode.WATCHING, l.seenAt(open + LoneWorkerLogic.LATE_MS))
     }
 
     @Test fun sensor_silence_ends_wait_and_counts_from_there() {
@@ -318,6 +325,16 @@ class LoneWorkerChargeTest {
         assertEquals(Rest.DOCKED, d.rest)
         d.modeAt(20_000)
         assertEquals(Rest.DOCKED, d.rest)
+    }
+
+    /** settlePower tells whether it confirmed and applied a change, once. */
+    @Test fun settle_power_reports_a_confirmed_change_once() {
+        val l = newLogic(charging = true)
+        l.powerRaw(false, 10_000)
+        assertFalse(l.settlePower(10_000 + PowerDebounce.DEBOUNCE_MS - 1))
+        assertTrue(l.settlePower(10_000 + PowerDebounce.DEBOUNCE_MS))
+        assertEquals(Rest.WAIT, l.rest)
+        assertFalse(l.settlePower(20_000))
     }
 
     // Carrying while charging = 10 steps within the last 30 s.

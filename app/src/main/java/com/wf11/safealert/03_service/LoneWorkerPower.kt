@@ -20,7 +20,6 @@ class PowerDebounce {
     /** 마지막으로 확정한 값. */
     var reported = false
         private set
-    private var lastRaw = false
     /** 확정되지 않은 변화의 첫 변화 시각. 없으면 MIN_VALUE. */
     var pendingAt = Long.MIN_VALUE
         private set
@@ -28,12 +27,14 @@ class PowerDebounce {
     /** 확정되지 않은 변화가 있다. */
     val pending: Boolean get() = pendingAt != Long.MIN_VALUE
 
+    /** 확정되지 않은 변화가 at 이전(같은 시각 포함)에 시작됐다 — 그 마감 판정은 확정·버림까지 기다린다(M1). */
+    fun pendingBy(at: Long): Boolean = pending && pendingAt <= at
+
     /** 확정을 확인할 시각 = 첫 변화 + CONFIRM_MS. 대기가 없으면 null. */
     val confirmAt: Long? get() = if (pending) pendingAt + CONFIRM_MS else null
 
     fun seed(on: Boolean) {
         reported = on
-        lastRaw = on
         pendingAt = Long.MIN_VALUE
     }
 
@@ -44,7 +45,6 @@ class PowerDebounce {
     fun raw(on: Boolean, tMs: Long, sticky: Boolean = false): Boolean {
         if (sticky && pending) return false
         val before = pendingAt
-        lastRaw = on
         if (on == reported) pendingAt = Long.MIN_VALUE
         else if (!pending) pendingAt = tMs
         return pendingAt != before
@@ -52,9 +52,9 @@ class PowerDebounce {
 
     /** DEBOUNCE_MS 동안 안정됐으면 (새 값, 첫 변화 시각) 을 한 번 돌려준다. */
     fun poll(tMs: Long): Pair<Boolean, Long>? {
-        if (!pending || tMs - pendingAt < DEBOUNCE_MS || lastRaw == reported) return null
+        if (!pending || tMs - pendingAt < DEBOUNCE_MS) return null
         val at = pendingAt
-        reported = lastRaw
+        reported = !reported
         pendingAt = Long.MIN_VALUE
         return reported to at
     }

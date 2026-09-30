@@ -24,13 +24,12 @@ package com.wf11.safealert.service
  * 걸음: 걸음 센서가 낸 걸음 가운데 그 시각을 덮는 1초 가속도 창이 걷는 모양이고 앱 진동 구간이 아닌 것(WalkingSteps).
  * 뚜렷한 움직임: 최근 10초 안 5걸음. 걸음 센서를 쓸 수 없으면 3초 이상 이어진 걷는 모양 창.
  * 확인 창(두 종류)은 [괜찮음]·뚜렷한 움직임·실제 전원 연결로 닫힌다. 실제 연결은 사고 의심도 끝낸다.
- * 무동작 stillMs→확인 창, 사고 30초 무움직임→확인 창, 확인 창→SOS 마감은 마감 시각까지의 센서 데이터가 들어온 뒤(없으면 LATE_MS 뒤) 판정한다.
+ * 무동작 stillMs→확인 창, 사고 30초 무움직임→확인 창, 확인 창→SOS 마감은 마감 시각까지의 센서 데이터가 들어온 뒤(없으면 LATE_MS 뒤), 그리고 그 전(같은 시각 포함)에 시작한 전원 변화가 확정되거나 버려진 뒤(최대 약 2초, 확정이면 첫 변화 시각부터 적용) 판정한다(M1).
  * SOS 는 구역 진입·기능 끄기·전원 변화로 끝나지 않고 오직 cancelSos 로만 끝난다.
  * 재시작 뒤 전원·구역 보류는 RestartHold.
  * 동료 SOS 수신은 LoneWorkerPeers 가 회차(bleId, ep) 단위 항목으로 다룬다(서버 기록과 BLE 비트가 같은 회차면 한 항목).
  *
- * 내 서버 기록은 작성자 uid 로 LoneWorkerSosSync 가 걸러내고, BLE 스캐너는 자기 광고를 받지 못한다.
- * 그래서 여기서는 bleId 로 나를 걸러내지 않는다 — 같은 장비 ID 를 나눠 쓰는 폰끼리도 서로 경보한다 (v1.1.99).
+ * 내 서버 기록은 작성자 uid 로 LoneWorkerSosSync 가 걸러내고, BLE 스캐너는 자기 광고를 받지 못한다 — 그래서 여기서는 bleId 로 나를 걸러내지 않는다(같은 장비 ID 를 나눠 쓰는 폰끼리도 서로 경보, v1.1.99).
  */
 class LoneWorkerLogic(var myBleId: String) {
 
@@ -263,10 +262,10 @@ class LoneWorkerLogic(var myBleId: String) {
         updateSettle(nowMs)
         // 정착한 안전구역에서는 무동작을 세지 않는다(기준을 계속 지금으로, C3)
         if (zoneSettled) raiseStillBase(nowMs)
-        // 재시작 전원 보류 중, 그리고 보류 끝까지의 센서 데이터가 들어와 들고 있던 창을 열기 전에는 확인 창을 새로 열지 않는다(E9·L3)
-        val held = hold.checkAt(nowMs)
-        if (!hold.powerHeld(nowMs) && held?.let { due(it, nowMs) } != false) {
-            if (held != null) hold.takeCheck()?.let { if (enabled && mode == Mode.WATCHING) toChecking(it, held, nowMs) }
+        // 보류 게이트: 재시작 전원 보류 중, 그리고 들고 있던 창을 열기 전에는 확인 창을 새로 열지 않는다(E9·L3)
+        val gate = hold.gate(nowMs)
+        if (gate?.let { due(it, nowMs) } != false) {
+            if (gate != null) hold.takeCheck()?.let { if (enabled && mode == Mode.WATCHING) toChecking(it, gate, nowMs) }
             accidentTick(nowMs)
             stillOpenAt()?.let { if (due(it, nowMs)) toChecking("still", it, nowMs) }
         }
@@ -323,12 +322,11 @@ class LoneWorkerLogic(var myBleId: String) {
     /** 전원 원시 값(sticky = 스티키 배터리 보정, 대기 중이면 버림). 2초 안정된 변화를 먼저 확정하고, 대기가 바뀌었으면 true(모니터가 다시 예약). */
     fun powerRaw(on: Boolean, tMs: Long, sticky: Boolean = false): Boolean {
         settlePower(tMs)
-        return power.raw(on, tMs, sticky).also { if (it) hold.powerWait(power.pendingAt, tMs) }
+        return power.raw(on, tMs, sticky).also { if (it) hold.powerWait(power, tMs) }
     }
 
-    private fun settlePower(t: Long) {
-        power.poll(t)?.let { (on, at) -> setCharging(on, at) }
-    }
+    /** 2초 안정된 전원 변화를 확정해 적용했으면 true — 확정 소비는 여기 한 곳(tick·powerRaw 첫머리, 모니터 전원 입구). */
+    fun settlePower(t: Long): Boolean = power.poll(t)?.let { (on, at) -> setCharging(on, at); true } ?: false
 
     /**
      * 끝(트리거 뒤 5분)이 지난 사고 의심은 버리고, 열린 확인 창은 응답 시간을 처음부터 다시 센다.
@@ -354,12 +352,15 @@ class LoneWorkerLogic(var myBleId: String) {
 
     fun responseLeftMs(nowMs: Long): Long = sosAt()?.let { (it - nowMs).coerceAtLeast(0L) } ?: 0L
 
-    /** 다음에 tick 이 필요한 시각: 전원 확정 확인, 재시작 전원 보류 끝, 보류가 없으면 기다리는 마감(아직 안 됐으면 그 시각, 지났으면 LATE_MS 뒤) 중 가장 이른 것. */
-    fun nextCheckAt(nowMs: Long): Long? = listOfNotNull(power.confirmAt, hold.powerEnd(nowMs) ?:
-        deadlines(nowMs).map { if (nowMs < it) it else it + LATE_MS }.filter { it > nowMs }.minOrNull()).minOrNull()
+    /** 다음에 tick 이 필요한 시각: 전원 확정 확인과 기다리는 마감(보류 중이면 보류 끝, 아직 안 됐으면 그 시각, 지났으면 LATE_MS 뒤) 중 가장 이른 것. */
+    fun nextCheckAt(nowMs: Long): Long? = (deadlines(nowMs).map { if (nowMs < it) it else it + LATE_MS }.filter { it > nowMs } +
+        listOfNotNull(power.confirmAt)).minOrNull()
 
-    /** 지난 마감이 센서 데이터를 기다리고 있다(모니터가 flush 를 요청한다). */
-    fun waitingOnSensors(nowMs: Long): Boolean = deadlines(nowMs).any { nowMs >= it && !due(it, nowMs) }
+    /** 지난 마감이 판정을 기다린다 — 센서 데이터 또는 그 전에 시작한 전원 대기(모니터가 웨이크락을 잡는다). */
+    fun waitingToJudge(nowMs: Long): Boolean = deadlines(nowMs).any { nowMs >= it && !due(it, nowMs) }
+
+    /** 그 가운데 마감까지의 센서 데이터가 모자란 것이 있다(모니터가 flush 를 요청한다 — 전원 대기만이면 요청하지 않는다). */
+    fun waitingOnSensors(nowMs: Long): Boolean = deadlines(nowMs).any { nowMs >= it && !due(it, nowMs) && sensedTo() < it }
 
     /** 지난 마감 가운데 지금 판정할 수 있는 것이 있다(모니터가 스로틀 중 즉시 판정을 예약할 때 쓴다). */
     fun dueNow(nowMs: Long): Boolean = deadlines(nowMs).any { due(it, nowMs) }
@@ -369,8 +370,8 @@ class LoneWorkerLogic(var myBleId: String) {
     /** 센서 데이터가 들어온 끝 시각: 닫힌 가속도 창 끝, 걸음 센서를 쓰면 걸음 전달 시각과 둘 중 이른 쪽. */
     private fun sensedTo(): Long = if (stepsAvailable) minOf(walk.closedTo, walk.stepSeenTo) else walk.closedTo
 
-    /** 마감 at 을 지금 판정해도 되나: 마감까지의 데이터가 들어왔거나 LATE_MS 가 지났다. */
-    private fun due(at: Long, nowMs: Long): Boolean = nowMs >= at && (sensedTo() >= at || nowMs >= at + LATE_MS)
+    /** 마감 at 을 지금 판정해도 되나(판정 시각 게이트 한 곳): 지났고, at 이전에 시작한 전원 대기가 없고(M1 — tick 이 먼저 확정하므로 첫 변화 + DEBOUNCE_MS 를 넘겨 막지 않는다), 마감까지의 데이터가 들어왔거나 LATE_MS 가 지났다(C5). */
+    private fun due(at: Long, nowMs: Long): Boolean = nowMs >= at && !power.pendingBy(at) && (sensedTo() >= at || nowMs >= at + LATE_MS)
 
     /** 사고 확인 창을 여는 마감: 마지막 뚜렷한 움직임(없으면 트리거)부터 30초. 의심 5분을 넘으면 없음. */
     private fun accidentOpenAt(): Long? {
@@ -397,9 +398,8 @@ class LoneWorkerLogic(var myBleId: String) {
     private fun stillOpenAt(): Long? = (stillBase + stillMs).takeIf {
         enabled && !zoneSettled && !siren.covers(it) && rest == Rest.NONE && mode == Mode.WATCHING }
 
-    /** 판정을 기다리는 마감. 재시작 전원 보류 중에는 없고, 들고 있는 복원 창이 있으면 그 창을 여는 마감(보류 끝)뿐이다. */
-    private fun deadlines(nowMs: Long): List<Long> = if (hold.powerHeld(nowMs)) emptyList()
-        else hold.checkAt(nowMs)?.let { listOf(it) } ?: listOfNotNull(stillOpenAt(), fallOpenAt(nowMs), sosAt())
+    /** 판정을 기다리는 마감. 보류 게이트(RestartHold.gate)가 있으면 그 시각 하나, 없으면 무동작·사고 창 열기와 SOS 마감. */
+    private fun deadlines(nowMs: Long): List<Long> = hold.gate(nowMs)?.let { listOf(it) } ?: listOfNotNull(stillOpenAt(), fallOpenAt(nowMs), sosAt())
 
     /**
      * 사고 의심 판정. 사고 마감이 되면 사고 확인 창을 연다. 무동작 확인 창이 이미 열려 있으면 두 마감 중

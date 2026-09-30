@@ -230,9 +230,18 @@ class LoneWorkerMonitor(
 
     private val deadlineRunnable = Runnable { tickNow() }
 
-    /** 전원 원시 값을 판정에 넣고, 디바운스 대기가 바뀌었으면 판정 tick 으로 확정 확인 시각을 다시 예약한다 (v1.1.99). */
+    /**
+     * 전원 원시 값: 2초 안정된 변화를 먼저 확정하고 원시 값을 판정 로직의 디바운스에 넣는다. 확정이 있으면 판정·렌더,
+     * 대기만 바뀌었으면 판정·다음 예약만 하고 모드·쉼 이유가 바뀐 때만 렌더한다 (v1.1.99).
+     */
     private fun onPowerRaw(on: Boolean, sticky: Boolean) {
-        if (started && logic.powerRaw(on, now(), sticky)) tickNow()
+        if (!started) return
+        val t = now()
+        val settled = logic.settlePower(t)
+        if (!logic.powerRaw(on, t, sticky) && !settled) return
+        lastTickAt = t
+        tick(t)
+        if (settled || logic.mode != lastMode || logic.rest != lastRest) render() else updateWakeLock(false)
     }
 
     /**
@@ -442,9 +451,9 @@ class LoneWorkerMonitor(
     }
 
     private fun updateWakeLock(renew: Boolean) {
-        // 마감이 지나 센서 데이터를 기다리는 동안도 잡아 LATE_MS 백스톱을 보장한다
+        // 지난 마감이 판정을 기다리는 동안(센서 데이터·그 전에 시작한 전원 대기)도 잡아 LATE_MS 백스톱·전원 확정 확인을 보장한다
         val need = sensors.needsWake || logic.mode != LoneWorkerLogic.Mode.WATCHING ||
-            logic.audiblePeers().isNotEmpty() || logic.waitingOnSensors(now())
+            logic.audiblePeers().isNotEmpty() || logic.waitingToJudge(now())
         if (!need) {
             releaseWakeLock()
             return
