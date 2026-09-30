@@ -84,7 +84,6 @@ class LoneWorkerSensors(
         on = false
         unregisterAccel()
         refreshSteps()
-        gyroLog(false, false)
     }
 
     private fun manager(): SensorManager? =
@@ -158,7 +157,8 @@ class LoneWorkerSensors(
     /**
      * 동료 사이렌이 이 기기에서 진동하는 동안만 자이로 측정 로그를 1초마다 남긴다(D3). 판정에 쓰지 않고 표본 수·평균·최대
      * 각속도뿐이다(개인정보·위치 없음). 등록 결과 한 줄은 사이렌 한 번에 한 번(GyroGate), 끌 때 남은 구간 한 줄.
-     * 자이로가 없으면 조용히 건너뛴다.
+     * 자이로가 없으면 조용히 건너뛴다. 끄기는 사이렌 끝과 모니터 종료(LoneWorkerMonitor.stop)뿐 — 기능 끄기로 센서를 내려도
+     * 사이렌 진동 중 측정은 이어진다.
      */
     fun gyroLog(siren: Boolean, vibrating: Boolean) {
         if (!gyroGate.update(siren, vibrating)) return

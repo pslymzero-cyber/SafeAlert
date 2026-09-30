@@ -150,6 +150,7 @@ class LoneWorkerMonitor(
     fun stop() {
         if (!started) return
         started = false
+        sensors.gyroLog(false, false) // 자이로 측정은 사이렌 끝이나 여기서만 끈다 (v1.1.99)
         sensors.unregister()
         prefsListener?.let { DevSettings.unregisterOnChange(it) }
         prefsListener = null
@@ -433,10 +434,7 @@ class LoneWorkerMonitor(
         override fun run() {
             loopOn = false
             if (!started) return
-            val t = now()
-            lastTickAt = t
-            tick(t)
-            render()
+            tickNow()
             alarm.refresh()
             updateWakeLock(true)
             scheduleLoop()

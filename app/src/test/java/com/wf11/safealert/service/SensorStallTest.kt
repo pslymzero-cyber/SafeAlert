@@ -5,6 +5,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 
 /** SensorStall: accelerometer silence detection (v1.1.99, RR08). Pure JVM. */
 class SensorStallTest {
@@ -85,5 +86,27 @@ class SensorStallTest {
         // registered again in the same siren: no second log line
         assertTrue(g.update(true, true))
         assertFalse(g.registered(true))
+    }
+
+    /**
+     * Turning the feature off or changing settings does not reset the gyro gate during a peer siren;
+     * only the siren end and the monitor stop turn the gyro log off (W5, D3).
+     */
+    @Test
+    fun gyro_log_is_turned_off_only_by_the_siren_or_the_monitor_stop() {
+        fun src(name: String) = listOf(
+            File("src/main/java/com/wf11/safealert/03_service/$name"),
+            File("app/src/main/java/com/wf11/safealert/03_service/$name")
+        ).first { it.exists() }.readText().replace("\r\n", "\n")
+        fun block(s: String, head: String): String {
+            val i = s.indexOf(head)
+            assertTrue(head, i >= 0)
+            return s.substring(i, s.indexOf("\n    }", i))
+        }
+        assertFalse(block(src("LoneWorkerSensors.kt"), "fun unregister()").contains("gyroLog("))
+        val stop = block(src("LoneWorkerMonitor.kt"), "fun stop()")
+        val off = stop.indexOf("sensors.gyroLog(false, false)")
+        assertTrue(off >= 0)
+        assertTrue(off < stop.indexOf("sensors.unregister()"))
     }
 }
