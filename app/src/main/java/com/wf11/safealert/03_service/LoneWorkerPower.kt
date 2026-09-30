@@ -66,7 +66,7 @@ class LoneWorkerPower(
         debounce.poll(SystemClock.elapsedRealtime())?.let { (on, at) -> onChange(on, at) }
     }
 
-    /** 수신을 시작하고 지금 전원이 연결돼 있는지 돌려준다(디바운스 시작값). */
+    /** 수신을 시작하고 지금 전원이 연결돼 있는지(원시값) 돌려준다. 디바운스는 seed 로 시작한다. */
     fun start(): Boolean {
         if (receiver == null) {
             val r = object : BroadcastReceiver() {
@@ -83,7 +83,13 @@ class LoneWorkerPower(
             }
             if (runCatching { ctx.registerReceiver(r, f) }.isSuccess) receiver = r
         }
-        return plugged().also { debounce.seed(it) }
+        return plugged()
+    }
+
+    /** 디바운스를 reported(저장 상태의 충전 값)로 시작하고 원시값 now 를 넣는다 — 다르면 2초 안정 뒤 onChange. */
+    fun seed(reported: Boolean, now: Boolean) {
+        debounce.seed(reported)
+        raw(now)
     }
 
     /** 방송을 놓쳤을 때의 보정: 스티키 배터리 상태를 원시 값으로 넣는다. 방송 변화가 대기 중이면 건드리지 않는다. */

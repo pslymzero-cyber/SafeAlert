@@ -111,12 +111,8 @@ class LoneWorkerMonitor(
         // 충전 중이면 거치로, 아니면 첫 뚜렷한 움직임 대기로 시작한다 (v1.1.99)
         val plugged = power.start()
         val t0 = now()
-        logic.start(t0, zoneInside, plugged)
-        // 저장된 감시 상태를 이어가고, 꺼져 있던 동안의 전원 변화는 지금의 실제 연결·해제로 적용한다 (v1.1.99, B6)
-        resume.load(t0)?.let {
-            logic.resume(it, t0)
-            logic.setCharging(plugged, t0)
-        }
+        // 저장 상태로 이어가고, 지금 전원과의 차이는 2초 디바운스 뒤 재시작 시각의 실제 변화로 적용한다 (v1.1.99, B6)
+        power.seed(logic.startFrom(t0, zoneInside, plugged, resume.load(t0)), plugged)
         // 저장된 본인 SOS 가 있으면 첫 렌더 전에 되살린다 — 같은 서버 키로 사이렌·광고 bit1 이 다시 켜진다 (v1.1.99, R3)
         sync.restoredTrigger()?.let { logic.restoreSos(it, now()) }
         notifier.createChannel()
@@ -193,7 +189,14 @@ class LoneWorkerMonitor(
     /** 센서 콜백 뒤: 상태·쉼 이유가 바뀌었으면 바로, 아니면 1초에 한 번 tick·render 한다 (v1.1.99). */
     private fun onSensorEvent(t: Long) {
         if (!started) return
-        if (logic.mode == lastMode && logic.rest == lastRest && t - lastTickAt < TICK_MIN_MS) return
+        if (logic.mode == lastMode && logic.rest == lastRest && t - lastTickAt < TICK_MIN_MS) {
+            // 센서 데이터가 지난 마감을 덮었으면 스로틀과 무관하게 바로 판정한다
+            if (logic.dueNow(t)) {
+                handler.removeCallbacks(deadlineRunnable)
+                handler.post(deadlineRunnable)
+            }
+            return
+        }
         lastTickAt = t
         tick(t)
         render()
@@ -408,7 +411,7 @@ class LoneWorkerMonitor(
         if (showScreen) notifier.openScreen()
         updateWakeLock(false)
         scheduleLoop()
-        resume.save(logic.snapshot(), t)
+        resume.save(logic.snapshot(t), t)
         uiListener?.invoke()
     }
 
@@ -438,8 +441,9 @@ class LoneWorkerMonitor(
     }
 
     private fun updateWakeLock(renew: Boolean) {
+        // 마감이 지나 센서 데이터를 기다리는 동안도 잡아 LATE_MS 백스톱을 보장한다
         val need = sensors.needsWake || logic.mode != LoneWorkerLogic.Mode.WATCHING ||
-            logic.audiblePeers().isNotEmpty()
+            logic.audiblePeers().isNotEmpty() || logic.waitingOnSensors(now())
         if (!need) {
             releaseWakeLock()
             return

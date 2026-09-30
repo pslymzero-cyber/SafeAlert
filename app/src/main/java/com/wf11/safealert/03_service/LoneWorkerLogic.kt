@@ -61,6 +61,8 @@ class LoneWorkerLogic(var myBleId: String) {
         const val CARRY_FALLBACK_WINDOWS = 5
         /** 마감 시각까지의 센서 데이터가 이만큼 지나도 오지 않으면 도착한 것만으로 판정한다(배치 지연 5초 + 창 1초). */
         const val LATE_MS = 6_000L
+        /** 재시작 뒤 복원한 세이프존 안 상태를 구역 보고 없이 유지하는 한도(BleService 신호 두절 이탈 10초와 같은 규칙, C3). */
+        const val ZONE_RESUME_HOLD_MS = 10_000L
     }
 
     /** 설정에서 라이브로 바꾼다 (기본 3분 / 2분). 무동작 확인 전용 — 사고 확인은 30초 / 1분 고정. */
@@ -105,6 +107,8 @@ class LoneWorkerLogic(var myBleId: String) {
     private var lastUnplugAt = Long.MIN_VALUE
     /** 동료 사이렌이 이 기기에서 진동하기 시작한 시각(C2 무동작 셈 멈춤). 멈춤이 없으면 MIN_VALUE. */
     private var sirenPauseAt = Long.MIN_VALUE
+    /** 복원한 세이프존 안 상태를 구역 보고 없이 유지하는 끝. 없으면 MIN_VALUE. */
+    private var zoneHoldUntil = Long.MIN_VALUE
 
     /** 무동작 확인을 쉬는 이유. */
     val rest: Rest get() = when {
@@ -131,6 +135,7 @@ class LoneWorkerLogic(var myBleId: String) {
         lastPlugAt = Long.MIN_VALUE
         lastUnplugAt = Long.MIN_VALUE
         sirenPauseAt = Long.MIN_VALUE
+        zoneHoldUntil = Long.MIN_VALUE
         mode = Mode.WATCHING
         trigger = ""
         modeSinceMs = nowMs
@@ -226,6 +231,7 @@ class LoneWorkerLogic(var myBleId: String) {
     }
 
     fun onZone(inside: Boolean, nowMs: Long) {
+        zoneHoldUntil = Long.MIN_VALUE
         updateSettle(nowMs)
         if (inside) {
             if (!zoneInside) {
@@ -243,6 +249,8 @@ class LoneWorkerLogic(var myBleId: String) {
 
     fun tick(nowMs: Long) {
         updateSirenPause(nowMs)
+        // 재시작 뒤 구역 보고가 한도 안에 없으면 그 시각에 벗어난 것으로 본다(C3)
+        if (zoneHoldUntil != Long.MIN_VALUE && nowMs >= zoneHoldUntil) onZone(false, zoneHoldUntil)
         updateSettle(nowMs)
         // 정착한 안전구역에서는 무동작을 세지 않는다(기준을 계속 지금으로, C3)
         if (zoneSettled) raiseStillBase(nowMs)
@@ -277,33 +285,47 @@ class LoneWorkerLogic(var myBleId: String) {
         toSos(nowMs)
     }
 
-    /** 재시작 이어가기 저장값. SOS 는 확인 창으로 저장하지 않는다(본인 SOS 는 SosLedger 가 복원). */
-    fun snapshot(): LoneWorkerResume.State {
+    /** 재시작 이어가기 저장값. SOS 는 확인 창으로 저장하지 않는다(본인 SOS 는 SosLedger 가 복원). 기준은 사이렌 멈춤을 뺀 값(C2). */
+    fun snapshot(nowMs: Long): LoneWorkerResume.State {
         val suspected = accidentUntil != Long.MIN_VALUE
-        val checking = mode == Mode.CHECKING
         return LoneWorkerResume.State(
-            if (suspected) accidentFrom else null,
-            if (suspected) accidentUntil else null,
             if (suspected) maxOf(accidentFrom, lastDistinctAt) else null,
-            if (checking) trigger else "",
-            if (checking) modeSinceMs else null,
-            charging, carried, stillBase
+            if (suspected) accidentUntil else null,
+            if (mode == Mode.CHECKING) trigger else "",
+            charging, carried, pausedBase(nowMs), zoneSettled,
+            if (zoneInside) zoneInsideSince else null
         )
     }
 
     /**
-     * 저장 상태로 이어간다. start() 뒤, 전원 차이 적용·SOS 복원 전에 호출한다.
-     * 끝(트리거 뒤 5분)이 지난 사고 의심은 버리고, 열린 확인 창은 응답 시간을 처음부터 다시 센다.
+     * 시작하고 저장 상태가 있으면 이어간다. 모니터와 테스트가 같은 조립을 쓴다. 시작한 충전 값(저장값, 없으면 plugged)을
+     * 돌려준다 — 디바운스 시작값이다. 지금 전원과의 차이는 디바운스가 2초 뒤 재시작 시각의 실제 변화로 적용한다(E9).
      */
-    fun resume(s: LoneWorkerResume.State, nowMs: Long) {
-        if (s.accidentFrom != null && s.accidentUntil != null && s.accidentUntil > nowMs) {
-            accidentFrom = s.accidentFrom
+    fun startFrom(nowMs: Long, zoneInside: Boolean, plugged: Boolean, saved: LoneWorkerResume.State?): Boolean {
+        val charging = saved?.charging ?: plugged
+        start(nowMs, zoneInside, charging)
+        saved?.let { resume(it, nowMs) }
+        return charging
+    }
+
+    /**
+     * 끝(트리거 뒤 5분)이 지난 사고 의심은 버리고, 열린 확인 창은 응답 시간을 처음부터 다시 센다.
+     * 저장 때 구역 안이었으면 구역 안·진입 시각·정착을 이어가고, 시작 때 구역 밖이면 ZONE_RESUME_HOLD_MS 안에 보고를 기다린다.
+     */
+    private fun resume(s: LoneWorkerResume.State, nowMs: Long) {
+        if (s.accidentHold != null && s.accidentUntil != null && s.accidentUntil > nowMs) {
+            accidentFrom = s.accidentHold
+            lastDistinctAt = s.accidentHold
             accidentUntil = s.accidentUntil
-            lastDistinctAt = s.accidentHold ?: s.accidentFrom
         }
-        charging = s.charging
         carried = s.carried
         stillBase = s.stillBase
+        s.zoneSince?.let {
+            if (!zoneInside) zoneHoldUntil = nowMs + ZONE_RESUME_HOLD_MS
+            zoneInside = true
+            zoneInsideSince = it
+            zoneSettled = s.zoneSettled
+        }
         if (s.check.isNotEmpty()) toChecking(s.check, nowMs, nowMs)
     }
 
