@@ -231,6 +231,8 @@ class LoneWorkerHeartbeatTest {
 
     @Test fun no_false_gap_after_online_restart_dead_battery_or_normal_stop() {
         // (a) killed 2 minutes after a good refresh, back 30 s later
+        // assumes the last refresh was acked before the kill; a kill between server apply and ack can still add one
+        // false gap (inherent, see keep())
         var g = Rig()
         var hb = g.hb()
         hb.tick(true, "WALKER"); g.r.writes[0].done(true)
@@ -271,16 +273,56 @@ class LoneWorkerHeartbeatTest {
         assertEquals(0, g.gaps().size)
     }
 
-    @Test fun rejected_refresh_keeps_baseline_for_next_session() {
+    @Test fun rejected_refresh_drops_carry_and_next_session_starts_fresh() {
         hb.tick(true, "WALKER")
         r.writes[0].done(true)
         for (i in 0 until 8) { adv(5 * min); hb.tick(true, "WALKER") }
         r.writes[1].done(false)
+        assertNull(kv.m[LoneWorkerHeartbeat.K_CARRY])
         adv(5 * min); hb.tick(true, "WALKER")
         val start = r.writes.last()
         assertEquals("s2", start.key)
         assertEquals(setOf("uid", "role", "start", "last"), start.fields.keys)
         start.done(true)
-        assertEquals(mapOf("g/0" to mapOf("from" to s0, "to" to s0 + 45 * min)), gaps().single().fields)
+        assertEquals(0, gaps().size)
+    }
+
+    @Test fun carry_needs_same_center_same_uid_within_15_minutes_of_last_sent_stamp() {
+        fun run(center: String, uid: String, backMin: Long): List<W> {
+            val g = Rig()
+            var hb = g.hb()
+            hb.tick(true, "WALKER"); g.r.writes[0].done(true) // baseline s0
+            g.adv(5 * min); hb.tick(true, "WALKER") // last sent stamp s0+5, never answered
+            g.adv(backMin * min)
+            g.r.path = "root/hb/" + center; g.r.uid = uid
+            hb = g.hb(); hb.tick(true, "WALKER") // restart
+            val start = g.r.writes.last()
+            g.adv(g.t0 + 25 * min - g.t)
+            start.done(true)
+            return g.gaps()
+        }
+        // 14 min after the last sent stamp is 19 min after the last ack: the window follows the sent stamp
+        val gs = run("WF11", "u1", 14)
+        assertEquals(1, gs.size)
+        assertEquals("s2", gs[0].key)
+        assertEquals(mapOf("g/0" to mapOf("from" to s0, "to" to s0 + 25 * min)), gs[0].fields)
+        assertEquals(0, run("WF11", "u1", 16).size)
+        assertEquals(0, run("WF12", "u1", 14).size)
+        assertEquals(0, run("WF11", "u2", 14).size)
+    }
+
+    @Test fun carried_baseline_is_placed_at_first_ack_in_server_time() {
+        val g = Rig()
+        var hb = g.hb()
+        hb.tick(true, "WALKER"); g.r.writes[0].done(true)
+        g.adv(5 * min); hb.tick(true, "WALKER") // no answer
+        g.adv(9 * min)
+        g.r.server -= 10 * min // slow wall clock, no server anchor yet
+        hb = g.hb(); hb.tick(true, "WALKER")
+        val start = g.r.writes.last()
+        g.adv(8 * min)
+        g.r.server += 10 * min // anchor arrives
+        start.done(true)
+        assertEquals(mapOf("g/0" to mapOf("from" to g.s0, "to" to g.s0 + 22 * min)), g.gaps().single().fields)
     }
 }
