@@ -144,4 +144,112 @@ class LoneWorkerOrderTest : RestartKit() {
         assertTrue(l.powerRaw(true, 12_000, sticky = true))
         assertEquals(Rest.DOCKED, l.rest)
     }
+
+    // ---- determinism table: deadline kind x plug/unplug x before/after x confirm/drop x steps after the deadline ----
+
+    /** One table row: a fresh logic each call, drive start, deadline D, raw power feeds, time the power wait resolves. */
+    private class Row(val make: () -> LoneWorkerLogic, val from: Long, val d: Long, val power: List<Feed>, val resolve: Long)
+
+    /** Still, fall and SOS rows: the raw change 0.5 s before (or after) D, dropped by the opposite value at D + 1.2 s. */
+    private fun row(kind: String, plug: Boolean, after: Boolean, drop: Boolean): Row {
+        val d = when (kind) {
+            "still" -> if (plug) 180_000L else 190_000L
+            "fall" -> 40_000L
+            else -> if (plug) 300_000L else 310_000L
+        }
+        val make = {
+            val l = when (kind) {
+                "still" -> if (plug) newLogic(carried = true) else carriedWhileCharging()
+                "fall" -> (if (plug) newLogic(carried = true) else newLogic(charging = true)).apply { onAccident(10_000) }
+                else -> if (plug) newLogic(carried = true).apply { seenAt(180_000) }
+                    else carriedWhileCharging().apply { seenAt(190_000) }
+            }
+            l.seenAt(d - 3_000)
+            l
+        }
+        val p = if (after) d + 500 else d - 500
+        val power = listOf(Feed(p, on = plug)) + if (drop) listOf(Feed(d + 1_200, on = !plug)) else emptyList()
+        return Row(make, d - 3_000, d, power, if (drop) d + 1_200 else p + PowerDebounce.CONFIRM_MS)
+    }
+
+    /**
+     * Held check rows (restart at 5 s with the other power, the saved still check held): before = the restart raw value
+     * is the change (confirmed: D = 7 s, dropped at 6.2 s: D = 8.05 s); after = the restart value bounces back at 6.2 s
+     * (D = 8.05 s) and a real change starts at 8.55 s (dropped at 9.25 s).
+     */
+    private fun held(plug: Boolean, after: Boolean, drop: Boolean): Row {
+        val old = if (plug) newLogic(carried = true).apply { seenAt(180_000) } else carriedWhileCharging().apply { seenAt(190_000) }
+        val savedAt = if (plug) 181_000L else 191_000L
+        val power = when {
+            !after && !drop -> emptyList()
+            !after -> listOf(Feed(6_200, on = !plug))
+            !drop -> listOf(Feed(6_200, on = !plug), Feed(8_550, on = plug))
+            else -> listOf(Feed(6_200, on = !plug), Feed(8_550, on = plug), Feed(9_250, on = !plug))
+        }
+        val d = if (!after && !drop) 7_000L else 8_050L
+        val resolve = when { !after && !drop -> 7_050L; !after -> 6_200L; !drop -> 10_600L; else -> 9_250L }
+        return Row({ restart(old, savedAt, 5_000, 20_000, charging = plug) }, 5_000, d, power, resolve)
+    }
+
+    /**
+     * Every second after from: the accelerometer callback closing that window (walking when a step is in it), then the
+     * step flush callback. Each step is an accelerometer callback reporting MOVED, then the step callback.
+     */
+    private fun sensors(from: Long, until: Long, steps: List<Long>): List<Feed> =
+        (from + 1_000..until step 1_000L).flatMap { s ->
+            listOf(Feed(s, sense = { onWindow(MotionAnalyzer.Window(s, steps.any { it in s - 1_000 until s })) }),
+                Feed(s, sense = { stepsFlushed(s) }))
+        } + steps.flatMap { t -> listOf(Feed(t, sense = { onMoved(t) }), Feed(t, sense = { onStep(t) })) }
+
+    /** "W DOCKED", "C still NONE", "S still WAIT" to the last drive line. */
+    private fun end(code: String): String {
+        val t = code.split(" ")
+        return when (t[0]) {
+            "W" -> "end WATCHING  ${t[1]}"
+            "C" -> "end CHECKING ${t[1]} ${t[2]}"
+            else -> "end SOS ${t[1]} ${t[2]}"
+        }
+    }
+
+    /**
+     * Runs the 16 rows of kind live and late (sensor data from D - 1.5 s held back until the power wait resolves).
+     * P <= D rows give the same record with times, P > D rows the same final state. want = plug then unplug, each
+     * "before confirm|before drop|after confirm|after drop" with "no steps/steps" per cell.
+     */
+    private fun table(kind: String, want: List<String>) {
+        for ((i, plug) in listOf(true, false).withIndex()) {
+            val cells = want[i].split("|")
+            for ((j, side) in listOf(false to false, false to true, true to false, true to true).withIndex()) {
+                val (after, drop) = side
+                val r = if (kind == "held") held(plug, after, drop) else row(kind, plug, after, drop)
+                for ((k, walk) in listOf(false, true).withIndex()) {
+                    val name = "$kind/${if (plug) "plug" else "unplug"}/${if (after) "after" else "before"}/" +
+                        "${if (drop) "drop" else "confirm"}/${if (walk) "walk" else "no"}"
+                    val until = r.d + 12_000
+                    val steps = if (walk) (0..5).map { r.d + 300 + 500L * it } else emptyList()
+                    val feeds = (sensors(r.from, until, steps) + r.power).sortedBy { it.at }
+                    val live = r.make().drive(r.from, feeds, until)
+                    val late = r.make().drive(r.from, feeds, until, (r.d - 1_500)..r.resolve, r.resolve)
+                    if (after) assertEquals(name, live.last(), late.last()) else assertEquals(name, live, late)
+                    assertEquals(name, end(cells[j].split("/")[k]), live.last())
+                }
+            }
+        }
+    }
+
+    @Test fun still_deadline_is_the_same_for_every_delivery() = table("still", listOf(
+        "W DOCKED/W DOCKED|C still NONE/W NONE|W DOCKED/W DOCKED|C still NONE/W NONE",
+        "W WAIT/W NONE|C still NONE/W NONE|C still WAIT/W NONE|C still NONE/W NONE"))
+
+    @Test fun fall_deadline_is_the_same_for_every_delivery() = table("fall", listOf(
+        "W DOCKED/W DOCKED|C fall NONE/W NONE|W DOCKED/W DOCKED|C fall NONE/W NONE",
+        "C fall WAIT/W NONE|C fall DOCKED/W DOCKED|C fall WAIT/W NONE|C fall DOCKED/W DOCKED"))
+
+    @Test fun held_check_is_the_same_for_every_delivery() = table("held", listOf(
+        "W DOCKED/W DOCKED|C still NONE/W NONE|W DOCKED/W DOCKED|C still NONE/W NONE",
+        "C still WAIT/W NONE|C still NONE/W NONE|C still WAIT/W NONE|C still NONE/W NONE"))
+
+    @Test fun sos_deadline_is_the_same_for_every_delivery() = table("sos", listOf(
+        "W DOCKED/W DOCKED|S still NONE/S still NONE|S still DOCKED/S still DOCKED|S still NONE/S still NONE",
+        "S still WAIT/S still NONE|S still NONE/S still NONE|S still WAIT/S still NONE|S still NONE/S still NONE"))
 }

@@ -265,13 +265,13 @@ class LoneWorkerStillCountTest {
         assertTrue(l.waitingToJudge(180_000))
         assertFalse(l.waitingOnSensors(180_000))
         assertEquals(179_500 + PowerDebounce.CONFIRM_MS, l.nextCheckAt(180_000))
+        assertEquals(Mode.WATCHING, l.seenAt(179_500 + PowerDebounce.DEBOUNCE_MS))
+        assertFalse(l.waitingToJudge(179_500 + PowerDebounce.DEBOUNCE_MS))
         val d = newLogic(carried = true)
         d.sensed(178_000)
         d.powerRaw(true, 179_500)
         assertEquals(Mode.WATCHING, d.modeAt(180_000))
         assertTrue(d.waitingToJudge(180_000))
         assertTrue(d.waitingOnSensors(180_000))
-        assertEquals(Mode.WATCHING, l.seenAt(179_500 + PowerDebounce.DEBOUNCE_MS))
-        assertFalse(l.waitingToJudge(179_500 + PowerDebounce.DEBOUNCE_MS))
     }
 }
