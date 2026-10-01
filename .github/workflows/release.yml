@@ -27,6 +27,15 @@ jobs:
             exit 1
           fi
 
+      # (v1.2.2) 구조 요청 메일 스크립트 주소. 없으면 메일 기능만 꺼진 채로 빌드한다(실패시키지 않음, 값은 찍지 않음)
+      - name: Check SOS mail URL secret
+        env:
+          SA_SOS_MAIL_URL: ${{ secrets.SA_SOS_MAIL_URL }}
+        run: |
+          if [ -z "$SA_SOS_MAIL_URL" ]; then
+            echo "::warning::SA_SOS_MAIL_URL 비밀값이 없어 구조 요청 메일이 꺼진 채로 빌드된다"
+          fi
+
       - name: Set up JDK 17
         uses: actions/setup-java@v5   # node24 런타임
         with:
@@ -69,7 +78,7 @@ jobs:
           # 클래스명 앞의 "com.wf11.safealert.ble." 패키지 접두어는 아래 경로 조합에 하드코딩돼
           # 있다 — 이 패키지 밖으로 골든 테스트가 옮겨지면 이 스크립트도 함께 고쳐야 한다.
           REQUIRED="RssiCascadeTest RssiCascadeIsolationTest MedianFilterWarmupTest AlertCascadeGoldenTest UwbSessionGoldenTest LowSpeedApproachRegressionTest BeaconFullIdTest SpecialAlertTimeGateTest"
-          MIN_TOTAL=487   # 전체 단위 테스트 수 하한 = @Test 총수(2026-10-01). 실행 수가 이보다 적으면 테스트가 조용히 사라진 것
+          MIN_TOTAL=496   # 전체 단위 테스트 수 하한 = @Test 총수(2026-10-01). 실행 수가 이보다 적으면 테스트가 조용히 사라진 것
 
           if [ ! -d "$XML_DIR" ]; then
             echo "::error::테스트 결과 디렉터리가 없다: $XML_DIR — 테스트가 한 건도 실행되지 않았다"
@@ -112,6 +121,7 @@ jobs:
           SA_RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
           SA_RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
           SA_DEV_PIN: ${{ secrets.SA_DEV_PIN }}
+          SA_SOS_MAIL_URL: ${{ secrets.SA_SOS_MAIL_URL }}
         run: ./gradlew assembleRelease --no-daemon --console=plain
 
       # 서명이 빠지면 app-release-unsigned.apk 가 나와 mv 가 실패한다(자연 게이트)

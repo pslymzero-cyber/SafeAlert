@@ -17,6 +17,8 @@ import com.wf11.safealert.BuildConfig
 import com.wf11.safealert.service.BleService
 import com.wf11.safealert.service.CalibrationEngine
 import com.wf11.safealert.service.DeviceStateRegistry
+import com.wf11.safealert.service.LoneWorkerSosSync
+import com.wf11.safealert.service.SosMail
 import com.wf11.safealert.utils.DevSettings
 import com.wf11.safealert.utils.UwbCalibrator
 import com.wf11.safealert.utils.UwbRanger
@@ -80,6 +82,8 @@ class DevSettingsActivity : AppCompatActivity() {
         // Firebase
         binding.etFirebaseRoot.setText(DevSettings.firebaseRoot)
         binding.etDevSiteCode.setText(DevSettings.siteCode)   // (v1.1.90) 사업장 코드 변경 경로
+        binding.etSosMailTo.setText(LoneWorkerSosSync.mailTo(this, DevSettings.siteCode))
+        binding.tvSosMailOff.visibility = if (LoneWorkerSosSync.mailEnabled) View.GONE else View.VISIBLE
         binding.switchAutoSave.isChecked = DevSettings.autoSaveAlerts
         // 디버그
         binding.switchDebug.isChecked = DevSettings.debugMode
@@ -293,9 +297,27 @@ class DevSettingsActivity : AppCompatActivity() {
         // (v1.1.90) 사업장 코드 — 저장 시 UwbCalibrator 프로파일 전환. 경보 로그 경로 alerts/<사업장>/<날짜>/ 는 그대로
         run {
             val et = binding.etDevSiteCode
-            val commit: () -> Unit = { DevSettings.siteCode = et.text.toString(); UwbCalibrator.applySite() }
+            val commit: () -> Unit = {
+                val before = DevSettings.siteCode
+                DevSettings.siteCode = et.text.toString(); UwbCalibrator.applySite()
+                // 사업장이 바뀌면 메일 칸을 그 사업장 값으로 다시 채운다(바뀌지 않았으면 입력 중인 값을 지우지 않는다)
+                if (DevSettings.siteCode != before) binding.etSosMailTo.setText(LoneWorkerSosSync.mailTo(this, DevSettings.siteCode))
+            }
             editCommitters += commit
             et.setOnFocusChangeListener { _, hasFocus -> if (!hasFocus) { commit(); et.setText(DevSettings.siteCode) } }
+        }
+        // (v1.2.2) 구조 요청 메일 받는 주소 — 사업장별. 빈 값 = 보내지 않음, 형식이 틀리면 저장하지 않는다
+        run {
+            val et = binding.etSosMailTo
+            val commit: () -> Unit = {
+                val v = et.text.toString().trim()
+                if (v.isEmpty() || SosMail.validAddress(v)) LoneWorkerSosSync.setMailTo(this, DevSettings.siteCode, v)
+                else Toast.makeText(this, "이메일 주소 형식이 맞지 않아 저장하지 않았습니다.", Toast.LENGTH_LONG).show()
+            }
+            editCommitters += commit
+            et.setOnFocusChangeListener { _, hasFocus ->
+                if (!hasFocus) { commit(); et.setText(LoneWorkerSosSync.mailTo(this, DevSettings.siteCode)) }
+            }
         }
         bindLongField(binding.etTimegateMs,          { DevSettings.timeGateMs },             { DevSettings.timeGateMs = it })
         bindLongField(binding.etTimegateCornering,   { DevSettings.corneringTimeGateMs },    { DevSettings.corneringTimeGateMs = it })
