@@ -9,7 +9,9 @@ import java.net.URLEncoder
  * 메일 스크립트에 요청을 보내 성공·중복이면 지우고, 일시 실패면 10초부터 두 배씩(최대 5분) 늘려 다시 보낸다.
  * 서버 저장 확인 뒤(넣은 시각) 2시간이 넘거나 시계가 1분 넘게 거꾸로 가면 포기한다(스크립트의 신선도 기준과 같다).
  * 같은 기록의 sos 가 남아 있는 동안 resolved 는 보내지 않고, sos 가 끝나면 바로 이어 보낸다.
- * 받는 주소·무동작 분은 넣는 순간 고정한다. 메일은 보조 통로라 어떤 경보·판정도 이 클래스를 기다리지 않는다.
+ * 받는 주소·무동작 분은 넣는 순간 고정한다. 해제 메일은 같은 기록의 구조 요청 메일이 들어갈 때의 주소로 간다
+ * (기록별로 7일 보관). 이 단말에서 구조 요청 메일을 넣은 적 없는 기록이면 해제 메일도 넣지 않는다.
+ * 메일은 보조 통로라 어떤 경보·판정도 이 클래스를 기다리지 않는다.
  * 대기열이 찼는지 비었는지는 onQueue 로 알린다(감시가 멈춘 뒤에도 보내는 예약 작업이 이를 따른다).
  */
 class SosMail(
@@ -28,11 +30,17 @@ class SosMail(
         const val GIVE_UP_MS = 2 * 3_600_000L
         const val CLOCK_BACK_MS = 60_000L
         const val K_LIST = "m.list"
+        const val K_ADDR = "m.to"
+        const val KEEP_ADDR_MS = 7 * 86_400_000L
 
+        private val SCRIPT_URL = Regex("https://script\\.google\\.com/macros/s/[A-Za-z0-9_-]+/exec")
         private val ADDRESS = Regex("[A-Za-z0-9%+_-]+(\\.[A-Za-z0-9%+_-]+)*@[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)+")
         private val CODE = Regex("\"code\"\\s*:\\s*\"([a-z_]+)\"")
 
         fun validAddress(s: String): Boolean = s.length in 1..254 && ADDRESS.matches(s)
+
+        /** 웹 앱 배포 주소(https://script.google.com/macros/s/<id>/exec) 형식이면 정리한 값, 아니면 빈 값(메일 꺼짐). */
+        fun scriptUrl(raw: String): String = raw.trim().let { if (SCRIPT_URL.matches(it)) it else "" }
 
         /** 스크립트 응답의 code 값(비밀 아님, 로그에 남겨도 된다). 없으면 null. */
         fun code(body: String?): String? = body?.let { CODE.find(it)?.groupValues?.get(1) }
@@ -62,6 +70,11 @@ class SosMail(
     private val next = HashMap<String, Long>()
     private var drainDone: ((Boolean) -> Unit)? = null
 
+    // 강제 종료로 예약 작업이 지워져도 다음 생성 때 남은 대기열로 다시 건다.
+    init {
+        if (load().isNotEmpty()) onQueue(true)
+    }
+
     /** 서버 기록이 확인된 순간 부른다. path = "{루트}/sos/{사업장 코드}". */
     fun enqueue(event: String, path: String, key: String, stillMin: Int) {
         if (event != EVENT_SOS && event != EVENT_RESOLVED) return
@@ -71,11 +84,17 @@ class SosMail(
         if (site.isEmpty()) return
         val sc = path.substring(i + 5)
         if (sc.isEmpty() || key.isEmpty()) return
-        val to = addressFor(sc).trim()
+        val addr = loadAddr()
+        // 해제는 설정을 다시 읽지 않고 같은 기록의 구조 요청 메일 주소를 쓴다(없으면 넣지 않음)
+        val to = if (event == EVENT_SOS) addressFor(sc).trim() else addr.firstOrNull { it[0] == key }?.get(1) ?: return
         if (!validAddress(to)) return
         val list = load()
         if (list.any { it.event == event && it.id == key }) return
-        save(list + Item(event, site, sc, key, to, stillMin.coerceIn(1, 30), now()))
+        val t = now()
+        val kept = addr.filter { it[0] != key && (event != EVENT_SOS || t - it[2].toLong() <= KEEP_ADDR_MS) }
+        val rows = if (event == EVENT_SOS) kept + listOf(listOf(key, to, t.toString())) else kept
+        save(list + Item(event, site, sc, key, to, stillMin.coerceIn(1, 30), t),
+            mapOf(K_ADDR to if (rows.isEmpty()) null else rows.joinToString("\n") { it.joinToString("\t") }))
         tick()
     }
 
@@ -133,8 +152,12 @@ class SosMail(
         }
     }
 
-    private fun save(list: List<Item>) {
-        kv.put(mapOf(K_LIST to if (list.isEmpty()) null else list.joinToString("\n") {
+    // 기록별 받는 주소: 한 줄에 '기록 키 \t 주소 \t 넣은 시각'. 칸 수·시각이 어긋난 줄은 버린다.
+    private fun loadAddr(): List<List<String>> = (kv.get(K_ADDR) ?: "").split('\n')
+        .map { it.split('\t') }.filter { it.size == 3 && it[2].toLongOrNull() != null }
+
+    private fun save(list: List<Item>, extra: Map<String, String?> = emptyMap()) {
+        kv.put(extra + (K_LIST to if (list.isEmpty()) null else list.joinToString("\n") {
             listOf(it.event, it.site, it.sc, it.id, it.to, it.stillMin, it.at).joinToString("\t")
         }))
         onQueue(list.isNotEmpty())

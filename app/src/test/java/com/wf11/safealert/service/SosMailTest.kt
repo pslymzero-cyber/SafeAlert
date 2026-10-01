@@ -283,8 +283,58 @@ class SosMailTest {
         mail(kv).enqueue(SosMail.EVENT_SOS, "root/sos/WF11", "k1", 3)
         kv.m[SosMail.K_LIST] = "garbage\nsos\troot\tWF11\tkx\tx@y.com\tnope\t1\n" + kv.m[SosMail.K_LIST]
         posts.clear()
-        mail(kv).tick()
+        queue.clear()
+        val m2 = mail(kv)
+        assertEquals(listOf(true), queue)
+        m2.tick()
         assertEquals(1, posts.size)
         assertEquals(form1, posts[0].form)
+    }
+
+    @Test fun resolved_goes_to_address_the_sos_was_queued_with() {
+        val kv = Kv()
+        to = "a@coupangfs.com"
+        mail(kv).enqueue(SosMail.EVENT_SOS, "root/sos/WF11", "k1", 3)
+        posts[0].done(sent)
+        assertEquals(1, asked.size)
+        to = "b@coupangfs.com"
+        val m = mail(kv)
+        m.enqueue(SosMail.EVENT_RESOLVED, "root/sos/WF11", "k1", 3)
+        assertEquals(2, posts.size)
+        assertTrue(posts[1].form.contains("event=resolved&to=a%40coupangfs.com&"))
+        assertNull(kv.m[SosMail.K_ADDR])
+        assertEquals(1, asked.size)
+        posts[1].done(sent)
+
+        // no sos mail queued on this device for k9: no resolved mail
+        m.enqueue(SosMail.EVENT_RESOLVED, "root/sos/WF11", "k9", 3)
+        assertEquals(2, posts.size)
+        assertNull(kv.m[SosMail.K_LIST])
+
+        // address rows older than 7 days are dropped when a new sos is queued
+        m.enqueue(SosMail.EVENT_SOS, "root/sos/WF11", "k2", 3)
+        posts[2].done(sent)
+        now += SosMail.KEEP_ADDR_MS + 1
+        m.enqueue(SosMail.EVENT_SOS, "root/sos/WF11", "k3", 3)
+        assertEquals(listOf("k3"), kv.m[SosMail.K_ADDR]!!.split('\n').map { it.substringBefore('\t') })
+    }
+
+    @Test fun script_url_only_web_app_exec_form() {
+        val ok = "https://script.google.com/macros/s/AKfy_c-1/exec"
+        assertEquals(ok, SosMail.scriptUrl(ok))
+        assertEquals(ok, SosMail.scriptUrl("  $ok \n"))
+        for (bad in listOf(
+            "https://script.google.com/macros/s/AKfy_c-1/dev",
+            "https://script.google.com/macros/s/AKfy_c-1/edit",
+            "http://script.google.com/macros/s/AKfy_c-1/exec",
+            "https://script.google.com/macros/s/AKfy_c-1/exec?x=1",
+            "https://script.google.com/a/macros/dom/s/x/exec",
+            "https://script.google.com/",
+            ""
+        )) assertEquals(bad, "", SosMail.scriptUrl(bad))
+    }
+
+    @Test fun job_retries_linear_from_10_seconds() {
+        assertTrue(serviceSource("SosMailJob.kt").contains(".setBackoffCriteria(10_000L, JobInfo.BACKOFF_POLICY_LINEAR)"))
     }
 }

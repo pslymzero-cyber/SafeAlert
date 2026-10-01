@@ -45,8 +45,8 @@ class LoneWorkerSosSync(
         private const val TAG = "SosMail"
         private const val K_TO = "to"
 
-        /** 메일 스크립트 주소(빌드 때 주입). 앱스 스크립트 주소가 아니면 빈 값 = 메일 꺼짐. */
-        val mailUrl: String = BuildConfig.SOS_MAIL_URL.trim().let { if (it.startsWith("https://script.google.com/")) it else "" }
+        /** 메일 스크립트 주소(빌드 때 주입). 웹 앱 배포 주소(…/macros/s/<id>/exec) 형식이 아니면 빈 값 = 메일 꺼짐. */
+        val mailUrl: String = SosMail.scriptUrl(BuildConfig.SOS_MAIL_URL)
         val mailEnabled: Boolean get() = mailUrl.isNotEmpty()
 
         // 사업장 코드별 파일(DevSettings.sitePrefName 과 같은 이름 규칙). 키가 없으면 기본 주소, 빈 값 = 보내지 않음.

@@ -28,6 +28,7 @@ class SosMailJob : JobService() {
                         JobInfo.Builder(JOB_ID, ComponentName(ctx, SosMailJob::class.java))
                             .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
                             .setPersisted(true)
+                            .setBackoffCriteria(10_000L, JobInfo.BACKOFF_POLICY_LINEAR)
                             .build()
                     )
                 }
@@ -37,7 +38,7 @@ class SosMailJob : JobService() {
 
     override fun onStartJob(params: JobParameters): Boolean {
         if (!LoneWorkerSosSync.mailEnabled) return false
-        // 남은 항목이 있으면 시스템 재시도(30초부터 늘어남)에 맡긴다
+        // 남은 항목이 있으면 시스템 재시도(10초씩 늘어남 — 2시간 안에서 간격이 6분을 넘지 않는다)에 맡긴다
         LoneWorkerSosSync.mail(this).drain { left -> jobFinished(params, left) }
         return true
     }
