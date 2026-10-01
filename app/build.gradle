@@ -76,7 +76,8 @@ android {
         unitTests.returnDefaultValues = true
         unitTests.all {
             // 저장소 파일을 읽는 대조 테스트 — 이 파일만 바뀌어도 다시 돈다
-            inputs.files(rootProject.file('database.rules.json'), rootProject.file('scripts/sos-mail/Code.gs'))
+            inputs.files(rootProject.file('database.rules.json'), rootProject.file('scripts/sos-mail/Code.gs'),
+                rootProject.file('.github/scripts/hb_digest.py'))
             testLogging {
                 events 'failed'
                 exceptionFormat 'full'

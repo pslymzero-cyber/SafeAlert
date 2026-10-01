@@ -11,16 +11,6 @@ import org.junit.Test
 /** SosMail: rescue mail queue fed by the ledger's server-confirmed points (v1.2.2). No network. */
 class SosMailTest {
 
-    private class Kv : SosKv {
-        val m = HashMap<String, String>()
-        var puts = 0
-        override fun get(k: String): String? = m[k]
-        override fun put(changes: Map<String, String?>) {
-            puts++
-            for ((k, v) in changes) if (v == null) m.remove(k) else m[k] = v
-        }
-    }
-
     private class Call<T>(val path: String, val key: String, val cb: (T) -> Unit)
 
     private class Tr : SosTransport {

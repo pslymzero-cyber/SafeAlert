@@ -145,6 +145,17 @@ internal fun LoneWorkerLogic.peerSiren(from: Long, to: Long, id: String = "P") {
     }
 }
 
+/** In-memory SosKv for tests. puts counts put() calls. */
+internal class Kv : SosKv {
+    val m = HashMap<String, String>()
+    var puts = 0
+    override fun get(k: String): String? = m[k]
+    override fun put(changes: Map<String, String?>) {
+        puts++
+        for ((k, v) in changes) if (v == null) m.remove(k) else m[k] = v
+    }
+}
+
 /** A repository file by its path from the root, LF line ends (the test runs from the module or the root). */
 internal fun repoFile(rel: String): String =
     listOf(File(rel), File("../$rel")).first { it.exists() }.readText().replace("\r\n", "\n")

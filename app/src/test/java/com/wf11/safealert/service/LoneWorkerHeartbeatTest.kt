@@ -25,14 +25,6 @@ class LoneWorkerHeartbeatTest {
         }
     }
 
-    private class Kv : SosKv {
-        val m = HashMap<String, String>()
-        override fun get(k: String): String? = m[k]
-        override fun put(changes: Map<String, String?>) {
-            for ((k, v) in changes) if (v == null) m.remove(k) else m[k] = v
-        }
-    }
-
     // One device: same server, same storage. hb() = a new process (old callbacks never come back).
     private class Rig {
         var t = 100_000L

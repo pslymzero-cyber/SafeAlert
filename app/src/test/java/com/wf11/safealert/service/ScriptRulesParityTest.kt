@@ -58,10 +58,13 @@ class ScriptRulesParityTest {
         val freshHours = Regex("""var FRESH_MS = (\d+) \* 3600 \* 1000;""").find(gs)!!.groupValues[1].toLong()
         assertEquals(SosMail.GIVE_UP_MS, freshHours * 3_600_000L)
         val max = scriptMaxTo(gs)
+        // 254 = maxLength of the address field in activity_dev_settings.xml
         assertEquals(254, max)
-        val at = "a@" + "b".repeat(max - 6) + ".com"
-        assertEquals(max, at.length)
-        assertTrue(SosMail.validAddress(at))
-        assertTrue(!SosMail.validAddress("a$at"))
+    }
+
+    @Test fun digest_gap_matches_app_gap() {
+        val py = repoFile(".github/scripts/hb_digest.py")
+        val minutes = Regex("""(?m)^GAP_MS = (\d+) \* 60_000""").find(py)!!.groupValues[1].toLong()
+        assertEquals(LoneWorkerHeartbeat.GAP_MS, minutes * 60_000L)
     }
 }

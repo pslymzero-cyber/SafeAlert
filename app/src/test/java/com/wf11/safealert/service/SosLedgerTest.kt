@@ -11,14 +11,6 @@ import org.junit.Test
 /** SosLedger: own SOS storage and retry state machine (v1.1.99). In-memory kv and a capturing transport. */
 class SosLedgerTest {
 
-    private class Kv : SosKv {
-        val m = HashMap<String, String>()
-        override fun get(k: String): String? = m[k]
-        override fun put(changes: Map<String, String?>) {
-            for ((k, v) in changes) if (v == null) m.remove(k) else m[k] = v
-        }
-    }
-
     private class Call<T>(val path: String, val key: String, val cb: (T) -> Unit)
 
     private class Tr : SosTransport {
