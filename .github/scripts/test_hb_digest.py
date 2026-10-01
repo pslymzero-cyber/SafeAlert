@@ -47,15 +47,50 @@ def test_center_counts_buckets_and_total():
     }
     s = hb_digest.summarize(data, FROM, NOW)
     c = s["WF11"]
-    assert (c["sessions"], c["ended"], c["lost"], c["live"], c["gaps"]) == (3, 1, 1, 1, 4), c
+    assert (c["sessions"], c["ended"], c["restart"], c["lost"], c["live"], c["gaps"]) == (3, 1, 0, 1, 1, 4), c
     assert c["b"] == [1, 1, 1, 1], c
     lines = hb_digest.render(s)
     assert lines[0] == hb_digest.TITLE
     rows = [l for l in lines if l.startswith("| ")]
     assert rows[0] == hb_digest.HEAD
-    assert rows[1] == "| WF11 | 3 | 1 | 1 | 1 | 4 | 1 | 1 | 1 | 1 |", rows
-    assert rows[2] == "| WF12 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |", rows
-    assert rows[3] == "| " + hb_digest.TOTAL + " | 4 | 2 | 1 | 1 | 4 | 1 | 1 | 1 | 1 |", rows
+    assert rows[1] == "| WF11 | 3 | 1 | 0 | 1 | 1 | 4 | 1 | 1 | 1 | 1 |", rows
+    assert rows[2] == "| WF12 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |", rows
+    assert rows[3] == "| " + hb_digest.TOTAL + " | 4 | 2 | 0 | 1 | 1 | 4 | 1 | 1 | 1 | 1 |", rows
+    assert lines[1 + lines.index(rows[3]) + 1] == hb_digest.READ, lines
+
+
+def test_from_is_kst_midnight():
+    import datetime
+    kst = datetime.timezone(datetime.timedelta(hours=9))
+    assert FROM == int(datetime.datetime(2026, 9, 1, tzinfo=kst).timestamp() * 1000), FROM
+    data = {"WF11": {"a": sess(FROM + 7 * 60 * MIN, NOW, end=NOW), "b": sess(FROM - MIN, NOW, end=NOW)}}
+    s = hb_digest.summarize(data, FROM, NOW)
+    assert s["WF11"]["sessions"] == 1, s
+
+
+def counts(data, now=NOW):
+    c = hb_digest.summarize(data, FROM, now)["WF11"]
+    return c["sessions"], c["ended"], c["restart"], c["lost"], c["live"]
+
+
+def test_restart_pairs_same_uid_same_center():
+    t0 = FROM + 3600 * 1000
+    old = sess(t0, t0 + 237 * MIN, uid="u1")
+    new = sess(t0 + 241 * MIN, t0 + 300 * MIN, end=t0 + 300 * MIN, uid="u1")
+    assert counts({"WF11": {"KEYMARK": old, "n": new}}) == (2, 1, 1, 0, 0)
+    late = dict(new, start=t0 + 237 * MIN + 16 * MIN)
+    assert counts({"WF11": {"o": old, "n": late}}) == (2, 1, 0, 1, 0)
+    other = dict(new, uid="u2", start=t0 + 238 * MIN)
+    assert counts({"WF11": {"o": old, "n": other}}) == (2, 1, 0, 1, 0)
+    elsewhere = hb_digest.summarize({"WF11": {"o": old}, "WF12": {"n": new}}, FROM, NOW)
+    assert elsewhere["WF11"]["lost"] == 1 and elsewhere["WF11"]["restart"] == 0, elsewhere
+    assert elsewhere["WF12"]["sessions"] == 1, elsewhere
+    # still "live" by its last refresh, but a new session already started within 15 minutes
+    live_now = t0 + 241 * MIN
+    assert counts({"WF11": {"o": old, "n": new}}, now=live_now) == (2, 1, 1, 0, 0)
+    text = "\n".join(hb_digest.render(hb_digest.summarize({"WF11": {"KEYMARK": old, "n": new}}, FROM, NOW)))
+    assert "u1" not in text and "KEYMARK" not in text, text
+    assert hb_digest.READ in text, text
 
 
 def test_array_and_object_gaps_match():
