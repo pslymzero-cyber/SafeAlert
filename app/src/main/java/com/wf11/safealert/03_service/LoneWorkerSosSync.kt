@@ -63,8 +63,8 @@ class LoneWorkerSosSync(
         private val mailExec: ExecutorService by lazy { Executors.newSingleThreadExecutor() }
         private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
 
-        /** 원장 파일 위의 저장소. 쓰기는 commit(동기) — 쓴 직후 죽어도 남는다. */
-        private fun kvOf(ctx: Context): SosKv = object : SosKv {
+        /** 원장 파일 위의 저장소. 쓰기는 commit(동기) — 쓴 직후 죽어도 남는다. sync = false 면 apply(잃어도 되는 값). */
+        private fun kvOf(ctx: Context, sync: Boolean = true): SosKv = object : SosKv {
             private val prefs: SharedPreferences by lazy { ctx.getSharedPreferences(FILE, Context.MODE_PRIVATE) }
 
             // 이전 개발 빌드가 다른 형으로 남긴 값은 읽지 않는다
@@ -72,7 +72,7 @@ class LoneWorkerSosSync(
             override fun put(changes: Map<String, String?>) {
                 val e = prefs.edit()
                 for ((k, v) in changes) if (v == null) e.remove(k) else e.putString(k, v)
-                e.commit()
+                if (sync) e.commit() else e.apply()
             }
         }
 
@@ -190,7 +190,7 @@ class LoneWorkerSosSync(
                 runCatching { SosRemote.update(path, key, fields) { ok -> handler.post { done(ok) } } }
                     .onFailure { done(false) }
             }
-        }, SystemClock::elapsedRealtime)
+        }, kvOf(ctx, sync = false), SystemClock::elapsedRealtime)
     }
 
     /** 감시 tick(10초)마다 부른다. on = 단독 작업자 감시 기능이 켜져 있는가, role = 역할 분류(WALKER 등). */

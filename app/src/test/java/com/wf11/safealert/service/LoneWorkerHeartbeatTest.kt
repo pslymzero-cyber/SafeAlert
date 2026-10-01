@@ -1,6 +1,7 @@
 package com.wf11.safealert.service
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -24,10 +25,31 @@ class LoneWorkerHeartbeatTest {
         }
     }
 
+    private class Kv : SosKv {
+        val m = HashMap<String, String>()
+        override fun get(k: String): String? = m[k]
+        override fun put(changes: Map<String, String?>) {
+            for ((k, v) in changes) if (v == null) m.remove(k) else m[k] = v
+        }
+    }
+
+    // One device: same server, same storage. hb() = a new process (old callbacks never come back).
+    private class Rig {
+        var t = 100_000L
+        val t0 = t
+        val r = Fake()
+        val kv = Kv()
+        val s0 = r.server
+        fun hb() = LoneWorkerHeartbeat(r, kv) { t }
+        fun adv(ms: Long) { t += ms; r.server += ms }
+        fun gaps() = r.writes.filter { w -> w.fields.keys.any { it.startsWith("g/") } }
+    }
+
     private val min = 60_000L
     private var t = 100_000L
     private val r = Fake()
-    private val hb = LoneWorkerHeartbeat(r) { t }
+    private val kv = Kv()
+    private val hb = LoneWorkerHeartbeat(r, kv) { t }
     private val s0 = r.server
 
     private fun adv(ms: Long) { t += ms; r.server += ms }
@@ -184,5 +206,81 @@ class LoneWorkerHeartbeatTest {
         assertEquals(3, r.writes.size)
         assertEquals("s2", r.writes[2].key)
         assertEquals(setOf("uid", "role", "start", "last"), r.writes[2].fields.keys)
+    }
+
+    @Test fun restart_during_outage_keeps_baseline_for_gap() {
+        for ((outEnd, dead) in listOf(25 to 12, 70 to 62, 120 to 12)) {
+            val g = Rig()
+            var hb = g.hb()
+            hb.tick(true, "WALKER")
+            g.r.writes[0].done(true)
+            while (g.t - g.t0 < dead * min) { g.adv(30_000); hb.tick(true, "WALKER") } // no answers
+            g.adv(30_000)
+            hb = g.hb()
+            hb.tick(true, "WALKER")
+            val start = g.r.writes.last()
+            assertEquals(setOf("uid", "role", "start", "last"), start.fields.keys)
+            while (g.t - g.t0 < outEnd * min) { g.adv(30_000); hb.tick(true, "WALKER") }
+            start.done(true)
+            val gs = g.gaps()
+            assertEquals("case $outEnd/$dead", 1, gs.size)
+            assertEquals("s2", gs[0].key)
+            assertEquals(mapOf("g/0" to mapOf("from" to g.s0, "to" to g.s0 + outEnd * min)), gs[0].fields)
+        }
+    }
+
+    @Test fun no_false_gap_after_online_restart_dead_battery_or_normal_stop() {
+        // (a) killed 2 minutes after a good refresh, back 30 s later
+        var g = Rig()
+        var hb = g.hb()
+        hb.tick(true, "WALKER"); g.r.writes[0].done(true)
+        g.adv(5 * min); hb.tick(true, "WALKER"); g.r.writes[1].done(true)
+        g.adv(2 * min + 30_000)
+        hb = g.hb(); hb.tick(true, "WALKER"); g.r.writes.last().done(true)
+        assertEquals(0, g.gaps().size)
+
+        // (b) battery dead after a good refresh, reboot 5 hours later (clock starts again)
+        g = Rig()
+        hb = g.hb()
+        hb.tick(true, "WALKER"); g.r.writes[0].done(true)
+        g.adv(5 * min); hb.tick(true, "WALKER"); g.r.writes[1].done(true)
+        g.t = 50_000; g.r.server += 5 * 60 * min
+        hb = g.hb(); hb.tick(true, "WALKER"); g.r.writes.last().done(true)
+        assertEquals(0, g.gaps().size)
+
+        // (c) normal stop during an outage keeps its gap on the end write only
+        g = Rig()
+        hb = g.hb()
+        hb.tick(true, "WALKER"); g.r.writes[0].done(true)
+        repeat(40) { g.adv(30_000); hb.tick(true, "WALKER") }
+        hb.end()
+        assertEquals(1, g.gaps().size)
+        assertNull(g.kv.m[LoneWorkerHeartbeat.K_CARRY])
+        g.adv(min); hb.tick(true, "WALKER"); g.r.writes.last().done(true)
+        assertEquals(1, g.gaps().size)
+
+        // (d) stopped while no session was open (refresh rejected): the next start is a fresh baseline
+        g = Rig()
+        hb = g.hb()
+        hb.tick(true, "WALKER"); g.r.writes[0].done(true)
+        repeat(4) { g.adv(5 * min); hb.tick(true, "WALKER") }
+        g.r.writes[1].done(false)
+        hb.end()
+        assertNull(g.kv.m[LoneWorkerHeartbeat.K_CARRY])
+        g.adv(5 * min); hb.tick(true, "WALKER"); g.r.writes.last().done(true)
+        assertEquals(0, g.gaps().size)
+    }
+
+    @Test fun rejected_refresh_keeps_baseline_for_next_session() {
+        hb.tick(true, "WALKER")
+        r.writes[0].done(true)
+        for (i in 0 until 8) { adv(5 * min); hb.tick(true, "WALKER") }
+        r.writes[1].done(false)
+        adv(5 * min); hb.tick(true, "WALKER")
+        val start = r.writes.last()
+        assertEquals("s2", start.key)
+        assertEquals(setOf("uid", "role", "start", "last"), start.fields.keys)
+        start.done(true)
+        assertEquals(mapOf("g/0" to mapOf("from" to s0, "to" to s0 + 45 * min)), gaps().single().fields)
     }
 }
