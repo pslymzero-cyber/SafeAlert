@@ -5,6 +5,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
 import android.content.Intent
+import android.content.res.ColorStateList
 import android.view.View
 import android.view.WindowManager
 import android.widget.Toast
@@ -20,10 +21,11 @@ import com.wf11.safealert.service.PeerRow
 /**
  * 단독 작업자 확인·구조 요청 화면 (v1.1.99).
  *
- * 잠금 화면 위에 뜨고, 상태는 LoneWorkerMonitor.uiState() 만 읽어 그린다.
- * 유예·휴식 버튼이 없고 뒤로가기는 확인·구조 요청 중에 화면을 닫지 않는다 — 확인 창은 [근무 중],
- * 구조 요청은 본인 [괜찮음]으로만 닫힌다. [괜찮음]은 언제나 "정말 괜찮으신가요?" 확인을 거치며,
- * 잠금 화면 알림의 [괜찮음]도 같은 확인 창을 연다(EXTRA_CONFIRM_OK).
+ * 잠금 화면 위에 뜨고, 상태는 LoneWorkerMonitor.uiState() 만 읽어 그린다. 모양은 이유 칩·큰 제목·남은 시간 링(확인 창)·큰 버튼,
+ * 색은 상태마다 한 벌(확인 창 노랑, 구조 요청 빨강, 해제됨 초록)이고 보이는 동안 1초마다 다시 그린다.
+ * 유예·휴식 버튼이 없고 뒤로가기는 확인·구조 요청 중에 화면을 닫지 않는다 — 확인 창은 [괜찮아요]나 걸음,
+ * 구조 요청은 본인 [괜찮아요]로만 닫힌다. 구조 요청의 [괜찮아요]는 언제나 "정말 괜찮으신가요?" 확인을 거치며,
+ * 잠금 화면 알림의 [괜찮아요]도 같은 확인 창을 연다(EXTRA_CONFIRM_OK).
  * 동료 [확인]/[닫기]는 이 화면이 마지막으로 그린 항목만 묵음으로 만들며, 진행 중 항목이 막 바뀐 직후의 탭은 무시한다.
  */
 class LoneWorkerActivity : AppCompatActivity() {
@@ -34,6 +36,12 @@ class LoneWorkerActivity : AppCompatActivity() {
     private var waitUntil = 0L   // 서비스 복원 대기 마감(elapsedRealtime), 0 = 대기 안 함
     private val ackGate = PeerAckGate()
     private val retry = Runnable { render() }
+    private val ticker = object : Runnable {
+        override fun run() {
+            render()
+            binding.root.postDelayed(this, TICK_MS)
+        }
+    }
     private val listener: () -> Unit = { runOnUiThread { render() } }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -54,7 +62,7 @@ class LoneWorkerActivity : AppCompatActivity() {
             override fun handleOnBackPressed() {
                 val m = LoneWorkerMonitor.current?.uiState()?.mode
                 if (m == LoneWorkerLogic.Mode.CHECKING || m == LoneWorkerLogic.Mode.SOS)
-                    Toast.makeText(this@LoneWorkerActivity, "[근무 중] 또는 [괜찮음]을 눌러야 닫힙니다", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@LoneWorkerActivity, "[괜찮아요]를 눌러야 닫혀요", Toast.LENGTH_SHORT).show()
                 else finish()
             }
         })
@@ -65,12 +73,14 @@ class LoneWorkerActivity : AppCompatActivity() {
         super.onStart()
         LoneWorkerMonitor.uiListener = listener
         render()
+        binding.root.postDelayed(ticker, TICK_MS)
     }
 
     override fun onStop() {
         // 다른 화면이 이미 자기 리스너로 바꿨다면 건드리지 않는다
         if (LoneWorkerMonitor.uiListener === listener) LoneWorkerMonitor.uiListener = null
         binding.root.removeCallbacks(retry)
+        binding.root.removeCallbacks(ticker)
         confirmDialog?.dismiss()
         confirmDialog = null
         super.onStop()
@@ -94,8 +104,8 @@ class LoneWorkerActivity : AppCompatActivity() {
         if (confirmDialog?.isShowing == true) return
         confirmDialog = AlertDialog.Builder(this)
             .setTitle("정말 괜찮으신가요?")
-            .setMessage("해제하면 같은 사업장 휴대폰의 구조 요청 경보가 꺼집니다")
-            .setPositiveButton("괜찮음") { _, _ -> mon.cancelSos() }
+            .setMessage("해제하면 같은 사업장 휴대폰의 구조 요청 경보가 꺼져요")
+            .setPositiveButton("괜찮아요") { _, _ -> mon.cancelSos() }
             .setNegativeButton("취소", null)
             .show()
     }
@@ -108,6 +118,9 @@ class LoneWorkerActivity : AppCompatActivity() {
             val t = SystemClock.elapsedRealtime()
             if (waitUntil == 0L && LoneWorkerUi.reviveIfStoredSos(this)) waitUntil = t + 10_000L
             if (t < waitUntil) {
+                paint(ALERT)
+                b.tvLwChip.visibility = View.GONE
+                b.lwRingBox.visibility = View.GONE
                 b.tvLwTitle.text = "구조 요청 복원 중"
                 b.tvLwBody.text = ""
                 b.btnLwPeer.visibility = View.GONE
@@ -127,33 +140,36 @@ class LoneWorkerActivity : AppCompatActivity() {
         ackGate.onRender(st.peers, SystemClock.elapsedRealtime())
         b.btnLwPeer.visibility = View.GONE
         val own = st.mode != LoneWorkerLogic.Mode.WATCHING
-        val bg: Int
-        val fg: Int
-        when {
-            st.mode == LoneWorkerLogic.Mode.SOS -> {
-                bg = Color.parseColor("#C62828"); fg = Color.WHITE
+        val peerLines = st.peers.map { it.line }
+        val look = when (st.mode) {
+            LoneWorkerLogic.Mode.SOS -> {
+                chip("내 구조 요청")
                 b.tvLwTitle.text = "구조 요청 중"
-                b.tvLwBody.text = (listOf(listOfNotNull("같은 사업장 휴대폰에 구조 요청이 나가고 있습니다", st.serverStatus).joinToString("\n")) + st.peers.map { it.line })
+                b.tvLwBody.text = (listOf(listOfNotNull("같은 사업장 휴대폰에 구조 요청이 나가고 있어요", st.serverStatus).joinToString("\n")) + peerLines)
                     .joinToString("\n\n")
-                b.btnLwPrimary.text = "괜찮음"
+                b.btnLwPrimary.text = "괜찮아요"
                 b.btnLwPrimary.setOnClickListener { showConfirm(mon) }
+                ALERT
             }
-            st.mode == LoneWorkerLogic.Mode.CHECKING -> {
-                bg = Color.parseColor("#FFC107"); fg = Color.BLACK
-                b.tvLwTitle.text = "근무 중이신가요?"
-                b.tvLwBody.text = (listOf("${st.responseLeftSec}초 안에 누르지 않으면 같은 사업장에 구조 요청이 나갑니다") + st.peers.map { it.line })
+            LoneWorkerLogic.Mode.CHECKING -> {
+                chip(if (st.trigger == "fall") "넘어짐 감지" else "${st.stillMin}분 동안 움직임 없음")
+                b.tvLwTitle.text = "괜찮으세요?"
+                b.tvLwBody.text = (listOf("응답이 없으면 같은 사업장에 구조 요청이 나가요\n걸으면(5걸음) 자동으로 닫혀요") + peerLines)
                     .joinToString("\n\n")
-                b.btnLwPrimary.text = "근무 중"
+                b.btnLwPrimary.text = "괜찮아요"
                 b.btnLwPrimary.setOnClickListener { mon.ack() }
+                CHECK
             }
             else -> {
-                bg = Color.parseColor("#C62828"); fg = Color.WHITE
-                b.tvLwTitle.text = if (st.peerActive) "구조 요청" else "해제됨"
-                b.tvLwBody.text = st.peers.joinToString("\n\n") { it.line }
+                chip("같은 사업장 동료")
+                b.tvLwTitle.text = if (st.peerActive) "동료 구조 요청" else "해제됨"
+                b.tvLwBody.text = peerLines.joinToString("\n\n")
                 b.btnLwPrimary.text = if (st.peerActive) "확인" else "닫기"
                 b.btnLwPrimary.setOnClickListener { ackPeers(mon) }
+                if (st.peerActive) ALERT else DONE
             }
         }
+        ring(st, look)
         if (own && st.peerActive) {
             b.btnLwPeer.text = "확인(다른 작업자)"
             b.btnLwPeer.setOnClickListener { ackPeers(mon) }
@@ -164,9 +180,54 @@ class LoneWorkerActivity : AppCompatActivity() {
             if (pendingConfirm) showConfirm(mon)
         } else confirmDialog?.dismiss()
         pendingConfirm = false
-        b.lwRoot.setBackgroundColor(bg)
-        b.tvLwTitle.setTextColor(fg)
-        b.tvLwBody.setTextColor(fg)
+        paint(look)
+    }
+
+    private fun chip(text: String) {
+        binding.tvLwChip.text = text
+        binding.tvLwChip.visibility = View.VISIBLE
+    }
+
+    /** 확인 창이면 남은 초를 링과 큰 숫자로 보여 주고, 아니면 숨긴다. */
+    private fun ring(st: LoneWorkerMonitor.UiState, look: Look) {
+        val b = binding
+        val show = st.mode == LoneWorkerLogic.Mode.CHECKING && st.responseTotalSec > 0
+        b.lwRingBox.visibility = if (show) View.VISIBLE else View.GONE
+        if (!show) return
+        val left = st.responseLeftSec.coerceIn(0, st.responseTotalSec)
+        b.lwRing.trackColor = look.subBg
+        b.lwRing.setIndicatorColor(look.title)
+        b.lwRing.setProgressCompat(left * 1000 / st.responseTotalSec, true)
+        b.tvLwCount.text = left.toString()
+        b.tvLwCount.setTextColor(look.title)
+        b.tvLwCountUnit.setTextColor(look.body)
+    }
+
+    private fun paint(look: Look) {
+        val b = binding
+        b.lwRoot.setBackgroundColor(look.bg)
+        b.tvLwTitle.setTextColor(look.title)
+        b.tvLwBody.setTextColor(look.body)
+        b.tvLwChip.setTextColor(look.chipFg)
+        b.tvLwChip.backgroundTintList = ColorStateList.valueOf(look.chipBg)
+        b.btnLwPrimary.backgroundTintList = ColorStateList.valueOf(look.btnBg)
+        b.btnLwPrimary.setTextColor(look.btnFg)
+        b.btnLwPeer.backgroundTintList = ColorStateList.valueOf(look.subBg)
+        b.btnLwPeer.setTextColor(look.subFg)
+    }
+
+    /** 상태 한 가지의 색 한 벌. 링 바탕은 subBg, 링과 숫자는 title 색이다. */
+    private class Look(
+        val bg: Int, val title: Int, val body: Int, val chipBg: Int, val chipFg: Int,
+        val btnBg: Int, val btnFg: Int, val subBg: Int, val subFg: Int
+    )
+
+    private companion object {
+        const val TICK_MS = 1_000L
+        fun c(hex: String) = Color.parseColor(hex)
+        val CHECK = Look(c("#FAC775"), c("#412402"), c("#633806"), c("#FAEEDA"), c("#633806"), c("#2C2C2A"), Color.WHITE, c("#FAEEDA"), c("#412402"))
+        val ALERT = Look(c("#A32D2D"), Color.WHITE, c("#FCEBEB"), c("#791F1F"), c("#FCEBEB"), Color.WHITE, c("#A32D2D"), c("#791F1F"), c("#FCEBEB"))
+        val DONE = Look(c("#3B6D11"), Color.WHITE, c("#EAF3DE"), c("#27500A"), c("#EAF3DE"), Color.WHITE, c("#3B6D11"), c("#27500A"), c("#EAF3DE"))
     }
 
     /** 마지막으로 그린 항목만 묵음으로 만든다. 진행 중 항목이 막 바뀐 직후면 탭을 무시한다. */

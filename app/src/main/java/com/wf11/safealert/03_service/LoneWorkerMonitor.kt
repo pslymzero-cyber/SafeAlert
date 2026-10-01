@@ -31,7 +31,10 @@ class LoneWorkerMonitor(
         val responseLeftSec: Int,
         val peers: List<PeerRow>,  // 그린 동료 줄(그린 순서)
         val serverStatus: String?, // 내 SOS 서버 전송 상태(SOS 가 아니면 null)
-        val alarmFault: String? = null // 경보음 볼륨을 올리지 못했을 때의 안내(v1.1.99)
+        val alarmFault: String? = null, // 경보음 볼륨을 올리지 못했을 때의 안내(v1.1.99)
+        val trigger: String = "",       // 확인 창·SOS 이유("still" 무동작, "fall" 낙상)
+        val responseTotalSec: Int = 0,  // 이 확인 창의 전체 응답 시간(남은 시간 링의 기준)
+        val stillMin: Int = 0           // 무동작 확인까지의 분(이유 칩 문구)
     ) {
         val peerActive: Boolean get() = peers.any { it.active }
     }
@@ -344,7 +347,10 @@ class LoneWorkerMonitor(
             ((logic.responseLeftMs(t) + 999L) / 1000L).toInt(),
             shown.map { PeerRow(it.id, it.epId, it.line(t), it.active) },
             if (logic.mode == LoneWorkerLogic.Mode.SOS) sync.statusText() else null,
-            alarm.volumeFault
+            alarm.volumeFault,
+            logic.trigger,
+            ((if (logic.trigger == "fall") LoneWorkerLogic.ACCIDENT_RESPONSE_MS else logic.responseMs) / 1000L).toInt(),
+            (logic.stillMs / 60_000L).toInt()
         )
     }
 

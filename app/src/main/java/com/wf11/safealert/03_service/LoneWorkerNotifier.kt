@@ -142,9 +142,9 @@ class LoneWorkerNotifier(
         lastKey = key
         val (title, text, act) = when {
             mode == LoneWorkerLogic.Mode.SOS ->
-                Triple("구조 요청 중", "[괜찮음]을 눌러야 해제됩니다", "괜찮음" to activityPi(REQ_CONFIRM, true))
+                Triple("구조 요청 중", "[괜찮아요]를 눌러야 해제돼요", "괜찮아요" to activityPi(REQ_CONFIRM, true))
             mode == LoneWorkerLogic.Mode.CHECKING ->
-                Triple("근무 중이신가요?", "응답하지 않으면 같은 사업장에 구조 요청이 나갑니다", "근무 중" to servicePi(REQ_ACK, BleService.ACTION_LW_ACK))
+                Triple("괜찮으세요?", "응답이 없으면 같은 사업장에 구조 요청이 나가요", "괜찮아요" to servicePi(REQ_ACK, BleService.ACTION_LW_ACK))
             audible.isNotEmpty() ->
                 Triple("구조 요청", audible.joinToString(", ") { it.displayName() }, "확인" to servicePi(REQ_SILENCE, BleService.ACTION_LW_SILENCE, audible))
             quiet != null -> Triple(quiet.first, quiet.second, null)

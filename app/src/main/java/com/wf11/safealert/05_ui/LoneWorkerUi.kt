@@ -78,16 +78,16 @@ object LoneWorkerUi {
         val mon = LoneWorkerMonitor.current
         if (mon != null) {
             if (!mon.sosActive) return false
-            Toast.makeText(activity, "[괜찮음]으로 먼저 해제하세요", Toast.LENGTH_LONG).show()
+            Toast.makeText(activity, "[괜찮아요]로 먼저 해제하세요", Toast.LENGTH_LONG).show()
             return true
         }
         if (!reviveIfStoredSos(activity)) {
             // 권한이 빠져 서비스를 못 띄우는 상태: 저장된 구조 요청이 남아 있으면 실행 상태를 지우지 않고 막는다
             if (runningMode(activity) == null || !LoneWorkerSosSync.hasStoredSos(activity) || ServiceStartGate.canStart(activity)) return false
-            Toast.makeText(activity, "근처 기기 권한을 허용한 뒤 [괜찮음]으로 먼저 해제하세요", Toast.LENGTH_LONG).show()
+            Toast.makeText(activity, "근처 기기 권한을 허용한 뒤 [괜찮아요]로 먼저 해제하세요", Toast.LENGTH_LONG).show()
             return true
         }
-        Toast.makeText(activity, "구조 요청을 복원합니다 — [괜찮음]으로 먼저 해제하세요", Toast.LENGTH_LONG).show()
+        Toast.makeText(activity, "구조 요청을 복원합니다 — [괜찮아요]로 먼저 해제하세요", Toast.LENGTH_LONG).show()
         return true
     }
 

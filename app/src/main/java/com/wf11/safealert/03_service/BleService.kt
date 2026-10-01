@@ -706,7 +706,7 @@ class BleService : LifecycleService() {
                 saveRunningMode(myMode, myId, myCategory)
                 val sp = getSharedPreferences("safealert_prefs", MODE_PRIVATE)
                 if (sp.getLong("running_since", 0L) == 0L) sp.edit().putLong("running_since", System.currentTimeMillis()).commit()
-                sendStatusBroadcast("[괜찮음]으로 먼저 해제하세요")
+                sendStatusBroadcast("[괜찮아요]로 먼저 해제하세요")
             } else {
                 // [v1.0.46 중지버그] 사용자가 직접 중지 → START_STICKY 복원 키를 동기(.commit) 제거.
                 //   stopAll() 내부가 아닌 여기서만 지운다: onDestroy→stopAll() 경로(시스템 킬·앱 종료)는
