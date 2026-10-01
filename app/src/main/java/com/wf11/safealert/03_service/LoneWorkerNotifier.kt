@@ -42,7 +42,7 @@ internal fun LoneWorkerPeers.Peer.line(nowMs: Long): String {
  *
  * 큰 알림(확인 중·SOS·동료 구조 요청)은 새 경보가 생길 때마다 지웠다가 다시 올려 헤드업과 전체 화면 인텐트가
  * 다시 뜨게 하고(RR05), 사용자가 쓸어 내리면 deleteIntent 로 알려 다시 올린다(RR13).
- * SOS 알림의 [괜찮음]은 서비스에서 바로 끝내지 않고 확인 화면을 연다(U1) — 해제는 화면의 확인 대화상자를 거친다.
+ * SOS 알림의 [괜찮아요]는 서비스에서 바로 끝내지 않고 확인 화면을 연다(U1) — 해제는 화면의 확인 대화상자를 거친다.
  */
 class LoneWorkerNotifier(
     private val ctx: Context,
@@ -54,7 +54,7 @@ class LoneWorkerNotifier(
         const val NOTIF_ID = 4242
         private const val RESOLVED_NOTIF_MS = 60_000L
 
-        /** 알림의 [괜찮음]이 화면을 열면서 넘기는 표시: 화면은 바로 확인 대화상자를 띄운다. */
+        /** 알림의 [괜찮아요]가 화면을 열면서 넘기는 표시: 화면은 바로 확인 대화상자를 띄운다. */
         const val EXTRA_CONFIRM_OK = "lw_confirm_ok"
         /** 알림의 [확인]이 넘기는 항목 id 목록: 이 항목만 묵음으로 만든다. */
         const val EXTRA_PEER_IDS = "lw_peer_ids"
@@ -144,7 +144,7 @@ class LoneWorkerNotifier(
             mode == LoneWorkerLogic.Mode.SOS ->
                 Triple("구조 요청 중", "[괜찮아요]를 눌러야 해제돼요", "괜찮아요" to activityPi(REQ_CONFIRM, true))
             mode == LoneWorkerLogic.Mode.CHECKING ->
-                Triple("괜찮으세요?", "응답이 없으면 같은 사업장에 구조 요청이 나가요", "괜찮아요" to servicePi(REQ_ACK, BleService.ACTION_LW_ACK))
+                Triple("괜찮으세요?", "응답이 없으면 같은 사업장에 구조 요청이 나가요. 걸으면 자동으로 닫혀요", "괜찮아요" to servicePi(REQ_ACK, BleService.ACTION_LW_ACK))
             audible.isNotEmpty() ->
                 Triple("구조 요청", audible.joinToString(", ") { it.displayName() }, "확인" to servicePi(REQ_SILENCE, BleService.ACTION_LW_SILENCE, audible))
             quiet != null -> Triple(quiet.first, quiet.second, null)
@@ -155,6 +155,7 @@ class LoneWorkerNotifier(
             .setSmallIcon(android.R.drawable.ic_dialog_alert)
             .setContentTitle(title)
             .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setContentIntent(if (quiet != null) mainPi() else open)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
             .setPriority(NotificationCompat.PRIORITY_MAX)

@@ -1,98 +1,109 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 단독 작업자 확인·구조 요청 화면. 잠금 화면 위에서 이유 칩, 큰 제목, 남은 시간 링, 큰 버튼 하나로 동작한다. 색은 화면이 상태마다 칠한다. -->
+<!-- 단독 작업자 확인·구조 요청 화면. 위쪽(이유 칩·큰 제목·남은 시간 링·본문)은 스크롤되고, 버튼은 늘 화면 맨 아래에 있다(가로·작은 화면에서도 보이게).
+     바탕·글자·버튼 색은 화면이 상태마다 칠하고, 링은 확인 창(노랑)에서만 보여서 색을 여기 고정한다. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:id="@+id/lw_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:gravity="center_horizontal"
     android:paddingStart="24dp"
     android:paddingEnd="24dp"
     android:paddingTop="32dp"
     android:paddingBottom="24dp">
 
-    <TextView
-        android:id="@+id/tv_lw_chip"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:background="@drawable/lw_chip_bg"
-        android:paddingStart="16dp"
-        android:paddingEnd="16dp"
-        android:paddingTop="8dp"
-        android:paddingBottom="8dp"
-        android:textSize="16sp"
-        android:visibility="gone" />
-
-    <TextView
-        android:id="@+id/tv_lw_title"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="16dp"
-        android:gravity="center"
-        android:textSize="34sp"
-        android:textStyle="bold" />
-
-    <FrameLayout
-        android:id="@+id/lw_ring_box"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="28dp"
-        android:visibility="gone">
-
-        <com.google.android.material.progressindicator.CircularProgressIndicator
-            android:id="@+id/lw_ring"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:max="1000"
-            app:indicatorSize="216dp"
-            app:trackThickness="18dp"
-            app:trackCornerRadius="9dp" />
-
-        <LinearLayout
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center"
-            android:gravity="center_horizontal"
-            android:orientation="vertical">
-
-            <TextView
-                android:id="@+id/tv_lw_count"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:includeFontPadding="false"
-                android:textSize="68sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/tv_lw_count_unit"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="초 남음"
-                android:textSize="17sp" />
-        </LinearLayout>
-    </FrameLayout>
-
     <ScrollView
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
-        android:layout_marginTop="24dp">
+        android:fillViewport="true">
 
-        <TextView
-            android:id="@+id/tv_lw_body"
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:gravity="center_horizontal"
-            android:lineSpacingMultiplier="1.25"
-            android:textSize="18sp" />
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/tv_lw_chip"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@drawable/shape_target_box"
+                android:paddingStart="16dp"
+                android:paddingEnd="16dp"
+                android:paddingTop="8dp"
+                android:paddingBottom="8dp"
+                android:textSize="16sp"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/tv_lw_title"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:gravity="center"
+                android:textSize="34sp"
+                android:textStyle="bold" />
+
+            <FrameLayout
+                android:id="@+id/lw_ring_box"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="24dp"
+                android:visibility="gone">
+
+                <com.google.android.material.progressindicator.CircularProgressIndicator
+                    android:id="@+id/lw_ring"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:max="1000"
+                    app:indicatorColor="#412402"
+                    app:indicatorSize="216dp"
+                    app:trackColor="#FAEEDA"
+                    app:trackCornerRadius="9dp"
+                    app:trackThickness="18dp" />
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center"
+                    android:gravity="center_horizontal"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/tv_lw_count"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:includeFontPadding="false"
+                        android:textColor="#412402"
+                        android:textSize="68sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="초 남음"
+                        android:textColor="#633806"
+                        android:textSize="17sp" />
+                </LinearLayout>
+            </FrameLayout>
+
+            <TextView
+                android:id="@+id/tv_lw_body"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="24dp"
+                android:gravity="center_horizontal"
+                android:lineSpacingMultiplier="1.25"
+                android:textSize="18sp" />
+        </LinearLayout>
     </ScrollView>
 
     <com.google.android.material.button.MaterialButton
         android:id="@+id/btn_lw_peer"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginBottom="12dp"
+        android:layout_marginTop="12dp"
         android:insetTop="0dp"
         android:insetBottom="0dp"
         android:minHeight="64dp"
@@ -104,6 +115,7 @@
         android:id="@+id/btn_lw_primary"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
         android:insetTop="0dp"
         android:insetBottom="0dp"
         android:minHeight="88dp"

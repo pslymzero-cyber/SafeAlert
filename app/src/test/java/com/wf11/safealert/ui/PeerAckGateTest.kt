@@ -2,7 +2,9 @@ package com.wf11.safealert.ui
 
 import com.wf11.safealert.service.PeerRow
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** The screen confirm silences only the rows it last drew, and ignores a tap right after the active item set changed. */
@@ -52,6 +54,20 @@ class PeerAckGateTest {
         assertEquals(emptyList<String>(), ids(g.onTap(Long.MAX_VALUE)))
         g.onRender(emptyList(), 5_000L)
         assertEquals(emptyList<String>(), ids(g.onTap(5_001L)))
+    }
+
+    @Test fun screen_change_with_same_peers_opens_settle_window() {
+        // own check window closed by the first tap: the same button now acks peers, so a quick second tap must not pass
+        val g = PeerAckGate()
+        g.onRender(rows("A#1"), 0L, "CHECKING:true")
+        assertTrue(g.settled(800L))
+        g.onRender(rows("A#1"), 1_000L, "WATCHING:true")
+        assertFalse(g.settled(1_300L))
+        assertNull(g.onTap(1_300L))
+        assertTrue(g.settled(1_700L))
+        assertEquals(listOf("A#1"), ids(g.onTap(1_700L)))
+        g.onRender(rows("A#1"), 1_800L, "WATCHING:true")
+        assertTrue(g.settled(1_800L))
     }
 
     @Test fun new_item_with_same_epid_opens_settle_window() {

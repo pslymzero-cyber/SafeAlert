@@ -700,7 +700,7 @@ class BleService : LifecycleService() {
                 applyMode()
             }
             ACTION_STOP       -> if (loneWorker.sosActive) {
-                // (v1.1.99) 구조 요청 중에는 중지·역할 전환 불가 — 해제는 본인 [괜찮음]뿐
+                // (v1.1.99) 구조 요청 중에는 중지·역할 전환 불가 — 해제는 본인 [괜찮아요]뿐
                 Log.d(TAG, "구조 요청 중 정지 요청 무시")
                 // 화면이 먼저 지운 실행 상태를 되살린다 — 다음 복원·화면 복귀가 이 값을 쓴다 (v1.1.99)
                 saveRunningMode(myMode, myId, myCategory)

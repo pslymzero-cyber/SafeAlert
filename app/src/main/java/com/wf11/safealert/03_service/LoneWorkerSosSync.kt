@@ -13,7 +13,7 @@ import com.wf11.safealert.utils.DevSettings
  * 단독 작업자 SOS 의 서버 쪽 일 전부 (v1.1.99): 내 SOS 영속 저장·전송·해제는 [SosLedger] 에 맡기고,
  * 여기서는 SharedPreferences·Firebase 를 그 인터페이스에 이어 붙이며 동료 수신 재연결을 맡는다.
  *
- * 내 SOS 는 [괜찮음]으로만 끝나므로(R3) 서비스 종료·역할 전환·재시작·프로세스 사망 뒤에도 남아야 한다.
+ * 내 SOS 는 [괜찮아요]로만 끝나므로(R3) 서비스 종료·역할 전환·재시작·프로세스 사망 뒤에도 남아야 한다.
  * 해제는 저장해 둔 경로에 쓴다(현재 사업장 코드로 경로를 다시 만들지 않는다).
  *
  * 생성자는 참조만 저장한다(SharedPreferences·원장은 첫 사용 때 만든다). 모든 진입점은 메인 스레드에서 불리고,
@@ -107,7 +107,7 @@ class LoneWorkerSosSync(
     /** 서버 전송 상태 문구. 내 SOS 가 없으면 null. */
     fun statusText(): String? = ledger.statusText()
 
-    /** 해제([괜찮음]에서만 호출). 활성 칸은 바로 비고 해제는 확인될 때까지 재시도된다. */
+    /** 해제([괜찮아요]에서만 호출). 활성 칸은 바로 비고 해제는 확인될 때까지 재시도된다. */
     fun resolve() = ledger.resolve()
 
     /** 해제가 서버에 닿지 못해 다시 보내는 중인가. */

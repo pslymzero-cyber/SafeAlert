@@ -6,14 +6,14 @@ package com.wf11.safealert.service
  * 안드로이드 의존이 없는 순수 로직이다. 시각은 전부 호출자가 넘기는 elapsedRealtime 기준 ms 다
  * (센서 시각은 호출자가 이 기준으로 바꿔 넘긴다).
  *
- *   WATCHING --사고 30초 무움직임 / 무동작 stillMs--> CHECKING --응답 없이 1분 / responseMs--> SOS --괜찮음--> WATCHING
+ *   WATCHING --사고 30초 무움직임 / 무동작 stillMs--> CHECKING --응답 없이 1분 / responseMs--> SOS --괜찮아요--> WATCHING
  *
  * 규칙 1(사고): 낙상 신호 하나로 그 충격 시각부터 5분 동안 사고를 의심한다(직전 움직임 조건 없음).
  * 그 안에서 뚜렷한 움직임이 30초 동안 없으면 사고 확인 창("fall", 1분)을 연다. 거치·안전구역과 무관하지만,
  * 안전구역 안(들어서자마자, 원시 안쪽)에서 충격 순간 충전 중이었으면(충격 뒤 실제 해제는 충전 중이었다, 충격 전 10초 안 실제 해제도 포함 — 크래들에서 떨어짐,
  * 재시작 때 적용한 해제는 빼고) 낙상을 무시한다(N2, FALL 처리 시각과 무관). 트리거 전 10초 안(또는 트리거 뒤)의 실제 전원 연결(재시작 때 적용한 연결은 빼고)은 거치대에 꽂는 동작으로 보고 그 트리거를 버린다.
  * 의심 중 실제 연결은 사람이 있다는 뜻이라 의심을 끝낸다.
- * 사고 확인 창을 [괜찮음]으로 닫으면 의심이 끝나고, 뚜렷한 움직임으로 닫히면 5분이 끝날 때까지 계속 지켜본다.
+ * 사고 확인 창을 [괜찮아요]로 닫으면 의심이 끝나고, 뚜렷한 움직임으로 닫히면 5분이 끝날 때까지 계속 지켜본다.
  *
  * 규칙 2(무동작): 지님(Rest.NONE)일 때만 stillMs 무동작이면 무동작 확인 창("still", responseMs)을 연다.
  * 충전 안 함은 시작·전원 해제 뒤 첫 뚜렷한 움직임(또는 센서 1분 무응답)부터 지님이고 그 전은 대기(WAIT)다.
@@ -23,7 +23,7 @@ package com.wf11.safealert.service
  *
  * 걸음: 걸음 센서가 낸 걸음 가운데 그 시각을 덮는 1초 가속도 창이 걷는 모양이고 앱 진동 구간이 아닌 것(WalkingSteps).
  * 뚜렷한 움직임: 최근 10초 안 5걸음. 걸음 센서를 쓸 수 없으면 3초 이상 이어진 걷는 모양 창. 확인 창을 닫는 셈은 창이 뜬 뒤 것만(전원 해제로 다시 세지 않음), 해제 뒤 지님은 뺀 시각 뒤 것으로 따로 센다(M2).
- * 확인 창(두 종류)은 [괜찮음]·뚜렷한 움직임·실제 전원 연결로 닫힌다. 실제 연결은 사고 의심도 끝낸다.
+ * 확인 창(두 종류)은 [괜찮아요]·뚜렷한 움직임·실제 전원 연결로 닫힌다. 실제 연결은 사고 의심도 끝낸다.
  * 마감 판정(무동작·사고 창 열기, SOS)은 마감까지의 센서 데이터가 들어온 뒤(없으면 LATE_MS 뒤), 그 전(같은 시각 포함)에 시작한 전원 변화가 확정·버림될 때까지 기다리고(M1), 그동안 들어온 센서 입력은 판정 뒤 반영하며(N1), 마감 뒤 시작한 변화는 판정 뒤 적용한다(Q1) — 순서는 JudgeOrder 한 곳.
  * SOS 는 구역 진입·기능 끄기·전원 변화로 끝나지 않고 오직 cancelSos 로만 끝난다.
  * 재시작 뒤 전원·구역 보류는 RestartHold.
@@ -287,7 +287,7 @@ class LoneWorkerLogic(var myBleId: String) {
         sosAt()?.let { if (order.due(it, nowMs)) toSos(nowMs) }
     }
 
-    /** [괜찮음]: 열린 확인 창을 닫고 진행 중인 사고 의심도 끝낸다. */
+    /** [괜찮아요]: 열린 확인 창을 닫고 진행 중인 사고 의심도 끝낸다. */
     fun ackWorking(nowMs: Long): Boolean {
         if (mode != Mode.CHECKING) return false
         closeCheck(nowMs)
@@ -361,6 +361,7 @@ class LoneWorkerLogic(var myBleId: String) {
     }
 
     fun responseLeftMs(nowMs: Long): Long = sosAt()?.let { (it - nowMs).coerceAtLeast(0L) } ?: 0L
+    fun responseTotalMs(): Long = respFor(trigger)  // 지금 창의 전체 응답 시간(화면 링의 기준, 마감과 같은 규칙)
 
     /** 모니터 예약(nextCheckAt)·웨이크락(waitingToJudge)·flush(waitingOnSensors)·즉시 판정(dueNow) — JudgeOrder. */
     fun nextCheckAt(nowMs: Long): Long? = order.nextCheckAt(nowMs)

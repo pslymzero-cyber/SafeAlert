@@ -34,7 +34,9 @@ class LoneWorkerMonitor(
         val alarmFault: String? = null, // 경보음 볼륨을 올리지 못했을 때의 안내(v1.1.99)
         val trigger: String = "",       // 확인 창·SOS 이유("still" 무동작, "fall" 낙상)
         val responseTotalSec: Int = 0,  // 이 확인 창의 전체 응답 시간(남은 시간 링의 기준)
-        val stillMin: Int = 0           // 무동작 확인까지의 분(이유 칩 문구)
+        val stillMin: Int = 0,          // 무동작 확인까지의 분(이유 칩 문구)
+        val responseLeftMs: Long = 0L,  // 남은 응답 시간(ms) — 화면이 초 경계에 맞춰 다시 그린다
+        val stepsAvailable: Boolean = true // 걸음 센서로 셈(아니면 걷는 모양 이어짐으로 셈) — 걸음 안내 문구
     ) {
         val peerActive: Boolean get() = peers.any { it.active }
     }
@@ -169,7 +171,7 @@ class LoneWorkerMonitor(
         lastAudible = emptySet()
         sidLabels.clear()
         sidMissUntil.clear()
-        // 서버의 active 기록과 저장된 내 SOS 는 그대로 둔다 — 해제는 본인 [괜찮음]뿐 (D-05, R3)
+        // 서버의 active 기록과 저장된 내 SOS 는 그대로 둔다 — 해제는 본인 [괜찮아요]뿐 (D-05, R3)
         logic = LoneWorkerLogic("") // 재시작 때 지난 동료 항목이 되살아나지 않게 비운다
         if (current === this) current = null
         uiListener?.invoke()
@@ -342,15 +344,18 @@ class LoneWorkerMonitor(
         val t = now()
         val shown = logic.peers.filter { !it.silenced }  // 해제된 항목은 [닫기] 전까지 보인다
         if (logic.mode == LoneWorkerLogic.Mode.WATCHING && shown.isEmpty()) return null
+        val left = logic.responseLeftMs(t)
         return UiState(
             logic.mode,
-            ((logic.responseLeftMs(t) + 999L) / 1000L).toInt(),
+            ((left + 999L) / 1000L).toInt(),
             shown.map { PeerRow(it.id, it.epId, it.line(t), it.active) },
             if (logic.mode == LoneWorkerLogic.Mode.SOS) sync.statusText() else null,
             alarm.volumeFault,
             logic.trigger,
-            ((if (logic.trigger == "fall") LoneWorkerLogic.ACCIDENT_RESPONSE_MS else logic.responseMs) / 1000L).toInt(),
-            (logic.stillMs / 60_000L).toInt()
+            (logic.responseTotalMs() / 1000L).toInt(),
+            (logic.stillMs / 60_000L).toInt(),
+            left,
+            logic.stepsAvailable
         )
     }
 
