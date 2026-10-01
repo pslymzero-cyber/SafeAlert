@@ -45,7 +45,7 @@ class SosMailTest {
     private class Post(val form: String, val done: (String?) -> Unit)
 
     private var now = 1_000_000_000L
-    private var to = SosMail.DEFAULT_TO
+    private var to = "wfspt@coupangfs.com"
     private val posts = ArrayList<Post>()
     private val asked = ArrayList<String>()
     private val queue = ArrayList<Boolean>()

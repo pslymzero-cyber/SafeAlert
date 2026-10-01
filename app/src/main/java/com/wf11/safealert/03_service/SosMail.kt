@@ -24,7 +24,7 @@ class SosMail(
     companion object {
         const val EVENT_SOS = "sos"
         const val EVENT_RESOLVED = "resolved"
-        const val DEFAULT_TO = "wfspt@coupangfs.com"
+        const val DEFAULT_TO = "pslymzero@coupangfs.com"
         const val GIVE_UP_MS = 2 * 3_600_000L
         const val CLOCK_BACK_MS = 60_000L
         const val K_LIST = "m.list"
