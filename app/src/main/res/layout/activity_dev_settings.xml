@@ -145,7 +145,7 @@
                             android:layout_height="wrap_content" android:inputType="textEmailAddress" android:maxLength="254"
                             android:textSize="@dimen/sa_type_body" android:textColor="@color/sa_text_primary" />
                         <TextView android:id="@+id/tv_sos_mail_off" style="@style/SA.Hint" android:visibility="gone"
-                            android:text="이 빌드는 메일 기능이 꺼져 있습니다 (배포 설정에 스크립트 주소 없음)." />
+                            android:text="이 빌드는 메일 기능이 꺼져 있습니다 (배포 설정의 스크립트 주소가 없거나 웹 앱 배포 주소(…/macros/s/…/exec) 형식이 아님)." />
 
                     </LinearLayout>
                 </LinearLayout>

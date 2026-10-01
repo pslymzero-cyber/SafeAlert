@@ -17,7 +17,8 @@
  *     - DAILY_MAX (선택)   : 사업장(루트+센터)마다 최근 24시간 동안 보낸 구조 요청 메일 수 상한. 기본 50, 1~60.
  *                            해제 메일은 세지 않고 막지도 않는다.
  *     'S|' 로 시작하는 속성은 스크립트가 쓰는 보낸 기록이라 손대지 않는다(구조 요청 7일·해제 24시간 보관 뒤
- *     자동 삭제. 예전 SENT_LOG 속성이 있으면 지워도 된다).
+ *     자동 삭제. 합쳐 3,000건이 넘으면 오래된 것부터 지운다(지워진 구조 요청은 해제 메일만 못 나간다).
+ *     예전 SENT_LOG 속성이 있으면 지워도 된다).
  *  6. 배포 > 새 배포 > 유형 '웹 앱', 실행 계정 '나', 액세스 '모든 사용자' → 배포.
  *  7. 권한 창에서 계정 선택 → '고급' → 이동 → 허용 (메일 보내기·외부 서비스 연결).
  *  8. 나온 웹 앱 주소를 GitHub 저장소 Settings > Secrets and variables > Actions 의 비밀값 SA_SOS_MAIL_URL 로 저장한다.
@@ -34,6 +35,9 @@ var DB_URL_RE = /^https:\/\/[A-Za-z0-9.-]+\/?$/;
 var DAY_MS = 24 * 3600 * 1000;
 // 구조 요청 메일 기록은 해제 메일 확인용으로 7일 보관. 일반 계정은 많아야 700건 안팎(약 100KB, 저장소 500KB 한도 안).
 var KEEP_MS = 7 * DAY_MS;
+// 보낸 기록은 합쳐 많아야 3,000건(긴 키도 약 370KB, 저장소 500KB 안). 넘으면 오래된 것부터 지워
+// 그 기록의 해제 메일만 못 나간다. 구조 요청 메일은 막지 않는다.
+var MAX_SENT = 3000;
 var FRESH_MS = 2 * 3600 * 1000;
 var RATE_PER_MIN = 30;
 var DEFAULT_CAP = 50;
@@ -84,6 +88,13 @@ function handle(p) {
       if (!(now - at < keep)) store.deleteProperty(k);
       else sent[k] = at;
     });
+    var keys = Object.keys(sent).sort(function (a, b) {
+      return sent[a] - sent[b] || (a < b ? -1 : a > b ? 1 : 0);
+    });
+    for (var i = 0; i < keys.length - MAX_SENT; i++) {
+      store.deleteProperty(keys[i]);
+      delete sent[keys[i]];
+    }
 
     var tag = addrTag(lower);
     var key = SENT + [event, site, sc, id, tag].join('|');

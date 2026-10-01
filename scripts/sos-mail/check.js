@@ -269,6 +269,22 @@ t = make({ db: { k1: { name: 'Kim', role: 'WALKER', trigger: 'still', createdAt:
 assert.strictEqual(t.post({ event: 'resolved' }), 'sent');
 assert.strictEqual(t.w.mails.length, 1);
 
+// sent records capped at MAX_SENT in total: oldest go first, the sos mail is never refused
+const MAX_SENT = Number((src.match(/var MAX_SENT = (\d+);/) || [])[1]);
+assert.ok(MAX_SENT >= 3000, 'MAX_SENT');
+const capProps = { ['S|resolved|wf11|X1|r0|' + TAG]: String(NOW - HOUR) };
+for (let i = 0; i < MAX_SENT; i++) capProps['S|sos|wf11|X1|f' + i + '|' + TAG] = String(NOW - 48 * HOUR - (MAX_SENT - i) * 1000);
+t = make({ db: { k1: still }, props: capProps });
+assert.strictEqual(t.post({}), 'sent');
+assert.strictEqual(t.w.mails.length, 1);
+assert.ok(!(('S|sos|wf11|X1|f0|' + TAG) in t.w.props), 'oldest record dropped');
+assert.ok(('S|sos|wf11|X1|f1|' + TAG) in t.w.props);
+assert.ok(('S|sos|wf11|WF11|k1|' + TAG) in t.w.props);
+assert.strictEqual(t.sentKeys().length, MAX_SENT + 1);
+assert.strictEqual(t.post({ sc: 'X1', id: 'f0', event: 'resolved' }), 'not_ready');
+assert.strictEqual(t.sentKeys().length, MAX_SENT);
+assert.ok(!(('S|sos|wf11|X1|f1|' + TAG) in t.w.props));
+
 // daily cap counts only sos mails of the last 24 hours
 t = make({ db: { k1: still }, props: { DAILY_MAX: '1', ['S|sos|wf11|WF11|k0|' + TAG]: String(NOW - 25 * HOUR) } });
 assert.strictEqual(t.post({}), 'sent');
