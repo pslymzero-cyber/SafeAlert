@@ -9,6 +9,8 @@ name: Alert digest
 #   결과는 저장소 맨 위 ALERTS.md 한 장이다. GitHub 앱에서 저장소만 열면
 #   파일 목록 위쪽에 바로 보인다 — 경로를 타고 들어갈 필요가 없다.
 #   원본 JSON 은 커밋하지 않는다 — 이 저장소는 공개다.
+#   hb(단독 작업자 살아 있음 세션)도 .read 규칙이 없어 같은 관리 비밀값으로만 읽고,
+#   식별자 없이 센터별 숫자만 '연락 끊김 (기록만)' 표로 남긴다.
 
 on:
   schedule:
@@ -168,11 +170,19 @@ jobs:
               python3 .github/scripts/analyze_alerts.py "alerts-$SITE.json" \
                 --label "${SITE^^}" --md ALERTS.md --append --no-ids \
                 --from "$FROM" $ECHO $PROBE
+
+              # hb = 단독 작업자 살아 있음 세션. 통째로 받아 시작 시각으로 기간을 자른다.
+              if curl -fsS --get "${DB%/}/$SITE/hb.json" \
+                   --data-urlencode "auth=$KEY" -o "hb-$SITE.json"; then
+                python3 .github/scripts/hb_digest.py "hb-$SITE.json" --md ALERTS.md --from "$FROM"
+              else
+                echo "::notice::$SITE hb 없음 — 연락 끊김 섹션 생략"
+              fi
             else
               echo "::warning::$SITE 읽기 실패 — 건너뜀"
               printf '## %s\n\n> 읽기 실패.\n\n' "${SITE^^}" >> ALERTS.md
             fi
-            rm -f "alerts-$SITE.json" "echo-$SITE.json" "probe-$SITE.json"
+            rm -f "alerts-$SITE.json" "echo-$SITE.json" "probe-$SITE.json" "hb-$SITE.json"
           done
 
       - name: 변경분 커밋
