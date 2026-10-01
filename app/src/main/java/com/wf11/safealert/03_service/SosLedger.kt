@@ -181,6 +181,8 @@ class SosLedger(
                     createBusy.remove(sentKey)
                     if (r == Remote.MINE_ACTIVE || r == Remote.MINE_RESOLVED) {
                         onCreated(sentPath, sentKey)
+                        // 서버에서 이미 해제된 기록: 먼저 온 해제 확인은 주소가 없어 빠졌을 수 있다
+                        if (r == Remote.MINE_RESOLVED) onSaved(SosMail.EVENT_RESOLVED, sentPath, sentKey)
                     } else {
                         val n = (createFails[sentKey] ?: 0) + 1
                         createFails[sentKey] = n

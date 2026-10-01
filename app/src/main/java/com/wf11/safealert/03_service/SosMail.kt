@@ -11,6 +11,7 @@ import java.net.URLEncoder
  * 같은 기록의 sos 가 남아 있는 동안 resolved 는 보내지 않고, sos 가 끝나면 바로 이어 보낸다.
  * 받는 주소·무동작 분은 넣는 순간 고정한다. 해제 메일은 같은 기록의 구조 요청 메일이 들어갈 때의 주소로 간다
  * (기록별로 7일 보관). 이 단말에서 구조 요청 메일을 넣은 적 없는 기록이면 해제 메일도 넣지 않는다.
+ * 구조 요청이 확정 거절되면 그 기록의 해제도 넣지 않는다. 주소 행은 7일 지나면 쓰지 않는다.
  * 메일은 보조 통로라 어떤 경보·판정도 이 클래스를 기다리지 않는다.
  * 대기열이 찼는지 비었는지는 onQueue 로 알린다(감시가 멈춘 뒤에도 보내는 예약 작업이 이를 따른다).
  */
@@ -84,17 +85,17 @@ class SosMail(
         if (site.isEmpty()) return
         val sc = path.substring(i + 5)
         if (sc.isEmpty() || key.isEmpty()) return
+        val t = now()
         val addr = loadAddr()
-        // 해제는 설정을 다시 읽지 않고 같은 기록의 구조 요청 메일 주소를 쓴다(없으면 넣지 않음)
-        val to = if (event == EVENT_SOS) addressFor(sc).trim() else addr.firstOrNull { it[0] == key }?.get(1) ?: return
+        // 해제는 설정을 다시 읽지 않고 같은 기록의 구조 요청 메일 주소를 쓴다(없거나 7일 지났으면 넣지 않음)
+        val to = if (event == EVENT_SOS) addressFor(sc).trim()
+            else addr.firstOrNull { it[0] == key && t - it[2].toLong() <= KEEP_ADDR_MS }?.get(1) ?: return
         if (!validAddress(to)) return
         val list = load()
         if (list.any { it.event == event && it.id == key }) return
-        val t = now()
         val kept = addr.filter { it[0] != key && (event != EVENT_SOS || t - it[2].toLong() <= KEEP_ADDR_MS) }
         val rows = if (event == EVENT_SOS) kept + listOf(listOf(key, to, t.toString())) else kept
-        save(list + Item(event, site, sc, key, to, stillMin.coerceIn(1, 30), t),
-            mapOf(K_ADDR to if (rows.isEmpty()) null else rows.joinToString("\n") { it.joinToString("\t") }))
+        save(list + Item(event, site, sc, key, to, stillMin.coerceIn(1, 30), t), mapOf(K_ADDR to addrText(rows)))
         tick()
     }
 
@@ -110,7 +111,8 @@ class SosMail(
             busy.add(tag)
             post(form(e.site, e.sc, e.id, e.event, e.to, e.stillMin)) { body ->
                 busy.remove(tag)
-                if (outcome(body) == Outcome.RETRY) {
+                val o = outcome(body)
+                if (o == Outcome.RETRY) {
                     val n = (fails[tag] ?: 0) + 1
                     fails[tag] = n
                     next[tag] = now() + SosLedger.backoffMs(n)
@@ -118,7 +120,15 @@ class SosMail(
                     fails.remove(tag)
                     next.remove(tag)
                     val list = load()
-                    if (list.any { it.tag == tag }) save(list.filterNot { it.tag == tag })
+                    if (o == Outcome.DROP && e.event == EVENT_SOS) {
+                        // 구조 요청 메일이 안 나간 것이 확정이라 같은 기록의 해제와 주소 행도 지운다
+                        val rest = list.filterNot { it.id == e.id }
+                        val addr = loadAddr()
+                        val rows = addr.filter { it[0] != e.id }
+                        if (rest.size != list.size || rows.size != addr.size) {
+                            save(rest, if (rows.size != addr.size) mapOf(K_ADDR to addrText(rows)) else emptyMap())
+                        }
+                    } else if (list.any { it.tag == tag }) save(list.filterNot { it.tag == tag })
                     tick() // 기다리던 같은 기록의 해제를 바로 보낸다
                 }
                 checkDrain()
@@ -155,6 +165,9 @@ class SosMail(
     // 기록별 받는 주소: 한 줄에 '기록 키 \t 주소 \t 넣은 시각'. 칸 수·시각이 어긋난 줄은 버린다.
     private fun loadAddr(): List<List<String>> = (kv.get(K_ADDR) ?: "").split('\n')
         .map { it.split('\t') }.filter { it.size == 3 && it[2].toLongOrNull() != null }
+
+    private fun addrText(rows: List<List<String>>): String? =
+        if (rows.isEmpty()) null else rows.joinToString("\n") { it.joinToString("\t") }
 
     private fun save(list: List<Item>, extra: Map<String, String?> = emptyMap()) {
         kv.put(extra + (K_LIST to if (list.isEmpty()) null else list.joinToString("\n") {

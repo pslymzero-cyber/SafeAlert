@@ -38,7 +38,8 @@ class SosMailJob : JobService() {
 
     override fun onStartJob(params: JobParameters): Boolean {
         if (!LoneWorkerSosSync.mailEnabled) return false
-        // 남은 항목이 있으면 시스템 재시도(10초씩 늘어남 — 2시간 안에서 간격이 6분을 넘지 않는다)에 맡긴다
+        // 남은 항목이 있으면 시스템 재시도(10초씩 늘어남)에 맡긴다. 앱 안 재시도 대기(10초~5분)와 겹쳐 실제로 다시 보내는
+        // 간격은 10분 안팎까지 벌어질 수 있고 시스템이 더 미룰 수도 있다
         LoneWorkerSosSync.mail(this).drain { left -> jobFinished(params, left) }
         return true
     }

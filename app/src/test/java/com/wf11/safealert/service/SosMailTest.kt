@@ -337,4 +337,76 @@ class SosMailTest {
     @Test fun job_retries_linear_from_10_seconds() {
         assertTrue(serviceSource("SosMailJob.kt").contains(".setBackoffCriteria(10_000L, JobInfo.BACKOFF_POLICY_LINEAR)"))
     }
+
+    @Test fun resolve_ack_before_late_create_read_still_mails_both() {
+        val kv = Kv(); val tr = Tr(); val (l, m) = pair(kv, tr)
+        l.begin(rec())
+        tr.creates[0].cb(false)
+        l.resolve()
+        tr.resolves[0].cb(true)
+        assertEquals(0, posts.size)
+        tr.reads[0].cb(Remote.MINE_RESOLVED)
+        assertEquals(1, posts.size)
+        assertEquals(form1, posts[0].form)
+        val resolvedLines = { kv.m[SosMail.K_LIST]!!.split('\n').count { it.startsWith("resolved\t") } }
+        assertEquals(1, resolvedLines())
+        m.enqueue(SosMail.EVENT_RESOLVED, "root/sos/WF11", "k1", 3)
+        assertEquals(1, resolvedLines())
+        posts[0].done(sent)
+        assertEquals(2, posts.size)
+        assertEquals(form1.replace("event=sos", "event=resolved"), posts[1].form)
+        posts[1].done(sent)
+        assertNull(kv.m[SosMail.K_LIST])
+    }
+
+    @Test fun resolve_lookup_skips_address_rows_older_than_7_days() {
+        val kv = Kv(); val m = mail(kv)
+        val t0 = now
+        m.enqueue(SosMail.EVENT_SOS, "root/sos/WF11", "k1", 3)
+        posts[0].done(sent)
+        now = t0 + SosMail.KEEP_ADDR_MS
+        m.enqueue(SosMail.EVENT_RESOLVED, "root/sos/WF11", "k1", 3)
+        assertEquals(2, posts.size)
+        assertTrue(posts[1].form.contains("id=k1&event=resolved&"))
+        posts[1].done(sent)
+
+        val t1 = now
+        m.enqueue(SosMail.EVENT_SOS, "root/sos/WF11", "k2", 3)
+        posts[2].done(sent)
+        now = t1 + SosMail.KEEP_ADDR_MS + 1
+        m.enqueue(SosMail.EVENT_RESOLVED, "root/sos/WF11", "k2", 3)
+        assertEquals(3, posts.size)
+        assertNull(kv.m[SosMail.K_LIST])
+    }
+
+    @Test fun sos_drop_forgets_address_and_waiting_resolve_but_give_up_keeps_it() {
+        val kv = Kv(); val m = mail(kv)
+        m.enqueue(SosMail.EVENT_SOS, "root/sos/WF11", "k1", 3)
+        m.enqueue(SosMail.EVENT_RESOLVED, "root/sos/WF11", "k1", 3)
+        assertEquals(1, posts.size)
+        posts[0].done("{\"code\":\"stale\"}")
+        assertEquals(1, posts.size)
+        assertNull(kv.m[SosMail.K_LIST])
+        assertNull(kv.m[SosMail.K_ADDR])
+
+        // refused sos with no resolve waiting: its address row goes, a later resolve is not queued
+        m.enqueue(SosMail.EVENT_SOS, "root/sos/WF11", "k3", 3)
+        posts[1].done("{\"code\":\"not_allowed\"}")
+        assertNull(kv.m[SosMail.K_LIST])
+        assertNull(kv.m[SosMail.K_ADDR])
+        m.enqueue(SosMail.EVENT_RESOLVED, "root/sos/WF11", "k3", 3)
+        assertEquals(2, posts.size)
+
+        // gave up after 2 hours: the mail may have gone out, so the address row stays
+        val t0 = now
+        m.enqueue(SosMail.EVENT_SOS, "root/sos/WF11", "k2", 3)
+        posts[2].done(null)
+        now = t0 + SosMail.GIVE_UP_MS + 1; m.tick()
+        assertEquals(3, posts.size)
+        assertNull(kv.m[SosMail.K_LIST])
+        assertTrue(kv.m[SosMail.K_ADDR]!!.startsWith("k2\t"))
+        m.enqueue(SosMail.EVENT_RESOLVED, "root/sos/WF11", "k2", 3)
+        assertEquals(4, posts.size)
+        assertTrue(posts[3].form.contains("id=k2&event=resolved&"))
+    }
 }
