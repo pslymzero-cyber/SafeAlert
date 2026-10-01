@@ -34,6 +34,8 @@ jobs:
         run: |
           if [ -z "$SA_SOS_MAIL_URL" ]; then
             echo "::warning::SA_SOS_MAIL_URL 비밀값이 없어 구조 요청 메일이 꺼진 채로 빌드된다"
+          elif [[ ! "$SA_SOS_MAIL_URL" =~ ^https://script\.google\.com/macros/s/[A-Za-z0-9_-]+/exec$ ]]; then
+            echo "::warning::SA_SOS_MAIL_URL 형식이 웹 앱 배포 주소(https://script.google.com/macros/s/…/exec)가 아니다"
           fi
 
       - name: Set up JDK 17
