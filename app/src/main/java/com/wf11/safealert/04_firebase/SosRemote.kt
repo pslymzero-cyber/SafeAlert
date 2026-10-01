@@ -102,6 +102,18 @@ object SosRemote {
 
     fun nodePath(root: String, site: String): String = "$root/sos/$site"
 
+    /** 단독 작업자 살아 있음 세션 노드 경로 (v1.2.2). */
+    fun hbPath(root: String, site: String): String = "$root/hb/$site"
+
+    /** 세션 노드 일부 갱신(updateChildren). 실패 로그에는 경로·키·uid 를 남기지 않는다. */
+    fun update(path: String, key: String, fields: Map<String, Any>, onDone: (Boolean) -> Unit) {
+        FirebaseDatabase.getInstance().reference.child(path).child(key).updateChildren(fields)
+            .addOnCompleteListener {
+                if (!it.isSuccessful) Log.w(TAG, "살아 있음 기록 실패")
+                onDone(it.isSuccessful)
+            }
+    }
+
     fun currentUid(): String? = runCatching { FirebaseAuth.getInstance().currentUser?.uid }.getOrNull()
 
     /** 지정 경로 아래 새 푸시 키를 로컬에서 만든다(서버 왕복 없음). */

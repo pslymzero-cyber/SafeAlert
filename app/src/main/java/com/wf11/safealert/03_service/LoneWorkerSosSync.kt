@@ -176,6 +176,29 @@ class LoneWorkerSosSync(
         }) { onChange() }
     }
 
+    // (v1.2.2) 감시 중 살아 있음 기록 — 기록만, 실패는 무시하고 경보·판정과 무관하다
+    private val hb by lazy {
+        LoneWorkerHeartbeat(object : HbRemote {
+            override fun uid(): String? = transport.uid()
+            override fun path(): String? {
+                val site = DevSettings.siteCode
+                return if (site.isEmpty()) null else SosRemote.hbPath(DevSettings.firebaseRoot, site)
+            }
+            override fun newKey(path: String): String = SosRemote.newKey(path)
+            override fun serverNow(): Long = SosRemote.serverNowMs() ?: System.currentTimeMillis()
+            override fun update(path: String, key: String, fields: Map<String, Any>, done: (Boolean) -> Unit) {
+                runCatching { SosRemote.update(path, key, fields) { ok -> handler.post { done(ok) } } }
+                    .onFailure { done(false) }
+            }
+        }, SystemClock::elapsedRealtime)
+    }
+
+    /** 감시 tick(10초)마다 부른다. on = 단독 작업자 감시 기능이 켜져 있는가, role = 역할 분류(WALKER 등). */
+    fun heartbeat(on: Boolean, role: String) = hb.tick(on, role)
+
+    /** 감시가 정상으로 멈출 때 세션 끝을 남긴다. */
+    fun endHeartbeat() = hb.end()
+
     private var remover: (() -> Unit)? = null
     private var listenPath = ""
     private var generation = 0

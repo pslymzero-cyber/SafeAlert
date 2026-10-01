@@ -145,6 +145,7 @@ class LoneWorkerMonitor(
         override fun run() {
             if (!started) return
             sync.tick()
+            sync.heartbeat(DevSettings.lwEnabled, roleName) // (v1.2.2) 살아 있음 기록만 — 판정과 무관
             onPowerRaw(power.plugged(), true) // 방송을 놓쳐도 스티키 배터리 상태로 보정(대기 중이면 버림, 같은 2초 디바운스)
             sensors.refreshSteps() // 신체 활동 권한이 바뀌었으면 걸음 센서 등록을 맞춘다
             checkStall(now())
@@ -159,6 +160,7 @@ class LoneWorkerMonitor(
         sensors.unregister()
         prefsListener?.let { DevSettings.unregisterOnChange(it) }
         prefsListener = null
+        sync.endHeartbeat()
         sync.stopListening()
         alarm.stop(final = true)
         releaseWakeLock()
