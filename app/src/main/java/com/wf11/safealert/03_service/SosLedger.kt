@@ -31,6 +31,8 @@ interface SosTransport {
  * 그 밖의 실패는 10초부터 두 배씩(최대 5분) 늘려 다시 시도한다. 규칙이 허용하지 않는 필드는 절대 쓰지 않는다.
  * 실패한 해제도 기록이 살아 있으면 슬롯을 유지하고 계속 다시 보낸다 (RR15).
  * (v1.2.2) 서버 저장이 확인된 순간 onSaved 로 알린다 — 구조 요청 메일이 여기서 시작한다.
+ * 해제 확인 때 구조 요청이 아직 확인되지 않았던 기록이면 구조 요청을 먼저 알린다. 스크립트가 늦은 구조 요청 메일을
+ * '해제됨'으로 보낸다. 이미 확인된 기록은 해제만 알린다.
  */
 class SosLedger(
     private val kv: SosKv,
@@ -82,7 +84,8 @@ class SosLedger(
         fun nextEpisode(prev: Int): Int = (prev.coerceAtLeast(0) % 255) + 1
     }
 
-    private class Pending(val path: String, val key: String)
+    /** sent = 해제할 때 구조 요청이 서버에서 확인돼 있었는가(생성 확인이 늦게 오면 그때 세운다). */
+    private class Pending(val path: String, val key: String, val sent: Boolean)
 
     // 진행 중·실패·다음 허용 시각은 메모리에만 둔다(재시작하면 바로 다시 시도). 생성과 해제는 따로 센다.
     private val createBusy = HashSet<String>()
@@ -141,7 +144,7 @@ class SosLedger(
         if (key != null && path != null) {
             val list = pending()
             if (list.none { it.key == key && it.path == path }) {
-                ch[K_PENDING] = encode(list + Pending(path, key))
+                ch[K_PENDING] = encode(list + Pending(path, key, kv.get(K_SENT) != null))
             }
         }
         kv.put(ch)
@@ -181,8 +184,6 @@ class SosLedger(
                     createBusy.remove(sentKey)
                     if (r == Remote.MINE_ACTIVE || r == Remote.MINE_RESOLVED) {
                         onCreated(sentPath, sentKey)
-                        // 서버에서 이미 해제된 기록: 먼저 온 해제 확인은 주소가 없어 빠졌을 수 있다
-                        if (r == Remote.MINE_RESOLVED) onSaved(SosMail.EVENT_RESOLVED, sentPath, sentKey)
                     } else {
                         val n = (createFails[sentKey] ?: 0) + 1
                         createFails[sentKey] = n
@@ -197,11 +198,20 @@ class SosLedger(
     private fun onCreated(path: String, key: String) {
         createFails.remove(key)
         createNext.remove(key)
+        // 해제·교체로 활성 키가 바뀐 뒤에 늦게 온 응답은 활성 칸에 쓰지 않는다
+        val active = kv.get(K_KEY) == key && hasActive()
+        val list = pending()
+        val waiting = list.any { it.key == key && it.path == path && !it.sent }
+        // 해제 확인이 구조 요청까지 알리고 줄을 지운 뒤 늦게 온 확인이면 다시 알리지 않는다
+        if (!active && !waiting) return
         // 늦게 온 확인이라도 서버에는 기록이 생겼으므로 알린다.
         // 메일 대기열이 먼저 남아야 사이에 죽어도 재확인으로 다시 알린다
         onSaved(SosMail.EVENT_SOS, path, key)
-        // 해제·교체로 활성 키가 바뀐 뒤에 늦게 온 응답은 활성 칸에 쓰지 않는다
-        if (kv.get(K_KEY) == key && hasActive()) kv.put(mapOf(K_SENT to "1"))
+        if (active) kv.put(mapOf(K_SENT to "1"))
+        if (waiting) {
+            val marked = list.map { if (it.key == key && it.path == path) Pending(it.path, it.key, true) else it }
+            kv.put(mapOf(K_PENDING to encode(marked)))
+        }
     }
 
     private fun currentRecord() = Record(
@@ -220,16 +230,13 @@ class SosLedger(
             transport.resolve(e.path, key) { ok ->
                 if (ok) {
                     resolveBusy.remove(key)
-                    // 메일 대기열이 먼저 남아야 사이에 죽어도 재확인으로 다시 알린다
-                    onSaved(SosMail.EVENT_RESOLVED, e.path, key)
-                    drop(e)
+                    resolved(e)
                     onChange()
                 } else {
                     transport.read(e.path, key) { r ->
                         resolveBusy.remove(key)
                         if (r == Remote.MINE_RESOLVED) {
-                            onSaved(SosMail.EVENT_RESOLVED, e.path, key) // 대기열 먼저(위와 같은 이유)
-                            drop(e)
+                            resolved(e)
                         } else if (r == Remote.ABSENT) {
                             drop(e)
                         } else {
@@ -244,6 +251,18 @@ class SosLedger(
         }
     }
 
+    /**
+     * 해제가 서버에서 확인됨. 줄을 지금 다시 읽어, 구조 요청이 확인되지 않은 채 해제된 기록이면 구조 요청을 먼저
+     * 알린다(보낸 뒤 생성 확인이 와서 표시가 바뀌었을 수 있다). 메일 대기열이 먼저 남아야 사이에 죽어도 재확인으로
+     * 다시 알린다.
+     */
+    private fun resolved(e: Pending) {
+        val now = pending().firstOrNull { it.key == e.key && it.path == e.path }
+        if (now != null && !now.sent) onSaved(SosMail.EVENT_SOS, e.path, e.key)
+        onSaved(SosMail.EVENT_RESOLVED, e.path, e.key)
+        drop(e)
+    }
+
     private fun drop(e: Pending) {
         val left = pending().filterNot { it.key == e.key && it.path == e.path }
         kv.put(mapOf(K_PENDING to if (left.isEmpty()) null else encode(left)))
@@ -251,17 +270,19 @@ class SosLedger(
         resolveNext.remove(e.key)
     }
 
-    // 목록 저장 형식: 줄마다 "경로 TAB 키". 깨진 줄은 건너뛴다.
+    // 목록 저장 형식: 줄마다 "경로 TAB 키", 구조 요청 확인 전에 해제한 것만 "TAB 0" 을 붙인다.
+    // 셋째 칸이 없는 줄(이전 형식 포함)은 확인된 것으로 읽는다. 깨진 줄은 건너뛴다.
     private fun pending(): List<Pending> {
         val raw = kv.get(K_PENDING) ?: return emptyList()
         val out = ArrayList<Pending>()
         for (line in raw.split('\n')) {
-            val i = line.indexOf('\t')
-            if (i <= 0 || i == line.length - 1) continue
-            out.add(Pending(line.substring(0, i), line.substring(i + 1)))
+            val f = line.split('\t')
+            if (f.size !in 2..3 || f[0].isEmpty() || f[1].isEmpty()) continue
+            out.add(Pending(f[0], f[1], f.getOrNull(2) != "0"))
         }
         return out
     }
 
-    private fun encode(list: List<Pending>): String = list.joinToString("\n") { it.path + "\t" + it.key }
+    private fun encode(list: List<Pending>): String =
+        list.joinToString("\n") { it.path + "\t" + it.key + if (it.sent) "" else "\t0" }
 }

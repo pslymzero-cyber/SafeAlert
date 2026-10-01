@@ -344,10 +344,10 @@ class SosMailTest {
         tr.creates[0].cb(false)
         l.resolve()
         tr.resolves[0].cb(true)
-        assertEquals(0, posts.size)
-        tr.reads[0].cb(Remote.MINE_RESOLVED)
         assertEquals(1, posts.size)
         assertEquals(form1, posts[0].form)
+        tr.reads[0].cb(Remote.MINE_RESOLVED)
+        assertEquals(1, posts.size)
         val resolvedLines = { kv.m[SosMail.K_LIST]!!.split('\n').count { it.startsWith("resolved\t") } }
         assertEquals(1, resolvedLines())
         m.enqueue(SosMail.EVENT_RESOLVED, "root/sos/WF11", "k1", 3)

@@ -86,14 +86,14 @@ class SosMail(
         val sc = path.substring(i + 5)
         if (sc.isEmpty() || key.isEmpty()) return
         val t = now()
-        val addr = loadAddr()
+        val addr = loadAddr().filter { t - it[2].toLong() <= KEEP_ADDR_MS }
         // 해제는 설정을 다시 읽지 않고 같은 기록의 구조 요청 메일 주소를 쓴다(없거나 7일 지났으면 넣지 않음)
         val to = if (event == EVENT_SOS) addressFor(sc).trim()
-            else addr.firstOrNull { it[0] == key && t - it[2].toLong() <= KEEP_ADDR_MS }?.get(1) ?: return
+            else addr.firstOrNull { it[0] == key }?.get(1) ?: return
         if (!validAddress(to)) return
         val list = load()
         if (list.any { it.event == event && it.id == key }) return
-        val kept = addr.filter { it[0] != key && (event != EVENT_SOS || t - it[2].toLong() <= KEEP_ADDR_MS) }
+        val kept = addr.filter { it[0] != key }
         val rows = if (event == EVENT_SOS) kept + listOf(listOf(key, to, t.toString())) else kept
         save(list + Item(event, site, sc, key, to, stillMin.coerceIn(1, 30), t), mapOf(K_ADDR to addrText(rows)))
         tick()

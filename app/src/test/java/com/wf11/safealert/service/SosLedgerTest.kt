@@ -213,4 +213,73 @@ class SosLedgerTest {
         assertNull(kv.m["r.list"])
         assertEquals(listOf("sos:-:false", "resolved:-:true", "sos:-:false", "resolved:-:true"), seen)
     }
+
+    private fun recording(kv: Kv, tr: Tr, seen: MutableList<String>) =
+        SosLedger(kv, tr, { now }, { e, _, k -> seen.add("$e:$k") })
+
+    // A resolve confirmed before the create was confirmed queues the SOS first, then the resolve, once each
+    @Test fun unconfirmed_resolve_queues_sos_then_resolved_once_in_any_order() {
+        val both = listOf("sos:k1", "resolved:k1")
+        fun case(steps: (Kv, Tr, SosLedger, MutableList<String>) -> Unit): List<String> {
+            val kv = Kv(); val tr = Tr(); val seen = ArrayList<String>()
+            val l = recording(kv, tr, seen)
+            l.begin(rec())
+            steps(kv, tr, l, seen)
+            return seen
+        }
+        // (1) create ack after resolve(), before the resolve ack
+        assertEquals(both, case { _, tr, l, _ ->
+            l.resolve(); tr.creates[0].cb(true); tr.resolves[0].cb(true)
+        })
+        // (2) A: no create answer, restart, resolve ok
+        assertEquals(both, case { kv, _, l, seen ->
+            l.resolve()
+            assertEquals("root/site\tk1\t0", kv.m["r.list"])
+            val tr2 = Tr(); val l2 = recording(kv, tr2, seen)
+            l2.tick(); tr2.resolves[0].cb(true)
+            assertNull(kv.m["r.list"])
+        })
+        // (3) A': as (2), resolve rejected and read back as resolved
+        assertEquals(both, case { kv, _, l, seen ->
+            l.resolve()
+            val tr2 = Tr(); val l2 = recording(kv, tr2, seen)
+            l2.tick(); tr2.resolves[0].cb(false); tr2.reads[0].cb(Remote.MINE_RESOLVED)
+        })
+        // (4) B: create rejected, read error, then resolve ok
+        assertEquals(both, case { _, tr, l, _ ->
+            tr.creates[0].cb(false); tr.reads[0].cb(Remote.ERROR)
+            l.resolve(); tr.resolves[0].cb(true)
+        })
+        // (5) D2: create rejected, resolve(), create read resolved, then resolve ok
+        assertEquals(both, case { _, tr, l, _ ->
+            tr.creates[0].cb(false); l.resolve()
+            tr.reads[0].cb(Remote.MINE_RESOLVED); tr.resolves[0].cb(true)
+        })
+        // (6) D2 reversed: resolve ok first, then the late create read
+        assertEquals(both, case { _, tr, l, _ ->
+            tr.creates[0].cb(false); l.resolve()
+            tr.resolves[0].cb(true); tr.reads[0].cb(Remote.MINE_RESOLVED)
+        })
+    }
+
+    // A confirmed record, or an old two-field pending line, queues only the resolve
+    @Test fun confirmed_or_old_format_pending_queues_only_resolved() {
+        val kv = Kv(); val tr = Tr()
+        val l = recording(kv, tr, ArrayList())
+        l.begin(rec())
+        tr.creates[0].cb(true)
+        l.resolve()
+        assertEquals("root/site\tk1", kv.m["r.list"])
+        val seen = ArrayList<String>()
+        val tr2 = Tr(); val l2 = recording(kv, tr2, seen)
+        l2.tick(); tr2.resolves[0].cb(true)
+        assertEquals(listOf("resolved:k1"), seen)
+
+        val kv3 = Kv(); val tr3 = Tr(); val seen3 = ArrayList<String>()
+        kv3.m["r.list"] = "root/site\tk9"
+        val l3 = recording(kv3, tr3, seen3)
+        l3.tick(); tr3.resolves[0].cb(false); tr3.reads[0].cb(Remote.MINE_RESOLVED)
+        assertEquals(listOf("resolved:k9"), seen3)
+        assertNull(kv3.m["r.list"])
+    }
 }
