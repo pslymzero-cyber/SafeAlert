@@ -4,6 +4,8 @@
  *
  * 설치 순서
  *  1. 알림 전용 구글 계정으로 로그인한다. 메일은 이 계정 이름으로 나간다.
+ *     이 계정의 하루 메일 한도(일반 구글 계정 받는 사람 100명, Workspace 1,500명)가 차면 다음 날까지
+ *     해제 메일도 막힐 수 있다(구조 요청 메일을 먼저 보낸다).
  *  2. script.google.com → 새 프로젝트. 이름은 'SafeAlert 구조 요청 메일'.
  *  3. 기본 코드를 지우고 이 파일 전체를 붙여넣은 뒤 저장한다.
  *  4. 왼쪽 톱니(프로젝트 설정) → 시간대를 (GMT+09:00) 서울로.
@@ -12,9 +14,10 @@
  *     - FIREBASE_DB_SECRET : 파이어베이스 프로젝트 설정 > 서비스 계정 > 데이터베이스 비밀번호
  *     - ALLOWED_DOMAINS    : 메일을 받을 수 있는 도메인. 비우면 coupangfs.com. 쉼표·세미콜론·공백·줄바꿈 어느 것으로
  *                            나눠도 되고 앞의 '@' 와 대소문자는 무시한다. 정확한 주소(me@example.com)도 넣을 수 있다.
- *     - DAILY_MAX (선택)   : 사업장(루트+센터)마다 24시간 동안 보낼 구조 요청 메일 수. 기본 50, 1~60.
+ *     - DAILY_MAX (선택)   : 사업장(루트+센터)마다 최근 24시간 동안 보낸 구조 요청 메일 수 상한. 기본 50, 1~60.
  *                            해제 메일은 세지 않고 막지도 않는다.
- *     'S|' 로 시작하는 속성은 스크립트가 쓰는 보낸 기록이라 손대지 않는다(예전 SENT_LOG 속성이 있으면 지워도 된다).
+ *     'S|' 로 시작하는 속성은 스크립트가 쓰는 보낸 기록이라 손대지 않는다(구조 요청 7일·해제 24시간 보관 뒤
+ *     자동 삭제. 예전 SENT_LOG 속성이 있으면 지워도 된다).
  *  6. 배포 > 새 배포 > 유형 '웹 앱', 실행 계정 '나', 액세스 '모든 사용자' → 배포.
  *  7. 권한 창에서 계정 선택 → '고급' → 이동 → 허용 (메일 보내기·외부 서비스 연결).
  *  8. 나온 웹 앱 주소를 GitHub 저장소 Settings > Secrets and variables > Actions 의 비밀값 SA_SOS_MAIL_URL 로 저장한다.
@@ -29,6 +32,8 @@ var ID_RE = /^[A-Za-z0-9_-]{1,40}$/;
 var TO_RE = /^[A-Za-z0-9%+_-]+(\.[A-Za-z0-9%+_-]+)*@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/;
 var DB_URL_RE = /^https:\/\/[A-Za-z0-9.-]+\/?$/;
 var DAY_MS = 24 * 3600 * 1000;
+// 구조 요청 메일 기록은 해제 메일 확인용으로 7일 보관. 일반 계정은 많아야 700건 안팎(약 100KB, 저장소 500KB 한도 안).
+var KEEP_MS = 7 * DAY_MS;
 var FRESH_MS = 2 * 3600 * 1000;
 var RATE_PER_MIN = 30;
 var DEFAULT_CAP = 50;
@@ -75,7 +80,8 @@ function handle(p) {
     Object.keys(all).forEach(function (k) {
       if (k.indexOf(SENT) !== 0) return;
       var at = Number(all[k]);
-      if (!(now - at < DAY_MS)) store.deleteProperty(k);
+      var keep = k.indexOf(SENT + 'sos|') === 0 ? KEEP_MS : DAY_MS;
+      if (!(now - at < keep)) store.deleteProperty(k);
       else sent[k] = at;
     });
 
@@ -86,7 +92,9 @@ function handle(p) {
       if (!sent[SENT + ['sos', site, sc, id, tag].join('|')]) return 'not_ready';
     } else {
       var prefix = SENT + 'sos|' + site + '|' + sc + '|';
-      var used = Object.keys(sent).filter(function (k) { return k.indexOf(prefix) === 0; }).length;
+      var used = Object.keys(sent).filter(function (k) {
+        return k.indexOf(prefix) === 0 && now - sent[k] < DAY_MS;
+      }).length;
       if (used >= cap(cfg('DAILY_MAX'))) return 'quota';
     }
     if (MailApp.getRemainingDailyQuota() < 1) return 'quota';

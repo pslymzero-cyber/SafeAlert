@@ -251,11 +251,29 @@ for (const ch of ['\u2028', '\u2029', '\u202E', '\u200B', '\uFEFF', '\u0085', '\
   assert.ok(!m.subject.includes(ch) && !m.body.includes(ch), 'char ' + ch.charCodeAt(0).toString(16));
 }
 
-// sent records older than 24 hours are removed; fresh ones stay
+// sent records: sos kept 7 days, resolved kept 24 hours
 const OLD = 'S|sos|wf11|WF11|old|aaaaaaaaaaaa', FRESH = 'S|sos|wf11|WF11|new|bbbbbbbbbbbb';
-t = make({ db: { k1: still }, props: { [OLD]: String(NOW - 25 * HOUR), [FRESH]: String(NOW - HOUR) } });
+const SOS30 = 'S|sos|wf11|WF11|mid|cccccccccccc', RES25 = 'S|resolved|wf11|WF11|mid|cccccccccccc';
+t = make({ db: { k1: still }, props: { [OLD]: String(NOW - 8 * 24 * HOUR), [FRESH]: String(NOW - HOUR),
+  [SOS30]: String(NOW - 30 * HOUR), [RES25]: String(NOW - 25 * HOUR) } });
 assert.strictEqual(t.post({}), 'sent');
 assert.ok(!(OLD in t.w.props) && FRESH in t.w.props);
+assert.ok(SOS30 in t.w.props && !(RES25 in t.w.props));
+
+// resolved 30 hours after the sos mail still goes out
+const tagOf = (to) => crypto.createHash('sha256').update(to.toLowerCase(), 'utf8').digest('hex').slice(0, 12);
+const TAG = tagOf('wfspt@coupangfs.com');
+t = make({ db: { k1: { name: 'Kim', role: 'WALKER', trigger: 'still', createdAt: NOW - 30 * HOUR,
+  resolvedAt: NOW - 60000, status: 'resolved', uid: 'u' } },
+  props: { ['S|sos|wf11|WF11|k1|' + TAG]: String(NOW - 30 * HOUR) } });
+assert.strictEqual(t.post({ event: 'resolved' }), 'sent');
+assert.strictEqual(t.w.mails.length, 1);
+
+// daily cap counts only sos mails of the last 24 hours
+t = make({ db: { k1: still }, props: { DAILY_MAX: '1', ['S|sos|wf11|WF11|k0|' + TAG]: String(NOW - 25 * HOUR) } });
+assert.strictEqual(t.post({}), 'sent');
+t = make({ db: { k1: still }, props: { DAILY_MAX: '1', ['S|sos|wf11|WF11|k0|' + TAG]: String(NOW - 23 * HOUR) } });
+assert.strictEqual(t.post({}), 'quota');
 
 // busy: lock not taken
 t = make({ db: { k1: still } });
