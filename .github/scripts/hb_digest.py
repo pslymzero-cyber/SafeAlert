@@ -12,8 +12,9 @@ import json
 import sys
 import time
 
+from analyze_alerts import KST  # 경보 집계와 같은 한국 시간대(tzdata 가 없으면 고정 +9)
+
 GAP_MS = 15 * 60_000  # 마지막 갱신이 이보다 오래면 '끊긴 채 끝남'(앱의 끊김 기준과 같다). 재시작 기준도 같은 15분
-KST = datetime.timezone(datetime.timedelta(hours=9))
 BUCKETS = [(30, "15~30분"), (60, "30~60분"), (120, "1~2시간"), (None, "2시간+")]  # 분 상한
 TITLE = "### 연락 끊김 (기록만)"
 NOTE = "> 단독 작업 감시 중 단말이 5분마다 남긴 살아 있음 기록. 메일·알림 없음. 이름·기기 식별자는 집계하지 않는다."
