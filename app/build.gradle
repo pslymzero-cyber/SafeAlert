@@ -75,6 +75,8 @@ android {
         //   Robolectric 테스트는 자체 sandbox classloader 로 실제 구현을 쓰므로 영향 없음.
         unitTests.returnDefaultValues = true
         unitTests.all {
+            // 저장소 파일을 읽는 대조 테스트 — 이 파일만 바뀌어도 다시 돈다
+            inputs.files(rootProject.file('database.rules.json'), rootProject.file('scripts/sos-mail/Code.gs'))
             testLogging {
                 events 'failed'
                 exceptionFormat 'full'

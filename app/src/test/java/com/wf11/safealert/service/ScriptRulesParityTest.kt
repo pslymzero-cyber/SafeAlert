@@ -1,15 +1,11 @@
 package com.wf11.safealert.service
 
-import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** App rules vs. the mail script (Code.gs) and the database rules: they must agree (v1.2.2). */
 class ScriptRulesParityTest {
-
-    private fun repoFile(rel: String): String =
-        listOf(File(rel), File("../$rel")).first { it.exists() }.readText().replace("\r\n", "\n")
 
     private fun hbBlock(): String {
         val s = repoFile("database.rules.json")
@@ -19,8 +15,13 @@ class ScriptRulesParityTest {
         return s.substring(a, b)
     }
 
+    private fun script() = repoFile("scripts/sos-mail/Code.gs")
+
+    private fun scriptMaxTo(gs: String) = Regex("""to\.length > (\d+)""").find(gs)!!.groupValues[1].toInt()
+
     @Test fun address_rule_matches_script_to_re() {
-        val gs = repoFile("scripts/sos-mail/Code.gs")
+        val gs = script()
+        val max = scriptMaxTo(gs)
         val toRe = Regex(gs.substringAfter("var TO_RE = /").substringBefore("/;\n"))
         val samples = listOf(
             "a@b.co", "a%b@x.com", "a.b+c%d_e-f@x-y.co.kr", ".a@x.com", "a.@x.com", "a..b@x.com", "a b@x.com",
@@ -28,7 +29,7 @@ class ScriptRulesParityTest {
             "a@" + "b".repeat(248) + ".com", "a@" + "b".repeat(249) + ".com"
         )
         val app = samples.map { SosMail.validAddress(it) }
-        assertEquals(samples.map { it.length <= 254 && toRe.matches(it) }, app)
+        assertEquals(samples.map { it.length <= max && toRe.matches(it) }, app)
         assertTrue(app.contains(true) && app.contains(false))
     }
 
@@ -42,8 +43,25 @@ class ScriptRulesParityTest {
 
     @Test fun hb_rules_clock_slack_and_g_object() {
         val hb = hbBlock()
-        assertEquals(4, Regex("<= now \\+ 60000").findAll(hb).count())
-        assertEquals(0, Regex("<= now(?! \\+ 60000)").findAll(hb).count())
+        assertEquals(4, Regex("""<= now \+ 60000(?!\d)""").findAll(hb).count())
+        assertEquals(0, Regex("""<= now(?! \+ 60000(?!\d))""").findAll(hb).count())
         assertTrue(hb.substringAfter("\"g\": {").trimStart().startsWith("\".validate\": \"newData.hasChildren()\""))
+        // a gap may start before its session start (baseline carried over a restart)
+        assertTrue(!hb.substringAfter("\"g\": {").substringBefore("\"\$other\"").contains("start"))
+    }
+
+    @Test fun keep_fresh_and_address_length_match_script() {
+        val gs = script()
+        assertTrue(gs.contains("var DAY_MS = 24 * 3600 * 1000;"))
+        val keepDays = Regex("""var KEEP_MS = (\d+) \* DAY_MS;""").find(gs)!!.groupValues[1].toLong()
+        assertEquals(SosMail.KEEP_ADDR_MS, keepDays * 86_400_000L)
+        val freshHours = Regex("""var FRESH_MS = (\d+) \* 3600 \* 1000;""").find(gs)!!.groupValues[1].toLong()
+        assertEquals(SosMail.GIVE_UP_MS, freshHours * 3_600_000L)
+        val max = scriptMaxTo(gs)
+        assertEquals(254, max)
+        val at = "a@" + "b".repeat(max - 6) + ".com"
+        assertEquals(max, at.length)
+        assertTrue(SosMail.validAddress(at))
+        assertTrue(!SosMail.validAddress("a$at"))
     }
 }

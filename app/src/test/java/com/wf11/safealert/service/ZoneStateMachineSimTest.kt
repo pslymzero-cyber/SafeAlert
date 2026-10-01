@@ -8,7 +8,6 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.util.ReflectionHelpers
 import org.robolectric.util.ReflectionHelpers.ClassParameter
-import java.io.File
 import java.util.Random
 import kotlin.math.roundToInt
 
@@ -255,11 +254,7 @@ class ZoneStateMachineSimTest {
 
     @Test
     fun `04 소스 가드 - 존 상수와 데드밴드 분기가 미러와 같은지`() {
-        val f = listOf(
-            File("src/main/java/com/wf11/safealert/03_service/BleService.kt"),
-            File("app/src/main/java/com/wf11/safealert/03_service/BleService.kt")
-        ).first { it.exists() }
-        val src = f.readText()
+        val src = serviceSource("BleService.kt")
         fun has(re: String, what: String) =
             assertTrue("BleService.kt 가 미러와 어긋남 — ${what}", Regex(re).containsMatchIn(src))
 

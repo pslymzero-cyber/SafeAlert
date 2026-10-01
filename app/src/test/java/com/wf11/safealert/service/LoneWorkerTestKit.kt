@@ -145,11 +145,12 @@ internal fun LoneWorkerLogic.peerSiren(from: Long, to: Long, id: String = "P") {
     }
 }
 
-/** Source of a file in 03_service, LF line ends (the test runs from the module or the root). */
-internal fun serviceSource(name: String): String = listOf(
-    File("src/main/java/com/wf11/safealert/03_service/$name"),
-    File("app/src/main/java/com/wf11/safealert/03_service/$name")
-).first { it.exists() }.readText().replace("\r\n", "\n")
+/** A repository file by its path from the root, LF line ends (the test runs from the module or the root). */
+internal fun repoFile(rel: String): String =
+    listOf(File(rel), File("../$rel")).first { it.exists() }.readText().replace("\r\n", "\n")
+
+/** Source of a file in 03_service. */
+internal fun serviceSource(name: String): String = repoFile("app/src/main/java/com/wf11/safealert/03_service/$name")
 
 /** From head to the end of its 4-space-indented block. */
 internal fun sourceBlock(s: String, head: String): String {
