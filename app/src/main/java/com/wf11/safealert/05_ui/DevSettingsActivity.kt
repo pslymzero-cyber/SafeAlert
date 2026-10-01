@@ -83,6 +83,7 @@ class DevSettingsActivity : AppCompatActivity() {
         binding.etFirebaseRoot.setText(DevSettings.firebaseRoot)
         binding.etDevSiteCode.setText(DevSettings.siteCode)   // (v1.1.90) 사업장 코드 변경 경로
         binding.etSosMailTo.setText(LoneWorkerSosSync.mailTo(this, DevSettings.siteCode))
+        binding.etSosMailTo.isEnabled = DevSettings.siteCode.isNotEmpty()
         binding.tvSosMailOff.visibility = if (LoneWorkerSosSync.mailEnabled) View.GONE else View.VISIBLE
         binding.switchAutoSave.isChecked = DevSettings.autoSaveAlerts
         // 디버그
@@ -302,6 +303,7 @@ class DevSettingsActivity : AppCompatActivity() {
                 DevSettings.siteCode = et.text.toString(); UwbCalibrator.applySite()
                 // 사업장이 바뀌면 메일 칸을 그 사업장 값으로 다시 채운다(바뀌지 않았으면 입력 중인 값을 지우지 않는다)
                 if (DevSettings.siteCode != before) binding.etSosMailTo.setText(LoneWorkerSosSync.mailTo(this, DevSettings.siteCode))
+                binding.etSosMailTo.isEnabled = DevSettings.siteCode.isNotEmpty()
             }
             editCommitters += commit
             et.setOnFocusChangeListener { _, hasFocus -> if (!hasFocus) { commit(); et.setText(DevSettings.siteCode) } }
@@ -310,9 +312,13 @@ class DevSettingsActivity : AppCompatActivity() {
         run {
             val et = binding.etSosMailTo
             val commit: () -> Unit = {
+                val sc = DevSettings.siteCode
                 val v = et.text.toString().trim()
-                if (v.isEmpty() || SosMail.validAddress(v)) LoneWorkerSosSync.setMailTo(this, DevSettings.siteCode, v)
-                else Toast.makeText(this, "이메일 주소 형식이 맞지 않아 저장하지 않았습니다.", Toast.LENGTH_LONG).show()
+                // 사업장 코드가 없거나 바꾸지 않은 값이면 저장하지 않는다(열고 나가기만 해서 기본값이 고정되지 않게)
+                if (sc.isNotEmpty() && v != LoneWorkerSosSync.mailTo(this, sc)) {
+                    if (v.isEmpty() || SosMail.validAddress(v)) LoneWorkerSosSync.setMailTo(this, sc, v)
+                    else Toast.makeText(this, "이메일 주소 형식이 맞지 않아 저장하지 않았습니다.", Toast.LENGTH_LONG).show()
+                }
             }
             editCommitters += commit
             et.setOnFocusChangeListener { _, hasFocus ->

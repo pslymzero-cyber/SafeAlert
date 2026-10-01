@@ -140,7 +140,7 @@
                             android:textSize="@dimen/sa_type_body" android:textColor="@color/sa_text_primary" />
                         <!-- (v1.2.2) 구조 요청 메일 — 사업장 코드별 저장 -->
                         <TextView style="@style/SA.Label" android:layout_marginTop="10dp" android:text="구조 요청 메일 받는 주소 (이 사업장)" />
-                        <TextView style="@style/SA.Hint" android:layout_marginTop="1dp" android:text="단독 작업 중 구조 요청·해제를 이 주소로 메일로 알립니다. 비우면 보내지 않습니다." />
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="1dp" android:text="단독 작업 중 구조 요청·해제를 이 주소로 메일로 알립니다. 회사 메일 주소(스크립트 허용 목록에 있는 주소)만 받을 수 있습니다. 비우면 보내지 않습니다. 사업장 코드가 있어야 입력할 수 있습니다." />
                         <EditText android:id="@+id/et_sos_mail_to" android:layout_width="match_parent"
                             android:layout_height="wrap_content" android:inputType="textEmailAddress" android:maxLength="254"
                             android:textSize="@dimen/sa_type_body" android:textColor="@color/sa_text_primary" />

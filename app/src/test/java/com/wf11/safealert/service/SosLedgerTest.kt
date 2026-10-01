@@ -191,4 +191,26 @@ class SosLedgerTest {
         assertEquals(1, tr2.resolves.size)
         assertEquals("k1", tr2.resolves[0].key)
     }
+
+    // Mail queue is written before a.sent / pending removal, so a death in between is recovered by the re-check
+    @Test fun on_saved_runs_before_sent_mark_and_pending_drop() {
+        val kv = Kv(); val tr = Tr()
+        val seen = ArrayList<String>()
+        val l = SosLedger(kv, tr, { now }, { e, _, k ->
+            seen.add(e + ":" + (kv.m["a.sent"] ?: "-") + ":" + (kv.m["r.list"]?.contains(k) == true))
+        })
+        l.begin(rec())
+        tr.creates[0].cb(true)
+        assertEquals("1", kv.m["a.sent"])
+        l.resolve()
+        tr.resolves[0].cb(true)
+        assertNull(kv.m["r.list"])
+        l.begin(rec())
+        tr.creates[1].cb(true)
+        l.resolve()
+        tr.resolves[1].cb(false)
+        tr.reads[0].cb(Remote.MINE_RESOLVED)
+        assertNull(kv.m["r.list"])
+        assertEquals(listOf("sos:-:false", "resolved:-:true", "sos:-:false", "resolved:-:true"), seen)
+    }
 }

@@ -36,6 +36,8 @@
 
     <!-- 자동 업데이트 -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- (v1.2.2) 구조 요청 메일 예약 작업의 네트워크 조건 -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <!-- 백그라운드 유지 + 오디오 -->
@@ -104,6 +106,12 @@
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
+
+        <!-- (v1.2.2) 감시가 멈춘 뒤에도 대기 중인 구조 요청 메일 요청을 네트워크가 있을 때 보낸다 -->
+        <service
+            android:name=".service.SosMailJob"
+            android:permission="android.permission.BIND_JOB_SERVICE"
+            android:exported="false" />
 
     </application>
 

@@ -13,8 +13,10 @@ class SosMailTest {
 
     private class Kv : SosKv {
         val m = HashMap<String, String>()
+        var puts = 0
         override fun get(k: String): String? = m[k]
         override fun put(changes: Map<String, String?>) {
+            puts++
             for ((k, v) in changes) if (v == null) m.remove(k) else m[k] = v
         }
     }
@@ -46,8 +48,10 @@ class SosMailTest {
     private var to = SosMail.DEFAULT_TO
     private val posts = ArrayList<Post>()
     private val asked = ArrayList<String>()
+    private val queue = ArrayList<Boolean>()
 
-    private fun mail(kv: Kv) = SosMail(kv, { f, d -> posts.add(Post(f, d)) }, { now }) { sc -> asked.add(sc); to }
+    private fun mail(kv: Kv) =
+        SosMail(kv, { f, d -> posts.add(Post(f, d)) }, { now }, { queue.add(it) }) { sc -> asked.add(sc); to }
 
     private fun pair(kv: Kv, tr: Tr): Pair<SosLedger, SosMail> {
         val m = mail(kv)
@@ -115,6 +119,10 @@ class SosMailTest {
         assertFalse(SosMail.validAddress("a b@x.com"))
         assertFalse(SosMail.validAddress("@x.com"))
         assertFalse(SosMail.validAddress("a@x..com"))
+        assertTrue(SosMail.validAddress("a.b@x.com"))
+        assertFalse(SosMail.validAddress(".a@x.com"))
+        assertFalse(SosMail.validAddress("a.@x.com"))
+        assertFalse(SosMail.validAddress("a..b@x.com"))
         assertFalse(SosMail.validAddress("a".repeat(246) + "@x.com.kr"))
     }
 
@@ -149,6 +157,9 @@ class SosMailTest {
         assertEquals(Outcome.RETRY, SosMail.outcome(null))
         assertEquals(Outcome.RETRY, SosMail.outcome("<html>sign in</html>"))
         assertEquals(Outcome.DONE, SosMail.outcome("{ \"ok\" : true, \"code\" : \"dup\" }"))
+        assertEquals("busy", SosMail.code("{\"ok\":false,\"code\":\"busy\"}"))
+        assertNull(SosMail.code(null))
+        assertNull(SosMail.code("<html>sign in</html>"))
     }
 
     @Test fun retry_backoff_then_done_or_drop_removes() {
@@ -177,21 +188,94 @@ class SosMailTest {
         assertEquals(1, posts.size)
     }
 
-    @Test fun gives_up_after_30_minutes_or_clock_back() {
+    @Test fun gives_up_after_2_hours_or_clock_back() {
         val kv = Kv(); val m = mail(kv)
         val t0 = now
         m.enqueue(SosMail.EVENT_SOS, "root/sos/WF11", "k1", 3)
         posts[0].done(null)
-        now = t0 + 30 * 60_000L + 1_000; m.tick()
-        assertEquals(1, posts.size)
+        now = t0 + 119 * 60_000L; m.tick()
+        assertEquals(2, posts.size)
+        posts[1].done(null)
+        now = t0 + 2 * 3_600_000L + 1; m.tick()
+        assertEquals(2, posts.size)
         assertNull(kv.m[SosMail.K_LIST])
 
         now = t0
         m.enqueue(SosMail.EVENT_SOS, "root/sos/WF11", "k2", 3)
-        posts[1].done(null)
+        posts[2].done(null)
         now = t0 - 120_000; m.tick()
-        assertEquals(2, posts.size)
+        assertEquals(3, posts.size)
         assertNull(kv.m[SosMail.K_LIST])
+    }
+
+    @Test fun site_root_slashes_trimmed_and_slash_only_root_ignored() {
+        val kv = Kv(); val m = mail(kv)
+        m.enqueue(SosMail.EVENT_SOS, "/wf11/sos/WF11", "k1", 3)
+        m.enqueue(SosMail.EVENT_SOS, "wf11//sos/WF11", "k2", 3)
+        m.enqueue(SosMail.EVENT_SOS, "//sos/WF11", "k3", 3)
+        assertEquals(2, posts.size)
+        assertTrue(posts.all { it.form.startsWith("site=wf11&sc=WF11&") })
+    }
+
+    @Test fun storage_written_only_when_queue_changes() {
+        val kv = Kv(); val m = mail(kv)
+        m.tick()
+        assertEquals(0, kv.puts)
+        val t0 = now
+        m.enqueue(SosMail.EVENT_SOS, "root/sos/WF11", "k1", 3)
+        assertEquals(1, kv.puts)
+        posts[0].done(null)
+        m.tick()
+        assertEquals(1, kv.puts)
+        // given up while in flight: the late answer finds nothing to remove
+        now = t0 + 10_000; m.tick()
+        now = t0 + 2 * 3_600_000L + 1; m.tick()
+        assertEquals(2, kv.puts)
+        posts[1].done(sent)
+        assertEquals(2, kv.puts)
+    }
+
+    @Test fun drain_reports_once_after_last_answer() {
+        val kv = Kv(); val m = mail(kv)
+        val got = ArrayList<Boolean>()
+        m.drain { got.add(it) }
+        assertEquals(listOf(false), got)
+
+        m.enqueue(SosMail.EVENT_SOS, "root/sos/WF11", "k1", 3)
+        m.drain { got.add(it) }
+        assertEquals(1, got.size)
+        posts[0].done(null)
+        assertEquals(listOf(false, true), got)
+        m.drain { got.add(it) }
+        assertEquals(listOf(false, true, true), got)
+
+        now += 10_000
+        m.drain { got.add(it) }
+        assertEquals(3, got.size)
+        posts[1].done(sent)
+        assertEquals(listOf(false, true, true, false), got)
+        m.tick()
+        assertEquals(4, got.size)
+    }
+
+    @Test fun resolved_goes_right_after_sos_is_done() {
+        val kv = Kv(); val m = mail(kv)
+        m.enqueue(SosMail.EVENT_SOS, "root/sos/WF11", "k1", 3)
+        m.enqueue(SosMail.EVENT_RESOLVED, "root/sos/WF11", "k1", 3)
+        assertEquals(1, posts.size)
+        posts[0].done(sent)
+        assertEquals(2, posts.size)
+        assertTrue(posts[1].form.contains("event=resolved"))
+    }
+
+    @Test fun on_queue_true_when_filled_false_when_emptied() {
+        val kv = Kv(); val m = mail(kv)
+        m.tick()
+        assertTrue(queue.isEmpty())
+        m.enqueue(SosMail.EVENT_SOS, "root/sos/WF11", "k1", 3)
+        assertEquals(listOf(true), queue)
+        posts[0].done(sent)
+        assertEquals(listOf(true, false), queue)
     }
 
     @Test fun restart_resumes_from_storage_and_skips_broken_lines() {

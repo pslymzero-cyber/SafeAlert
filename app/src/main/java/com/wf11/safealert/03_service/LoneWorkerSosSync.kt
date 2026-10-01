@@ -3,6 +3,7 @@ package com.wf11.safealert.service
 import android.content.Context
 import android.content.SharedPreferences
 import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import com.wf11.safealert.BuildConfig
@@ -60,6 +61,40 @@ class LoneWorkerSosSync(
         }
 
         private val mailExec: ExecutorService by lazy { Executors.newSingleThreadExecutor() }
+        private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
+
+        /** 원장 파일 위의 저장소. 쓰기는 commit(동기) — 쓴 직후 죽어도 남는다. */
+        private fun kvOf(ctx: Context): SosKv = object : SosKv {
+            private val prefs: SharedPreferences by lazy { ctx.getSharedPreferences(FILE, Context.MODE_PRIVATE) }
+
+            // 이전 개발 빌드가 다른 형으로 남긴 값은 읽지 않는다
+            override fun get(k: String): String? = runCatching { prefs.getString(k, null) }.getOrNull()
+            override fun put(changes: Map<String, String?>) {
+                val e = prefs.edit()
+                for ((k, v) in changes) if (v == null) e.remove(k) else e.putString(k, v)
+                e.commit()
+            }
+        }
+
+        // 메일은 보조 통로: 실패는 null 로 삼키고, 결과는 메인에서 대기열에 돌려준다. 로그는 응답 코드만.
+        private val postMail: (String, (String?) -> Unit) -> Unit = { form, done ->
+            val url = mailUrl
+            mailExec.execute {
+                val body = runCatching { httpPost(url, form) }.getOrNull()
+                Log.i(TAG, "mail request: " + (SosMail.code(body) ?: "no response"))
+                mainHandler.post { done(body) }
+            }
+        }
+
+        private var mailQueue: SosMail? = null
+
+        /**
+         * 프로세스에 하나뿐인 메일 대기열. 메인 스레드에서만 부른다.
+         * 감시 tick 과 예약 작업(SosMailJob)이 같은 인스턴스를 써서 같은 항목을 두 번 보내지 않는다.
+         */
+        fun mail(ctx: Context): SosMail = mailQueue ?: ctx.applicationContext.let { app ->
+            SosMail(kvOf(app), postMail, System::currentTimeMillis, { SosMailJob.sync(app, it) }) { sc -> mailTo(app, sc) }
+        }.also { mailQueue = it }
 
         /** POST 뒤 302 가 오면 Location(https 만)을 GET 으로 한 번 따라가 결과 본문을 받는다. 그 밖은 null. */
         private fun httpPost(url: String, form: String): String? {
@@ -92,17 +127,7 @@ class LoneWorkerSosSync(
         }
     }
 
-    private val prefs: SharedPreferences by lazy { ctx.getSharedPreferences(FILE, Context.MODE_PRIVATE) }
-
-    private val kv = object : SosKv {
-        // 이전 개발 빌드가 다른 형으로 남긴 값은 읽지 않는다
-        override fun get(k: String): String? = runCatching { prefs.getString(k, null) }.getOrNull()
-        override fun put(changes: Map<String, String?>) {
-            val e = prefs.edit()
-            for ((k, v) in changes) if (v == null) e.remove(k) else e.putString(k, v)
-            e.commit()
-        }
-    }
+    private val kv = kvOf(ctx)
 
     private val transport = object : SosTransport {
         override fun uid(): String? {
@@ -145,21 +170,9 @@ class LoneWorkerSosSync(
         }
     }
 
-    // 메일은 보조 통로: 실패는 null 로 삼키고, 결과는 메인에서 대기열에 돌려준다
-    private val postMail: (String, (String?) -> Unit) -> Unit = { form, done ->
-        val url = mailUrl
-        mailExec.execute {
-            val body = runCatching { httpPost(url, form) }.getOrNull()
-            Log.i(TAG, if (body == null) "mail request: no response" else "mail request: response")
-            handler.post { done(body) }
-        }
-    }
-
-    private val mail by lazy { SosMail(kv, postMail, System::currentTimeMillis) { sc -> mailTo(ctx, sc) } }
-
     private val ledger by lazy {
         SosLedger(kv, transport, SystemClock::elapsedRealtime, { event, path, key ->
-            if (mailEnabled) mail.enqueue(event, path, key, DevSettings.lwStillMin)
+            if (mailEnabled) mail(ctx).enqueue(event, path, key, DevSettings.lwStillMin)
         }) { onChange() }
     }
 
@@ -200,7 +213,7 @@ class LoneWorkerSosSync(
     fun tick() {
         attachIfNeeded()
         ledger.tick()
-        if (mailEnabled) mail.tick()
+        if (mailEnabled) mail(ctx).tick()
     }
 
     private fun attachIfNeeded() {

@@ -195,10 +195,11 @@ class SosLedger(
     private fun onCreated(path: String, key: String) {
         createFails.remove(key)
         createNext.remove(key)
+        // 늦게 온 확인이라도 서버에는 기록이 생겼으므로 알린다.
+        // 메일 대기열이 먼저 남아야 사이에 죽어도 재확인으로 다시 알린다
+        onSaved(SosMail.EVENT_SOS, path, key)
         // 해제·교체로 활성 키가 바뀐 뒤에 늦게 온 응답은 활성 칸에 쓰지 않는다
         if (kv.get(K_KEY) == key && hasActive()) kv.put(mapOf(K_SENT to "1"))
-        // 늦게 온 확인이라도 서버에는 기록이 생겼으므로 알린다
-        onSaved(SosMail.EVENT_SOS, path, key)
     }
 
     private fun currentRecord() = Record(
@@ -217,15 +218,16 @@ class SosLedger(
             transport.resolve(e.path, key) { ok ->
                 if (ok) {
                     resolveBusy.remove(key)
-                    drop(e)
+                    // 메일 대기열이 먼저 남아야 사이에 죽어도 재확인으로 다시 알린다
                     onSaved(SosMail.EVENT_RESOLVED, e.path, key)
+                    drop(e)
                     onChange()
                 } else {
                     transport.read(e.path, key) { r ->
                         resolveBusy.remove(key)
                         if (r == Remote.MINE_RESOLVED) {
+                            onSaved(SosMail.EVENT_RESOLVED, e.path, key) // 대기열 먼저(위와 같은 이유)
                             drop(e)
-                            onSaved(SosMail.EVENT_RESOLVED, e.path, key)
                         } else if (r == Remote.ABSENT) {
                             drop(e)
                         } else {
