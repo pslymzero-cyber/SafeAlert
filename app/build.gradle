@@ -18,6 +18,9 @@ android {
         // (v1.1.90) 설정 PIN — 값은 빌드 시 주입(BuildConfig + CI Secrets). 저장소에 실제 값을 두지 않는다.
         //   우선순위: -PdevPin / ~/.gradle/gradle.properties devPin → 환경변수 SA_DEV_PIN → '000'
         buildConfigField "String", "DEV_PIN", "\"${project.findProperty('devPin') ?: System.getenv('SA_DEV_PIN') ?: '000'}\""
+        // (v1.2.2) 구조 요청 메일 스크립트 주소 — 우선순위: -PsosMailUrl / gradle.properties sosMailUrl → 환경변수 SA_SOS_MAIL_URL → 빈 값.
+        //   비면 메일 기능이 꺼진다. 저장소에 실제 주소를 두지 않는다.
+        buildConfigField "String", "SOS_MAIL_URL", "\"${(project.findProperty('sosMailUrl') ?: System.getenv('SA_SOS_MAIL_URL') ?: '').toString().trim()}\""
     }
 
     // 디버그 keystore 경로 명시 — CI 러너가 자동 생성한 임의 키 대신 ~/.android/debug.keystore 를

@@ -30,11 +30,13 @@ interface SosTransport {
  * 같은 키로 다시 만드는 쓰기가 생성 전용 규칙에 막힌다. 내 uid 의 기록이 이미 있으면 전송된 것으로 본다 (RR11).
  * 그 밖의 실패는 10초부터 두 배씩(최대 5분) 늘려 다시 시도한다. 규칙이 허용하지 않는 필드는 절대 쓰지 않는다.
  * 실패한 해제도 기록이 살아 있으면 슬롯을 유지하고 계속 다시 보낸다 (RR15).
+ * (v1.2.2) 서버 저장이 확인된 순간 onSaved 로 알린다 — 구조 요청 메일이 여기서 시작한다.
  */
 class SosLedger(
     private val kv: SosKv,
     private val transport: SosTransport,
     private val clock: () -> Long,
+    private val onSaved: (event: String, path: String, key: String) -> Unit = { _, _, _ -> },
     private val onChange: () -> Unit = {}
 ) {
     data class Record(
@@ -171,14 +173,14 @@ class SosLedger(
         transport.create(sentPath, sentKey, currentRecord(), uid) { ok ->
             if (ok) {
                 createBusy.remove(sentKey)
-                onCreated(sentKey)
+                onCreated(sentPath, sentKey)
                 onChange()
             } else {
                 // 서버에 이미 내 기록이 있으면(재시작 전 쓰기가 뒤늦게 반영) 다시 쓰지 않고 전송된 것으로 본다
                 transport.read(sentPath, sentKey) { r ->
                     createBusy.remove(sentKey)
                     if (r == Remote.MINE_ACTIVE || r == Remote.MINE_RESOLVED) {
-                        onCreated(sentKey)
+                        onCreated(sentPath, sentKey)
                     } else {
                         val n = (createFails[sentKey] ?: 0) + 1
                         createFails[sentKey] = n
@@ -190,11 +192,13 @@ class SosLedger(
         }
     }
 
-    private fun onCreated(key: String) {
+    private fun onCreated(path: String, key: String) {
         createFails.remove(key)
         createNext.remove(key)
         // 해제·교체로 활성 키가 바뀐 뒤에 늦게 온 응답은 활성 칸에 쓰지 않는다
         if (kv.get(K_KEY) == key && hasActive()) kv.put(mapOf(K_SENT to "1"))
+        // 늦게 온 확인이라도 서버에는 기록이 생겼으므로 알린다
+        onSaved(SosMail.EVENT_SOS, path, key)
     }
 
     private fun currentRecord() = Record(
@@ -214,11 +218,15 @@ class SosLedger(
                 if (ok) {
                     resolveBusy.remove(key)
                     drop(e)
+                    onSaved(SosMail.EVENT_RESOLVED, e.path, key)
                     onChange()
                 } else {
                     transport.read(e.path, key) { r ->
                         resolveBusy.remove(key)
-                        if (r == Remote.ABSENT || r == Remote.MINE_RESOLVED) {
+                        if (r == Remote.MINE_RESOLVED) {
+                            drop(e)
+                            onSaved(SosMail.EVENT_RESOLVED, e.path, key)
+                        } else if (r == Remote.ABSENT) {
                             drop(e)
                         } else {
                             val n = (resolveFails[key] ?: 0) + 1

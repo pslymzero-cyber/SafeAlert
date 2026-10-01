@@ -4,10 +4,16 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.os.Handler
 import android.os.SystemClock
+import android.util.Log
+import com.wf11.safealert.BuildConfig
 import com.google.firebase.database.ServerValue
 import com.wf11.safealert.firebase.FirebaseConfig
 import com.wf11.safealert.firebase.SosRemote
 import com.wf11.safealert.utils.DevSettings
+import java.net.HttpURLConnection
+import java.net.URL
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 
 /**
  * 단독 작업자 SOS 의 서버 쪽 일 전부 (v1.1.99): 내 SOS 영속 저장·전송·해제는 [SosLedger] 에 맡기고,
@@ -18,6 +24,8 @@ import com.wf11.safealert.utils.DevSettings
  *
  * 생성자는 참조만 저장한다(SharedPreferences·원장은 첫 사용 때 만든다). 모든 진입점은 메인 스레드에서 불리고,
  * Firebase 콜백은 handler 로 메인에 다시 게시한 뒤 원장에 전달한다.
+ *
+ * (v1.2.2) 원장이 서버 저장을 확인하면 [SosMail] 대기열에 넣고, 백그라운드 스레드에서 메일 스크립트로 보낸다.
  */
 class LoneWorkerSosSync(
     private val ctx: Context,
@@ -32,6 +40,56 @@ class LoneWorkerSosSync(
         fun hasStoredSos(ctx: Context): Boolean = runCatching {
             ctx.getSharedPreferences(FILE, Context.MODE_PRIVATE).getString(SosLedger.K_TRIGGER, null) != null
         }.getOrDefault(false)
+
+        private const val TAG = "SosMail"
+        private const val K_TO = "to"
+
+        /** 메일 스크립트 주소(빌드 때 주입). 앱스 스크립트 주소가 아니면 빈 값 = 메일 꺼짐. */
+        val mailUrl: String = BuildConfig.SOS_MAIL_URL.trim().let { if (it.startsWith("https://script.google.com/")) it else "" }
+        val mailEnabled: Boolean get() = mailUrl.isNotEmpty()
+
+        // 사업장 코드별 파일(DevSettings.sitePrefName 과 같은 이름 규칙). 키가 없으면 기본 주소, 빈 값 = 보내지 않음.
+        private fun mailPrefs(ctx: Context, sc: String): SharedPreferences =
+            ctx.getSharedPreferences(if (sc.isEmpty()) "sos_mail" else "sos_mail_" + sc, Context.MODE_PRIVATE)
+
+        fun mailTo(ctx: Context, sc: String): String =
+            runCatching { mailPrefs(ctx, sc).getString(K_TO, null) }.getOrNull() ?: SosMail.DEFAULT_TO
+
+        fun setMailTo(ctx: Context, sc: String, v: String) {
+            mailPrefs(ctx, sc).edit().putString(K_TO, v.trim()).apply()
+        }
+
+        private val mailExec: ExecutorService by lazy { Executors.newSingleThreadExecutor() }
+
+        /** POST 뒤 302 가 오면 Location(https 만)을 GET 으로 한 번 따라가 결과 본문을 받는다. 그 밖은 null. */
+        private fun httpPost(url: String, form: String): String? {
+            val c = URL(url).openConnection() as HttpURLConnection
+            try {
+                c.instanceFollowRedirects = false
+                c.connectTimeout = 10_000
+                c.readTimeout = 30_000
+                c.requestMethod = "POST"
+                c.doOutput = true
+                c.setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+                c.outputStream.use { it.write(form.toByteArray(Charsets.UTF_8)) }
+                val code = c.responseCode
+                if (code == 200) return c.inputStream.bufferedReader().use { it.readText() }
+                if (code !in 300..399) return null
+                val loc = c.getHeaderField("Location") ?: return null
+                if (!loc.startsWith("https://")) return null
+                val g = URL(loc).openConnection() as HttpURLConnection
+                try {
+                    g.instanceFollowRedirects = true
+                    g.connectTimeout = 10_000
+                    g.readTimeout = 30_000
+                    return if (g.responseCode == 200) g.inputStream.bufferedReader().use { it.readText() } else null
+                } finally {
+                    g.disconnect()
+                }
+            } finally {
+                c.disconnect()
+            }
+        }
     }
 
     private val prefs: SharedPreferences by lazy { ctx.getSharedPreferences(FILE, Context.MODE_PRIVATE) }
@@ -87,7 +145,23 @@ class LoneWorkerSosSync(
         }
     }
 
-    private val ledger by lazy { SosLedger(kv, transport, SystemClock::elapsedRealtime) { onChange() } }
+    // 메일은 보조 통로: 실패는 null 로 삼키고, 결과는 메인에서 대기열에 돌려준다
+    private val postMail: (String, (String?) -> Unit) -> Unit = { form, done ->
+        val url = mailUrl
+        mailExec.execute {
+            val body = runCatching { httpPost(url, form) }.getOrNull()
+            Log.i(TAG, if (body == null) "mail request: no response" else "mail request: response")
+            handler.post { done(body) }
+        }
+    }
+
+    private val mail by lazy { SosMail(kv, postMail, System::currentTimeMillis) { sc -> mailTo(ctx, sc) } }
+
+    private val ledger by lazy {
+        SosLedger(kv, transport, SystemClock::elapsedRealtime, { event, path, key ->
+            if (mailEnabled) mail.enqueue(event, path, key, DevSettings.lwStillMin)
+        }) { onChange() }
+    }
 
     private var remover: (() -> Unit)? = null
     private var listenPath = ""
@@ -126,6 +200,7 @@ class LoneWorkerSosSync(
     fun tick() {
         attachIfNeeded()
         ledger.tick()
+        if (mailEnabled) mail.tick()
     }
 
     private fun attachIfNeeded() {
