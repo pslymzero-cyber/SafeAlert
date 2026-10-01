@@ -102,6 +102,8 @@ class LoneWorkerHeartbeatTest {
         val g = gaps()
         assertEquals(LoneWorkerHeartbeat.MAX_GAPS, g.size)
         assertEquals((0 until 50).map { "g/$it" }, g.map { it.fields.keys.single() })
+        adv(16 * min); hb.end()
+        assertEquals(setOf("last", "end"), r.writes.last().fields.keys)
     }
 
     @Test fun closed_session_ignores_late_success_and_next_on_opens_new_key() {
@@ -151,9 +153,36 @@ class LoneWorkerHeartbeatTest {
         assertEquals(2, r.writes.size)
         assertEquals("s2", r.writes[1].key)
         r.writes[1].done(true)
+    }
+
+    @Test fun end_records_gap_when_silent_over_15_minutes() {
+        hb.tick(true, "WALKER")
+        r.writes[0].done(true)
+        for (i in 0 until 3) { adv(5 * min); hb.tick(true, "WALKER") } // refreshes never answered
+        hb.end() // exactly 15 minutes after the last success
+        assertEquals(setOf("last", "end"), r.writes.last().fields.keys)
+
+        hb.tick(true, "WALKER")
+        val st = r.server
+        r.writes.last().done(true)
+        for (i in 0 until 9) { adv(5 * min); hb.tick(true, "WALKER") }
+        hb.end()
+        val s = r.server
+        assertEquals(mapOf("last" to s, "end" to s, "g/0" to mapOf("from" to st, "to" to s)), r.writes.last().fields)
+        assertEquals("s2", r.writes.last().key)
+        assertEquals(1, gaps().size)
+    }
+
+    @Test fun rejected_refresh_opens_new_key_after_5_minutes() {
+        hb.tick(true, "WALKER")
+        r.writes[0].done(true)
         adv(5 * min); hb.tick(true, "WALKER")
-        r.writes[2].done(false) // refresh failure is ignored
-        adv(5 * min); hb.tick(true, "WALKER")
-        assertEquals(listOf("s2", "s2"), r.writes.drop(2).map { it.key })
+        r.writes[1].done(false)
+        adv(5 * min - 10_000); hb.tick(true, "WALKER")
+        assertEquals(2, r.writes.size)
+        adv(10_000); hb.tick(true, "WALKER")
+        assertEquals(3, r.writes.size)
+        assertEquals("s2", r.writes[2].key)
+        assertEquals(setOf("uid", "role", "start", "last"), r.writes[2].fields.keys)
     }
 }

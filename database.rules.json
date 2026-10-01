@@ -172,22 +172,23 @@
               ".validate": "(newData.val() === 'WALKER' || newData.val() === 'EPJ' || newData.val() === 'FORKLIFT' || newData.val() === 'UNKNOWN') && (!data.exists() || newData.val() === data.val())"
             },
             "start": {
-              ".validate": "newData.isNumber() && newData.val() <= now && (!data.exists() || newData.val() === data.val())"
+              ".validate": "newData.isNumber() && newData.val() <= now + 60000 && (!data.exists() || newData.val() === data.val())"
             },
             "last": {
-              ".validate": "newData.isNumber() && newData.val() <= now"
+              ".validate": "newData.isNumber() && newData.val() <= now + 60000"
             },
             "end": {
-              ".validate": "newData.isNumber() && newData.val() <= now && !data.exists()"
+              ".validate": "newData.isNumber() && newData.val() <= now + 60000 && !data.exists()"
             },
             "g": {
+              ".validate": "newData.hasChildren()",
               "$n": {
                 ".validate": "$n.matches(/^([0-9]|[1-4][0-9])$/) && !data.exists() && newData.hasChildren(['from','to'])",
                 "from": {
                   ".validate": "newData.isNumber() && newData.val() > 0 && newData.val() < newData.parent().child('to').val()"
                 },
                 "to": {
-                  ".validate": "newData.isNumber() && newData.val() <= now"
+                  ".validate": "newData.isNumber() && newData.val() <= now + 60000"
                 },
                 "$other": {
                   ".validate": false
