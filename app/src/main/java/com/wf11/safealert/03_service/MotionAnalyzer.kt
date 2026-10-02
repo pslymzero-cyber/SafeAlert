@@ -33,7 +33,7 @@ class MotionAnalyzer(
     data class Window(val endMs: Long, val strong: Boolean)
 
     /**
-     * 낙상 모양: 충격을 무장한 자유낙하 구간 길이(ms), 충격 창(자유낙하 끝 + 1초) 안의 최대 |a|(G),
+     * 낙상 모양: 충격 표본 직전 1초 안 0.5 G 아래 시간 합(ms, 중간에 튄 표본이 있어도 합친다, A2), 충격 창(자유낙하 끝 + 1초) 안의 최대 |a|(G),
      * 자세 변화(도, 낙하 전 자세를 모르면 null).
      */
     data class FallShape(val freeFallMs: Long, val peakG: Double, val postureDeg: Double?) {
@@ -63,6 +63,8 @@ class MotionAnalyzer(
         const val MOVE_MIN_ACTIVE = 3
         const val FREE_FALL_G = 0.5
         const val FREE_FALL_MIN_MS = 60L
+        /** 낙상 모양의 자유낙하 시간을 합하는 구간: 충격 표본 직전 1초 (A2). */
+        const val FREE_FALL_SPAN_MS = 1000L
         const val IMPACT_G = 2.5
         /**
          * 측정 범위를 G 로 나눈 값이 이보다 작으면 g 단위로 보고한 것으로 해석한다: g 단위로 흔히 보고되는 2·4·8·16 을
@@ -78,13 +80,16 @@ class MotionAnalyzer(
         const val POST_MAX_ACTIVE = 3
 
         /**
-         * 센서 최대 범위(m/s^2)가 MIN_RANGE_G 이상 wantG 미만이면 범위의 90% 를 낙상 충격 임계로 쓴다. 아니면 wantG.
-         * 범위를 G 로 나눈 값이 MIN_RANGE_G 보다 작으면 g 단위로 보고한 것으로 해석한다.
+         * 낙상 충격 임계(G). 기본(base) = 센서 범위가 IMPACT_G 보다 작으면 범위의 90%, 아니면 IMPACT_G.
+         * 결과 = max(base, min(wantG, 범위의 90%)) — wantG 를 올려도 내려가지 않고(단조), base 아래로 가지 않으며, 범위의 90% 를 넘지 않는다(A4).
+         * 범위를 모르면(MIN_RANGE_G 미만) max(IMPACT_G, wantG). 범위를 G 로 나눈 값이 MIN_RANGE_G 보다 작으면 g 단위로 보고한 것으로 해석한다.
          * wantG 기본값 IMPACT_G = 기본 낙상 임계. 세이프존 기준 G 도 같은 보정을 거친다 (D-02).
          */
         fun impactGFor(maxRangeMs2: Float, wantG: Double = IMPACT_G): Double {
             val rangeG = (maxRangeMs2 / G).let { if (it < MIN_RANGE_G) maxRangeMs2.toDouble() else it }
-            return if (rangeG >= MIN_RANGE_G && rangeG < wantG) 0.9 * rangeG else wantG
+            if (rangeG < MIN_RANGE_G) return maxOf(IMPACT_G, wantG)
+            val base = if (rangeG < IMPACT_G) 0.9 * rangeG else IMPACT_G
+            return maxOf(base, minOf(wantG, 0.9 * rangeG))
         }
 
         /** 떨어진 높이(cm)의 자유낙하 시간(ms) = round(1000 * sqrt(2h / g)). 30 cm = 247 ms. */
@@ -127,7 +132,8 @@ class MotionAnalyzer(
     private var armedPreX = 0.0
     private var armedPreY = 0.0
     private var armedPreZ = 0.0
-    private var armedFfMs = 0L
+    /** 0.5 G 아래 구간(시작, 끝) — 60 ms 미만 튐 포함, 직전 1초만 남긴다 (A2). */
+    private val lowRuns = ArrayDeque<Pair<Long, Long>>()
 
     // 충격 후보
     private var candidate = false
@@ -150,6 +156,7 @@ class MotionAnalyzer(
         lastClosedIdx = -1L; hasPrev = false; activeMask = 0L
         ffStart = -1L; ffPreValid = false; armedEnd = -1L; armedPreValid = false
         candidate = false; postN = 0; postX = 0.0; postY = 0.0; postZ = 0.0; postActive = 0
+        lowRuns.clear()
     }
 
     fun add(tMs: Long, x: Float, y: Float, z: Float, masked: Boolean = false): Signal {
@@ -218,9 +225,10 @@ class MotionAnalyzer(
                 ffPreX = prevX; ffPreY = prevY; ffPreZ = prevZ
             }
         } else if (ffStart >= 0) {
+            lowRuns.addLast(ffStart to t)
+            while (lowRuns.isNotEmpty() && lowRuns.first().second <= t - FREE_FALL_SPAN_MS) lowRuns.removeFirst()
             if (t - ffStart >= FREE_FALL_MIN_MS) {
                 armedEnd = t
-                armedFfMs = t - ffStart
                 armedPreValid = ffPreValid
                 armedPreX = ffPreX; armedPreY = ffPreY; armedPreZ = ffPreZ
             }
@@ -237,7 +245,7 @@ class MotionAnalyzer(
                 candPreValid = armedPreValid
                 candPreX = armedPreX; candPreY = armedPreY; candPreZ = armedPreZ
                 postN = 0; postX = 0.0; postY = 0.0; postZ = 0.0; postActive = 0
-                candFfMs = armedFfMs
+                candFfMs = lowGMsBefore(t)
                 candImpactEnd = armedEnd + IMPACT_WINDOW_MS
                 candPeakG = mag / G
                 armedEnd = -1L
@@ -257,10 +265,14 @@ class MotionAnalyzer(
         if (postN == 0 || postActive >= POST_MAX_ACTIVE) return false
         // 낙하 전 자세를 모르면(서비스 시작 직후) 자세 변화로 본다 — 놓치는 쪽이 더 나쁘다 (D-07)
         val deg = if (candPreValid) angleDeg(postX / postN, postY / postN, postZ / postN, candPreX, candPreY, candPreZ) else null
-        if (deg != null && deg < POSTURE_DEG) return false
+        if (deg != null && !(deg >= POSTURE_DEG)) return false // 각도가 숫자가 아니면(NaN) 넘어짐 아님 (A3)
         fallShape = FallShape(candFfMs, candPeakG, deg)
         return true
     }
+
+    /** 충격 표본 t 직전 FREE_FALL_SPAN_MS 안 0.5 G 아래 시간 합 (A2). */
+    private fun lowGMsBefore(t: Long): Long =
+        lowRuns.sumOf { (a, b) -> maxOf(0L, minOf(b, t) - maxOf(a, t - FREE_FALL_SPAN_MS)) }
 }
 
 private fun angleDeg(ax: Double, ay: Double, az: Double, bx: Double, by: Double, bz: Double): Double {

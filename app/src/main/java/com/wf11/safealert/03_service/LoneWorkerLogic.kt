@@ -10,7 +10,7 @@ package com.wf11.safealert.service
  *
  * 규칙 1(사고): 낙상 신호 하나로 그 충격 시각부터 5분 동안 사고를 의심한다(직전 움직임 조건 없음).
  * 그 안에서 뚜렷한 움직임이 30초 동안 없으면 사고 확인 창("fall", 1분)을 연다. 거치·안전구역과 무관하지만,
- * 안전구역 안(들어서자마자, 원시 안쪽)에서 충격 순간 충전 중이었으면(충격 뒤 실제 해제는 충전 중이었다, 충격 전 10초 안 실제 해제도 포함 — 크래들에서 떨어짐,
+ * 충격 순간(FALL 이 온 시각 아님, A1) 안전구역 안(들어서자마자, 원시 안쪽)이고 충전 중이었으면(충격 뒤 실제 해제는 충전 중이었다, 충격 전 10초 안 실제 해제도 포함 — 크래들에서 떨어짐,
  * 재시작 때 적용한 해제는 빼고) 낙상을 무시한다(N2, FALL 처리 시각과 무관). 안전구역 안 낙상은 zoneFall(높이·충격·자세, 개발자 설정, 자세 모르면 넘은 것)을 모두 넘어야 센다. 트리거 전 10초 안(또는 트리거 뒤)의 실제 전원 연결(재시작 때 적용한 연결은 빼고)은 거치대에 꽂는 동작으로 보고 그 트리거를 버린다.
  * 의심 중 실제 연결은 사람이 있다는 뜻이라 의심을 끝낸다.
  * 사고 확인 창을 [괜찮아요]로 닫으면 의심이 끝나고, 뚜렷한 움직임으로 닫히면 5분이 끝날 때까지 계속 지켜본다.
@@ -92,8 +92,7 @@ class LoneWorkerLogic(var myBleId: String) {
     private var enabled = true
     /** 무동작 시간을 세는 기준 시각: 시작·움직임·확인 창 닫힘·다시 켬·정착 구역 이탈·지님 시작 중 가장 늦은 것. */
     private var stillBase = 0L
-    private var zoneInside = false
-    private var zoneInsideSince = 0L
+    private val zone = ZoneHistory() // 세이프존 원시 안/밖과 들어선 시각, 낙상은 충격 순간 상태로 본다(A1)
 
     // 지님: 충전 안 함이면 대기가 끝났고, 충전 중이면 걸음으로 지님이 확인됐다
     private var charging = false // 로직에 적용한 전원 — JudgeOrder 가 마감 순서에 맞춰 옮기므로 디바운스 확정값(PowerDebounce.reported)과 미루는 동안 다르다
@@ -146,8 +145,7 @@ class LoneWorkerLogic(var myBleId: String) {
         trigger = ""
         modeSinceMs = nowMs
         zoneSettled = false
-        this.zoneInside = zoneInside
-        zoneInsideSince = nowMs
+        zone.reset(zoneInside, nowMs)
     }
 
     /** 기능 끄기: 열린 확인 창(들고 있는 복원 창 포함)과 사고 의심은 거두고, 진행 중인 SOS 는 유지한다 (D-05). */
@@ -225,11 +223,11 @@ class LoneWorkerLogic(var myBleId: String) {
         raiseStillBase(nowMs)
     }
 
-    /** 낙상(trigMs = 충격 표본 시각). 꺼짐·SOS·사고 확인 중이면 버리고, 그 밖의 무시 조건은 규칙 1(클래스 KDoc). 의심 중 새 트리거는 의심 끝만 늘린다. 안전구역 안이면 shape 가 zoneFall 을 넘어야 센다. */
+    /** 낙상(trigMs = 충격 표본 시각). 꺼짐·SOS·사고 확인 중이면 버리고, 그 밖의 무시 조건은 규칙 1(클래스 KDoc). 의심 중 새 트리거는 의심 끝만 늘린다. 충격 순간 안전구역 안이었으면(A1) shape 가 zoneFall 을 넘어야 센다. */
     fun onAccident(trigMs: Long, shape: MotionAnalyzer.FallShape = MotionAnalyzer.FallShape.ANY) {
         if (order.keep { onAccident(trigMs, shape) } || !enabled || mode == Mode.SOS) return
         if (mode == Mode.CHECKING && trigger == "fall") return
-        if (zoneInside && (charging || !zoneFall.passes(shape) ||
+        if (zone.insideAt(trigMs) && (charging || !zoneFall.passes(shape) ||
                 (lastUnplugAt != Long.MIN_VALUE && trigMs - lastUnplugAt <= UNPLUG_FALL_MS))) return
         if (lastPlugAt != Long.MIN_VALUE && trigMs - lastPlugAt <= PLUG_EXCEPT_MS) return
         if (accidentUntil == Long.MIN_VALUE) accidentFrom = trigMs
@@ -249,16 +247,13 @@ class LoneWorkerLogic(var myBleId: String) {
             leaveZone(nowMs)
             return
         }
-        if (!zoneInside) {
-            zoneInside = true
-            zoneInsideSince = nowMs
-        }
+        if (!zone.inside) zone.mark(true, nowMs)
         updateSettle(nowMs)
     }
 
     private fun leaveZone(t: Long) {
-        if (!zoneInside) return
-        zoneInside = false
+        if (!zone.inside) return
+        zone.mark(false, t)
         if (zoneSettled) {
             zoneSettled = false
             raiseStillBase(t)
@@ -321,7 +316,7 @@ class LoneWorkerLogic(var myBleId: String) {
             if (suspected) accidentUntil else null,
             when (mode) { Mode.CHECKING -> trigger; Mode.WATCHING -> hold.check; else -> "" },
             charging, carried, siren.base(stillBase, nowMs, stillMs), zoneSettled,
-            if (zoneInside) zoneInsideSince else null
+            if (zone.inside) zone.since else null
         )
     }
 
@@ -352,9 +347,8 @@ class LoneWorkerLogic(var myBleId: String) {
         carried = s.carried
         stillBase = s.stillBase
         s.zoneSince?.let {
-            if (!zoneInside) hold.holdZone(nowMs + ZONE_RESUME_HOLD_MS)
-            zoneInside = true
-            zoneInsideSince = it
+            if (!zone.inside) hold.holdZone(nowMs + ZONE_RESUME_HOLD_MS)
+            zone.reset(true, it)
             zoneSettled = s.zoneSettled
         }
         if (hold.powerHeld(nowMs)) hold.holdCheck(s.check) else if (s.check.isNotEmpty()) toChecking(s.check, nowMs, nowMs)
@@ -448,7 +442,7 @@ class LoneWorkerLogic(var myBleId: String) {
     /** 재시작 구역 보류 한도가 지났으면 그 시각에 정착 계산 없이 벗어난 것으로 먼저 보고(C3), 보류 중에는 정착으로 올리지 않는다 — 정착은 안쪽 보고로만. */
     private fun updateSettle(nowMs: Long) {
         hold.zoneExpired(nowMs)?.let { leaveZone(it) }
-        if (!hold.zoneHeld && zoneInside &&!zoneSettled && nowMs - zoneInsideSince >= ZONE_SETTLE_MS) {
+        if (!hold.zoneHeld && zone.inside &&!zoneSettled && nowMs - zone.since >= ZONE_SETTLE_MS) {
             zoneSettled = true
             closeCheck(nowMs, "still")
         }
