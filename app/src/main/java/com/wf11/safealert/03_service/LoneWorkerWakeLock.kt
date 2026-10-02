@@ -3,7 +3,7 @@ package com.wf11.safealert.service
 import android.content.Context
 import android.os.PowerManager
 
-/** 단독 작업자 감시의 부분 웨이크락 하나 — 필요 판단은 모니터, 10분 시한은 5초 루프가 갱신. */
+/** 단독 작업자 감시의 부분 웨이크락 하나 — 필요 판단은 아래 wakeNeeded(모니터가 부름), 10분 시한은 5초 루프가 갱신. */
 internal class LoneWorkerWakeLock(private val ctx: Context) {
     private var lock: PowerManager.WakeLock? = null
 
@@ -29,3 +29,12 @@ internal class LoneWorkerWakeLock(private val ctx: Context) {
         const val TIMEOUT_MS = 10 * 60_000L
     }
 }
+
+/** 5초 갱신 루프가 필요한가 — 확인·SOS 중, 상대 항목이 있을 때, 센서가 깨어 있어야 할 때, 감시 중 장비 거치. */
+internal fun LoneWorkerLogic.loopNeeded(sensorsNeedWake: Boolean): Boolean =
+    mode != LoneWorkerLogic.Mode.WATCHING || peers.isNotEmpty() || sensorsNeedWake || enabled && mounted
+
+/** 웨이크락이 필요한가 — 센서, 감시 중 장비 거치, 확인·SOS 중, 울리는 상대, 판정을 기다리는 지난 마감. */
+internal fun LoneWorkerLogic.wakeNeeded(sensorsNeedWake: Boolean, nowMs: Long): Boolean =
+    sensorsNeedWake || enabled && mounted || mode != LoneWorkerLogic.Mode.WATCHING ||
+        audiblePeers().isNotEmpty() || waitingToJudge(nowMs)

@@ -81,10 +81,11 @@ class SensorStallTest {
     /**
      * The monitor feeds broadcasts (not sticky) and the 10 s sticky check to the logic and ticks and renders on one path
      * when it applied or the wait changed, tells the logic each sensor callback ended, schedules its first tick at the
-     * end of start, holds the wake lock for any passed deadline and flushes only for missing data (X7, M1, N1, Y4, Y16).
+     * end of start and flushes only for missing data (X7, M1, N1, Y4, Y16). The wake-lock decision is a behavior test
+     * (MountedStillTest.mounted_keeps_wake_lock_and_renew_loop).
      */
     @Test
-    fun monitor_feeds_raw_power_and_waits_awake_only_as_needed() {
+    fun monitor_feeds_raw_power_and_flushes_only_for_missing_data() {
         val m = serviceSource("LoneWorkerMonitor.kt")
         assertTrue(m.contains("LoneWorkerPower(ctx) { onPowerRaw(it, false) }"))
         assertTrue(sourceBlock(m, "private val syncRunnable").contains("onPowerRaw(power.plugged(), true)"))
@@ -94,7 +95,6 @@ class SensorStallTest {
             body(m, "private fun onPowerRaw("))
         assertEquals("render()", body(m, "private fun tickNow()").last())
         assertEquals(listOf("if (!started) return", "logic.sensorEventEnd(t)"), body(m, "private fun onSensorEvent(").take(2))
-        assertTrue(sourceBlock(m, "private fun updateWakeLock(").contains("logic.waitingToJudge(now())"))
         val tick = sourceBlock(m, "private fun tick(t: Long)")
         assertTrue(tick.contains("logic.waitingOnSensors(t)"))
         assertTrue(tick.contains("if (waiting) sensors.flush()"))

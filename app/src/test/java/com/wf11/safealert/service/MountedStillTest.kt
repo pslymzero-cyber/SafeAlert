@@ -190,17 +190,33 @@ class MountedStillTest {
 
         assertTrue(LoneWorkerNotifier.TURN_CLOSE_HINT.contains("${LoneWorkerLogic.STRONG_RUN_MS / 1000}"))
         assertTrue(LoneWorkerNotifier.TURN_CLOSE_HINT.contains("["))
-        assertTrue(serviceSource("LoneWorkerNotifier.kt").split("TURN_CLOSE_HINT").size - 1 >= 2)
+        // wiring: the notification and both screen spots pick the hint by closesByTurn (negated or dropped = fail)
+        assertEquals(1, serviceSource("LoneWorkerNotifier.kt").split("if (closesByTurn) TURN_CLOSE_HINT else").size - 1)
         val activity = repoFile("app/src/main/java/com/wf11/safealert/05_ui/LoneWorkerActivity.kt")
-        assertTrue(activity.split("closesByTurn").size - 1 >= 2)
+        assertEquals(2, activity.split("if (st.closesByTurn) LoneWorkerNotifier.TURN_CLOSE_HINT else").size - 1)
     }
 
     /** H6: the wake lock and its 5 s renew loop also run while mounted and the watch is on (screen-off turn poll). */
     @Test fun mounted_keeps_wake_lock_and_renew_loop() {
-        val m = serviceSource("LoneWorkerMonitor.kt")
-        val wake = sourceBlock(m, "private fun updateWakeLock(")
-        assertTrue(wake.contains("logic.mounted"))
-        assertTrue(wake.contains("logic.waitingToJudge(now())"))
-        assertTrue(m.substringAfter("private fun needLoop()").substringBefore("private fun scheduleLoop").contains("logic.mounted"))
+        val m = mounted()
+        assertTrue(m.wakeNeeded(false, 1_000))
+        assertTrue(m.loopNeeded(false))
+        m.setEnabled(false, 2_000)
+        assertEquals(Mode.WATCHING, m.mode)
+        assertFalse(m.wakeNeeded(false, 2_000))
+        assertFalse(m.loopNeeded(false))
+
+        // a docked walker (charging, no equipment mode) needs neither
+        val docked = newLogic(charging = true)
+        assertFalse(docked.wakeNeeded(false, 1_000))
+        assertFalse(docked.loopNeeded(false))
+
+        // a passed deadline waiting for its power judgment keeps the CPU awake
+        val w = newLogic(carried = true)
+        assertFalse(w.wakeNeeded(false, 1_000))
+        w.powerRaw(true, 179_500)
+        assertEquals(Mode.WATCHING, w.seenAt(180_000))
+        assertTrue(w.waitingToJudge(180_000))
+        assertTrue(w.wakeNeeded(false, 180_000))
     }
 }

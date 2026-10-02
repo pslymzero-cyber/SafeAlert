@@ -219,12 +219,21 @@ class LoneWorkerLogicTest {
         assertFalse(m.peer("P").active)
     }
 
+    /**
+     * After 10 s of BLE false the BLE-only entry of the same phone (another episode) is resolved - the 10 s path ran -
+     * while the entry backed by server record k1 stays active: only the server ends it.
+     */
     @Test fun server_backed_peer_is_not_resolved_by_ble_falling_edge() {
         val l = carriedLogic()
         l.server("k1", "P", true, 1_000)
         l.onPeerBle("P", true, 1_100)
+        l.onPeerBle("P", true, 1_200, episode = 5)
+        assertEquals(2, l.peers.size)
         l.onPeerBle("P", false, 2_000)
-        assertTrue(l.peer("P").active)
+        assertTrue(l.peers.single { it.key == "k1" }.active)
+        l.onPeerBle("P", false, 2_000 + LoneWorkerPeers.PEER_BLE_FALL_MS)
+        assertFalse(l.peers.single { it.key == null }.active)
+        assertTrue(l.peers.single { it.key == "k1" }.active)
     }
 
     @Test fun device_lost_leaves_peer_active() {

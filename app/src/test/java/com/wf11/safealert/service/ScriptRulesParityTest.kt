@@ -74,7 +74,17 @@ class ScriptRulesParityTest {
         val block = gs.substringAfter("var PIT_NAMES = {").substringBefore("};")
         val map = Regex("""([A-Z]{2}): '([^']+)'""").findAll(block).associate { it.groupValues[1] to it.groupValues[2] }
         assertEquals(PitType.values().associate { it.code to it.label }, map)
-        assertTrue(gs.contains("/^([A-Z]{2})-([0-9]{2})$/"))
+
+        // roleName's id rule (regex on trim().toUpperCase(), number '00' refused, code must be named) vs PitType.parse
+        val body = gs.substringAfter("function roleName(r, name) {").substringBefore("\n}")
+        val re = Regex(body.substringAfter("var m = /").substringBefore("/.exec(str(name).trim().toUpperCase())"))
+        assertTrue(body.contains("m[2] !== '00'") && body.contains("PIT_NAMES[m[1]]"))
+        fun scriptLabel(id: String): String? =
+            re.find(id.trim().uppercase())?.takeIf { it.groupValues[2] != "00" }?.let { map[it.groupValues[1]] }
+        val ids = listOf("CB-01", "RT-99", "CB-00", "CB-100", "cb-01", " rt-07 ", "XX-01", "CB01", "RT-7", "")
+        val labels = ids.map { PitType.parse(it)?.first?.label }
+        assertEquals(ids.map { scriptLabel(it) }, labels)
+        assertTrue(labels.contains(null) && labels.any { it != null })
     }
 
     @Test fun sos_role_label_matches_mail_rule() {

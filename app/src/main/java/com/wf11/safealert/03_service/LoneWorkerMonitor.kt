@@ -457,8 +457,7 @@ class LoneWorkerMonitor(
 
     // ── 5초 갱신·웨이크락 ─────────────────────────────────────
 
-    private fun needLoop() =
-        logic.mode != LoneWorkerLogic.Mode.WATCHING || logic.peers.isNotEmpty() || sensors.needsWake || logic.enabled && logic.mounted
+    private fun needLoop() = logic.loopNeeded(sensors.needsWake)
 
     private fun scheduleLoop() {
         if (loopOn || !needLoop()) return
@@ -480,8 +479,7 @@ class LoneWorkerMonitor(
     private fun updateWakeLock(renew: Boolean) {
         // 지난 마감이 판정을 기다리는 동안(센서 데이터·그 전에 시작한 전원 대기)도 잡아 LATE_MS 백스톱·전원 확정 확인을 보장한다
         // 감시가 켜진 장비 거치 중(충전 중이라 배터리 부담 없음)에도 잡아 화면이 꺼져도 회전 폴링·ImuFusion 이 돈다(H6)
-        val need = sensors.needsWake || logic.enabled && logic.mounted || logic.mode != LoneWorkerLogic.Mode.WATCHING ||
-            logic.audiblePeers().isNotEmpty() || logic.waitingToJudge(now())
+        val need = logic.wakeNeeded(sensors.needsWake, now())
         wake.hold(need, renew)
     }
 }

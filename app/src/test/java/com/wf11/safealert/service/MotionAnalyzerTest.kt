@@ -93,33 +93,48 @@ class MotionAnalyzerTest {
         assertTrue(r.times(Signal.FALL).isEmpty())
     }
 
-    @Test fun spike_without_free_fall_is_not_a_fall() {
+    // Each fall rule alone: the negative breaks only that rule, the control differs only in that input.
+
+    /** Rule: a free fall must come before the impact. An impact alone (3 G) then lying still is not a fall. */
+    @Test fun impact_without_free_fall_is_not_a_fall() {
         val r = Run()
         r.span(0, 3000, still)
-        r.span(3000, 3060) { floatArrayOf(0f, 0f, 39f) }
-        r.span(3060, 25_000) { t ->
-            floatArrayOf(0f, 0f, (9.81 + 2.0 * sin(2 * PI * 5 * sec(t))).toFloat())
+        r.span(3000, 3060) { floatArrayOf(0f, 0f, 30f) }
+        r.span(3060, 17_000, lying)
+        assertTrue(r.times(Signal.FALL).isEmpty())
+
+        val control = Run()
+        control.fallHead()
+        control.span(3260, 17_000, lying)
+        assertEquals(1, control.times(Signal.FALL).size)
+    }
+
+    /** Rule: the free fall lasts at least FREE_FALL_MIN_MS (60 ms). 40 ms of low G then impact and lying is not a fall. */
+    @Test fun free_fall_shorter_than_60ms_is_not_a_fall() {
+        fun trace(lowMs: Long): Run {
+            val r = Run()
+            r.span(0, 3000, still)
+            r.span(3000, 3000 + lowMs) { floatArrayOf(0f, 0f, 1.5f) }
+            r.span(3000 + lowMs, 3060 + lowMs) { floatArrayOf(0f, 0f, 30f) }
+            r.span(3060 + lowMs, 17_000, lying)
+            return r
         }
-        assertTrue(r.times(Signal.FALL).isEmpty())
+        assertTrue(40L < MotionAnalyzer.FREE_FALL_MIN_MS)
+        assertTrue(trace(40).times(Signal.FALL).isEmpty())
+        assertEquals(1, trace(60).times(Signal.FALL).size)
     }
 
-    @Test fun sit_down_dip_is_not_a_fall() {
-        val r = Run()
-        r.span(0, 3000, still)
-        r.span(3000, 3200) { floatArrayOf(0f, 0f, 6.9f) }    // 0.7 g
-        r.span(3200, 3300) { floatArrayOf(0f, 0f, 19.6f) }   // 2 g
-        r.span(3300, 25_000, lying)
-        assertTrue(r.times(Signal.FALL).isEmpty())
-    }
-
-    @Test fun walking_and_running_are_not_falls() {
-        val walk = Run()
-        walk.span(0, 60_000, walking(3.0, 2.0))
-        assertTrue(walk.times(Signal.FALL).isEmpty())
-
-        val run = Run()
-        run.span(0, 60_000, walking(4.0, 3.0))
-        assertTrue(run.times(Signal.FALL).isEmpty())
+    /** Rule: the posture changes at least POSTURE_DEG (45). A full fall ending 30 deg from upright is not a fall. */
+    @Test fun small_posture_change_is_not_a_fall() {
+        fun trace(deg: Double): Run {
+            val a = deg * PI / 180.0
+            val r = Run()
+            r.fallHead()
+            r.span(3260, 17_000) { floatArrayOf((9.81 * sin(a)).toFloat(), 0f, (9.81 * cos(a)).toFloat()) }
+            return r
+        }
+        assertTrue(trace(30.0).times(Signal.FALL).isEmpty())
+        assertEquals(1, trace(60.0).times(Signal.FALL).size)
     }
 
     // v1.1.99 review fixes

@@ -12,6 +12,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.lang.reflect.Modifier
 
 /**
  * AlertStateMachine 단독 JVM 테스트 (Phase 3 T3, REFACTOR-04).
@@ -122,7 +123,9 @@ class AlertStateMachineJvmTest {
 
     /**
      * STATE-02 - 상태 제거 단일 경로. registry.purge 한 번이 그 기기의 모든 슬롯을 비운다.
-     * 판정으로 상태를 실제로 채운 뒤 지우므로, 등록이 누락된 슬롯이 있으면 잔여로 드러난다.
+     * entryCount 는 등록된 슬롯만 세므로, 아예 등록되지 않은 맵은 purge 잔여 비교로는 보이지 않는다.
+     * 그래서 AlertStateMachine·UwbDistanceManager 의 Map/Set 필드를 리플렉션으로 모두 훑어 각각이
+     * 등록된 슬롯(sizeOf != null)인지도 확인한다 - 새 기기별 맵을 등록 없이 추가하면 여기서 실패한다.
      */
     @Test
     fun registryPurge_leavesNoResidueForDevice() {
@@ -144,5 +147,15 @@ class AlertStateMachineJvmTest {
             baseline.toLong(),
             asm.registry.entryCount().toLong(),
         )
+
+        // 기기 ID 로 키를 잡지 않는 맵 - 역할쌍 키(소수 고정)라 기기 소실 때 지울 대상이 아니다.
+        val notPerDevice = setOf("uwbProbeLastSaveMap")
+        val unregistered = listOf(AlertStateMachine::class.java, UwbDistanceManager::class.java)
+            .flatMap { it.declaredFields.toList() }
+            .filter { !Modifier.isStatic(it.modifiers) }
+            .filter { Map::class.java.isAssignableFrom(it.type) || Set::class.java.isAssignableFrom(it.type) }
+            .map { it.name }
+            .filter { it !in notPerDevice && asm.registry.sizeOf(it) == null }
+        assertTrue("레지스트리에 등록되지 않은 기기별 맵: $unregistered", unregistered.isEmpty())
     }
 }
