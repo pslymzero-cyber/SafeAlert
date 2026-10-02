@@ -45,6 +45,9 @@ var DEFAULT_CAP = 50;
 var MAX_CAP = 60;
 var SENT = 'S|';
 var TAIL = '이 메일은 SafeAlert가 자동으로 보냈습니다. 회신하지 마십시오.';
+// 장비 코드 → 영문 이름. 앱 PitType.kt 와 같아야 한다(ScriptRulesParityTest 가 대조).
+var PIT_NAMES = { CB: 'Counterbalance', RT: 'Reach Truck', HR: 'High Reach', OP: 'Order Picker',
+  ST: 'Stacker', TT: 'Tow Tractor', EP: 'Electric Pallet Jack', WK: 'Walkie Stacker' };
 
 function doPost(e) {
   try {
@@ -171,7 +174,7 @@ function allowed(to, list) {
 
 function buildMail(event, sc, id, rec, stillMin) {
   var name = oneLine(rec.name);
-  var role = roleName(rec.role);
+  var role = roleName(rec.role, name);
   var no = id.slice(-6);
   var who = esc(sc) + ' · ' + esc(name) + ' (' + esc(role) + ')';
   if (event === 'resolved') {
@@ -228,8 +231,11 @@ function buildMail(event, sc, id, rec, stillMin) {
   };
 }
 
-function roleName(r) {
+/** 역할 표시: 보행자, 이름이 장비 ID(PitType.parse 와 같은 형식)면 장비 영문 이름, 아니면 지게차·EPJ·알 수 없음. 앱 sosRoleLabel 과 같은 규칙. */
+function roleName(r, name) {
   if (r === 'WALKER') return '보행자';
+  var m = /^([A-Z]{2})-([0-9]{2})$/.exec(str(name).trim().toUpperCase());
+  if (m && m[2] !== '00' && PIT_NAMES[m[1]]) return PIT_NAMES[m[1]];
   if (r === 'FORKLIFT') return '지게차';
   if (r === 'EPJ') return 'EPJ';
   return '알 수 없음';

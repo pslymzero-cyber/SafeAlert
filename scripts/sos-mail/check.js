@@ -83,7 +83,7 @@ function make(o) {
     return r.code;
   };
   const sentKeys = () => Object.keys(w.props).filter((k) => k.indexOf('S|') === 0);
-  return { w, post, sentKeys };
+  return { w, post, sentKeys, ctx };
 }
 
 const still = { name: 'Kim', role: 'WALKER', trigger: 'still', createdAt: NOW - 60000, status: 'active', uid: 'u' };
@@ -352,6 +352,19 @@ assert.strictEqual(t.w.reads, reads);
 assert.strictEqual(t.w.fetched.length, fetched);
 assert.strictEqual(t.w.locked, locked);
 assert.strictEqual(t.w.mails.length, 1);
+
+// role label: equipment ID -> equipment English name (same rule as the app's sosRoleLabel)
+const WALKER_KO = '\uBCF4\uD589\uC790', FORKLIFT_KO = '\uC9C0\uAC8C\uCC28', UNKNOWN_KO = '\uC54C \uC218 \uC5C6\uC74C';
+const roleName = make({ db: { k1: still } }).ctx.roleName;
+[
+  ['FORKLIFT', 'RT-07', 'Reach Truck'], ['EPJ', 'WK-02', 'Walkie Stacker'], ['FORKLIFT', ' rt-07 ', 'Reach Truck'],
+  ['WALKER', 'RT-07', WALKER_KO], ['FORKLIFT', 'Lee', FORKLIFT_KO], ['FORKLIFT', 'RT-00', FORKLIFT_KO],
+  ['FORKLIFT', 'XX-01', FORKLIFT_KO], ['EPJ', 'Kim', 'EPJ'], ['UNKNOWN', 'Kim', UNKNOWN_KO], [undefined, undefined, UNKNOWN_KO]
+].forEach(([r, n, want]) => assert.strictEqual(roleName(r, n), want, r + ' ' + n));
+t = make({ db: { k1: { name: 'RT-07', role: 'FORKLIFT', trigger: 'fall', createdAt: NOW - 60000, status: 'active', uid: 'u' } } });
+assert.strictEqual(t.post({}), 'sent');
+assert.ok(t.w.mails[0].body.includes('\uC791\uC5C5\uC790: RT-07 (Reach Truck)'));
+assert.ok(t.w.mails[0].htmlBody.includes('RT-07 (Reach Truck)'));
 
 console.log('sos-mail check OK (' + scenes + ' scenes)');
 

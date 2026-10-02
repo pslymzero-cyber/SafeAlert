@@ -10,6 +10,7 @@ import android.os.Build
 import android.provider.Settings
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import com.wf11.safealert.model.PitType
 import com.wf11.safealert.ui.LoneWorkerActivity
 import com.wf11.safealert.ui.MainActivity
 import java.time.Instant
@@ -23,16 +24,24 @@ private val HHMM: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
 internal fun LoneWorkerPeers.Peer.displayName(): String =
     name.ifEmpty { bleId.removePrefix("SAFEALERT_DEVICE_").removePrefix("SAFEALERT_WALKER_") }
 
-/** 동료 항목 한 줄: 이름 · 역할 · 시각 · 위치 · 상태. */
-internal fun LoneWorkerPeers.Peer.line(nowMs: Long): String {
-    val roleText = when (role) {
-        "WALKER" -> "보행자"
+/**
+ * 구조 요청 역할 표시: 보행자, 이름이 장비 ID 면 장비 영문 이름(PitType.label), 아니면 지게차·EPJ·알 수 없음.
+ * 메일(Code.gs roleName)과 같은 규칙 (D-04).
+ */
+internal fun sosRoleLabel(role: String, name: String): String =
+    if (role == "WALKER") "보행자"
+    else PitType.parse(name)?.first?.label ?: when (role) {
         "FORKLIFT" -> "지게차"
-        else -> role
+        "EPJ" -> "EPJ"
+        else -> "알 수 없음"
     }
+
+/** 동료 항목 한 줄: 이름 · 역할 · 시각 · 위치 · 상태. 역할이 비면(BLE 로만 본 동료, 서버 기록 전) 뺀다. */
+internal fun LoneWorkerPeers.Peer.line(nowMs: Long): String {
+    val roleText = role.ifEmpty { null }?.let { sosRoleLabel(it, displayName()) }
     val wall = if (fromServer) createdAtMs else System.currentTimeMillis() - (nowMs - firstSeenMs)
     return listOfNotNull(
-        displayName(), roleText.ifEmpty { null }, HHMM.format(Instant.ofEpochMilli(wall).atZone(ZoneId.systemDefault())),
+        displayName(), roleText, HHMM.format(Instant.ofEpochMilli(wall).atZone(ZoneId.systemDefault())),
         beacon.ifEmpty { null }?.let { if (fromServer) "마지막 위치: $it" else "${it} 근처" }, if (active) "구조 요청" else "해제됨"
     ).joinToString(" · ")
 }

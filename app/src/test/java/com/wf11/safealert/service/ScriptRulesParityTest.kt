@@ -1,5 +1,6 @@
 package com.wf11.safealert.service
 
+import com.wf11.safealert.model.PitType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -66,5 +67,26 @@ class ScriptRulesParityTest {
         val py = repoFile(".github/scripts/hb_digest.py")
         val minutes = Regex("""(?m)^GAP_MS = (\d+) \* 60_000""").find(py)!!.groupValues[1].toLong()
         assertEquals(LoneWorkerHeartbeat.GAP_MS, minutes * 60_000L)
+    }
+
+    @Test fun pit_names_match_pit_type() {
+        val gs = script()
+        val block = gs.substringAfter("var PIT_NAMES = {").substringBefore("};")
+        val map = Regex("""([A-Z]{2}): '([^']+)'""").findAll(block).associate { it.groupValues[1] to it.groupValues[2] }
+        assertEquals(PitType.values().associate { it.code to it.label }, map)
+        assertTrue(gs.contains("/^([A-Z]{2})-([0-9]{2})$/"))
+    }
+
+    @Test fun sos_role_label_matches_mail_rule() {
+        val walker = "\uBCF4\uD589\uC790"
+        val forklift = "\uC9C0\uAC8C\uCC28"
+        val unknown = "\uC54C \uC218 \uC5C6\uC74C"
+        val cases = listOf(
+            Triple("FORKLIFT", "RT-07", "Reach Truck"), Triple("EPJ", "WK-02", "Walkie Stacker"),
+            Triple("FORKLIFT", " rt-07 ", "Reach Truck"), Triple("WALKER", "RT-07", walker),
+            Triple("FORKLIFT", "Lee", forklift), Triple("FORKLIFT", "RT-00", forklift),
+            Triple("FORKLIFT", "XX-01", forklift), Triple("EPJ", "Kim", "EPJ"), Triple("UNKNOWN", "Kim", unknown)
+        )
+        for ((role, name, want) in cases) assertEquals("$role $name", want, sosRoleLabel(role, name))
     }
 }
