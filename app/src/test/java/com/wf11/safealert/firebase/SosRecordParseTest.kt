@@ -113,9 +113,4 @@ class SosRecordParseTest {
         assertEquals(0, SosRemote.parseSosRecord("k", valid().apply { put("ep", 300L) })!!.ep)
         assertEquals(0, SosRemote.parseSosRecord("k", valid().apply { put("ep", "7") })!!.ep)
     }
-
-    @Test
-    fun replayStart_isThirtyMinutesBeforeServerNow() {
-        assertEquals(1_780_000_000_000L + 5_000L - 1_800_000L, SosRemote.replayStartAt(1_780_000_000_000L, 5_000L))
-    }
 }

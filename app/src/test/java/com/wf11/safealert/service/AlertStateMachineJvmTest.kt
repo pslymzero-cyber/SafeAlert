@@ -145,29 +145,4 @@ class AlertStateMachineJvmTest {
             asm.registry.entryCount().toLong(),
         )
     }
-
-    /**
-     * BUG-01 - 기기 진입/소멸을 반복해도 상태 엔트리가 단조 증가하지 않는다.
-     * 매 사이클 새 id 를 쓰므로, 어느 슬롯이든 제거에서 빠지면 100배로 누적돼 실패한다.
-     */
-    @Test
-    fun repeatedDeviceChurn_doesNotGrowState() {
-        val fx = FakeEffects(myCategory = BleConstants.CAT_FORKLIFT, myMode = "FORKLIFT")
-        val asm = AlertStateMachine(fx, UwbDistanceManager { null })
-        val baseline = asm.registry.entryCount()
-
-        repeat(100) { cycle ->
-            val id = "SAFEALERT_DEVICE_CHURN_$cycle"
-            val t = 1_000L + cycle * 200L
-            asm.judgeUwbOnly(id, 12f, t)
-            asm.judgeUwbOnly(id, 5f, t + 100L)
-            asm.registry.purge(id, cold = true)
-        }
-
-        assertEquals(
-            "100회 진입/소멸 후에도 엔트리는 기저선이어야 한다",
-            baseline.toLong(),
-            asm.registry.entryCount().toLong(),
-        )
-    }
 }

@@ -22,7 +22,6 @@ class Sim0914SpecialGateTest {
     private val dt = 120L
     private val t0 = 1_000L
     private val REV = BleConstants.PSTATE_REVERSE
-    private val LOAD = BleConstants.PSTATE_LOADING
     private val IDLE = BleConstants.PSTATE_IDLE
     private val DANGER = BleConstants.LEVEL_DANGER
 
@@ -260,40 +259,6 @@ class Sim0914SpecialGateTest {
             out("b-e2e tree=${tree(H.newService())} firstSpecial=${sm.special?.fmt()} firstAlert=${sm.alert?.t}")
             tr.take(10).forEach { out("b-e2e-trace ${it.fmt()}") }
         }
-        assertTrue(fails.joinToString(" | "), fails.isEmpty())
-    }
-
-    // ─────────────────────────── c. 경보 중 기기의 후진·하역 전환 ───────────────────────────
-    @Test
-    fun c_alertedSwitchImmediateDanger() {
-        val fails = mutableListOf<String>()
-        for ((nm, st) in listOf("REVERSE" to REV, "LOADING" to LOAD)) {
-            val s = H.newService()
-            val t = prepStep(s)
-            val fr = step(s, 12, t, -45, st)
-            out("c-switch tree=${tree(s)} to=$nm sameFrame=${fr.label && fr.after == DANGER} ${fr.fmt()}")
-            if (!(fr.before != null && fr.label && fr.after == DANGER && fr.bc >= 1)) fails += "$nm: 같은 프레임 DANGER 아님 ${fr.fmt()}"
-        }
-        // WARNING 경보 중(-78, 위험 유지 하한 -70 미만) → -45 로 들어오며 후진 전환: 대조군 IDLE 과 DANGER 시각 비교
-        // DANGER 시각(비교 대상)과 특수 라벨 시각(정보)을 분리 — 라벨은 specialCandidate 의 pEma>=effDanger 거리 가드를 따른다
-        val res = mutableMapOf<Int, Fr?>()
-        for (st in listOf(REV, IDLE)) {
-            val s = H.newService()
-            var t = t0
-            repeat(15) { step(s, it, t, -78, IDLE); t += dt }
-            val lvl = H.alertLevelOf(s, id)
-            val switchT = t
-            val tr = runSeq(st, { -45 }, 15, s = s, startF = 15, startT = t)
-            val danger = tr.firstOrNull { it.after == DANGER }
-            val label = tr.firstOrNull { it.label }
-            res[st] = danger
-            out("c-warnSwitch tree=${tree(s)} st=$st levelBeforeSwitch=$lvl switchT=$switchT dangerT=${danger?.t} dangerDelayMs=${danger?.let { it.t - switchT }} labelT=${label?.t} labelDelayMs=${label?.let { it.t - switchT }} labelFrame=${label?.fmt()}")
-            tr.take(8).forEach { out("c-warnSwitch-trace st=$st ${it.fmt()}") }
-        }
-        val rev = res[REV]; val idle = res[IDLE]
-        if (rev == null) fails += "WARNING 경보 중 후진 전환에서 DANGER 미도달"
-        else if (rev.before == null) fails += "경보 중이어야 할 기기가 미등록 상태에서 발령 ${rev.fmt()}"
-        else if (idle != null && rev.t > idle.t) fails += "경보 중 후진 전환 DANGER 가 IDLE 대조군보다 늦음 rev=${rev.t} idle=${idle.t}"
         assertTrue(fails.joinToString(" | "), fails.isEmpty())
     }
 

@@ -120,7 +120,8 @@ class LoneWorkerResumeTest : RestartKit() {
         assertEquals(accidentCheck().snapshot(40_000), LoneWorkerResume.decode(ok, 40_000, wall0, boot))
         for (bad in listOf(null, "", "v1|1|2", "v9" + ok.drop(2), ok.replace("|fall|", "|x|"),
             ok.replaceFirst("|", "|abc"), ok.dropLast(1) + "x", ok + "|1",
-            "v2" + ok.drop(2), ok.substringBeforeLast("|"))) {
+            "v2" + ok.drop(2), ok.substringBeforeLast("|"),
+            "v1|999990000|999999000|999995000|fall|999991000|0|1|999980000")) {
             assertNull(bad, LoneWorkerResume.decode(bad, 40_000, wall0, boot))
         }
     }
@@ -351,21 +352,7 @@ class LoneWorkerResumeTest : RestartKit() {
         assertEquals(l.responseMs, l.responseLeftMs(5_000 + PowerDebounce.CONFIRM_MS))
     }
 
-    @Test fun restart_unplug_is_not_a_cradle_fall() {
-        // docked in the zone, restarted unplugged: the unplug applied at the restart does not hide a fall
-        val l = reboot(newLogic(charging = true, zoneInside = true), 20_000, 5_000, 20_000)
-        l.onAccident(9_000)
-        assertEquals(Mode.WATCHING, l.seenAt(38_999))
-        assertEquals(Mode.CHECKING, l.seenAt(39_000))
-        assertEquals("fall", l.trigger)
-    }
-
     // -- format and saving --
-
-    @Test fun v1_record_is_dropped() {
-        val v1 = "v1|999990000|999999000|999995000|fall|999991000|0|1|999980000"
-        assertNull(LoneWorkerResume.decode(v1, 5_000, wall0, boot))
-    }
 
     @Test fun malformed_field_is_dropped() {
         val f = LoneWorkerResume.encode(settledInZone().snapshot(100_000), 100_000, wall0, boot).split("|")

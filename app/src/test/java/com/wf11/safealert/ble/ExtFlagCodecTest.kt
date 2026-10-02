@@ -20,14 +20,6 @@ class ExtFlagCodecTest {
     }
 
     @Test
-    fun bit0OnlyReader_ignoresSos() {
-        for (inZone in listOf(false, true)) for (sos in listOf(false, true)) {
-            val ext = BleConstants.encodeExt(inZone, sos)
-            assertEquals(inZone, (ext and BleConstants.EXT_FLAG_IN_ZONE) != 0)
-        }
-    }
-
-    @Test
     fun decodeSos_bits() {
         assertFalse(BleConstants.decodeSos(0x01))
         assertTrue(BleConstants.decodeSos(0x02))

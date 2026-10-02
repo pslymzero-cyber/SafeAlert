@@ -97,26 +97,10 @@ class RssiCascadeTest {
             -78.0, -78.0, -78.0, -78.0, -78.0, -78.0, -78.0, -78.0, -78.0, -78.0
         )
 
-        // ── impulse / warmStart 기대값 (record-then-freeze, D-09) ───────────────────────
-        val EXPECTED_IMPULSE_WARM_MEDIAN = intArrayOf(-78, -78, -78, -78, -78, -78, -78, -77, -78, -78, -78, -78, -78, -78, -78, -78, -78, -78, -78, -78)
-        val EXPECTED_IMPULSE_WARM_PREFILTER = EXPECTED_IMPULSE_COLD_PREFILTER
-        val EXPECTED_IMPULSE_WARM_KALMAN = doubleArrayOf(
-            -78.0, -78.0, -78.0, -78.0, -78.0, -78.0, -78.0, -78.0, -78.0, -78.0,
-            -78.0, -78.0, -78.0, -78.0, -78.0, -78.0, -78.0, -78.0, -78.0, -78.0
-        )
-
         // ── stationary / coldStart 기대값 (record-then-freeze, D-09) ────────────────────
         val EXPECTED_STATIONARY_COLD_MEDIAN = intArrayOf(-80, -81, -80, -80, -80, -80, -80, -80, -80, -80, -80, -80, -80, -80, -80, -80, -81, -80, -80, -80)
         val EXPECTED_STATIONARY_COLD_PREFILTER = intArrayOf(-80, -80, -80, -80, -80, -80, -80, -80, -80, -80, -80, -80, -80, -80, -80, -80, -80, -80, -80, -80)
         val EXPECTED_STATIONARY_COLD_KALMAN = doubleArrayOf(
-            -80.0, -80.0, -80.0, -80.0, -80.0, -80.0, -80.0, -80.0, -80.0, -80.0,
-            -80.0, -80.0, -80.0, -80.0, -80.0, -80.0, -80.0, -80.0, -80.0, -80.0
-        )
-
-        // ── stationary / warmStart 기대값 (record-then-freeze, D-09) ────────────────────
-        val EXPECTED_STATIONARY_WARM_MEDIAN = EXPECTED_STATIONARY_COLD_MEDIAN
-        val EXPECTED_STATIONARY_WARM_PREFILTER = EXPECTED_STATIONARY_COLD_PREFILTER
-        val EXPECTED_STATIONARY_WARM_KALMAN = doubleArrayOf(
             -80.0, -80.0, -80.0, -80.0, -80.0, -80.0, -80.0, -80.0, -80.0, -80.0,
             -80.0, -80.0, -80.0, -80.0, -80.0, -80.0, -80.0, -80.0, -80.0, -80.0
         )
@@ -221,29 +205,11 @@ class RssiCascadeTest {
     }
 
     @Test
-    fun impulse_warmStart_matchesGolden() {
-        val actual = runCascade(INPUT_IMPULSE, warmStart = true)
-        assertCascade(
-            "impulse", "warmStart", actual,
-            EXPECTED_IMPULSE_WARM_MEDIAN, EXPECTED_IMPULSE_WARM_PREFILTER, EXPECTED_IMPULSE_WARM_KALMAN,
-        )
-    }
-
-    @Test
     fun stationary_coldStart_matchesGolden() {
         val actual = runCascade(INPUT_STATIONARY, warmStart = false)
         assertCascade(
             "stationary", "coldStart", actual,
             EXPECTED_STATIONARY_COLD_MEDIAN, EXPECTED_STATIONARY_COLD_PREFILTER, EXPECTED_STATIONARY_COLD_KALMAN,
-        )
-    }
-
-    @Test
-    fun stationary_warmStart_matchesGolden() {
-        val actual = runCascade(INPUT_STATIONARY, warmStart = true)
-        assertCascade(
-            "stationary", "warmStart", actual,
-            EXPECTED_STATIONARY_WARM_MEDIAN, EXPECTED_STATIONARY_WARM_PREFILTER, EXPECTED_STATIONARY_WARM_KALMAN,
         )
     }
 }

@@ -297,14 +297,6 @@ class LoneWorkerChargeTest {
         assertEquals(Rest.DOCKED, l.rest)
     }
 
-    @Test fun still_rule_is_off_in_settled_zone() {
-        val l = newLogic(zoneInside = true)
-        l.sensorSilent(0)
-        l.tick(60_000)
-        assertTrue(l.zoneSettled)
-        for (t in 60_000L..900_000L step 60_000L) assertEquals(Mode.WATCHING, l.modeAt(t))
-    }
-
     @Test fun real_plug_withdraws_open_still_check() {
         val l = newLogic()
         l.sensorSilent(0)
@@ -347,14 +339,6 @@ class LoneWorkerChargeTest {
         assertEquals(Mode.WATCHING, ok.mode)
     }
 
-    @Test fun rest_state_carries_its_own_texts() {
-        assertNull(Rest.NONE.banner)
-        assertTrue(Rest.DOCKED.banner!!.isNotEmpty())
-        assertTrue(Rest.WAIT.banner!!.isNotEmpty())
-        assertFalse(Rest.DOCKED.keepText == Rest.NONE.keepText)
-        assertFalse(Rest.WAIT.keepText == Rest.NONE.keepText)
-    }
-
     // -- PowerDebounce (2 s) --
 
     @Test fun debounce_ignores_flaps_shorter_than_2s() {
@@ -382,6 +366,13 @@ class LoneWorkerChargeTest {
         assertEquals(true to 1_000L, d.poll(3_000))
         assertNull(d.poll(3_001))
         assertTrue(d.reported)
+        // the logic's settlePower tells whether it confirmed and applied a change, once
+        val l = newLogic(charging = true)
+        l.powerRaw(false, 10_000)
+        assertFalse(l.settlePower(10_000 + PowerDebounce.DEBOUNCE_MS - 1))
+        assertTrue(l.settlePower(10_000 + PowerDebounce.DEBOUNCE_MS))
+        assertEquals(Rest.WAIT, l.rest)
+        assertFalse(l.settlePower(20_000))
     }
 
     @Test fun debounce_restarts_when_a_flap_returns() {
@@ -399,8 +390,10 @@ class LoneWorkerChargeTest {
         val l = newLogic(charging = true)
         l.powerRaw(false, 10_000)
         assertEquals(10_000 + PowerDebounce.CONFIRM_MS, l.nextCheckAt(10_000))
-        l.powerRaw(true, 12_500)
+        // the confirmed change asks for a tick, and the opposite raw value starts a new wait
+        assertTrue(l.powerRaw(true, 12_500))
         assertEquals(Rest.WAIT, l.rest)
+        assertEquals(12_500 + PowerDebounce.CONFIRM_MS, l.nextCheckAt(12_500))
         l.modeAt(12_500 + PowerDebounce.DEBOUNCE_MS)
         assertEquals(Rest.DOCKED, l.rest)
         // a flap shorter than 2 s is dropped
@@ -410,16 +403,6 @@ class LoneWorkerChargeTest {
         assertEquals(Rest.DOCKED, d.rest)
         d.modeAt(20_000)
         assertEquals(Rest.DOCKED, d.rest)
-    }
-
-    /** settlePower tells whether it confirmed and applied a change, once. */
-    @Test fun settle_power_reports_a_confirmed_change_once() {
-        val l = newLogic(charging = true)
-        l.powerRaw(false, 10_000)
-        assertFalse(l.settlePower(10_000 + PowerDebounce.DEBOUNCE_MS - 1))
-        assertTrue(l.settlePower(10_000 + PowerDebounce.DEBOUNCE_MS))
-        assertEquals(Rest.WAIT, l.rest)
-        assertFalse(l.settlePower(20_000))
     }
 
     // Carrying while charging = 10 steps within the last 30 s.
@@ -436,16 +419,5 @@ class LoneWorkerChargeTest {
             l.step(1_000 + i * 3_500L)
             assertEquals(Rest.DOCKED, l.rest)
         }
-    }
-
-    @Test fun sporadic_single_steps_never_close_still_check() {
-        val l = newLogic()
-        l.sensorSilent(0L)
-        assertEquals(Mode.CHECKING, l.seenAt(stillMs))
-        for (t in stillMs + 1_000 until stillMs + responseMs step 3_000L) {
-            l.step(t)
-            assertEquals(Mode.CHECKING, l.modeAt(t))
-        }
-        assertEquals(Mode.SOS, l.seenAt(stillMs + responseMs))
     }
 }

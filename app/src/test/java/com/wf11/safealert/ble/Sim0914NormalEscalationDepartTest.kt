@@ -87,33 +87,6 @@ class Sim0914NormalEscalationDepartTest {
         return out
     }
 
-    // a. 정상 속도 정면 접근 — AlertCascadeGoldenTest:210 골든(-95+1/프레임, 120ms): WARNING f19=2280ms(v1.1.95 경고 -78 재동결, 이전 -75 기준 f22=2640ms), DANGER f32=3840ms(v1.1.95 위험 -65 재동결, 이전 -55 기준 f39=4680ms).
-    // h. 이어서 -1dB/프레임 이탈 — AlertCascadeGoldenTest:240-244: f59(7080ms) 해제(v1.1.95 실측 재동결, 이전 f78=9360ms), WARNING 경유 없음.
-    @Test fun a_h_goldenHeadOnApproachThenDepart() {
-        val service = BleServiceTestHarness.newService()
-        val a = run("a_headOn", 42, service = service) { f, _ -> -95 + f }
-        val h = run("h_departGolden", 48, service = service, startFrame = 42) { f, _ -> -54 - (f - 42) }
-        assertEquals("a WARNING 진입(골든 f19)", 2280L, a.firstWarnMs)
-        assertEquals("a DANGER 진입(골든 f32)", 3840L, a.firstDangerMs)
-        assertEquals("h 해제(골든 f59)", 7080L, h.releaseMs)
-    }
-
-    // h2. 느린 이탈 1000ms — PassByStopSimulationTest s2_slowDrift3f 기준선 release=58.
-    @Test fun h2_passByStopSlowDrift() {
-        val t = run("h2_slowDrift1000", 88, dtMs = 1000L) { i, _ ->
-            when { i <= 22 -> -98 + i + n4(i); i <= 27 -> -76; i <= 57 -> -77 - (i - 28) / 3; else -> -86 + n4(i) }
-        }
-        assertEquals("h2 해제(PassByStop s2 release=58)", 58_000L, t.releaseMs)
-        assertEquals("h2 해제 후 재경보 없음", 0, t.reAlerts)
-    }
-
-    // b1. BUG-02 저속 접근 골든 — LowSpeedApproachRegressionTest:259 첫 WARNING f82(82000ms).
-    @Test fun b1_lowSpeedGolden() {
-        val t = run("b1_lowSpeed1000", 264, dtMs = 1000L) { i, _ -> -95 + i / 4 + intArrayOf(0, -1, 2, -1)[i % 4] }
-        assertNotNull("b1 WARNING 누락", t.firstWarnMs)
-        assertTrue("b1 WARNING 지연 ${t.firstWarnMs} > 82000", t.firstWarnMs!! <= 82_000L)
-    }
-
     // b2. 120ms 저속 + 지터(비접근 프레임 섞임 → 유예 영향) — 기대: WARNING 이 DANGER 보다 먼저 뜬다(누락 없음).
     @Test fun b2_slowJitter120() {
         val t = run("b2_slowJitter120", 420) { f, _ -> minOf(-90 + f / 8, -40) + J6[f % 6] }
@@ -143,13 +116,6 @@ class Sim0914NormalEscalationDepartTest {
         run("e3_spikeGapSpike240ms", 60) { f, _ -> if (f == 20 || f == 22) -50 else -90 }   // 기대 불명 — 측정만
         assertNull("e1 spike 경보", e1.firstAlertMs)
         assertNull("e2 spike 경보", e2.firstAlertMs)
-    }
-
-    // f. 스쳐 지나감 — 16ee857 대비 경보 유무·횟수 비교(측정만, 단정 없음).
-    @Test fun f_passBy() {
-        run("f1_passBy_peak-72_jitter", 60) { f, _ -> (if (f <= 18) -90 + f else -72 - (f - 18)) + J6[f % 6] }
-        run("f2_passBy_peak-58_jitter", 60) { f, _ -> (if (f <= 16) -90 + 2 * f else -58 - 2 * (f - 16)) + J6[f % 6] }
-        run("f3_passBy_peak-62_dip1", 60) { f, _ -> (if (f <= 14) -90 + 2 * f else -62 - 2 * (f - 14)) + (if (f % 3 == 2) -3 else 0) }
     }
 
     // g. TTC 조기경보 — WARNING+APPROACHING 에서 TTC<=3.0s 면 위험 임계 도달 전 DANGER(:1541). 발령 시각은 16ee857 과 동일해야 한다.

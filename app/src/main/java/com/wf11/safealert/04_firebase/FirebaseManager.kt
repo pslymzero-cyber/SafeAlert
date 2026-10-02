@@ -130,9 +130,6 @@ object FirebaseManager {
     fun sanitizeKey(s: String): String =
         s.trim().replace(Regex("[.#$\\[\\]/]"), "_").ifEmpty { "set" }
 
-    // (v1.1.87) 표시 이름 = BLE 송출 ID 상한. UTF-8 15바이트 = 한글 5자·영문 15자 (BleAdvertiser 절단 폭과 동일)
-    const val DEVICE_ID_MAX_BYTES = 15
-
     /**
      * (v1.1.90 SA-1) 표시 이름 = PIT 장비 ID. `종류코드-번호` 두 토큰이다 — `CB-01`, `RT-07`.
      *
@@ -152,13 +149,6 @@ object FirebaseManager {
 
     /** (v1.1.90) 입력 정규화 — 사업장 코드와 같은 규칙: 앞뒤 공백 제거 후 대문자화 */
     fun normalizeDeviceId(s: String): String = s.trim().uppercase(Locale.ROOT)
-
-    /** (v1.1.90 SA-1) 표시 이름 검증 — 빈 값은 허용(자동 ID 사용), 그 외는 장비 ID 형식만 허용. */
-    fun isValidDeviceId(s: String): Boolean {
-        val t = normalizeDeviceId(s)
-        if (t.isEmpty()) return true
-        return PIT_ID_REGEX.matches(t)
-    }
 
     /**
      * (v1.1.90) 자동 발급 ID 형식 — MainActivity.newAutoId() 생성규칙("SA-" + UUID 8자 대문자).
@@ -186,20 +176,6 @@ object FirebaseManager {
     fun withSite(id: String): String {
         val site = DevSettings.siteCode
         return if (site.isEmpty() || id.isEmpty()) id else "$site-$id"
-    }
-
-    /** (v1.1.87) s 의 앞에서부터 UTF-8 maxBytes 안에 드는 문자 수(서로게이트 쌍은 쪼개지 않음). 입력 필터용 */
-    fun utf8PrefixLen(s: CharSequence, maxBytes: Int): Int {
-        var bytes = 0
-        var i = 0
-        while (i < s.length) {
-            val cp = Character.codePointAt(s, i)
-            val n = when { cp < 0x80 -> 1; cp < 0x800 -> 2; cp < 0x10000 -> 3; else -> 4 }
-            if (bytes + n > maxBytes) break
-            bytes += n
-            i += Character.charCount(cp)
-        }
-        return i
     }
 
     /** 선택한 비콘 프로파일(JSON)을 이름붙은 세트로 업로드 */

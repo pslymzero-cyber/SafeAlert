@@ -65,12 +65,20 @@ class LoneWorkerLogicTest {
         assertEquals(Mode.CHECKING, l.mode)
     }
 
-    @Test fun moved_signal_does_not_close_an_open_check() {
+    /** A fidget MOVED signal is not distinct movement, so it closes neither a still check nor a fall check. */
+    @Test fun fidget_moved_signal_is_not_distinct_motion_and_keeps_checks_open() {
         val l = carriedLogic()
         l.toChecking()
         l.onMoved(190_000)
         l.tick(191_000)
         assertEquals(Mode.CHECKING, l.mode)
+
+        val f = newLogic(carried = true).also { it.stillMs = 3_600_000L }
+        f.onAccident(10_000)
+        assertEquals(Mode.CHECKING, f.seenAt(40_000))
+        f.onMoved(45_000)
+        assertEquals(Mode.CHECKING, f.seenAt(50_000))
+        assertEquals("fall", f.trigger)
     }
 
     @Test fun cancel_sos_returns_true_and_ack_is_ignored_in_sos() {
@@ -156,27 +164,6 @@ class LoneWorkerLogicTest {
         assertEquals(Mode.CHECKING, l.mode)
     }
 
-    @Test fun leaving_settled_zone_starts_new_count() {
-        val l = carriedLogic()
-        l.onZone(true, 1_000)
-        l.tick(61_000)
-        assertTrue(l.zoneSettled)
-        l.onZone(false, 300_000)
-        l.seenAt(479_999)
-        assertEquals(Mode.WATCHING, l.mode)
-        l.seenAt(480_000)
-        assertEquals(Mode.CHECKING, l.mode)
-    }
-
-    @Test fun sos_survives_settled_zone() {
-        val l = carriedLogic()
-        l.toSos()
-        l.onZone(true, 300_000)
-        l.tick(400_000)
-        assertTrue(l.zoneSettled)
-        assertEquals(Mode.SOS, l.mode)
-    }
-
     @Test fun peers_are_received_while_zone_settled() {
         val l = carriedLogic()
         l.onZone(true, 0)
@@ -194,19 +181,6 @@ class LoneWorkerLogicTest {
         l.onPeerBle("SAFEALERT_WALKER_ME", true, 1_100)
         assertEquals(1, l.peers.size)
         assertEquals(1, l.audiblePeers().size)
-    }
-
-    @Test fun server_plus_ble_make_one_peer_and_silence_sticks() {
-        val l = carriedLogic()
-        l.server("k1", "P", true, 1_000)
-        l.onPeerBle("P", true, 1_100)
-        assertEquals(1, l.peers.size)
-        assertEquals(1, l.audiblePeers().size)
-        l.ackAll(1_101)
-        assertEquals(0, l.audiblePeers().size)
-        assertTrue(l.peer("P").active)
-        l.onPeerBle("P", true, 1_200)
-        assertEquals(0, l.audiblePeers().size)
     }
 
     @Test fun server_resolved_matches_key_only() {
@@ -245,20 +219,6 @@ class LoneWorkerLogicTest {
         assertFalse(m.peer("P").active)
     }
 
-    @Test fun ble_bit_after_30s_gap_is_a_rising_edge() {
-        val l = carriedLogic()
-        l.onPeerBle("P", true, 1_000)
-        l.ackAll(1_001)
-        l.onPeerBle("P", true, 29_000)
-        assertEquals(0, l.audiblePeers().size)
-        l.onPeerBle("P", true, 60_000)
-        assertEquals(1, l.audiblePeers().size)
-        l.onPeerBle("P", false, 61_000)
-        assertTrue(l.peer("P").active)
-        l.onPeerBle("P", false, 71_000)
-        assertFalse(l.peer("P").active)
-    }
-
     @Test fun server_backed_peer_is_not_resolved_by_ble_falling_edge() {
         val l = carriedLogic()
         l.server("k1", "P", true, 1_000)
@@ -291,6 +251,7 @@ class LoneWorkerLogicTest {
         val p = l.peer("P", 2)
         assertTrue(p.active)
         assertFalse(p.silenced)
+        assertNull(p.key)
 
         val m = resolved()
         m.onPeerBle("P", true, 32_001, 1)
@@ -384,20 +345,6 @@ class LoneWorkerLogicTest {
         assertTrue(l.peers.none { it.active })
     }
 
-    @Test fun server_entry_matches_same_ble_episode_then_next_number_resounds() {
-        val l = carriedLogic()
-        l.peerServer("k1", "P", "n", "WALKER", "still", "B1", 1_000, true, 1_000, 5)
-        l.ackAll(1_001)
-        l.onPeerBle("P", true, 2_000, 5)
-        assertEquals(1, l.audiblePeers().size)
-        l.ackAll(2_001)
-        l.onPeerBle("P", true, 2_500, 5)
-        assertEquals(0, l.audiblePeers().size)
-        assertEquals("k1", l.peers.single().key)
-        l.onPeerBle("P", true, 3_000, 6)
-        assertEquals(6, l.audiblePeers().single().episode)
-    }
-
     @Test fun beacon_sid_takes_strongest_registered_sample() {
         val l = carriedLogic()
         assertEquals(0, l.beaconSid(0))
@@ -416,6 +363,8 @@ class LoneWorkerLogicTest {
         assertTrue(l.sosActive)
         l.onZone(true, 6_000)
         l.tick(70_000)
+        assertTrue(l.zoneSettled)
+        assertEquals(Mode.SOS, l.mode)
         l.setEnabled(false, 71_000)
         assertFalse(l.ackWorking(72_000))
         assertEquals(Mode.SOS, l.mode)

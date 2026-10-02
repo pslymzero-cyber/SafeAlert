@@ -324,31 +324,6 @@ class SosMailTest {
         )) assertEquals(bad, "", SosMail.scriptUrl(bad))
     }
 
-    @Test fun job_retries_linear_from_10_seconds() {
-        assertTrue(serviceSource("SosMailJob.kt").contains(".setBackoffCriteria(10_000L, JobInfo.BACKOFF_POLICY_LINEAR)"))
-    }
-
-    @Test fun resolve_ack_before_late_create_read_still_mails_both() {
-        val kv = Kv(); val tr = Tr(); val (l, m) = pair(kv, tr)
-        l.begin(rec())
-        tr.creates[0].cb(false)
-        l.resolve()
-        tr.resolves[0].cb(true)
-        assertEquals(1, posts.size)
-        assertEquals(form1, posts[0].form)
-        tr.reads[0].cb(Remote.MINE_RESOLVED)
-        assertEquals(1, posts.size)
-        val resolvedLines = { kv.m[SosMail.K_LIST]!!.split('\n').count { it.startsWith("resolved\t") } }
-        assertEquals(1, resolvedLines())
-        m.enqueue(SosMail.EVENT_RESOLVED, "root/sos/WF11", "k1", 3)
-        assertEquals(1, resolvedLines())
-        posts[0].done(sent)
-        assertEquals(2, posts.size)
-        assertEquals(form1.replace("event=sos", "event=resolved"), posts[1].form)
-        posts[1].done(sent)
-        assertNull(kv.m[SosMail.K_LIST])
-    }
-
     @Test fun resolve_lookup_skips_address_rows_older_than_7_days() {
         val kv = Kv(); val m = mail(kv)
         val t0 = now

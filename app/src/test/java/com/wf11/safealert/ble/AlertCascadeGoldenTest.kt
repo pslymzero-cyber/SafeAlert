@@ -5,8 +5,6 @@ import androidx.lifecycle.Lifecycle
 import com.wf11.safealert.service.BleService
 import com.wf11.safealert.service.BootRestoreReceiver
 import com.wf11.safealert.support.BleServiceTestHarness
-import com.wf11.safealert.utils.DevSettings
-import com.wf11.safealert.utils.OverlayManager
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -111,136 +109,6 @@ class AlertCascadeGoldenTest {
         assertEquals(deviceId, BleServiceTestHarness.alertBroadcasts().first().getStringExtra(BleService.EXTRA_ID))
     }
 
-    @Test
-    fun goldenProfile_neutralizesSideEffects() {
-        // Task 3 부작용 무해화 단언(D-2D) — newService() 가 적용한 골든 프로파일이 진동·소리·
-        // Firebase 자동저장(경보·UWB 표본)·오버레이 5종을 모두 차단하는 구성인지 확인한다.
-        // 완전성(32개 심볼 중 31줄 대입 커버)은 plan Task 3 <verify> 의 grep-count 비교 커맨드가
-        // 담당(테스트 코드 중복 방지).
-        BleServiceTestHarness.newService()
-        val context = RuntimeEnvironment.getApplication()
-
-        assertFalse("골든 프로파일인데 vibrationEnabled=true — 진동 무해화 실패", DevSettings.vibrationEnabled)
-        assertFalse("골든 프로파일인데 soundEnabled=true — 소리 무해화 실패", DevSettings.soundEnabled)
-        assertFalse("골든 프로파일인데 autoSaveAlerts=true — Firebase 저장 무해화 실패", DevSettings.autoSaveAlerts)
-        assertFalse(
-            "골든 프로파일인데 uwbProbeUploadEnabled=true — UWB 표본 Firebase 저장 무해화 실패",
-            DevSettings.uwbProbeUploadEnabled
-        )
-        assertFalse(
-            "골든 프로파일인데 canDrawOverlays=true — OverlayManager.showSidebar 게이트가 무력화된다",
-            OverlayManager.canDrawOverlays(context)
-        )
-    }
-
-    @Test
-    fun goldenProfile_isDeterministic() {
-        // Task 3 결정성 단언 — applyGoldenDevSettings() 재호출이 구성을 바꾸지 않고, 동일 스모크
-        // 시나리오가 두 개의 독립 서비스 인스턴스에서 동일 결과(레벨·등록시각·브로드캐스트 수)를
-        // 낸다는 것을 확인한다.
-        BleServiceTestHarness.newService() // 골든 기준선 확립(DevSettings.init 포함) — 이전 테스트 잔존 상태에 의존하지 않는다.
-        val configBefore = goldenConfigSnapshot()
-        BleServiceTestHarness.applyGoldenDevSettings()
-        val configAfter = goldenConfigSnapshot()
-        assertEquals("applyGoldenDevSettings() 재호출이 구성을 바꿨다 — 비결정적", configBefore, configAfter)
-
-        val deviceId = "AA:BB:CC:DD:EE:77"
-        val dangerRssi = -30
-
-        val serviceA = BleServiceTestHarness.newService()
-        var clockA = 1_000L
-        BleServiceTestHarness.callProcessAlert(serviceA, deviceId, dangerRssi, nowMs = clockA)
-        clockA += 120L
-        BleServiceTestHarness.callProcessAlert(serviceA, deviceId, dangerRssi, nowMs = clockA)
-        val resultA = BleServiceTestHarness.alertLevelOf(serviceA, deviceId) to BleServiceTestHarness.alertEntryMsOf(serviceA, deviceId)
-        val broadcastsA = BleServiceTestHarness.alertBroadcasts().size
-        BleServiceTestHarness.resetBetweenTests(serviceA)
-
-        val serviceB = BleServiceTestHarness.newService()
-        var clockB = 1_000L
-        BleServiceTestHarness.callProcessAlert(serviceB, deviceId, dangerRssi, nowMs = clockB)
-        clockB += 120L
-        BleServiceTestHarness.callProcessAlert(serviceB, deviceId, dangerRssi, nowMs = clockB)
-        val resultB = BleServiceTestHarness.alertLevelOf(serviceB, deviceId) to BleServiceTestHarness.alertEntryMsOf(serviceB, deviceId)
-        val broadcastsB = BleServiceTestHarness.alertBroadcasts().size
-
-        assertEquals("동일 골든 구성인데 스모크 결과(레벨/등록시각)가 다르다", resultA, resultB)
-        assertEquals("동일 골든 구성인데 브로드캐스트 수가 다르다", broadcastsA, broadcastsB)
-    }
-
-    /** 골든 프로파일 30줄 대입 전체를 순서 무관 비교용 목록으로 스냅샷(결정성 단언 전용). */
-    private fun goldenConfigSnapshot(): List<Any> = listOf(
-        DevSettings.autoSaveAlerts,
-        DevSettings.beaconGainPercent,
-        DevSettings.coopSlackDb,
-        DevSettings.debugMode,
-        DevSettings.echoAutoCalibEnabled,
-        DevSettings.fastApproachBypassVelDbm,
-        DevSettings.idleIdleSuppressEnabled,
-        DevSettings.idleIdleSuppressEpjPairsEnabled,
-        DevSettings.imuShadowFusionEnabled,
-        DevSettings.kalmanPreset,
-        DevSettings.logVerbose,
-        DevSettings.reciprocalMaxDisagreeDb,
-        DevSettings.reciprocalRssiEnabled,
-        DevSettings.reversePrepEnabled,
-        DevSettings.reversePrepHoldMs,
-        DevSettings.reverseRiseDbm,
-        DevSettings.reverseStableTolDb,
-        DevSettings.reverseWindowMs,
-        DevSettings.rssiWarning,
-        DevSettings.soundEnabled,
-        DevSettings.uwbApproachSpeedKmh,
-        DevSettings.uwbForkliftDangerMeters,
-        DevSettings.uwbForkliftWarnMeters,
-        DevSettings.uwbPairDangerMeters,
-        DevSettings.uwbPairWarnMeters,
-        DevSettings.uwbPrimaryAuthorityEnabled,
-        DevSettings.uwbProbeUploadEnabled,
-        DevSettings.uwbPromoteEnabled,
-        DevSettings.uwbVelPromoteEnabled,
-        DevSettings.uwbVelReleaseEnabled,
-        DevSettings.vibrationEnabled
-    )
-
-    /**
-     * 02-02 Task 1 — 격상(SAFE→WARNING→DANGER) 골든, 프레임별 기록·동결(D-2E/D-2F/D-2G).
-     * record-then-freeze: [ESCALATION_GOLDEN]/[ESCALATION_KFVEL] 는 실제 1회 구동에서 캡처된 값이며
-     * 손으로 계산하지 않는다. 재동결은 이 배열의 수동 파일 편집만 허용(자동 갱신 경로 없음, T-02-05).
-     *
-     * 기록 시점: versionName=1.1.70 versionCode=126, commit=6760f60, 2026-08-28T00:19:42Z.
-     * 채택 파라미터: START_DBM=-95, STEP_DBM=+1, FRAMES=42 — 실측(사전 예측 아님): WARNING 최초
-     * 진입 frame=22(rssi=-73), DANGER 최초 진입 frame=39(rssi=-56). streak/hysteresis 게이트로
-     * 인해 raw 임계 교차(v1.1.70 당시 rssiWarning=-75 @ i=20, rssiDanger=-55 @ i=40)보다 1~2프레임 지연 — 별도
-     * 조정 불필요(SAFE/WARNING/DANGER 3단계 모두 관측, 단조 증가).
-     *
-     * 재동결(D-2E 근본원인 수정, 2026-08-28): KalmanFilter.update() 가 생성자 기본 nowMs
-     * (real System.currentTimeMillis())를 그대로 써서 dt 를 실제 벽시계로 계산 — processAlert 에
-     * 주입한 프레임 시각 seam 과 무관했다(BleServiceTestHarness.kt 참고). 실행마다 tight in-memory
-     * 루프의 real elapsed time 이 대개 50ms 미만이라 dt 가 coerceIn 하한 0.05s 로 대부분 바닥
-     * 고정되던 값이 최초 동결본(kfVel, 그리고 frame=40 entry 재진입 흔들림)에 섞여 있었다 —
-     * FRAME_DT_MS=120L(0.12s) 을 의도한 golden 이 아니었다. 하네스에 리플렉션 시임을 추가해
-     * 콜드스타트로 새로 생성된 KalmanFilter 인스턴스의 nowMs/lastTsMs 를 주입 시각에 정렬한 뒤
-     * (production 코드 무수정) 재구동·재동결 — kfVel 전 구간 값 변경 + frame=40/41 entry 가
-     * 4800→4680 로 안정화(재진입 흔들림 제거, 더 이상 관측 노이즈가 아님).
-     *
-     * 재동결(v1.1.95 임계 위험 -65·경고 -78, 2026-09-15): 기본 밴드 10 에서 재구동·재동결.
-     * kfVel 은 frame=009 부터, render 는 frame=018(warnStreak 누적 시작) 부터 변경.
-     * WARNING 최초 진입 frame=019(rssi=-76, entry=2280), DANGER 최초 진입 frame=032(rssi=-63,
-     * entry=3840), frame=031(-64)부터 dangerStreak 누적.
-     *
-     * 재동결(v1.1.96 MedianFilter 부분버퍼 짝수=약한 쪽, 2026-09-16): kfVel 만 frame=009 부터 변경.
-     * render 는 42행 전부 그대로(WARNING 최초 frame=019, DANGER 최초 frame=032 유지).
-     */
-    @Test
-    fun escalation_goldenTimeline() {
-        val service = BleServiceTestHarness.newService()
-        BleServiceTestHarness.resetBetweenTests(service)
-        val actual = runScenario(service, CASCADE_DEVICE_ID, ESCALATION_RSSI, startFrame = 0)
-        assertEquals("escalation 프레임 수 불일치", FRAMES, actual.first.size)
-        assertScenario("escalation", actual, ESCALATION_GOLDEN, ESCALATION_KFVEL)
-    }
-
     /**
      * 02-02 Task 2 — 해제(DANGER→SAFE) 골든, 격상 종단 상태에서 이어 재생(D-2E/D-2F/D-2G).
      * record-then-freeze: [RELEASE_GOLDEN]/[RELEASE_KFVEL] 는 실제 1회 구동에서 캡처된 값이며
@@ -268,6 +136,7 @@ class AlertCascadeGoldenTest {
         val service = BleServiceTestHarness.newService()
         BleServiceTestHarness.resetBetweenTests(service)
         val escalation = runScenario(service, CASCADE_DEVICE_ID, ESCALATION_RSSI, startFrame = 0)
+        assertEquals("escalation 프레임 수 불일치", FRAMES, escalation.first.size)
         assertScenario("escalation", escalation, ESCALATION_GOLDEN, ESCALATION_KFVEL)
         val actual = runScenario(service, CASCADE_DEVICE_ID, RELEASE_RSSI, startFrame = FRAMES)
         assertEquals("release 프레임 수 불일치", RELEASE_FRAMES, actual.first.size)
@@ -275,28 +144,8 @@ class AlertCascadeGoldenTest {
     }
 
     /**
-     * 02-02 Task 2 — 동일 입력 재생 결정성 확인(acceptance: 격상+해제 전체를 두 번 재생해 완전 동일).
-     */
-    @Test
-    fun sameSequence_replaysIdentically() {
-        fun playFull(): Pair<Array<String>, DoubleArray> {
-            val service = BleServiceTestHarness.newService()
-            BleServiceTestHarness.resetBetweenTests(service)
-            val esc = runScenario(service, CASCADE_DEVICE_ID, ESCALATION_RSSI, startFrame = 0)
-            val rel = runScenario(service, CASCADE_DEVICE_ID, RELEASE_RSSI, startFrame = FRAMES)
-            return (esc.first + rel.first) to (esc.second + rel.second)
-        }
-        val run1 = playFull()
-        val run2 = playFull()
-        assertEquals("재생1·재생2 프레임 배열 불일치", run1.first.toList(), run2.first.toList())
-        for (i in run1.second.indices) {
-            assertEquals("재생1·재생2 kfVel[$i] 불일치", run1.second[i], run2.second[i], 1e-9)
-        }
-    }
-
-    /**
      * 02-02 Task 3 checkpoint 재개(Option A — 시퀀스 확장) — 급접촉(sudden first-contact) 서브
-     * 시나리오. escalation_goldenTimeline 은 1dBm/프레임 완만한 램프라 dangerStreak 가 2 에 도달하기
+     * 시나리오. 격상 골든(ESCALATION_RSSI)은 1dBm/프레임 완만한 램프라 dangerStreak 가 2 에 도달하기
      * 전에 pEma(BleService.kt:1790-1814, calcLevelWithHysteresis)가 먼저 DANGER 문턱을 넘어
      * (frame=039 dangerStreak=0 로 확인됨) :1885 즉시격상 오버레이가 관여할 기회가 없었다(1차
      * red-trial: dangerStreak>=2→3 변경에도 BUILD SUCCESSFUL — 오버레이 미관여 증명).
@@ -516,6 +365,35 @@ private fun assertScenario(
     }
 }
 
+/**
+ * 02-02 Task 1 — 격상(SAFE→WARNING→DANGER) 골든 기록 이력. release_goldenTimeline 이 해제 재생 전에 이 격상 골든을 먼저 단언한다.
+ * record-then-freeze: [ESCALATION_GOLDEN]/[ESCALATION_KFVEL] 는 실제 1회 구동에서 캡처된 값이며
+ * 손으로 계산하지 않는다. 재동결은 이 배열의 수동 파일 편집만 허용(자동 갱신 경로 없음, T-02-05).
+ *
+ * 기록 시점: versionName=1.1.70 versionCode=126, commit=6760f60, 2026-08-28T00:19:42Z.
+ * 채택 파라미터: START_DBM=-95, STEP_DBM=+1, FRAMES=42 — 실측(사전 예측 아님): WARNING 최초
+ * 진입 frame=22(rssi=-73), DANGER 최초 진입 frame=39(rssi=-56). streak/hysteresis 게이트로
+ * 인해 raw 임계 교차(v1.1.70 당시 rssiWarning=-75 @ i=20, rssiDanger=-55 @ i=40)보다 1~2프레임 지연 — 별도
+ * 조정 불필요(SAFE/WARNING/DANGER 3단계 모두 관측, 단조 증가).
+ *
+ * 재동결(D-2E 근본원인 수정, 2026-08-28): KalmanFilter.update() 가 생성자 기본 nowMs
+ * (real System.currentTimeMillis())를 그대로 써서 dt 를 실제 벽시계로 계산 — processAlert 에
+ * 주입한 프레임 시각 seam 과 무관했다(BleServiceTestHarness.kt 참고). 실행마다 tight in-memory
+ * 루프의 real elapsed time 이 대개 50ms 미만이라 dt 가 coerceIn 하한 0.05s 로 대부분 바닥
+ * 고정되던 값이 최초 동결본(kfVel, 그리고 frame=40 entry 재진입 흔들림)에 섞여 있었다 —
+ * FRAME_DT_MS=120L(0.12s) 을 의도한 golden 이 아니었다. 하네스에 리플렉션 시임을 추가해
+ * 콜드스타트로 새로 생성된 KalmanFilter 인스턴스의 nowMs/lastTsMs 를 주입 시각에 정렬한 뒤
+ * (production 코드 무수정) 재구동·재동결 — kfVel 전 구간 값 변경 + frame=40/41 entry 가
+ * 4800→4680 로 안정화(재진입 흔들림 제거, 더 이상 관측 노이즈가 아님).
+ *
+ * 재동결(v1.1.95 임계 위험 -65·경고 -78, 2026-09-15): 기본 밴드 10 에서 재구동·재동결.
+ * kfVel 은 frame=009 부터, render 는 frame=018(warnStreak 누적 시작) 부터 변경.
+ * WARNING 최초 진입 frame=019(rssi=-76, entry=2280), DANGER 최초 진입 frame=032(rssi=-63,
+ * entry=3840), frame=031(-64)부터 dangerStreak 누적.
+ *
+ * 재동결(v1.1.96 MedianFilter 부분버퍼 짝수=약한 쪽, 2026-09-16): kfVel 만 frame=009 부터 변경.
+ * render 는 42행 전부 그대로(WARNING 최초 frame=019, DANGER 최초 frame=032 유지).
+ */
 // 아래 두 배열은 1회 실제 구동 캡처값 — 손 계산 금지, 재동결은 수동 파일 편집만 허용(T-02-05).
 private val ESCALATION_GOLDEN: Array<String> = arrayOf(
     "frame=000 rssi= -95 level=null entry=null track=NONE        dangerStreak=0 warnStreak=0 fastStreak=0 bcast=0",

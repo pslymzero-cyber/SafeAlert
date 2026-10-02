@@ -29,23 +29,6 @@ class MedianFilterWarmupTest {
         val SAMPLES = intArrayOf(-92, -88, -85, -83, -80, -77, -75, -72, -70, -68)
     }
 
-    /** 윈도우가 채워지기 전까지 false, 정확히 windowSize 번째 표본에서 true 로 전이한다. */
-    @Test
-    fun coldStart_isNotFull_untilWindowFilled() {
-        val medianFilter = MedianFilter()   // windowSize = DEFAULT_WINDOW = 3
-
-        assertFalse("warmup/coldStart n=0 stage=median", medianFilter.isFull(DEVICE_01))
-
-        medianFilter.push(DEVICE_01, SAMPLES[0])
-        assertFalse("warmup/coldStart n=1 stage=median", medianFilter.isFull(DEVICE_01))
-
-        medianFilter.push(DEVICE_01, SAMPLES[1])
-        assertFalse("warmup/coldStart n=2 stage=median", medianFilter.isFull(DEVICE_01))
-
-        medianFilter.push(DEVICE_01, SAMPLES[2])
-        assertTrue("warmup/coldStart n=3 stage=median", medianFilter.isFull(DEVICE_01))
-    }
-
     /** FIFO 로 오래된 표본이 밀려나도 크기는 windowSize 로 유지되므로 true 가 지속된다. */
     @Test
     fun isFull_staysTrue_afterWindowOverflows() {

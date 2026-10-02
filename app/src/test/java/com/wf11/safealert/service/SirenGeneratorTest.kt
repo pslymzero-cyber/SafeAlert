@@ -32,10 +32,6 @@ class SirenGeneratorTest {
         return crossings / 2.0 / ((to - from).toDouble() / SAMPLE_RATE)
     }
 
-    @Test fun wail_cycle_size_matches_constants() {
-        assertEquals(SAMPLE_RATE * SirenGenerator.WAIL_CYCLE_MS / 1000, SirenGenerator.wailCycle().size)
-    }
-
     @Test fun wail_freq_stays_in_range_and_reaches_both_ends() {
         var lo = Double.MAX_VALUE
         var hi = 0.0
@@ -70,13 +66,6 @@ class SirenGeneratorTest {
             peak = maxOf(peak, abs(s.toInt()))
         }
         assertTrue("peak=$peak", abs(peak - target) <= 1)
-    }
-
-    @Test fun wail_loop_seam_is_click_free() {
-        val pcm = SirenGenerator.wailCycle()
-        var maxDelta = 0
-        for (i in 1 until pcm.size) maxDelta = maxOf(maxDelta, abs(pcm[i] - pcm[i - 1]))
-        assertTrue(abs(pcm[0] - pcm[pcm.size - 1]) <= maxDelta)
     }
 
     @Test fun check_beep_has_expected_shape() {

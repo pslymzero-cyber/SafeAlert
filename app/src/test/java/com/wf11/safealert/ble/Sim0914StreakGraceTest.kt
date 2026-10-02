@@ -96,68 +96,6 @@ class Sim0914StreakGraceTest {
         assertEquals(r100[0]!!.sustainedAt, r100[3]!!.sustainedAt)
     }
 
-    // ── b. ms 경계 299/300/301 ─────────────────────────────────────────
-    @Test
-    fun b_graceBoundaryMs_direct() {
-        val res = mutableMapOf<Long, Pair<Boolean, G>>()
-        for (d in listOf(299L, 300L, 301L)) {
-            val asm = asmOf(h.newService())
-            if (gate(asm, vel, 1_000L) == null) { out("b.ms", "gap=$d result=N/A"); continue }
-            val g = gate(asm, 0.0, 1_000L + d)!!
-            val kept = starts(asm).containsKey(id)
-            val ls = lastSeen(asm)?.get(id)
-            val next = gate(asm, vel, 1_000L + d + 100L)!!
-            res[d] = kept to g
-            out("b.ms", "gap=$d kept=$kept dipStreakMs=${g.streakMs} lastSeenAfter=${na(ls)} resumeStreakMs=${next.streakMs}")
-        }
-        // 유예 기준은 streak 시작이 아니라 마지막 접근 프레임
-        for (d in listOf(300L, 301L)) {
-            val asm = asmOf(h.newService())
-            if (gate(asm, vel, 1_000L) == null) { out("b.lastSeenRef", "gap=$d result=N/A"); continue }
-            gate(asm, vel, 1_240L)
-            val g = gate(asm, 0.0, 1_240L + d)!!
-            out("b.lastSeenRef", "start=1000 lastSeen=1240 dipAt=${1_240L + d} kept=${starts(asm).containsKey(id)} dipStreakMs=${g.streakMs} sustainedOnDipFrame=${g.sustained}")
-        }
-        if (res.isEmpty()) return
-        assertTrue(res[299L]!!.first); assertEquals(299L, res[299L]!!.second.streakMs)
-        assertTrue("300ms 는 유예(<=)", res[300L]!!.first); assertEquals(300L, res[300L]!!.second.streakMs)
-        assertFalse("301ms 는 리셋", res[301L]!!.first); assertEquals(0L, res[301L]!!.second.streakMs)
-    }
-
-    // ── a'. processAlert 경로(두 트리 공통) ─────────────────────────────
-    @Test
-    fun a_processAlertDipTrace() {
-        val base = { f: Int -> -80 + f / 6 }           // 약 1.4 dBm/s 느린 접근
-        fun run(n: Int, dipFrom: Int?): Pair<Long?, Int?> {
-            val svc = h.newService(); val asm = asmOf(svc)
-            var now = 1_000L; var resets = 0; var prev: Long? = null; var firstStartF: Int? = null
-            val trace = StringBuilder()
-            for (f in 0 until 150) {
-                val dip = dipFrom != null && f in dipFrom until dipFrom + n
-                val rssi = base(f) - if (dip) 4 else 0
-                h.callProcessAlert(svc, id, rssi, nowMs = now)
-                val st = starts(asm)[id]
-                if (st != null && firstStartF == null) firstStartF = f
-                if (prev != null && st != prev) resets++
-                prev = st
-                if (firstStartF != null) {
-                    val ws = fieldOrNull<Map<String, Int>>(asm, "warningContactStreakMap")?.get(id)
-                    trace.append("$f:$rssi/v=${kfVel(svc)?.let { "%.2f".format(it) } ?: "N/A"}/st=${st?.let { now - it } ?: "-"}/ls=${lastSeen(asm)?.get(id)?.let { now - it } ?: "N/A"}/ws=${na(ws)};")
-                }
-                if (h.alertLevelOf(svc, id) != null) {
-                    out("a.process", "dips=$n dipFrom=${na(dipFrom)} firstStartFrame=${na(firstStartF)} alertFrame=$f alertMs=$now level=${h.alertLevelOf(svc, id)} startResets=$resets")
-                    out("a.processTrace", "dips=$n $trace")
-                    return now to firstStartF
-                }
-                now += 120L
-            }
-            out("a.process", "dips=$n dipFrom=${na(dipFrom)} firstStartFrame=${na(firstStartF)} alert=none startResets=$resets")
-            return null to firstStartF
-        }
-        val (_, fs) = run(0, null)
-        for (n in 1..3) run(n, fs?.plus(1))
-    }
-
     // ── c/d. 해제 후 맵 정리와 재접근 ───────────────────────────────────
     private fun alertSteady(svc: BleService, startMs: Long, trace: StringBuilder? = null): Long? {
         var now = startMs

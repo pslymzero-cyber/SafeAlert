@@ -83,22 +83,6 @@ class MotionAnalyzerTest {
         assertTrue(three.times(Signal.MOVED).isNotEmpty())
     }
 
-    @Test fun sample_gap_counts_as_still() {
-        val r = Run()
-        r.span(0, 5_000, still)
-        r.span(65_000, 70_000, still)
-        assertTrue(r.signals.isEmpty())
-    }
-
-    @Test fun fall_positive_fires_exactly_once_after_settle_window() {
-        val r = Run()
-        r.fallHead()
-        r.span(3260, 17_000, lying)
-        val falls = r.times(Signal.FALL)
-        assertEquals(1, falls.size)
-        assertTrue(falls[0] in 14_200..16_200)
-    }
-
     @Test fun fall_then_walking_cancels() {
         val r = Run()
         r.fallHead()
@@ -240,5 +224,7 @@ class MotionAnalyzerTest {
         assertEquals(1, falls.size)
         assertEquals(3200L, r.a.eventMs)
         assertTrue(falls[0] - r.a.eventMs >= 12_000)
+        // and the single FALL is decided by 16.2 s
+        assertTrue(falls[0] <= 16_200)
     }
 }

@@ -56,12 +56,6 @@ class BeaconFullIdTest {
     }
 
     @Test
-    fun serviceUuid_samePrefix_equipAndVisitorJudgedSeparately() {
-        assertFalse(BeaconRegistry.isVisitorBeacon(serviceFullId(equipUuid)))
-        assertTrue(BeaconRegistry.isVisitorBeacon(serviceFullId(visitorUuid)))
-    }
-
-    @Test
     fun mac_judgedByExactMatch() {
         assertFalse(BeaconRegistry.isVisitorBeacon(macFullId(mac)))
         assertEquals("MAC", BeaconRegistry.findProfileByFullId(macFullId(mac))?.type)

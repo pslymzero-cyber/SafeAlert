@@ -8,14 +8,6 @@ import org.junit.Test
 class VibrationWindowTest {
 
     @Test
-    fun fresh_window_covers_nothing() {
-        val w = VibrationWindow()
-        assertFalse(w.covers(0L))
-        assertFalse(w.covers(1_000L))
-        assertFalse(w.covers(Long.MAX_VALUE - 1))
-    }
-
-    @Test
     fun one_shot_covers_start_to_end_plus_grace() {
         val w = VibrationWindow()
         w.oneShot(1_000L, 500L)

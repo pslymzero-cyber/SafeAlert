@@ -45,25 +45,6 @@ class LoneWorkerOrderTest : RestartKit() {
         }
     }
 
-    /** Plug at 301 s after the SOS deadline 300 s: SOS whether the data comes before or after the confirm. */
-    @Test fun stable_change_after_a_passed_deadline_waits_for_its_judgment() {
-        for (late in listOf(false, true)) {
-            val m = "late=$late"
-            val l = newLogic(carried = true)
-            assertEquals(m, Mode.CHECKING, l.seenAt(180_000))
-            assertEquals(m, Mode.CHECKING, l.modeAt(300_000))
-            l.powerRaw(true, 301_000)
-            if (late) {
-                assertEquals(m, Mode.SOS, l.seenAt(303_000))
-                assertEquals(m, Mode.SOS, l.modeAt(306_000))
-            } else {
-                assertEquals(m, Mode.SOS, l.seenAt(302_000))
-                assertEquals(m, Mode.SOS, l.modeAt(303_050))
-            }
-            assertEquals(m, Rest.DOCKED, l.rest)
-        }
-    }
-
     /** A change at the restart is applied first even when the saved still deadline has passed (E9, L1). */
     @Test fun restart_change_is_not_deferred_by_an_old_deadline() {
         for (plugged in listOf(true, false)) {
@@ -124,17 +105,6 @@ class LoneWorkerOrderTest : RestartKit() {
         val l = newLogic(carried = true)
         l.powerRaw(true, 1_000)
         assertEquals(180_000L, l.nextCheckAt(5_000))
-    }
-
-    /** The confirmed change leaves the debounce before the opposite raw value, which then starts a new wait (Y8). */
-    @Test fun opposite_broadcast_right_after_a_confirmation_starts_a_new_wait() {
-        val l = newLogic(carried = true)
-        l.powerRaw(true, 10_000)
-        assertTrue(l.powerRaw(false, 12_500))
-        assertEquals(Rest.DOCKED, l.rest)
-        assertEquals(12_500 + PowerDebounce.CONFIRM_MS, l.nextCheckAt(12_500))
-        l.seenAt(14_500)
-        assertEquals(Rest.WAIT, l.rest)
     }
 
     /** A sticky check that only confirms a stable change still asks the monitor for a tick (Y8). */

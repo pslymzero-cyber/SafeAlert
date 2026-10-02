@@ -49,21 +49,17 @@ class LoneWorkerAccidentTest {
         l.onZone(true, 5_000)
         l.onAccident(6_000)
         for (t in 40_000L..400_000L step 10_000L) assertEquals(Mode.WATCHING, l.seenAt(t))
+        // a full-shape fall (long drop, hard impact, big tilt) is ignored the same way
+        val full = rule1(charging = true)
+        full.onZone(true, 5_000)
+        full.onAccident(6_000, MotionAnalyzer.FallShape(400, 5.0, 90.0))
+        for (t in 40_000L..400_000L step 10_000L) assertEquals(Mode.WATCHING, full.seenAt(t))
     }
 
     @Test fun fall_while_charging_outside_zone_counts() {
         val l = rule1(charging = true)
         l.onAccident(20_000)
         assertEquals(Mode.CHECKING, l.seenAt(50_000))
-    }
-
-    @Test fun fall_inside_zone_not_charging_counts() {
-        val l = rule1(zoneInside = true)
-        l.tick(60_000)
-        assertEquals(true, l.zoneSettled)
-        l.onAccident(100_000)
-        assertEquals(Mode.CHECKING, l.seenAt(130_000))
-        assertEquals(Mode.SOS, l.seenAt(190_000))
     }
 
     @Test fun plug_within_10s_before_trigger_ignores_it() {
@@ -84,16 +80,14 @@ class LoneWorkerAccidentTest {
         assertEquals(Mode.WATCHING, l.seenAt(29_000))
         l.reportPower(true, 30_000)
         for (t in 40_000L..400_000L step 10_000L) assertEquals(Mode.WATCHING, l.seenAt(t))
-    }
-
-    @Test fun plug_after_steps_closed_accident_check_ends_suspicion() {
-        val l = rule1()
-        l.onAccident(10_000)
-        assertEquals(Mode.CHECKING, l.seenAt(40_000))
-        l.walk(45_000, 5)
-        assertEquals(Mode.WATCHING, l.mode)
-        l.reportPower(true, 50_000)
-        for (t in 60_000L..400_000L step 10_000L) assertEquals(Mode.WATCHING, l.seenAt(t))
+        // also after steps closed the accident check (suspicion still running)
+        val s = rule1()
+        s.onAccident(10_000)
+        assertEquals(Mode.CHECKING, s.seenAt(40_000))
+        s.walk(45_000, 5)
+        assertEquals(Mode.WATCHING, s.mode)
+        s.reportPower(true, 50_000)
+        for (t in 60_000L..400_000L step 10_000L) assertEquals(Mode.WATCHING, s.seenAt(t))
     }
 
     @Test fun real_plug_during_accident_check_closes_it_and_ends_suspicion() {
@@ -228,15 +222,6 @@ class LoneWorkerAccidentTest {
         assertEquals(Mode.CHECKING, l.seenAt(315_000))
     }
 
-    @Test fun five_steps_hold_then_restill_within_5min_opens_check() {
-        val l = rule1()
-        l.onAccident(10_000)
-        l.walk(38_000, 5)
-        assertEquals(Mode.WATCHING, l.seenAt(40_000))
-        assertEquals(Mode.WATCHING, l.seenAt(67_999))
-        assertEquals(Mode.CHECKING, l.seenAt(68_000))
-    }
-
     @Test fun four_steps_are_not_distinct_motion() {
         val l = rule1()
         l.onAccident(10_000)
@@ -270,14 +255,6 @@ class LoneWorkerAccidentTest {
         assertEquals(Mode.SOS, l.seenAt(100_000))
     }
 
-    @Test fun steps_before_the_trigger_do_not_count() {
-        val l = rule1()
-        l.walk(9_000, 4)
-        l.onAccident(10_000)
-        l.step(12_000)
-        assertEquals(Mode.CHECKING, l.seenAt(40_000))
-    }
-
     @Test fun ok_closes_accident_check_and_ends_suspicion() {
         val l = rule1()
         l.onAccident(10_000)
@@ -307,14 +284,6 @@ class LoneWorkerAccidentTest {
         l.onAccident(190_000)
         assertEquals(true, l.ackWorking(195_000))
         for (t in 200_000L..370_000L step 5_000L) assertEquals(Mode.WATCHING, l.seenAt(t))
-    }
-
-    @Test fun moved_signal_alone_does_not_close_accident_check() {
-        val l = rule1()
-        l.onAccident(10_000)
-        assertEquals(Mode.CHECKING, l.seenAt(40_000))
-        l.onMoved(45_000)
-        assertEquals(Mode.CHECKING, l.seenAt(50_000))
     }
 
     @Test fun without_step_sensor_3s_strong_motion_holds() {
@@ -426,13 +395,6 @@ class LoneWorkerAccidentTest {
         l.reportPower(false, 100_000)
         l.onAccident(100_400)
         for (t in 130_400L..430_400L step 10_000L) assertEquals(Mode.WATCHING, l.seenAt(t))
-    }
-
-    @Test fun unplug_just_after_fall_in_safe_zone_is_ignored() {
-        val l = rule1(charging = true, zoneInside = true)
-        l.reportPower(false, 101_000)
-        l.onAccident(100_000)
-        for (t in 130_000L..430_000L step 10_000L) assertEquals(Mode.WATCHING, l.seenAt(t))
     }
 
     @Test fun unplug_11s_before_fall_counts_unplug_after_fall_is_ignored() {

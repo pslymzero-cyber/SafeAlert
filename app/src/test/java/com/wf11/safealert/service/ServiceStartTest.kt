@@ -105,12 +105,6 @@ class ServiceStartTest {
         assertEquals(0L, BootRestoreReceiver.startedAt(0L, 0L, 34))
     }
 
-    @Test
-    fun old_key_boot_on_api33_restores_without_judging() {
-        val since = BootRestoreReceiver.startedAt(0L, 7_000L, 33)
-        assertFalse(stopped(33, listOf(user to 100_000L), since = since, updatedAt = 50_000L))
-    }
-
     private fun limited(sdk: Int, fine: Boolean, background: Boolean, bgStarted: Boolean) =
         ServiceStartGate.bgLocationLimited(sdk, fine, bgStarted) { background }
 

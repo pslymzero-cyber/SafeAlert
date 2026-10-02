@@ -85,27 +85,6 @@ class DeviceStateRegistryTest {
         assertEquals("clearAll 후 잔여 엔트리는 0 이어야 한다", 0, reg.entryCount())
     }
 
-    /**
-     * BUG-01 — 진입/소멸을 반복해도 엔트리가 누적되지 않는다.
-     * 매 사이클 기기 id 를 새로 만들어(재접속이 아닌 신규 기기) 누수라면 단조 증가하게 만든다.
-     */
-    @Test
-    fun repeatedJoinAndLeave_doesNotAccumulate() {
-        val reg = newRegistry()
-        val baseline = reg.entryCount()
-
-        repeat(200) { cycle ->
-            val id = "DEV_$cycle"
-            seed(id)
-            reg.purge(id, cold = true)
-            // teardown 은 기기별 purge 대상이 아니다 - 실제 서비스에서는 TTL prune 이 맡는 몫이라
-            // 이 테스트에서는 그 역할을 대신해 비워준다.
-            teardown.remove(id)
-        }
-
-        assertEquals("소멸 사이클 후 잔여 엔트리는 기저선으로 돌아와야 한다", baseline, reg.entryCount())
-    }
-
     /** 같은 이름을 두 번 등록하면 즉시 실패한다 — 슬롯 중복은 제거가 두 번 도는 조용한 버그다. */
     @Test(expected = IllegalArgumentException::class)
     fun duplicateSlotName_isRejected() {

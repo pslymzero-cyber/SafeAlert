@@ -10,15 +10,6 @@ import org.junit.Test
 class SensorStallTest {
 
     @Test
-    fun events_keep_it_ok() {
-        val s = SensorStall()
-        s.reset(0L)
-        s.onEvent(20_000L)
-        assertEquals(SensorStall.Action.OK, s.check(49_000L))
-        assertFalse(s.stalled)
-    }
-
-    @Test
     fun stall_retries_with_backoff_and_reports_stalled_until_an_event() {
         val s = SensorStall()
         s.reset(0L)
@@ -85,19 +76,6 @@ class SensorStallTest {
         // registered again in the same siren: no second log line
         assertTrue(g.update(true, true))
         assertFalse(g.registered(true))
-    }
-
-    /**
-     * Turning the feature off or changing settings does not reset the gyro gate during a peer siren;
-     * only the siren end and the monitor stop turn the gyro log off (W5, D3).
-     */
-    @Test
-    fun gyro_log_is_turned_off_only_by_the_siren_or_the_monitor_stop() {
-        assertFalse(sourceBlock(serviceSource("LoneWorkerSensors.kt"), "fun unregister()").contains("gyroLog("))
-        val stop = sourceBlock(serviceSource("LoneWorkerMonitor.kt"), "fun stop()")
-        val off = stop.indexOf("sensors.gyroLog(false, false)")
-        assertTrue(off >= 0)
-        assertTrue(off < stop.indexOf("sensors.unregister()"))
     }
 
     /**

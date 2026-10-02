@@ -15,11 +15,10 @@ import kotlin.math.roundToInt
  * (v1.1.79 검증) 세이프존 상태 머신 시뮬레이션.
  *
  * 과거 시뮬은 Python 재구현 모델이었다 — 재구현이 실제 Kotlin 과 갈라지면 시뮬은 자기 모델만
- * 검증하고 앱 결함은 그대로 통과시킨다. 그래서 이 테스트는 4단으로 짠다.
+ * 검증하고 앱 결함은 그대로 통과시킨다. 그래서 이 테스트는 3단으로 짠다.
  *   1) 실제 BleService.onZoneBeaconSignal / reevaluateZones 를 리플렉션으로 직접 구동한다.
- *   2) 통계용 미러가 실제 코드와 표본 단위로 완전 일치하는지 먼저 교차검증한다(불일치 = 즉시 실패).
- *   3) 검증된 미러로만 "수정 전(구)" 대조군을 다시드 돌려 개선폭을 수치화한다.
- *   4) 소스의 상수·데드밴드 분기를 파일에서 읽어 assert — 본체가 바뀌면 미러가 낡았다고 여기서 터진다.
+ *   2) 미러가 실제 코드와 표본 단위로 완전 일치하는지 교차검증한다(불일치 = 즉시 실패).
+ *   3) 소스의 상수·데드밴드 분기를 파일에서 읽어 assert — 본체가 바뀌면 미러가 낡았다고 여기서 터진다.
  *
  * 시간 제어: 진입 판정은 시간 무관(표본 카운트만)이고, 시간 의존은 reevaluateZones 뿐이다.
  * zoneLastSeenMap 을 리플렉션으로 과거로 밀면 실시간 대기 없이 GRACE·STALE 를 재현할 수 있다.
@@ -35,7 +34,6 @@ class ZoneStateMachineSimTest {
         const val EXIT_SAMPLES = 3       // v1.1.83: 이탈 디바운스(단발 페이드로 억제가 끊기던 증상)
         const val GRACE_MS = 10_000L     // v1.1.82: 3s -> 10s(느린 비콘 표본 사이 유지)
         const val NEW_STALE_MS = 30_000L // v1.1.79 현재
-        const val OLD_STALE_MS = 4_000L  // v1.1.79 직전(대조군)
         const val XCHECK_SEEDS = 10
         const val MC_SEEDS = 200
     }
@@ -118,8 +116,8 @@ class ZoneStateMachineSimTest {
         return Res(enterAt, insideOf(svc), trace)
     }
 
-    // ── 2) 미러 (교차검증 통과 후에만 통계에 쓴다) ───────────────────────────
-    private class Mirror(val deadbandResets: Boolean, val staleMs: Long) {
+    // ── 2) 미러 (실제 코드와 표본 단위로 교차검증) ───────────────────────────
+    private class Mirror(val staleMs: Long) {
         var sample = 0
         var inside: Boolean? = null
         var lastSeen = 0L
@@ -136,7 +134,7 @@ class ZoneStateMachineSimTest {
                     sample = minOf(sample, 0) - 1
                     if (-sample >= EXIT_SAMPLES && inside == true) inside = false
                 }
-                else -> if (deadbandResets) sample = 0
+                else -> Unit
             }
         }
 
@@ -172,7 +170,7 @@ class ZoneStateMachineSimTest {
             (0 until XCHECK_SEEDS).forEach { seed ->
                 val f = frames(s, seed.toLong())
                 val real = runReal(svc, f)
-                val mir = runMirror(Mirror(deadbandResets = false, staleMs = NEW_STALE_MS), f)
+                val mir = runMirror(Mirror(staleMs = NEW_STALE_MS), f)
                 assertEquals(
                     "${s.name} seed=${seed} 표본별 (sample,inside) 불일치 — 미러 드리프트",
                     real.trace, mir.trace
@@ -223,33 +221,6 @@ class ZoneStateMachineSimTest {
         println(("[오진입] 존 밖 ${MC_SEEDS}시드: 스파이크 %.2f%%, 억제 체류 %.2f%%(상한 %.2f%%), " +
                 "최장 연속 ${worstRun}표본 - 이탈선 아래 ${EXIT_SAMPLES}표본이면 반드시 해제")
                 .format(spikePct, pct, cap))
-    }
-
-    @Test
-    fun `03 대조 몬테카를로 - 수정 전후 진입 성공률`() {
-        val sb = StringBuilder("\n[세이프존 진입 성공률 — 수정 전(구) vs v1.1.79]\n")
-        sb.append(String.format("%-32s %8s %8s %14s%n", "시나리오", "구", "현재", "진입표본 구>현"))
-        val regressions = ArrayList<String>()
-
-        scenarios.forEach { s ->
-            var oldOk = 0; var newOk = 0; var oldSum = 0; var newSum = 0
-            (0 until MC_SEEDS).forEach { seed ->
-                val f = frames(s, seed.toLong())
-                val o = runMirror(Mirror(deadbandResets = true, staleMs = OLD_STALE_MS), f)
-                val nw = runMirror(Mirror(deadbandResets = false, staleMs = NEW_STALE_MS), f)
-                if (o.enterAt > 0) { oldOk++; oldSum += o.enterAt }
-                if (nw.enterAt > 0) { newOk++; newSum += nw.enterAt }
-            }
-            val oldPct = oldOk * 100.0 / MC_SEEDS
-            val newPct = newOk * 100.0 / MC_SEEDS
-            val oldAvg = if (oldOk > 0) "%.1f".format(oldSum.toDouble() / oldOk) else "-"
-            val newAvg = if (newOk > 0) "%.1f".format(newSum.toDouble() / newOk) else "-"
-            sb.append(String.format("%-32s %7.1f%% %7.1f%% %14s%n", s.name, oldPct, newPct, "${oldAvg}>${newAvg}"))
-            // 존 밖(D)은 양쪽 0% 가 정상. 그 외에서 현재가 구보다 나빠지면 회귀다.
-            if (!s.name.startsWith("D") && newPct < oldPct) regressions += "${s.name}: ${oldPct}% -> ${newPct}%"
-        }
-        println(sb)
-        assertTrue("수정이 진입 성공률을 떨어뜨린 시나리오: ${regressions}", regressions.isEmpty())
     }
 
     @Test

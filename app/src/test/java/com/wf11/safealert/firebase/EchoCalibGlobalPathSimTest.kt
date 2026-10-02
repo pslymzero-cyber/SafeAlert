@@ -40,22 +40,10 @@ class EchoCalibGlobalPathSimTest {
         assertEquals(100, v85[PEER]!!.second)
     }
 
-    /** S2. 롤아웃 중 신구 혼재 — 같은 기기가 구 경로(폴백 파싱)와 신 경로 양쪽에 존재.
-     *  구 경로 노드는 업그레이드해도 삭제되지 않으므로 걸러내지 않으면 표본이 두 번 세어진다. */
-    @Test
-    fun s2_같은기기_구경로잔존_중복집계_안됨() {
-        val 구경로_A = node("A", MY, "B" to stat(3.0, 100))   // echo_calib/SITE1/A (폴백 파싱)
-        val 신경로_A = node("A", MY, "B" to stat(3.0, 100))   // echo_calib/A
-        val B = node("B", PEER)
-
-        val merged = FirebaseManager.mergeEchoNodes(listOf(구경로_A), listOf(신경로_A, B))
-        assertEquals("같은 기기ID 노드는 하나로 접힌다", 2, merged.size)
-
-        val r = FirebaseManager.aggregateEchoPriors(merged, MY, IQR_GATE, CAP)
-        assertEquals("같은 기기 표본이 두 번 세어지면 안 된다", 100, r[PEER]!!.second)
-    }
-
-    /** S2b. 스테일 오염 — 구 경로에 남은 옛 측정값이 신규 측정값을 끌어당기면 안 된다. */
+    /**
+     * S2b. 롤아웃 중 신구 혼재 — 같은 기기가 구 경로(폴백 파싱)와 신 경로 양쪽에 존재한다. 구 경로 노드는
+     *  업그레이드해도 삭제되지 않으므로, 하나로 접히지 않으면 표본이 두 번 세어지고 옛 측정값이 신규 값을 끌어당긴다.
+     */
     @Test
     fun s2b_구경로_스테일값이_현재값을_오염시키지_않는다() {
         val 구경로_A = node("A", MY, "B" to stat(9.0, 100))   // 옛 측정 (오차 큰 시절)
@@ -63,8 +51,10 @@ class EchoCalibGlobalPathSimTest {
         val B = node("B", PEER)
 
         val merged = FirebaseManager.mergeEchoNodes(listOf(구경로_A), listOf(신경로_A, B))
+        assertEquals("같은 기기ID 노드는 하나로 접힌다", 2, merged.size)
         val r = FirebaseManager.aggregateEchoPriors(merged, MY, IQR_GATE, CAP)
         assertEquals("신 경로 현재값만 반영돼야 한다(오염되면 6.0)", 3.0, r[PEER]!!.first, 1e-9)
+        assertEquals("같은 기기 표본이 두 번 세어지면 안 된다", 100, r[PEER]!!.second)
     }
 
     /** S2c. 구 경로에만 있는 기기(아직 업그레이드 안 한 단말)는 그대로 살아남는다. */

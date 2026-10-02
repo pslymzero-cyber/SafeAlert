@@ -65,18 +65,43 @@ class SpecialAlertTimeGateTest {
 
     @Test
     fun alertedDeviceSwitchingToReverseGetsSpecialImmediately() {
-        val service = BleServiceTestHarness.newService()
-        var clock = 1_000L
-        repeat(10) {
-            BleServiceTestHarness.callProcessAlert(service, id, -45, remoteState = payload(BleConstants.PSTATE_IDLE), payloadPresent = true, nowMs = clock)
-            clock += 120L
-        }
-        assertNotNull("IDLE 로 먼저 경보에 들어가 있어야 한다", BleServiceTestHarness.alertLevelOf(service, id))
-        assertFalse(suddenLabels(service).containsKey(id))
+        for (state in listOf(BleConstants.PSTATE_REVERSE, BleConstants.PSTATE_LOADING)) {
+            val service = BleServiceTestHarness.newService()
+            var clock = 1_000L
+            repeat(10) {
+                BleServiceTestHarness.callProcessAlert(service, id, -45, remoteState = payload(BleConstants.PSTATE_IDLE), payloadPresent = true, nowMs = clock)
+                clock += 120L
+            }
+            assertNotNull("IDLE 로 먼저 경보에 들어가 있어야 한다", BleServiceTestHarness.alertLevelOf(service, id))
+            assertFalse(suddenLabels(service).containsKey(id))
 
-        BleServiceTestHarness.callProcessAlert(service, id, -45, remoteState = payload(BleConstants.PSTATE_REVERSE), payloadPresent = true, nowMs = clock)
-        assertTrue("경보 중 후진 전환은 같은 프레임에 특수경보", suddenLabels(service).containsKey(id))
-        assertEquals(BleConstants.LEVEL_DANGER, BleServiceTestHarness.alertLevelOf(service, id))
+            val broadcasts = BleServiceTestHarness.alertBroadcasts().size
+            BleServiceTestHarness.callProcessAlert(service, id, -45, remoteState = payload(state), payloadPresent = true, nowMs = clock)
+            assertTrue("state=$state: 경보 중 후진·하역 전환은 같은 프레임에 특수경보", suddenLabels(service).containsKey(id))
+            assertEquals(BleConstants.LEVEL_DANGER, BleServiceTestHarness.alertLevelOf(service, id))
+            assertTrue("state=$state: 그 프레임에 경보 브로드캐스트", BleServiceTestHarness.alertBroadcasts().size > broadcasts)
+        }
+
+        // WARNING 경보 중(-78)에 -45 로 들어오며 후진 전환: DANGER 가 IDLE 대조군보다 늦지 않다
+        fun dangerFrameAfterWarning(state: Int): Int? {
+            val service = BleServiceTestHarness.newService()
+            var clock = 1_000L
+            repeat(15) {
+                BleServiceTestHarness.callProcessAlert(service, id, -78, remoteState = payload(BleConstants.PSTATE_IDLE), payloadPresent = true, nowMs = clock)
+                clock += 120L
+            }
+            assertNotNull("전환 전에 경보 중이어야 한다", BleServiceTestHarness.alertLevelOf(service, id))
+            for (f in 0 until 15) {
+                BleServiceTestHarness.callProcessAlert(service, id, -45, remoteState = payload(state), payloadPresent = true, nowMs = clock)
+                if (BleServiceTestHarness.alertLevelOf(service, id) == BleConstants.LEVEL_DANGER) return f
+                clock += 120L
+            }
+            return null
+        }
+        val rev = dangerFrameAfterWarning(BleConstants.PSTATE_REVERSE)
+        val idle = dangerFrameAfterWarning(BleConstants.PSTATE_IDLE)
+        assertNotNull("WARNING 경보 중 후진 전환은 DANGER 에 도달해야 한다", rev)
+        assertTrue("후진 전환 DANGER 가 IDLE 대조군보다 늦다 rev=$rev idle=$idle", idle == null || rev!! <= idle)
     }
 
     @Test
@@ -84,13 +109,7 @@ class SpecialAlertTimeGateTest {
         val service = BleServiceTestHarness.newService()
         val asm = ReflectionHelpers.getField<Any>(service, "asm")
         val streaks = ReflectionHelpers.getField<Map<String, Long>>(service, "approachStreakStartMap")
-        fun gate(vel: Double, now: Long) = ReflectionHelpers.callInstanceMethod<Any>(
-            asm, "evalTimeGate",
-            ClassParameter.from(String::class.java, id),
-            ClassParameter.from(Double::class.javaPrimitiveType, vel),
-            ClassParameter.from(Long::class.javaPrimitiveType, now),
-            ClassParameter.from(Int::class.javaPrimitiveType, 10),
-        )
+        fun gate(vel: Double, now: Long) = evalGate(asm, vel, now)
         fun streakMs(g: Any) = ReflectionHelpers.getField<Long>(g, "streakMs")
 
         gate(50.0, 1_000L)
@@ -105,5 +124,24 @@ class SpecialAlertTimeGateTest {
 
         gate(0.0, 1_600L)                                 // 마지막 접근 1240 → 360ms > 300ms
         assertFalse("유예 초과는 streak 리셋", streaks.containsKey(id))
+
+        // ms 경계: 마지막 접근 프레임에서 300ms 까지는 유예(<=), 301ms 는 리셋(streakMs 0)
+        for ((gap, kept) in listOf(299L to true, 300L to true, 301L to false)) {
+            val s = BleServiceTestHarness.newService()
+            val a = ReflectionHelpers.getField<Any>(s, "asm")
+            val m = ReflectionHelpers.getField<Map<String, Long>>(s, "approachStreakStartMap")
+            evalGate(a, 50.0, 1_000L)
+            val g = evalGate(a, 0.0, 1_000L + gap)
+            assertEquals("gap=$gap", kept, m.containsKey(id))
+            assertEquals("gap=$gap", if (kept) gap else 0L, streakMs(g))
+        }
     }
+
+    private fun evalGate(asm: Any, vel: Double, now: Long) = ReflectionHelpers.callInstanceMethod<Any>(
+        asm, "evalTimeGate",
+        ClassParameter.from(String::class.java, id),
+        ClassParameter.from(Double::class.javaPrimitiveType, vel),
+        ClassParameter.from(Long::class.javaPrimitiveType, now),
+        ClassParameter.from(Int::class.javaPrimitiveType, 10),
+    )
 }

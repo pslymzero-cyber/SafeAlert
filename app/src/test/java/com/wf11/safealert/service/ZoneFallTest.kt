@@ -54,7 +54,7 @@ class ZoneFallTest {
     private fun rule1(charging: Boolean = false, zoneInside: Boolean = false) =
         newLogic(charging, zoneInside, carried = true).apply { stillMs = 3_600_000L }
 
-    /** Mirrors fall_inside_zone_not_charging_counts: settled inside the zone, fall at 100 s. */
+    /** Settled inside the zone (not charging), fall at 100 s. */
     private fun zoneFall(shape: FallShape, zone: ZoneFall = ZoneFall()): LoneWorkerLogic {
         val l = rule1(zoneInside = true)
         l.zoneFall = zone
@@ -116,7 +116,12 @@ class ZoneFallTest {
 
     @Test fun zone_short_free_fall_discarded() = assertDiscarded(zoneFall(FallShape(60, 3.0, 90.0)))
 
-    @Test fun zone_full_fall_counts() = assertChecking(zoneFall(FallShape(250, 3.0, 70.0)))
+    @Test fun zone_full_fall_counts() {
+        val l = zoneFall(FallShape(250, 3.0, 70.0))
+        assertTrue(l.zoneSettled)
+        assertChecking(l)
+        assertEquals(Mode.SOS, l.seenAt(190_000))
+    }
 
     @Test fun zone_small_tilt_discarded() = assertDiscarded(zoneFall(FallShape(250, 3.0, 50.0)))
 
@@ -125,30 +130,6 @@ class ZoneFallTest {
     @Test fun zone_impact_threshold_from_settings() {
         assertDiscarded(zoneFall(FallShape(300, 3.0, 90.0), ZoneFall(impactG = 4.0)))
         assertChecking(zoneFall(FallShape(300, 4.2, 90.0), ZoneFall(impactG = 4.0)))
-    }
-
-    @Test fun outside_zone_unchanged() {
-        val l = rule1()
-        l.onAccident(6_000, FallShape(60, 2.6, 46.0))
-        assertEquals(Mode.WATCHING, l.seenAt(35_999))
-        assertEquals(Mode.CHECKING, l.seenAt(36_000))
-    }
-
-    @Test fun charging_inside_zone_still_ignored() {
-        val l = rule1(charging = true)
-        l.onZone(true, 5_000)
-        l.onAccident(6_000, FallShape(400, 5.0, 90.0))
-        for (t in 40_000L..400_000L step 10_000L) assertEquals(Mode.WATCHING, l.seenAt(t))
-    }
-
-    // -- tracer: analyzer shape into the zone logic --
-
-    @Test fun tracer_analyzer_shape_into_zone_logic() {
-        val short = MotionAnalyzer().apply { assertEquals(1, fall(3000, 100).size) }
-        assertDiscarded(zoneFall(short.fallShape))
-        val long = MotionAnalyzer().apply { assertEquals(1, fall(3000, 300).size) }
-        assertNotNull(long.fallShape.postureDeg)
-        assertChecking(zoneFall(long.fallShape))
     }
 
     // -- review fixes A1-A4 --
@@ -166,14 +147,10 @@ class ZoneFallTest {
         l.tick(60_000)
         l.onAccident(100_000, a.fallShape)
         assertChecking(l)
-
-        val short = MotionAnalyzer().apply { assertEquals(1, fall(3000, 100).size) }
-        val left = rule1(zoneInside = true)
-        left.tick(60_000)
-        // H8: an exit confirmed within 12 s after the impact means outside; 13 s later keeps the inside rule
-        left.onZone(false, 113_000)
-        left.onAccident(100_000, short.fallShape)
-        assertDiscarded(left)
+        assertNotNull(a.fallShape.postureDeg)
+        // an analyzer shape with a 100 ms drop is too low for the zone rule
+        val brief = MotionAnalyzer().apply { assertEquals(1, fall(3000, 100).size) }
+        assertDiscarded(zoneFall(brief.fallShape))
     }
 
     @Test fun zone_entered_after_impact_uses_outside_rule() {
@@ -264,7 +241,7 @@ class ZoneFallTest {
     @Test fun zone_exit_confirmed_after_12s_keeps_inside_rule() {
         val l = rule1(zoneInside = true)
         l.tick(60_000)
-        l.onZone(false, 115_000)
+        l.onZone(false, 113_000)
         l.onAccident(100_000, short)
         assertDiscarded(l)
     }

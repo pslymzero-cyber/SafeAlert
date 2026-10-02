@@ -18,19 +18,13 @@ class PeerAckGateTest {
 
     private fun ids(r: List<PeerRow>?) = r?.map { it.epId }
 
-    @Test fun tap_after_settle_returns_last_drawn_ids() {
-        val g = PeerAckGate()
-        g.onRender(rows("A#1", "B#2"), 0L)
-        assertEquals(listOf("A#1", "B#2"), ids(g.onTap(PeerAckGate.SETTLE_MS)))
-    }
-
     @Test fun tap_within_settle_after_change_is_ignored() {
         val g = PeerAckGate()
         g.onRender(rows("A#1"), 0L)
         assertEquals(listOf("A#1"), ids(g.onTap(800L)))
         g.onRender(rows("A#1", "B#2"), 1_000L)
         assertNull(g.onTap(1_500L))
-        assertEquals(listOf("A#1", "B#2"), ids(g.onTap(1_700L)))
+        assertEquals(listOf("A#1", "B#2"), ids(g.onTap(1_000L + PeerAckGate.SETTLE_MS)))
     }
 
     @Test fun same_active_set_with_new_shown_ids_does_not_restart_delay() {

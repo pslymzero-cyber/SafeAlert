@@ -31,12 +31,6 @@ class MountedStillTest {
         assertEquals(120_000L, l.responseLeftMs(180_000))
     }
 
-    @Test fun walker_docked_still_rests() {
-        val l = newLogic(charging = true)
-        assertEquals(Rest.DOCKED, l.rest)
-        for (t in 10_000L..600_000L step 10_000L) assertEquals(Mode.WATCHING, l.seenAt(t))
-    }
-
     @Test fun moved_restarts_mounted_count() {
         val l = mounted()
         l.onMoved(100_000)

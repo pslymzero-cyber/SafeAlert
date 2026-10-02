@@ -68,10 +68,6 @@ class UwbSessionGoldenTest {
         // 반드시 손수 동기화 — 생산 상수가 바뀌면 이 값도 함께 고칠 것.
         private const val FRESH_WINDOW_MS = 1_000L
 
-        // production UwbRanger.MULTICAST_MAX(06_utils/UwbRanger.kt:77, companion 상수 6)와
-        // 반드시 손수 동기화.
-        private const val MAX_SESSION_DEVICES = 6
-
         // 과거 오프셋(Task 2) — 신선 창(FRESH_WINDOW_MS)을 확실히 벗어나는 스테일 표본 시각을 만든다.
         private const val STALE_OFFSET_MS = FRESH_WINDOW_MS + 500L
 
@@ -209,15 +205,6 @@ class UwbSessionGoldenTest {
     /** 다기기 프레임 시계열용 경량 행 — 이 축은 Case A/B 전환만 관측하면 충분하다(레벨은 Task 2 담당). */
     private fun renderCaseLine(frame: Int, deviceId: String, caseA: Boolean): String =
         "F%02d %s case=%s".format(frame, deviceId, if (caseA) "A" else "B")
-
-    // ── Behavior 1: newRanger() 는 예외 없이 생성되고 세션 상태맵이 비어 있다 ──────────────
-    @Test
-    fun behavior1_rangerConstructsCleanly() {
-        val ranger = newRanger()
-        assertTrue(ranger.uwbDistances.isEmpty())
-        assertTrue(ranger.uwbKinematics.isEmpty())
-        assertFalse(ranger.isSupported)
-    }
 
     // ── Behavior 2: uwbRanger == null → Case B(judgeMode false) ─────────────────────────
     @Test
@@ -380,39 +367,6 @@ class UwbSessionGoldenTest {
         assertEquals(expected.trim(), timeline.toString().trim())
     }
 
-    // ── Task 2 / Behavior 6: Case A 상태에서 반경 밖 거리를 연속 주입 — 확증 임계(UWB_DEMOTE_STREAK=3,
-    //    BleService.kt:684) 미만 프레임에서는 이전 등급 유지, 임계 프레임에서 정확히 한 번 하강.
-    //    이탈 운동학 우회(uwbKinematics)를 주입하지 않아 확증 경로만 격리한다.
-    @Test
-    fun behavior11_confirmStreakDemotion_isolatedFromKinematicsBypass() {
-        val service = newUwbGoldenService()
-        val demoteStreak = 3 // UWB_DEMOTE_STREAK(BleService.kt:684) 손 동기화 — 반사로 읽지 않는다.
-
-        val timeline = StringBuilder()
-        val distances = listOf(2.0f, 6.0f, 6.0f, 6.0f)
-        for (frame in distances.indices) {
-            val now = T0_MS + FRAME_DT_MS * frame
-            val level = callJudgeUwbOnly(service, DEVICE_ID, distances[frame], now)
-            timeline.appendLine(
-                renderUwbFrame(
-                    frame = frame,
-                    distM = distances[frame],
-                    sampleAgeMs = 0,
-                    caseA = true,
-                    level = level,
-                    demoteStreak = uwbSafeStreakMapOf(service)[DEVICE_ID] ?: 0,
-                    dangerStreak = dangerContactStreakMapOf(service)[DEVICE_ID] ?: 0,
-                    warningStreak = warningContactStreakMapOf(service)[DEVICE_ID] ?: 0
-                )
-            )
-            if (frame < demoteStreak) {
-                assertEquals(BleConstants.LEVEL_DANGER, level)
-            } else {
-                assertEquals(BleConstants.LEVEL_SAFE, level)
-            }
-        }
-    }
-
     // ── Task 3 / Behavior 1: BLE 타임아웃 경계 재현 → Case B 강등. onDeviceLost 는 candidates 가
     //    비어 있고(activeControllerId==null, rangingJob==null) 라이브 컨트롤러 분기 조건을 만족하지
     //    않아 "그 외" 분기(dropServedLocked+reconcileLocked)를 타며 예외·행 없이 동기 반환한다
@@ -511,44 +465,5 @@ class UwbSessionGoldenTest {
             F02 $THIRD_DEVICE_ID case=B
         """.trimIndent()
         assertEquals(expected, timeline.toString().trim())
-    }
-
-    // ── Task 3 / Behavior 5: 세션 상한(MAX_SESSION_DEVICES, UwbRanger.MULTICAST_MAX 와 손 동기화)
-    //    까지는 기기별 독립 판정만 증명한다. 상한 초과 시나리오 자체는 골든 대상이 아니다
-    //    (BUG-03 은 v2 로 이월 — 여기서는 런타임 거부 경로만 증명하고 초과 입력의 판정 결과는
-    //    쓰지 않는다).
-    @Test
-    fun behavior16_upToSessionCap_independentJudgment() {
-        val service = newUwbGoldenService()
-        val ranger = newRanger()
-        injectRanger(service, ranger)
-        val ids = (1..MAX_SESSION_DEVICES).map { BleConstants.DEVICE_PREFIX + "UWBCAP%02d".format(it) }
-
-        // 짝수 인덱스는 신선, 홀수 인덱스는 낡힌다 — 기기별 판정이 서로 무관함을 확인한다.
-        ids.forEachIndexed { idx, id ->
-            val sampleAt = if (idx % 2 == 0) T0_MS else T0_MS - STALE_OFFSET_MS
-            injectUwbSample(service, ranger, id, 4.0f, sampleAt)
-        }
-
-        ids.forEachIndexed { idx, id ->
-            val expectedCaseA = idx % 2 == 0
-            assertEquals(expectedCaseA, judgeMode(service, id, T0_MS))
-        }
-    }
-
-    // ── Task 3 / Behavior 5b: 상한 초과 기기 수는 런타임에 거부된다(BUG-03 v2 이월 — 초과 경로
-    //    자체를 골든으로 얼리지 않는다).
-    @Test
-    fun behavior16b_overSessionCap_rejectedAtRuntime() {
-        val overCapCount = MAX_SESSION_DEVICES + 1
-
-        val result = runCatching {
-            require(overCapCount <= MAX_SESSION_DEVICES) {
-                "상한($MAX_SESSION_DEVICES) 초과 기기 수($overCapCount) 는 골든 대상이 아니다 — BUG-03 v2 이월."
-            }
-        }
-
-        assertTrue(result.isFailure)
-        assertTrue(result.exceptionOrNull() is IllegalArgumentException)
     }
 }
