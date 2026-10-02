@@ -106,13 +106,13 @@
                             <TextView style="@style/SA.RowLabel" android:text="세이프존 낙상 충격(G)" />
                             <EditText android:id="@+id/et_lw_zone_fall_g" style="@style/SA.EditNumber" android:inputType="numberDecimal" />
                         </LinearLayout>
-                        <TextView style="@style/SA.Hint" android:layout_marginTop="0dp" android:text="1.5~8.0, 기본 2.5" />
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="0dp" android:text="2.5~8.0, 기본 2.5. 센서 범위보다 크면 범위의 90%" />
 
                         <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
                             <TextView style="@style/SA.RowLabel" android:text="세이프존 낙상 각도(°)" />
                             <EditText android:id="@+id/et_lw_zone_fall_deg" style="@style/SA.EditNumber" />
                         </LinearLayout>
-                        <TextView style="@style/SA.Hint" android:layout_marginTop="0dp" android:text="30~90, 기본 60" />
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="0dp" android:text="45~90, 기본 60" />
 
                         <View style="@style/SA.Divider" />
 
