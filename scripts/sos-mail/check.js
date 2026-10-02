@@ -158,6 +158,9 @@ for (const s of ['#c62828', ACTIVE, 'WF11', 'Kim', '>k1<',
   '\uC989\uC2DC \uC791\uC5C5\uC790 \uC0C1\uD0DC\uB97C \uD655\uC778\uD574 \uC8FC\uC2ED\uC2DC\uC624.',
   '\uD68C\uC2E0\uD558\uC9C0 \uB9C8\uC2ED\uC2DC\uC624.']) assert.ok(m.htmlBody.includes(s), 'sos html ' + s);
 for (const s of ['#2e7d32', DONE, RES_TITLE]) assert.ok(!m.htmlBody.includes(s), 'sos html no ' + s);
+assert.ok(m.htmlBody.includes('>\uC0AC\uC5C5\uC7A5<') &&
+  m.htmlBody.includes('background:#c62828;color:#ffffff;font-weight:bold;padding:2px 8px;">WF11</span></td>'), 'sos html site');
+assert.ok(!m.htmlBody.includes('\uB9C8\uC9C0\uB9C9 \uC704\uCE58'), 'sos html no last-location row');
 const url = t.w.fetched[t.w.fetched.length - 1];
 assert.ok(url.startsWith('https://db.example.com/wf11/sos/WF11/k1.json?auth='));
 assert.ok(url.endsWith(encodeURIComponent(SECRET)) && !url.endsWith(SECRET));
@@ -191,6 +194,7 @@ assert.ok(m.body.includes('\uD574\uC81C\uB428 (T(HH:mm:ss))'));
 htmlOk(m.htmlBody);
 assert.ok(m.htmlBody.includes('#c62828') && m.htmlBody.includes(DONE + ' (T(HH:mm:ss))'), 'resolved sos html state');
 assert.ok(m.htmlBody.includes('\uB118\uC5B4\uC9D0 \uAC10\uC9C0 \uD6C4 \uC751\uB2F5 \uC5C6\uC74C'), 'fall sos html cause');
+assert.ok(m.htmlBody.includes('>WF11</span> \u00B7 Rack A</td>'), 'fall sos html site + beacon');
 assert.ok(!m.htmlBody.includes(ACTIVE), 'resolved sos html not active');
 assert.strictEqual(t.post({ id: LONG, event: 'resolved' }), 'sent');
 m = t.w.mails[5];
@@ -198,6 +202,9 @@ htmlOk(m.htmlBody);
 for (const s of ['#2e7d32', RES_TITLE, 'WF11', 'Lee', '>KLMNOP<', '2\uBD84 5\uCD08',
   '\uC791\uC5C5\uC790\uAC00 [\uAD1C\uCC2E\uC544\uC694]\uB85C \uD574\uC81C\uD588\uC2B5\uB2C8\uB2E4.',
   '\uD68C\uC2E0\uD558\uC9C0 \uB9C8\uC2ED\uC2DC\uC624.']) assert.ok(m.htmlBody.includes(s), 'resolved html ' + s);
+assert.ok(m.htmlBody.includes('>\uC0AC\uC5C5\uC7A5<') &&
+  m.htmlBody.includes('background:#2e7d32;color:#ffffff;font-weight:bold;padding:2px 8px;">WF11</span> \u00B7 Rack A</td>'),
+  'resolved html site + beacon');
 assert.ok(!m.htmlBody.includes('#c62828'), 'resolved html no red');
 assert.ok(m.subject.includes('Lee'));
 assert.ok(m.subject.endsWith('(' + NO + 'KLMNOP)'));

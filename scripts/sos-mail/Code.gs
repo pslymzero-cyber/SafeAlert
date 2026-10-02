@@ -182,6 +182,7 @@ function buildMail(event, sc, id, rec, stillMin) {
       html: mailHtml('#2e7d32', '구조 요청 해제', who, '작업자가 [괜찮아요]로 해제했습니다.', [
         ['해제 시각', esc(fmt(rec.resolvedAt, 'HH:mm:ss')) + ' (서버 기록)', true],
         ['걸린 시간', '구조 요청 기록 후 ' + Math.floor(sec / 60) + '분 ' + (sec % 60) + '초'],
+        ['사업장', siteCell('#2e7d32', sc, rec)],
         ['상태', badge('#e8f5e9', '#2e7d32', '해제됨')],
         ['기록 번호', esc(no)]
       ]),
@@ -205,7 +206,7 @@ function buildMail(event, sc, id, rec, stillMin) {
     html: mailHtml('#c62828', '구조 요청', who, '즉시 작업자 상태를 확인해 주십시오.', [
       ['원인', esc(cause), true],
       ['서버 기록 시각', esc(fmt(rec.createdAt, 'yyyy-MM-dd HH:mm:ss')) + ' (한국 시간)'],
-      ['마지막 위치', esc(beacon)],
+      ['사업장', siteCell('#c62828', sc, rec)],
       ['상태', done ? badge('#e8f5e9', '#2e7d32', '해제됨 (' + esc(fmt(rec.resolvedAt, 'HH:mm:ss')) + ')')
         : badge('#fdecea', '#c62828', '구조 요청 중') +
           '<br><span style="font-size:12px;color:#666666;">작업자가 [괜찮아요]를 누르면 해제 메일이 갑니다.</span>'],
@@ -258,6 +259,12 @@ function esc(v) {
 /** 상태 칸의 색 글자 상자. */
 function badge(bg, fg, html) {
   return '<span style="background:' + bg + ';color:' + fg + ';font-weight:bold;padding:2px 8px;">' + html + '</span>';
+}
+
+/** '사업장' 칸: 띠와 같은 색 상자에 센터, 비콘 이름을 알면 옆에 붙인다. */
+function siteCell(color, sc, rec) {
+  var beacon = oneLine(rec.beacon);
+  return badge(color, '#ffffff', esc(sc)) + (beacon ? ' · ' + esc(beacon) : '');
 }
 
 /**
