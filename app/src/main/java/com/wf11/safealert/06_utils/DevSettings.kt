@@ -2,6 +2,7 @@
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.wf11.safealert.service.MotionAnalyzer
 
 object DevSettings {
 
@@ -239,11 +240,11 @@ object DevSettings {
         get() = prefs.getInt(KEY_LW_ZONE_FALL_CM, 30).coerceIn(2, 100)
         set(v) = prefs.edit().putInt(KEY_LW_ZONE_FALL_CM, v.coerceIn(2, 100)).apply()
     var lwZoneFallG: Double
-        get() = (Math.round(prefs.getFloat(KEY_LW_ZONE_FALL_G, 2.5f) * 10) / 10.0).coerceIn(2.5, 8.0)
-        set(v) = prefs.edit().putFloat(KEY_LW_ZONE_FALL_G, v.coerceIn(2.5, 8.0).toFloat()).apply()
+        get() = (Math.round(prefs.getFloat(KEY_LW_ZONE_FALL_G, MotionAnalyzer.IMPACT_G.toFloat()) * 10) / 10.0).coerceIn(MotionAnalyzer.IMPACT_G, 8.0)
+        set(v) = prefs.edit().putFloat(KEY_LW_ZONE_FALL_G, v.coerceIn(MotionAnalyzer.IMPACT_G, 8.0).toFloat()).apply()
     var lwZoneFallDeg: Int
-        get() = prefs.getInt(KEY_LW_ZONE_FALL_DEG, 60).coerceIn(45, 90)
-        set(v) = prefs.edit().putInt(KEY_LW_ZONE_FALL_DEG, v.coerceIn(45, 90)).apply()
+        get() = prefs.getInt(KEY_LW_ZONE_FALL_DEG, 60).coerceIn(MotionAnalyzer.POSTURE_DEG.toInt(), 90)
+        set(v) = prefs.edit().putInt(KEY_LW_ZONE_FALL_DEG, v.coerceIn(MotionAnalyzer.POSTURE_DEG.toInt(), 90)).apply()
 
     // ── 판정 파라미터 — BleService 하드코딩 상수의 설정 전환 ─────────────────
     //   기본값은 모두 '기존 하드코딩값과 동일'(거동 보존). BleService 가 같은 이름의

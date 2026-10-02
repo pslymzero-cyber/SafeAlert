@@ -25,7 +25,7 @@ import com.wf11.safealert.service.PeerRow
  * 잠금 화면 위에 뜨고, 상태는 LoneWorkerMonitor.uiState() 만 읽어 그린다. 모양은 이유 칩·큰 제목·남은 시간 링(확인 창)·큰 버튼,
  * 색은 상태마다 한 벌(확인 창 노랑, 구조 요청 빨강, 해제됨 초록)이다. 위쪽은 스크롤되고 버튼은 늘 화면 맨 아래에 있으며,
  * 링 크기는 화면 높이에 맞춘다(가로·작은 화면에서도 버튼이 보이게). 확인 창은 남은 초가 바뀌는 순간(초 경계 직후)마다 다시 그린다.
- * 유예·휴식 버튼이 없고 뒤로가기는 확인·구조 요청 중에 화면을 닫지 않는다 — 확인 창은 [괜찮아요]나 걸음,
+ * 유예·휴식 버튼이 없고 뒤로가기는 확인·구조 요청 중에 화면을 닫지 않는다 — 확인 창은 [괜찮아요]나 걸음(장비 거치 무동작 창은 회전·흔들기·[괜찮아요]),
  * 구조 요청은 본인 [괜찮아요]로만 닫힌다. 구조 요청의 [괜찮아요]는 언제나 "정말 괜찮으신가요?" 확인을 거치며,
  * 잠금 화면 알림의 [괜찮아요]도 같은 확인 창을 연다(EXTRA_CONFIRM_OK).
  * 버튼이 하는 일이 바뀐 직후(화면 종류나 진행 중 동료가 바뀐 뒤 SETTLE_MS)의 탭은 무시한다 — 두 번 누름이 바뀐 버튼을 누르지 않게.
@@ -63,8 +63,10 @@ class LoneWorkerActivity : AppCompatActivity() {
         binding.btnLwPeer.setOnClickListener { ackPeers() }
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
-                val hint = when (LoneWorkerMonitor.current?.uiState()?.mode) {
-                    LoneWorkerLogic.Mode.CHECKING -> "[괜찮아요]를 누르거나 걸으면 닫혀요"
+                val st = LoneWorkerMonitor.current?.uiState()
+                val hint = when (st?.mode) {
+                    LoneWorkerLogic.Mode.CHECKING ->
+                        if (st.closesByTurn) LoneWorkerNotifier.TURN_CLOSE_HINT else "[괜찮아요]를 누르거나 걸으면 닫혀요"
                     LoneWorkerLogic.Mode.SOS -> "[괜찮아요]를 눌러야 해제돼요"
                     else -> null
                 }
@@ -180,7 +182,8 @@ class LoneWorkerActivity : AppCompatActivity() {
             LoneWorkerLogic.Mode.CHECKING -> {
                 chip(if (st.trigger == "fall") "넘어짐 감지" else "${st.stillMin}분 동안 움직임 없음")
                 b.tvLwTitle.text = "괜찮으세요?"
-                b.tvLwBody.text = (listOf("응답이 없으면 같은 사업장에 구조 요청이 나가요\n" + walkHint(st.stepsAvailable)) + peerLines)
+                b.tvLwBody.text = (listOf("응답이 없으면 같은 사업장에 구조 요청이 나가요\n" +
+                    (if (st.closesByTurn) LoneWorkerNotifier.TURN_CLOSE_HINT else walkHint(st.stepsAvailable))) + peerLines)
                     .joinToString("\n\n")
                 b.btnLwPrimary.text = "괜찮아요"
                 CHECK

@@ -3,6 +3,7 @@ package com.wf11.safealert.service
 import com.wf11.safealert.service.LoneWorkerLogic.Mode
 import com.wf11.safealert.service.LoneWorkerLogic.Rest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -174,5 +175,38 @@ class MountedStillTest {
         l.strongWindows(301_000, 302_000, 303_000)
         assertEquals(Mode.CHECKING, l.mode)
         assertEquals(Mode.SOS, l.seenAt(304_000))
+    }
+
+    /** H3: only a mounted still window says it closes by turning, shaking or the ack; the text has one source. */
+    @Test fun mounted_still_check_says_turn_or_shake_closes_it() {
+        val m = mounted()
+        assertFalse(m.closesByTurn)
+        m.opensAt(180_000)
+        assertTrue(m.closesByTurn)
+
+        val f = mounted()
+        f.onAccident(10_000)
+        assertEquals(Mode.CHECKING, f.seenAt(40_000))
+        assertEquals("fall", f.trigger)
+        assertFalse(f.closesByTurn)
+
+        val c = newLogic(carried = true)
+        c.opensAt(180_000)
+        assertFalse(c.closesByTurn)
+
+        assertTrue(LoneWorkerNotifier.TURN_CLOSE_HINT.contains("${LoneWorkerLogic.STRONG_RUN_MS / 1000}"))
+        assertTrue(LoneWorkerNotifier.TURN_CLOSE_HINT.contains("["))
+        assertTrue(serviceSource("LoneWorkerNotifier.kt").split("TURN_CLOSE_HINT").size - 1 >= 2)
+        val activity = repoFile("app/src/main/java/com/wf11/safealert/05_ui/LoneWorkerActivity.kt")
+        assertTrue(activity.split("closesByTurn").size - 1 >= 2)
+    }
+
+    /** H6: the wake lock and its 5 s renew loop also run while mounted and the watch is on (screen-off turn poll). */
+    @Test fun mounted_keeps_wake_lock_and_renew_loop() {
+        val m = serviceSource("LoneWorkerMonitor.kt")
+        val wake = sourceBlock(m, "private fun updateWakeLock(")
+        assertTrue(wake.contains("logic.mounted"))
+        assertTrue(wake.contains("logic.waitingToJudge(now())"))
+        assertTrue(m.substringAfter("private fun needLoop()").substringBefore("private fun scheduleLoop").contains("logic.mounted"))
     }
 }

@@ -90,7 +90,9 @@ class LoneWorkerLogic(var myBleId: String) {
     val sosActive: Boolean get() = mode == Mode.SOS
     val peers: Collection<LoneWorkerPeers.Peer> get() = peerStore.all
 
-    private var enabled = true
+    /** 감시 켜짐(개발자 설정 기능 켬·센서 있음, 모니터가 setEnabled 로 넣음). */
+    var enabled = true
+        private set
     /** 무동작 시간을 세는 기준 시각: 시작·움직임·확인 창 닫힘·다시 켬·정착 구역 이탈·지님 시작·장비 거치 시작(연결·장비 모드)·장비 거치 중 회전 중 가장 늦은 것. 장비 거치 중엔 걸음이 올리지 않는다. */
     private var stillBase = 0L
     private val zone = ZoneHistory() // 세이프존 원시 안/밖과 들어선 시각, 낙상은 충격 순간 상태로 본다(A1)
@@ -124,6 +126,8 @@ class LoneWorkerLogic(var myBleId: String) {
         charging -> Rest.DOCKED
         else -> Rest.WAIT
     }
+    /** 열린 무동작 창이 걸음 대신 회전·3초 흔들림·[괜찮아요]로 닫힌다(장비 거치, B4) — 화면·알림의 닫는 방법 안내(H3). */
+    val closesByTurn: Boolean get() = mode == Mode.CHECKING && trigger == "still" && mounted
 
     internal val peerStore = LoneWorkerPeers()
 
@@ -225,10 +229,7 @@ class LoneWorkerLogic(var myBleId: String) {
 
     /** 움직임(MOVED)은 무동작 타이머만 갱신한다. 열린 확인 창은 닫지 않는다 (D-02, D-07). */
     fun onMoved(nowMs: Long) { if (!order.keep { onMoved(nowMs) }) raiseStillBase(nowMs) }
-    /**
-     * 장비 회전(BleService 1.5초 폴링, 직진 아닐 때만): 장비 거치면 무동작을 다시 세고 무동작 창을 닫는다(B2·B4). 폴링 시각이 찍힌 실시간 값이라 받는 즉시 실시간 순서로 적용돼
-     * 마감 이하 회전은 모두 그 마감 판정 전에 반영되고, 이미 지난 SOS 마감보다 늦은 회전은 그 창을 닫지 않는다(H7). sensedTo 에 안 보태고, MOVED 처럼 막힌 마감 뒤엔 보관했다 판정 뒤 재생(N1).
-     */
+    /** 장비 회전(BleService 1.5초 폴링, 직진 아닐 때만): 장비 거치면 무동작을 다시 세고 무동작 창을 닫는다(B2·B4). 폴링 시각이 찍힌 실시간 값이라 받는 즉시 실시간 순서로 적용돼 마감 이하 회전은 모두 그 마감 판정 전에 반영되고, 이미 지난 SOS 마감보다 늦은 회전은 그 창을 닫지 않는다(H7). sensedTo 에 안 보태고, MOVED 처럼 막힌 마감 뒤엔 보관했다 판정 뒤 재생(N1). */
     fun onTurn(nowMs: Long) { if (!order.keep { onTurn(nowMs) } && mounted) { raiseStillBase(nowMs); closeMounted(nowMs) } }
 
     /** 장비 거치 무동작 창을 회전·3초 흔들림(시각 t)으로 닫는다; 이미 지난 SOS 마감보다 늦은 입력은 마감 판정(센서 데이터 대기 중)이 먼저라 닫지 않는다(H7). */

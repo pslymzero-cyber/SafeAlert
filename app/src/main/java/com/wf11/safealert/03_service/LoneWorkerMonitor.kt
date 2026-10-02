@@ -4,7 +4,6 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.os.Handler
 import android.os.Looper
-import android.os.PowerManager
 import android.os.SystemClock
 import com.wf11.safealert.firebase.SosRemote
 import com.wf11.safealert.utils.BeaconRegistry
@@ -36,7 +35,8 @@ class LoneWorkerMonitor(
         val responseTotalSec: Int = 0,  // 이 확인 창의 전체 응답 시간(남은 시간 링의 기준)
         val stillMin: Int = 0,          // 무동작 확인까지의 분(이유 칩 문구)
         val responseLeftMs: Long = 0L,  // 남은 응답 시간(ms) — 화면이 초 경계에 맞춰 다시 그린다
-        val stepsAvailable: Boolean = true // 걸음 센서로 셈(아니면 걷는 모양 이어짐으로 셈) — 걸음 안내 문구
+        val stepsAvailable: Boolean = true, // 걸음 센서로 셈(아니면 걷는 모양 이어짐으로 셈) — 걸음 안내 문구
+        val closesByTurn: Boolean = false   // 장비 거치 무동작 창 — 회전·3초 흔들기·[괜찮아요]로 닫힘(H3)
     ) {
         val peerActive: Boolean get() = peers.any { it.active }
     }
@@ -46,7 +46,6 @@ class LoneWorkerMonitor(
         private const val TICK_MIN_MS = 1_000L
         private const val BEACON_NOTE_MS = 2_000L
         private const val SID_MISS_MS = 30_000L
-        private const val WAKE_LOCK_MS = 10 * 60_000L
         private const val SYNC_TICK_MS = 10_000L
 
         @Volatile var current: LoneWorkerMonitor? = null
@@ -83,7 +82,7 @@ class LoneWorkerMonitor(
     private var lastTickAt = 0L
     /** 스로틀 중에도 즉시 판정을 보는 시각 — 직전 tick 에서 지난 마감이 데이터를 기다렸으면 그 tick, 아니면 그때의 nextCheckAt (v1.1.99). */
     private var dueFrom = Long.MAX_VALUE
-    private var wakeLock: PowerManager.WakeLock? = null
+    private val wake = LoneWorkerWakeLock(ctx)
     private var loopOn = false
     private var prefsListener: SharedPreferences.OnSharedPreferenceChangeListener? = null
     private val beaconNoteAt = HashMap<String, Long>()
@@ -167,7 +166,7 @@ class LoneWorkerMonitor(
         sync.endHeartbeat()
         sync.stopListening()
         alarm.stop(final = true)
-        releaseWakeLock()
+        wake.release()
         handler.removeCallbacksAndMessages(null)
         loopOn = false
         watchdog.stop()
@@ -376,7 +375,8 @@ class LoneWorkerMonitor(
             (logic.responseTotalMs() / 1000L).toInt(),
             (logic.stillMs / 60_000L).toInt(),
             left,
-            logic.stepsAvailable
+            logic.stepsAvailable,
+            logic.closesByTurn
         )
     }
 
@@ -447,7 +447,7 @@ class LoneWorkerMonitor(
         if (p != null) alarm.play(p, vibrates) else alarm.stop()
         sensors.gyroLog(audible.isNotEmpty(), vibrates)
 
-        notifier.update(mode, audible, logic.peers.filter { !it.active && !it.silenced }, notice(), showScreen)
+        notifier.update(mode, logic.closesByTurn, audible, logic.peers.filter { !it.active && !it.silenced }, notice(), showScreen)
         if (showScreen) notifier.openScreen()
         updateWakeLock(false)
         scheduleLoop()
@@ -458,7 +458,7 @@ class LoneWorkerMonitor(
     // ── 5초 갱신·웨이크락 ─────────────────────────────────────
 
     private fun needLoop() =
-        logic.mode != LoneWorkerLogic.Mode.WATCHING || logic.peers.isNotEmpty() || sensors.needsWake
+        logic.mode != LoneWorkerLogic.Mode.WATCHING || logic.peers.isNotEmpty() || sensors.needsWake || logic.enabled && logic.mounted
 
     private fun scheduleLoop() {
         if (loopOn || !needLoop()) return
@@ -479,21 +479,9 @@ class LoneWorkerMonitor(
 
     private fun updateWakeLock(renew: Boolean) {
         // 지난 마감이 판정을 기다리는 동안(센서 데이터·그 전에 시작한 전원 대기)도 잡아 LATE_MS 백스톱·전원 확정 확인을 보장한다
-        val need = sensors.needsWake || logic.mode != LoneWorkerLogic.Mode.WATCHING ||
+        // 감시가 켜진 장비 거치 중(충전 중이라 배터리 부담 없음)에도 잡아 화면이 꺼져도 회전 폴링·ImuFusion 이 돈다(H6)
+        val need = sensors.needsWake || logic.enabled && logic.mounted || logic.mode != LoneWorkerLogic.Mode.WATCHING ||
             logic.audiblePeers().isNotEmpty() || logic.waitingToJudge(now())
-        if (!need) {
-            releaseWakeLock()
-            return
-        }
-        val wl = wakeLock ?: runCatching {
-            (ctx.getSystemService(Context.POWER_SERVICE) as PowerManager)
-                .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "SafeAlert:LoneWorker")
-                .apply { setReferenceCounted(false) }
-        }.getOrNull()?.also { wakeLock = it } ?: return
-        if (renew || !wl.isHeld) runCatching { wl.acquire(WAKE_LOCK_MS) }
-    }
-
-    private fun releaseWakeLock() {
-        wakeLock?.let { if (it.isHeld) runCatching { it.release() } }
+        wake.hold(need, renew)
     }
 }

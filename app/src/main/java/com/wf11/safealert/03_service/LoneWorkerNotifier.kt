@@ -63,6 +63,9 @@ class LoneWorkerNotifier(
         const val NOTIF_ID = 4242
         private const val RESOLVED_NOTIF_MS = 60_000L
 
+        /** 장비 거치 무동작 창을 닫는 방법 안내 — 화면 본문·뒤로가기 안내·알림이 함께 쓰는 유일한 문구(H3). */
+        const val TURN_CLOSE_HINT = "회전하거나 ${LoneWorkerLogic.STRONG_RUN_MS / 1000}초 넘게 흔들거나 [괜찮아요]를 누르면 닫혀요"
+
         /** 알림의 [괜찮아요]가 화면을 열면서 넘기는 표시: 화면은 바로 확인 대화상자를 띄운다. */
         const val EXTRA_CONFIRM_OK = "lw_confirm_ok"
         /** 알림의 [확인]이 넘기는 항목 id 목록: 이 항목만 묵음으로 만든다. */
@@ -129,10 +132,11 @@ class LoneWorkerNotifier(
 
     /**
      * 상태에 맞는 알림을 올리거나 지운다. 우선순위: SOS, 확인 중, 울리는 동료, 해제됨, 조용한 안내(notice).
-     * alertAgain 이 참이고 큰 알림이면 키가 같아도 지웠다가 다시 올린다.
+     * alertAgain 이 참이고 큰 알림이면 키가 같아도 지웠다가 다시 올린다. closesByTurn 이면 확인 중 안내가 걸음 대신 TURN_CLOSE_HINT 다(H3).
      */
     fun update(
         mode: LoneWorkerLogic.Mode,
+        closesByTurn: Boolean,
         audible: List<LoneWorkerPeers.Peer>,
         resolved: List<LoneWorkerPeers.Peer>,
         notice: Pair<String, String>?,
@@ -145,7 +149,7 @@ class LoneWorkerNotifier(
             if (lastKey != null) { nm.cancel(NOTIF_ID); lastKey = null }
             return
         }
-        val key = "${quiet?.first}|${quiet?.second}|$mode|${audible.joinToString(",") { it.id }}|${resolved.joinToString(",") { it.id }}"
+        val key = "${quiet?.first}|${quiet?.second}|$mode|$closesByTurn|${audible.joinToString(",") { it.id }}|${resolved.joinToString(",") { it.id }}"
         val again = loud && alertAgain
         if (key == lastKey && !again) return
         lastKey = key
@@ -153,7 +157,7 @@ class LoneWorkerNotifier(
             mode == LoneWorkerLogic.Mode.SOS ->
                 Triple("구조 요청 중", "[괜찮아요]를 눌러야 해제돼요", "괜찮아요" to activityPi(REQ_CONFIRM, true))
             mode == LoneWorkerLogic.Mode.CHECKING ->
-                Triple("괜찮으세요?", "응답이 없으면 같은 사업장에 구조 요청이 나가요. 걸으면 자동으로 닫혀요", "괜찮아요" to servicePi(REQ_ACK, BleService.ACTION_LW_ACK))
+                Triple("괜찮으세요?", "응답이 없으면 같은 사업장에 구조 요청이 나가요. " + (if (closesByTurn) TURN_CLOSE_HINT else "걸으면 자동으로 닫혀요"), "괜찮아요" to servicePi(REQ_ACK, BleService.ACTION_LW_ACK))
             audible.isNotEmpty() ->
                 Triple("구조 요청", audible.joinToString(", ") { it.displayName() }, "확인" to servicePi(REQ_SILENCE, BleService.ACTION_LW_SILENCE, audible))
             quiet != null -> Triple(quiet.first, quiet.second, null)
