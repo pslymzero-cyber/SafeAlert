@@ -193,6 +193,8 @@ class LoneWorkerMonitor(
             sensors.unregister()
             watchdog.disarm()
         }
+        // 세이프존 충격 기준도 기본 임계와 같은 센서 범위 보정(2 G 센서)을 거친다 (D-02)
+        logic.zoneFall = MotionAnalyzer.ZoneFall(impactG = MotionAnalyzer.impactGFor(sensors.rangeMs2, MotionAnalyzer.IMPACT_G))
         logic.setEnabled(DevSettings.lwEnabled && !sensors.noSensor, t)
         render()
     }

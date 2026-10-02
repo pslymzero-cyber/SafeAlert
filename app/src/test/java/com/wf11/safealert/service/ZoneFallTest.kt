@@ -1,0 +1,140 @@
+package com.wf11.safealert.service
+
+import com.wf11.safealert.service.LoneWorkerLogic.Mode
+import com.wf11.safealert.service.MotionAnalyzer.FallShape
+import com.wf11.safealert.service.MotionAnalyzer.Signal
+import com.wf11.safealert.service.MotionAnalyzer.ZoneFall
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Test
+
+/**
+ * Safe-zone fall criteria: inside the zone a fall counts only when free fall >= zone ms (height),
+ * peak impact >= sensor-scaled zone G and posture change >= zone angle (unknown posture counts as met).
+ * Outside the zone and the charging-in-zone exception are unchanged. 50 Hz analyzer traces, 20 ms step.
+ */
+class ZoneFallTest {
+
+    private val still = floatArrayOf(0f, 0f, 9.81f)
+    private val lying = floatArrayOf(9.81f, 0f, 0f)
+    private val freeFall = floatArrayOf(0f, 0f, 1.5f)
+
+    private fun MotionAnalyzer.span(from: Long, to: Long, v: FloatArray, out: MutableList<Long>) {
+        var t = from
+        while (t < to) {
+            if (add(t, v[0], v[1], v[2]) == Signal.FALL) out.add(t)
+            t += 20
+        }
+    }
+
+    /** Upright from 0 to ffFrom, free fall ffMs, the impact samples, then lying 15 s. Returns FALL times. */
+    private fun MotionAnalyzer.fall(ffFrom: Long, ffMs: Long, impacts: List<Float> = listOf(30f, 30f, 30f)): List<Long> {
+        val out = ArrayList<Long>()
+        span(0, ffFrom, still, out)
+        span(ffFrom, ffFrom + ffMs, freeFall, out)
+        var t = ffFrom + ffMs
+        for (m in impacts) { span(t, t + 20, floatArrayOf(0f, 0f, m), out); t += 20 }
+        span(t, t + 15_000, lying, out)
+        return out
+    }
+
+    private fun rule1(charging: Boolean = false, zoneInside: Boolean = false) =
+        newLogic(charging, zoneInside, carried = true).apply { stillMs = 3_600_000L }
+
+    /** Mirrors fall_inside_zone_not_charging_counts: settled inside the zone, fall at 100 s. */
+    private fun zoneFall(shape: FallShape, zone: ZoneFall = ZoneFall()): LoneWorkerLogic {
+        val l = rule1(zoneInside = true)
+        l.zoneFall = zone
+        l.tick(60_000)
+        l.onAccident(100_000, shape)
+        return l
+    }
+
+    private fun assertDiscarded(l: LoneWorkerLogic) {
+        for (t in 130_000L..400_000L step 10_000L) assertEquals(Mode.WATCHING, l.seenAt(t))
+    }
+
+    private fun assertChecking(l: LoneWorkerLogic) {
+        assertEquals(Mode.CHECKING, l.seenAt(130_000))
+        assertEquals("fall", l.trigger)
+    }
+
+    // -- analyzer shape --
+
+    @Test fun standard_fall_shape() {
+        val a = MotionAnalyzer()
+        assertEquals(1, a.fall(3000, 260).size)
+        assertEquals(260L, a.fallShape.freeFallMs)
+        assertEquals(3.059, a.fallShape.peakG, 0.01)
+        assertEquals(90.0, a.fallShape.postureDeg!!, 1.0)
+    }
+
+    @Test fun peak_is_max_in_impact_window() {
+        val a = MotionAnalyzer()
+        assertEquals(1, a.fall(3000, 260, listOf(26f, 40f, 30f)).size)
+        assertEquals(4.079, a.fallShape.peakG, 0.01)
+    }
+
+    @Test fun unknown_pre_fall_posture_is_null() {
+        val a = MotionAnalyzer()
+        assertEquals(1, a.fall(0, 300).size)
+        assertNull(a.fallShape.postureDeg)
+    }
+
+    @Test fun base_60ms_free_fall_still_falls() {
+        val a = MotionAnalyzer()
+        assertEquals(1, a.fall(3000, 60).size)
+        assertEquals(60L, a.fallShape.freeFallMs)
+    }
+
+    @Test fun impact_g_scaling_and_free_fall_ms() {
+        assertEquals(1.8, MotionAnalyzer.impactGFor(19.6f, 4.0), 0.01)
+        assertEquals(4.0, MotionAnalyzer.impactGFor(78.4f, 4.0), 0.0)
+        assertEquals(1.5, MotionAnalyzer.impactGFor(78.4f, 1.5), 0.0)
+        assertEquals(1.8, MotionAnalyzer.impactGFor(19.6f), 0.01)
+        assertEquals(247L, MotionAnalyzer.freeFallMsFor(30))
+        assertEquals(64L, MotionAnalyzer.freeFallMsFor(2))
+        assertEquals(452L, MotionAnalyzer.freeFallMsFor(100))
+        assertEquals(ZoneFall(247L, 2.5, 60.0), ZoneFall())
+    }
+
+    // -- logic inside / outside the zone --
+
+    @Test fun zone_short_free_fall_discarded() = assertDiscarded(zoneFall(FallShape(60, 3.0, 90.0)))
+
+    @Test fun zone_full_fall_counts() = assertChecking(zoneFall(FallShape(250, 3.0, 70.0)))
+
+    @Test fun zone_small_tilt_discarded() = assertDiscarded(zoneFall(FallShape(250, 3.0, 50.0)))
+
+    @Test fun zone_unknown_posture_counts() = assertChecking(zoneFall(FallShape(250, 3.0, null)))
+
+    @Test fun zone_impact_threshold_from_settings() {
+        assertDiscarded(zoneFall(FallShape(300, 3.0, 90.0), ZoneFall(impactG = 4.0)))
+        assertChecking(zoneFall(FallShape(300, 4.2, 90.0), ZoneFall(impactG = 4.0)))
+    }
+
+    @Test fun outside_zone_unchanged() {
+        val l = rule1()
+        l.onAccident(6_000, FallShape(60, 2.6, 46.0))
+        assertEquals(Mode.WATCHING, l.seenAt(35_999))
+        assertEquals(Mode.CHECKING, l.seenAt(36_000))
+    }
+
+    @Test fun charging_inside_zone_still_ignored() {
+        val l = rule1(charging = true)
+        l.onZone(true, 5_000)
+        l.onAccident(6_000, FallShape(400, 5.0, 90.0))
+        for (t in 40_000L..400_000L step 10_000L) assertEquals(Mode.WATCHING, l.seenAt(t))
+    }
+
+    // -- tracer: analyzer shape into the zone logic --
+
+    @Test fun tracer_analyzer_shape_into_zone_logic() {
+        val short = MotionAnalyzer().apply { assertEquals(1, fall(3000, 100).size) }
+        assertDiscarded(zoneFall(short.fallShape))
+        val long = MotionAnalyzer().apply { assertEquals(1, fall(3000, 300).size) }
+        assertNotNull(long.fallShape.postureDeg)
+        assertChecking(zoneFall(long.fallShape))
+    }
+}

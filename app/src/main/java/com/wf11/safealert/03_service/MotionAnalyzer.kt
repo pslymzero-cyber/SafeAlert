@@ -15,6 +15,7 @@ import kotlin.math.sqrt
  * 충격 2~12초 뒤 구간에서 자세가 45도 이상 바뀌었고 활동 초가 3개 미만. 임계값은 문헌 범위의 보수값이라 현장 보정 대상이다.
  * 낙상 충격 임계값은 센서 측정 범위가 2.5 G 미만인 기기(2 G 센서)에서는 범위에 맞춰 낮춘다 (impactGFor).
  * eventMs 에 충격 표본의 센서 시각을 남긴다(판정 시각이 아니라 충격 시각).
+ * fallShape 에 그 낙상의 모양(자유낙하 길이·충격 창 최대 G·자세 변화)을 남긴다 — 세이프존 안 판정용 (D-02).
  *
  * 이 앱 자신의 진동 구간 표본(masked)은 활동 통계에서만 뺀다. 낙상 판정은 모든 표본을 본다 —
  * 진동 모터 가속도는 충격 임계값보다 훨씬 작고, 알람 중 낙상을 놓치는 쪽이 더 나쁘다 (v1.1.99).
@@ -30,6 +31,27 @@ class MotionAnalyzer(
 
     /** 닫힌 1초 창: endMs(센서 시각), 표본이 있고 걷기 수준으로 흔들렸는지(걷는 모양). */
     data class Window(val endMs: Long, val strong: Boolean)
+
+    /**
+     * 낙상 모양: 충격을 무장한 자유낙하 구간 길이(ms), 충격 창(자유낙하 끝 + 1초) 안의 최대 |a|(G),
+     * 자세 변화(도, 낙하 전 자세를 모르면 null).
+     */
+    data class FallShape(val freeFallMs: Long, val peakG: Double, val postureDeg: Double?) {
+        companion object {
+            /** 어떤 기준도 넘는 모양 — 모양 없이 부르는 onAccident(trigMs) 의 기본값. */
+            val ANY = FallShape(Long.MAX_VALUE, Double.MAX_VALUE, null)
+        }
+    }
+
+    /**
+     * 세이프존 안 낙상 기준 (D-02): 자유낙하 길이·최대 충격·자세 변화를 모두 넘어야 넘어짐.
+     * impactG 는 이미 센서 범위 보정을 거친 값(impactGFor). 자세를 모르면 넘은 것으로 본다 (D-07).
+     * 기본값 247 ms(30 cm)·2.5 G·60도는 DevSettings 기본값과 같아야 한다 (D-03).
+     */
+    data class ZoneFall(val freeFallMs: Long = 247L, val impactG: Double = IMPACT_G, val postureDeg: Double = 60.0) {
+        fun passes(s: FallShape): Boolean =
+            s.freeFallMs >= freeFallMs && s.peakG >= impactG && (s.postureDeg == null || s.postureDeg >= postureDeg)
+    }
 
     companion object {
         const val G = 9.80665
@@ -56,17 +78,25 @@ class MotionAnalyzer(
         const val POST_MAX_ACTIVE = 3
 
         /**
-         * 센서 최대 범위(m/s^2)가 MIN_RANGE_G 이상 IMPACT_G 미만이면 범위의 90% 를 낙상 충격 임계로 쓴다. 아니면 IMPACT_G.
+         * 센서 최대 범위(m/s^2)가 MIN_RANGE_G 이상 wantG 미만이면 범위의 90% 를 낙상 충격 임계로 쓴다. 아니면 wantG.
          * 범위를 G 로 나눈 값이 MIN_RANGE_G 보다 작으면 g 단위로 보고한 것으로 해석한다.
+         * wantG 기본값 IMPACT_G = 기본 낙상 임계. 세이프존 기준 G 도 같은 보정을 거친다 (D-02).
          */
-        fun impactGFor(maxRangeMs2: Float): Double {
+        fun impactGFor(maxRangeMs2: Float, wantG: Double = IMPACT_G): Double {
             val rangeG = (maxRangeMs2 / G).let { if (it < MIN_RANGE_G) maxRangeMs2.toDouble() else it }
-            return if (rangeG >= MIN_RANGE_G && rangeG < IMPACT_G) 0.9 * rangeG else IMPACT_G
+            return if (rangeG >= MIN_RANGE_G && rangeG < wantG) 0.9 * rangeG else wantG
         }
+
+        /** 떨어진 높이(cm)의 자유낙하 시간(ms) = round(1000 * sqrt(2h / g)). 30 cm = 247 ms. */
+        fun freeFallMsFor(cm: Int): Long = Math.round(1000 * sqrt(2 * cm / 100.0 / G))
     }
 
     /** 마지막 FALL 신호의 충격 표본 센서 시각(ms). */
     var eventMs = 0L
+        private set
+
+    /** 마지막 FALL 신호의 낙상 모양. FALL 전에는 ANY. */
+    var fallShape = FallShape.ANY
         private set
 
     // 1초 창 누적
@@ -97,6 +127,7 @@ class MotionAnalyzer(
     private var armedPreX = 0.0
     private var armedPreY = 0.0
     private var armedPreZ = 0.0
+    private var armedFfMs = 0L
 
     // 충격 후보
     private var candidate = false
@@ -110,6 +141,9 @@ class MotionAnalyzer(
     private var postY = 0.0
     private var postZ = 0.0
     private var postActive = 0
+    private var candFfMs = 0L
+    private var candImpactEnd = 0L
+    private var candPeakG = 0.0
 
     fun reset() {
         curIdx = -1L; n = 0; sumM = 0.0; sumM2 = 0.0; sx = 0.0; sy = 0.0; sz = 0.0
@@ -186,6 +220,7 @@ class MotionAnalyzer(
         } else if (ffStart >= 0) {
             if (t - ffStart >= FREE_FALL_MIN_MS) {
                 armedEnd = t
+                armedFfMs = t - ffStart
                 armedPreValid = ffPreValid
                 armedPreX = ffPreX; armedPreY = ffPreY; armedPreZ = ffPreZ
             }
@@ -202,9 +237,13 @@ class MotionAnalyzer(
                 candPreValid = armedPreValid
                 candPreX = armedPreX; candPreY = armedPreY; candPreZ = armedPreZ
                 postN = 0; postX = 0.0; postY = 0.0; postZ = 0.0; postActive = 0
+                candFfMs = armedFfMs
+                candImpactEnd = armedEnd + IMPACT_WINDOW_MS
+                candPeakG = mag / G
                 armedEnd = -1L
             }
         }
+        if (candidate && t <= candImpactEnd) candPeakG = maxOf(candPeakG, mag / G)
 
         if (!candidate) return false
         if (t >= impactT + POST_START_MS && t < impactT + POST_END_MS) {
@@ -217,9 +256,10 @@ class MotionAnalyzer(
         candidate = false
         if (postN == 0 || postActive >= POST_MAX_ACTIVE) return false
         // 낙하 전 자세를 모르면(서비스 시작 직후) 자세 변화로 본다 — 놓치는 쪽이 더 나쁘다 (D-07)
-        val posture = !candPreValid ||
-            angleDeg(postX / postN, postY / postN, postZ / postN, candPreX, candPreY, candPreZ) >= POSTURE_DEG
-        return posture
+        val deg = if (candPreValid) angleDeg(postX / postN, postY / postN, postZ / postN, candPreX, candPreY, candPreZ) else null
+        if (deg != null && deg < POSTURE_DEG) return false
+        fallShape = FallShape(candFfMs, candPeakG, deg)
+        return true
     }
 }
 

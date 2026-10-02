@@ -11,7 +11,7 @@ package com.wf11.safealert.service
  * 규칙 1(사고): 낙상 신호 하나로 그 충격 시각부터 5분 동안 사고를 의심한다(직전 움직임 조건 없음).
  * 그 안에서 뚜렷한 움직임이 30초 동안 없으면 사고 확인 창("fall", 1분)을 연다. 거치·안전구역과 무관하지만,
  * 안전구역 안(들어서자마자, 원시 안쪽)에서 충격 순간 충전 중이었으면(충격 뒤 실제 해제는 충전 중이었다, 충격 전 10초 안 실제 해제도 포함 — 크래들에서 떨어짐,
- * 재시작 때 적용한 해제는 빼고) 낙상을 무시한다(N2, FALL 처리 시각과 무관). 트리거 전 10초 안(또는 트리거 뒤)의 실제 전원 연결(재시작 때 적용한 연결은 빼고)은 거치대에 꽂는 동작으로 보고 그 트리거를 버린다.
+ * 재시작 때 적용한 해제는 빼고) 낙상을 무시한다(N2, FALL 처리 시각과 무관). 안전구역 안 낙상은 zoneFall(높이·충격·자세, 개발자 설정, 자세 모르면 넘은 것)을 모두 넘어야 센다. 트리거 전 10초 안(또는 트리거 뒤)의 실제 전원 연결(재시작 때 적용한 연결은 빼고)은 거치대에 꽂는 동작으로 보고 그 트리거를 버린다.
  * 의심 중 실제 연결은 사람이 있다는 뜻이라 의심을 끝낸다.
  * 사고 확인 창을 [괜찮아요]로 닫으면 의심이 끝나고, 뚜렷한 움직임으로 닫히면 5분이 끝날 때까지 계속 지켜본다.
  *
@@ -70,6 +70,7 @@ class LoneWorkerLogic(var myBleId: String) {
     /** 설정에서 라이브로 바꾼다 (기본 3분 / 2분). 무동작 확인 전용 — 사고 확인은 30초 / 1분 고정. */
     var stillMs = 180_000L
     var responseMs = 120_000L
+    var zoneFall = MotionAnalyzer.ZoneFall() // 세이프존 안 낙상 기준(높이·충격·자세) — 개발자 설정, 모니터가 넣는다 (D-02, D-03)
     /** 걸음 센서가 등록돼 있다(센서·신체 활동 권한 있음). 아니면 걷는 모양 창으로 대신한다. */
     var stepsAvailable = true
     /** 이 기기에 진동기가 있다 — 없으면 사이렌 진동도, 그 동안의 무동작 셈 멈춤도 없다(D2). */
@@ -224,11 +225,11 @@ class LoneWorkerLogic(var myBleId: String) {
         raiseStillBase(nowMs)
     }
 
-    /** 낙상(trigMs = 충격 표본 시각). 꺼짐·SOS·사고 확인 중이면 버리고, 그 밖의 무시 조건은 규칙 1(클래스 KDoc). 의심 중 새 트리거는 의심 끝만 늘린다. */
-    fun onAccident(trigMs: Long) {
-        if (order.keep { onAccident(trigMs) } || !enabled || mode == Mode.SOS) return
+    /** 낙상(trigMs = 충격 표본 시각). 꺼짐·SOS·사고 확인 중이면 버리고, 그 밖의 무시 조건은 규칙 1(클래스 KDoc). 의심 중 새 트리거는 의심 끝만 늘린다. 안전구역 안이면 shape 가 zoneFall 을 넘어야 센다. */
+    fun onAccident(trigMs: Long, shape: MotionAnalyzer.FallShape = MotionAnalyzer.FallShape.ANY) {
+        if (order.keep { onAccident(trigMs, shape) } || !enabled || mode == Mode.SOS) return
         if (mode == Mode.CHECKING && trigger == "fall") return
-        if (zoneInside && (charging ||
+        if (zoneInside && (charging || !zoneFall.passes(shape) ||
                 (lastUnplugAt != Long.MIN_VALUE && trigMs - lastUnplugAt <= UNPLUG_FALL_MS))) return
         if (lastPlugAt != Long.MIN_VALUE && trigMs - lastPlugAt <= PLUG_EXCEPT_MS) return
         if (accidentUntil == Long.MIN_VALUE) accidentFrom = trigMs

@@ -62,6 +62,9 @@ class LoneWorkerSensors(
         private set
     var registered = false
         private set
+    /** 가속도 센서 최대 범위(m/s^2). 등록 전 0 — 세이프존 낙상 충격 기준 보정용 (D-02). */
+    var rangeMs2 = 0f
+        private set
     val stalled: Boolean get() = stall.stalled
     /** 등록된 센서 가운데 비웨이크업이 있어 감시 중 CPU 를 깨워 둬야 한다. */
     val needsWake: Boolean
@@ -103,7 +106,8 @@ class LoneWorkerSensors(
             noSensor = true
             return
         }
-        val impactG = MotionAnalyzer.impactGFor(s.maximumRange)
+        rangeMs2 = s.maximumRange
+        val impactG = MotionAnalyzer.impactGFor(rangeMs2)
         Log.i(TAG, "가속도 센서 wakeUp=${s.isWakeUpSensor} fifoMax=${s.fifoMaxEventCount} range=${s.maximumRange} impactG=$impactG")
         analyzer = MotionAnalyzer(impactG) { w -> logic().onWindow(w.copy(endMs = w.endMs + accelSkew)) }
         if (!m.registerListener(this, s, 20_000, MAX_BATCH_US, handler)) {
@@ -226,7 +230,7 @@ class LoneWorkerSensors(
                 // 이 앱의 진동 구간 표본은 활동 통계에서만 뺀다. 낙상 감지에는 그대로 넣는다 (v1.1.99, F07·RR02)
                 when (analyzer.add(rawMs, v[0], v[1], v[2], masked = VibrationHelper.window.covers(rawMs + accelSkew))) {
                     MotionAnalyzer.Signal.MOVED -> logic().onMoved(rawMs + accelSkew)
-                    MotionAnalyzer.Signal.FALL -> logic().onAccident(analyzer.eventMs + accelSkew)
+                    MotionAnalyzer.Signal.FALL -> logic().onAccident(analyzer.eventMs + accelSkew, analyzer.fallShape)
                     MotionAnalyzer.Signal.NONE -> {}
                 }
             }
