@@ -326,7 +326,7 @@ class LoneWorkerLogic(var myBleId: String) {
             if (suspected) accidentUntil else null,
             when (mode) { Mode.CHECKING -> trigger; Mode.WATCHING -> hold.check; else -> "" },
             charging, carried, siren.base(stillBase, nowMs, stillMs), zoneSettled,
-            if (zone.inside) zone.since else null
+            if (zone.inside) zone.since else null, mounted
         )
     }
 
@@ -345,7 +345,7 @@ class LoneWorkerLogic(var myBleId: String) {
     fun settlePower(t: Long): Boolean = order.settle(t)
 
     /**
-     * 끝(트리거 뒤 5분)이 지난 사고 의심은 버리고, 열린 확인 창은 응답 시간을 처음부터 다시 센다.
+     * 끝(트리거 뒤 5분)이 지난 사고 의심은 버리고, 열린 확인 창은 응답 시간을 처음부터 다시 센다. 장비 거치로 복원되는데 거치 중 저장이 아니면 무동작은 재시작부터 센다(H2).
      * 저장 때 구역 안이었으면 구역 안·진입 시각·정착을 이어가고, 시작 때 구역 밖이면 ZONE_RESUME_HOLD_MS 안에 보고를 기다린다.
      */
     private fun resume(s: LoneWorkerResume.State, nowMs: Long) {
@@ -355,7 +355,7 @@ class LoneWorkerLogic(var myBleId: String) {
             accidentUntil = s.accidentUntil
         }
         carried = s.carried
-        stillBase = s.stillBase
+        stillBase = if (mounted && !s.mounted) nowMs else s.stillBase // 거치 셈을 저장하지 않은 상태(v2·거치 아님)면 기준을 믿지 않고 재시작부터 센다(H2)
         s.zoneSince?.let {
             if (!zone.inside) hold.holdZone(nowMs + ZONE_RESUME_HOLD_MS)
             zone.reset(true, it)

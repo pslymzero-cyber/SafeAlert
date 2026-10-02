@@ -9,7 +9,7 @@ import kotlin.math.abs
  * 단독 작업자 감시의 재시작 이어가기 저장소 (v1.1.99).
  *
  * 저장 대상: 사고 의심(30초 셈 기준·끝), 열린 확인 창 종류, 충전 여부, 지님 확정, 무동작 기준 시각(사이렌 멈춤을 뺀 값),
- * 세이프존 상태(정착 여부·구역 진입 시각, 구역 밖이면 없음). 대기 = 충전 안 함이고 지님 확정 아님.
+ * 세이프존 상태(정착 여부·구역 진입 시각, 구역 밖이면 없음), 장비 거치 여부(v2 는 거치 아님으로 읽음). 대기 = 충전 안 함이고 지님 확정 아님.
  * 본인 SOS 는 저장하지 않는다(SosLedger 가 복원하고 그쪽이 이긴다).
  * 시각은 저장 시점 elapsedRealtime 그대로 두고 부팅 수·저장 elapsed·저장 벽시계를 함께 적는다. 같은 부팅이면
  * elapsed 값을 그대로 쓰고(벽시계 변경과 무관), 다른 부팅(또는 부팅 수를 모름)이면 벽시계 경과(음수는 0)만큼 옮긴다.
@@ -28,14 +28,18 @@ class LoneWorkerResume(private val ctx: Context) {
         val carried: Boolean,
         val stillBase: Long,
         val zoneSettled: Boolean,
-        val zoneSince: Long?
+        val zoneSince: Long?,
+        /** 장비 거치(장비 모드 + 충전 중 + 지님 아님) 중 저장 — 이때만 거치 셈 기준이 저장돼 믿을 수 있다. */
+        val mounted: Boolean = false
     )
 
     companion object {
         const val KEY = "lw_resume"
         private const val PREFS = "safealert_prefs"
-        private const val VERSION = "v2"
-        private const val FIELDS = 12
+        private const val VERSION = "v3"
+        private const val FIELDS = 13
+        /** v1.2.4 까지의 12칸 형식, 거치 칸이 없어 mounted = false 로 읽는다. */
+        private const val OLD_VERSION = "v2"
         /** 무동작 기준 시각만 바뀐 경우는 이만큼 바뀌어야 다시 저장한다(움직이는 동안 초당 쓰기 방지). */
         private const val STILL_SAVE_MS = 10_000L
         private val CHECKS = setOf("", "fall", "still")
@@ -45,7 +49,7 @@ class LoneWorkerResume(private val ctx: Context) {
             fun b(v: Boolean) = if (v) "1" else "0"
             return listOf(VERSION, boot.toString(), elapsedNow.toString(), wallNow.toString(),
                 t(s.accidentHold), t(s.accidentUntil), s.check, b(s.charging), b(s.carried), s.stillBase.toString(),
-                b(s.zoneSettled), t(s.zoneSince)).joinToString("|")
+                b(s.zoneSettled), t(s.zoneSince), b(s.mounted)).joinToString("|")
         }
 
         /** 형식·칸 수·숫자·종류 값이 어긋나면 null(이어가기 없이 새로 시작한다). boot 는 지금 부팅 수(모르면 -1). */
@@ -53,7 +57,8 @@ class LoneWorkerResume(private val ctx: Context) {
             if (raw == null) return null
             return runCatching {
                 val f = raw.split("|")
-                require(f.size == FIELDS && f[0] == VERSION && f[6] in CHECKS)
+                val cur = f.size == FIELDS && f[0] == VERSION
+                require((cur || f.size == FIELDS - 1 && f[0] == OLD_VERSION) && f[6] in CHECKS)
                 val savedBoot = f[1].toInt()
                 val savedElapsed = f[2].toLong()
                 val savedWall = f[3].toLong()
@@ -62,14 +67,15 @@ class LoneWorkerResume(private val ctx: Context) {
                 fun t(v: String): Long? = if (v.isEmpty()) null else v.toLong() + shift
                 fun past(v: String): Long? = t(v)?.let { minOf(it, elapsedNow) }
                 fun b(v: String): Boolean = when (v) { "1" -> true; "0" -> false; else -> error(v) }
-                State(past(f[4]), t(f[5]), f[6], b(f[7]), b(f[8]), past(f[9])!!, b(f[10]), past(f[11]))
+                State(past(f[4]), t(f[5]), f[6], b(f[7]), b(f[8]), past(f[9])!!, b(f[10]), past(f[11]),
+                    cur && b(f[12]))
             }.getOrNull()
         }
 
-        /** 저장할지: 처음이거나 기준 말고 다른 칸이 바뀌었거나, 지님·정착 구역 밖에서 기준이 STILL_SAVE_MS 이상 바뀌었다. */
+        /** 저장할지: 처음이거나 기준 말고 다른 칸이 바뀌었거나, 지님·장비 거치 중, 정착 구역 밖에서 기준이 STILL_SAVE_MS 이상 바뀌었다. */
         fun shouldSave(prev: State?, s: State): Boolean {
             if (prev == null || prev.copy(stillBase = s.stillBase) != s) return true
-            return s.carried && !s.zoneSettled && abs(s.stillBase - prev.stillBase) >= STILL_SAVE_MS
+            return (s.carried || s.mounted) && !s.zoneSettled && abs(s.stillBase - prev.stillBase) >= STILL_SAVE_MS
         }
 
         /** 사용자가 멈췄다: 실행 복원 키와 재시작 상태를 함께 지운다. 같은 editor 를 돌려준다(commit 은 호출한 쪽). */

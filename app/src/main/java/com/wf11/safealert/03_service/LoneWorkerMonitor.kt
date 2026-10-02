@@ -115,7 +115,7 @@ class LoneWorkerMonitor(
         this.name = name
         this.roleName = roleName
         logic.myBleId = bleId
-        logic.setEquipment(equipment, now()) // applyMode 가 역할이 바뀔 때마다 부르므로 바로 적용된다 (B1)
+        logic.setEquipment(equipment, now()) // 복원(startFrom)보다 먼저 넣어야 복원이 장비 거치를 안다(H2), 역할이 바뀌면 applyMode 가 새로 시작한다 (B1)
         if (started) return
         started = true
         // 충전 중이면 거치로, 아니면 첫 뚜렷한 움직임 대기로 시작한다 (v1.1.99)

@@ -118,8 +118,9 @@ class LoneWorkerResumeTest : RestartKit() {
         val ok = LoneWorkerResume.encode(accidentCheck().snapshot(40_000), 40_000, wall0, boot)
         assertNotNull(LoneWorkerResume.decode(ok, 40_000, wall0, boot))
         assertEquals(accidentCheck().snapshot(40_000), LoneWorkerResume.decode(ok, 40_000, wall0, boot))
-        for (bad in listOf(null, "", "v1|1|2", "v3" + ok.drop(2), ok.replace("|fall|", "|x|"),
-            ok.replaceFirst("|", "|abc"), ok.dropLast(1) + "x", ok + "|1")) {
+        for (bad in listOf(null, "", "v1|1|2", "v9" + ok.drop(2), ok.replace("|fall|", "|x|"),
+            ok.replaceFirst("|", "|abc"), ok.dropLast(1) + "x", ok + "|1",
+            "v2" + ok.drop(2), ok.substringBeforeLast("|"))) {
             assertNull(bad, LoneWorkerResume.decode(bad, 40_000, wall0, boot))
         }
     }
@@ -374,11 +375,16 @@ class LoneWorkerResumeTest : RestartKit() {
         }
     }
 
-    @Test fun save_skips_still_only_change_unless_carried_outside_settled_zone() {
+    @Test fun save_skips_still_only_change_unless_counting_outside_settled_zone() {
         val carried = LoneWorkerResume.State(null, null, "", false, true, 0L, false, null)
         val waiting = carried.copy(carried = false)
         val docked = waiting.copy(charging = true)
         val settled = carried.copy(zoneSettled = true, zoneSince = 0L)
+        val mounted = docked.copy(mounted = true)
+        assertTrue(LoneWorkerResume.shouldSave(mounted, mounted.copy(stillBase = 10_000)))
+        assertFalse(LoneWorkerResume.shouldSave(mounted, mounted.copy(stillBase = 9_000)))
+        val mountedSettled = mounted.copy(zoneSettled = true, zoneSince = 0L)
+        assertFalse(LoneWorkerResume.shouldSave(mountedSettled, mountedSettled.copy(stillBase = 60_000)))
         assertTrue(LoneWorkerResume.shouldSave(null, carried))
         assertTrue(LoneWorkerResume.shouldSave(carried, carried.copy(stillBase = 10_000)))
         assertFalse(LoneWorkerResume.shouldSave(carried, carried.copy(stillBase = 9_000)))
@@ -387,6 +393,57 @@ class LoneWorkerResumeTest : RestartKit() {
         assertFalse(LoneWorkerResume.shouldSave(settled, settled.copy(stillBase = 60_000)))
         assertTrue(LoneWorkerResume.shouldSave(carried, carried.copy(check = "still")))
         assertTrue(LoneWorkerResume.shouldSave(settled, settled.copy(zoneSettled = false, stillBase = 1_000)))
+    }
+
+    // -- mounted equipment restart (H1, H2) --
+
+    /** Restart in the monitor's order: equipment first, then startFrom (charging). */
+    private fun mountedRestart(s: LoneWorkerResume.State): LoneWorkerLogic =
+        LoneWorkerLogic("SAFEALERT_WALKER_ME").apply {
+            setEquipment(true, 5_000L)
+            startFrom(5_000L, false, true, s)
+        }
+
+    /**
+     * H1 tracer: a docked equipment device saves its still base and continues it after a restart.
+     * 10 s still before the save + 20 s downtime = 30 s at the restart, so the base is -25 s.
+     */
+    @Test fun mounted_restart_continues_still_count() {
+        val old = newLogic(charging = true).apply { setEquipment(true, 0L) }
+        val first = old.snapshot(0)
+        old.onMoved(100_000)
+        assertTrue(LoneWorkerResume.shouldSave(first, old.snapshot(110_000)))
+        val l = mountedRestart(saved(old, 110_000, 5_000, 20_000))
+        assertEquals(Mode.WATCHING, l.seenAt(154_999))
+        assertEquals(Mode.CHECKING, l.seenAt(155_000))
+        assertEquals("still", l.trigger)
+    }
+
+    /** H2: a v2 state (no mounted field) restored into a mounted device counts from the restart. */
+    @Test fun old_format_state_for_mounted_device_counts_from_restart() {
+        val s = LoneWorkerResume.decode("v2|7|110000|1000000000||||1|0|0|0|", 5_000, wall0 + 20_000, 8)
+        assertNotNull(s)
+        val l = mountedRestart(s!!)
+        assertEquals(Mode.WATCHING, l.seenAt(184_999))
+        assertEquals(Mode.CHECKING, l.seenAt(185_000))
+        assertEquals("still", l.trigger)
+        val start = sourceBlock(serviceSource("LoneWorkerMonitor.kt"), "fun start(bleId: String")
+        val eq = start.indexOf("logic.setEquipment(")
+        assertTrue(eq >= 0)
+        assertTrue(eq < start.indexOf("logic.startFrom("))
+    }
+
+    /** v2 strings still restore the open window and the accident suspicion. */
+    @Test fun v2_state_still_restores_checks_and_suspicion() {
+        val s = LoneWorkerResume.decode("v2|7|40000|1000000000|1000|301000|fall|0|1|1000|0|", 5_000, wall0 + 20_000, 8)
+        assertNotNull(s)
+        assertFalse(s!!.mounted)
+        assertEquals("fall", s.check)
+        assertEquals(246_000L, s.accidentUntil)
+        val l = LoneWorkerLogic("SAFEALERT_WALKER_ME").apply { startFrom(5_000, false, false, s) }
+        assertEquals(Mode.CHECKING, l.modeAt(5_000))
+        assertEquals("fall", l.trigger)
+        assertEquals(60_000L, l.responseLeftMs(5_000))
     }
 
     // -- peer siren pause (C2) --
