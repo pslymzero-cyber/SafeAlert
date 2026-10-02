@@ -59,6 +59,9 @@ class DevSettingsActivity : AppCompatActivity() {
         binding.switchLoneWorker.isChecked = DevSettings.lwEnabled
         binding.etLwStillMin.setText(DevSettings.lwStillMin.toString())
         binding.etLwResponseMin.setText(DevSettings.lwResponseMin.toString())
+        binding.etLwZoneFallCm.setText(DevSettings.lwZoneFallCm.toString())
+        binding.etLwZoneFallG.setText(DevSettings.lwZoneFallG.toString())
+        binding.etLwZoneFallDeg.setText(DevSettings.lwZoneFallDeg.toString())
         binding.switchDeviceTx.isChecked = DevSettings.deviceTx
         binding.switchDeviceRx.isChecked = DevSettings.deviceRx
         binding.switchWalkerTx.isChecked = DevSettings.walkerTx
@@ -228,6 +231,9 @@ class DevSettingsActivity : AppCompatActivity() {
         binding.switchLoneWorker.setOnCheckedChangeListener { _, c -> DevSettings.lwEnabled = c }
         bindIntField(binding.etLwStillMin,     { DevSettings.lwStillMin },     { DevSettings.lwStillMin = it })
         bindIntField(binding.etLwResponseMin,  { DevSettings.lwResponseMin },  { DevSettings.lwResponseMin = it })
+        bindIntField(binding.etLwZoneFallCm,   { DevSettings.lwZoneFallCm },   { DevSettings.lwZoneFallCm = it })
+        bindDoubleField(binding.etLwZoneFallG, { DevSettings.lwZoneFallG },    { DevSettings.lwZoneFallG = it })
+        bindIntField(binding.etLwZoneFallDeg,  { DevSettings.lwZoneFallDeg },  { DevSettings.lwZoneFallDeg = it })
         binding.switchDeviceTx.setOnCheckedChangeListener { _, c -> DevSettings.deviceTx = c }
         binding.switchDeviceRx.setOnCheckedChangeListener { _, c -> DevSettings.deviceRx = c }
         binding.switchWalkerTx.setOnCheckedChangeListener { _, c -> DevSettings.walkerTx = c }
@@ -653,6 +659,12 @@ class DevSettingsActivity : AppCompatActivity() {
 
     private fun bindIntField(et: android.widget.EditText, getter: () -> Int, setter: (Int) -> Unit) {
         val commit = { setter(et.text.toString().toIntOrNull() ?: getter()) }
+        editCommitters += commit
+        et.setOnFocusChangeListener { _, hasFocus -> if (!hasFocus) { commit(); et.setText(getter().toString()) } }
+    }
+
+    private fun bindDoubleField(et: android.widget.EditText, getter: () -> Double, setter: (Double) -> Unit) {
+        val commit = { setter(et.text.toString().toDoubleOrNull()?.takeIf { it.isFinite() } ?: getter()) }
         editCommitters += commit
         et.setOnFocusChangeListener { _, hasFocus -> if (!hasFocus) { commit(); et.setText(getter().toString()) } }
     }

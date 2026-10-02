@@ -96,6 +96,24 @@
                         </LinearLayout>
                         <TextView style="@style/SA.Hint" android:layout_marginTop="0dp" android:text="1~10, 기본 2" />
 
+                        <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
+                            <TextView style="@style/SA.RowLabel" android:text="세이프존 낙상 높이(cm)" />
+                            <EditText android:id="@+id/et_lw_zone_fall_cm" style="@style/SA.EditNumber" />
+                        </LinearLayout>
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="0dp" android:text="2~100, 기본 30. 세이프존 안 넘어짐은 높이·충격·각도를 모두 넘어야 확인 창" />
+
+                        <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
+                            <TextView style="@style/SA.RowLabel" android:text="세이프존 낙상 충격(G)" />
+                            <EditText android:id="@+id/et_lw_zone_fall_g" style="@style/SA.EditNumber" android:inputType="numberDecimal" />
+                        </LinearLayout>
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="0dp" android:text="1.5~8.0, 기본 2.5" />
+
+                        <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
+                            <TextView style="@style/SA.RowLabel" android:text="세이프존 낙상 각도(°)" />
+                            <EditText android:id="@+id/et_lw_zone_fall_deg" style="@style/SA.EditNumber" />
+                        </LinearLayout>
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="0dp" android:text="30~90, 기본 60" />
+
                         <View style="@style/SA.Divider" />
 
                         <TextView style="@style/SA.SubHeader" android:text="보행자"

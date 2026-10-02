@@ -130,7 +130,8 @@ class LoneWorkerMonitor(
         SirenGenerator.prewarm() // 사이렌·확인음 PCM 을 백그라운드에서 미리 만든다 (v1.1.99)
         val l = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
             if (key == DevSettings.KEY_LW_ENABLED || key == DevSettings.KEY_LW_STILL_MIN ||
-                key == DevSettings.KEY_LW_RESPONSE_MIN) handler.post { applySettings() }
+                key == DevSettings.KEY_LW_RESPONSE_MIN || key == DevSettings.KEY_LW_ZONE_FALL_CM ||
+                key == DevSettings.KEY_LW_ZONE_FALL_G || key == DevSettings.KEY_LW_ZONE_FALL_DEG) handler.post { applySettings() }
         }
         prefsListener = l
         DevSettings.registerOnChange(l)
@@ -193,8 +194,12 @@ class LoneWorkerMonitor(
             sensors.unregister()
             watchdog.disarm()
         }
-        // 세이프존 충격 기준도 기본 임계와 같은 센서 범위 보정(2 G 센서)을 거친다 (D-02)
-        logic.zoneFall = MotionAnalyzer.ZoneFall(impactG = MotionAnalyzer.impactGFor(sensors.rangeMs2, MotionAnalyzer.IMPACT_G))
+        // 세이프존 낙상 기준(개발자 설정). 충격은 기본 임계와 같은 센서 범위 보정(2 G 센서)을 거친다 (D-02, D-03)
+        logic.zoneFall = MotionAnalyzer.ZoneFall(
+            MotionAnalyzer.freeFallMsFor(DevSettings.lwZoneFallCm),
+            MotionAnalyzer.impactGFor(sensors.rangeMs2, DevSettings.lwZoneFallG),
+            DevSettings.lwZoneFallDeg.toDouble()
+        )
         logic.setEnabled(DevSettings.lwEnabled && !sensors.noSensor, t)
         render()
     }
