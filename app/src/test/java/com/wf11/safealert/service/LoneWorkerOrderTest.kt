@@ -3,6 +3,7 @@ package com.wf11.safealert.service
 import com.wf11.safealert.service.LoneWorkerLogic.Mode
 import com.wf11.safealert.service.LoneWorkerLogic.Rest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -60,8 +61,7 @@ class LoneWorkerOrderTest : RestartKit() {
 
     /**
      * Charging inside the zone, impact at 89 s, unplug at 100 s: the fall happened while charging and is ignored
-     * whether it is processed before or after the unplug confirms (N2). Not charging at the impact, a plug and an
-     * unplug after it do not make it a charging fall (the plug rule drops it).
+     * whether it is processed before or after the unplug confirms (N2).
      */
     @Test fun fall_before_an_unplug_is_ignored_whenever_it_is_processed() {
         bothOrders { late, m ->
@@ -75,12 +75,25 @@ class LoneWorkerOrderTest : RestartKit() {
             assertEquals(m, Mode.WATCHING, l.seenAt(119_000))
             assertNull(m, l.snapshot(119_000).accidentUntil)
         }
-        val l = newLogic(zoneInside = true, carried = true)
-        l.reportPower(true, 25_000)
-        l.reportPower(false, 28_000)
-        l.onAccident(20_000)
-        assertNull(l.snapshot(32_000).accidentUntil)
-        assertEquals(Mode.WATCHING, l.seenAt(60_000))
+    }
+
+    /**
+     * Outside the safe zone a real plug 5 s after the impact is the mounting action (power connected within 10 s
+     * before or after the impact): the fall is ignored whether it is processed before or after the plug confirms.
+     * Without the plug the same fall opens the suspicion.
+     */
+    @Test fun plug_shortly_after_impact_outside_zone_ignores_the_fall() {
+        bothOrders { late, m ->
+            val l = newLogic(carried = true)
+            if (!late) l.onAccident(20_000)
+            l.reportPower(true, 25_000)
+            if (late) l.onAccident(20_000)
+            assertNull(m, l.snapshot(32_000).accidentUntil)
+            assertEquals(m, Mode.WATCHING, l.seenAt(60_000))
+        }
+        val control = newLogic(carried = true)
+        control.onAccident(20_000)
+        assertNotNull(control.snapshot(32_000).accidentUntil)
     }
 
     /** Steps before the impact at 20 s do not count for the accident: check at 50 s in either processing order (Y5). */

@@ -118,11 +118,20 @@ class Sim0914NormalEscalationDepartTest {
         assertNull("e2 spike 경보", e2.firstAlertMs)
     }
 
-    // g. TTC 조기경보 — WARNING+APPROACHING 에서 TTC<=3.0s 면 위험 임계 도달 전 DANGER(:1541). 발령 시각은 16ee857 과 동일해야 한다.
+    // g. TTC 조기경보(AlertStateMachine TTC 선발령 분기, `ttc <= TTC_THRESHOLD_SEC`) — 경고권에서 접근 중이고
+    //    TTC 가 임계 이하면 RSSI 가 위험 임계에 닿기 전에 DANGER 를 낸다. 실측(2026-10-02): g1 WARNING 1200ms →
+    //    DANGER 1920ms(rssi -66), g2 WARNING 3120ms → DANGER 5520ms(rssi -67), 위험 임계 -65. 1초 간격 g3(DANGER -62)은
+    //    조기 발령이 아니라 뺐다.
     @Test fun g_ttcEarlyDanger() {
-        run("g1_ttc_1.5dBps120", 50) { f, _ -> minOf(-90 + (f * 3) / 2, -45) }
-        run("g2_ttc_0.5dB120", 140) { f, _ -> minOf(-90 + f / 2, -45) }
-        run("g3_ttc_2dB1000", 30, dtMs = 1000L) { f, _ -> minOf(-90 + 2 * f, -45) }
+        val g1 = run("g1_ttc_1.5dBps120", 50) { f, _ -> minOf(-90 + (f * 3) / 2, -45) }
+        val g2 = run("g2_ttc_0.5dB120", 140) { f, _ -> minOf(-90 + f / 2, -45) }
+        for ((name, t) in listOf("g1" to g1, "g2" to g2)) {
+            assertNotNull("$name WARNING 없음", t.firstWarnMs)
+            assertNotNull("$name DANGER 없음", t.firstDangerMs)
+            assertTrue("$name WARNING 이 DANGER 보다 먼저", t.firstWarnMs!! < t.firstDangerMs!!)
+            assertTrue("$name DANGER 가 위험 임계(${BleConstants.rssiDanger}) 전에 나와야 한다: ${t.firstDangerRssi}",
+                t.firstDangerRssi!! < BleConstants.rssiDanger)
+        }
     }
 
     // i. 경계 RSSI 흔들림 — v1.1.56 플래핑 억제, PassByStop reAlerts=0.

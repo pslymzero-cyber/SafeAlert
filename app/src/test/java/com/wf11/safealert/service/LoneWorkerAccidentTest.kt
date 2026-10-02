@@ -412,6 +412,25 @@ class LoneWorkerAccidentTest {
         assertNull(before.snapshot(119_000).accidentUntil)
     }
 
+    /** The unplug-before-fall window is "within 10 s": an unplug exactly UNPLUG_FALL_MS before the fall still ignores it. */
+    @Test fun unplug_exactly_10s_before_fall_in_safe_zone_is_ignored() {
+        val l = rule1(charging = true, zoneInside = true)
+        l.reportPower(false, 100_000)
+        l.onAccident(100_000 + LoneWorkerLogic.UNPLUG_FALL_MS)
+        for (t in 140_000L..440_000L step 10_000L) assertEquals(Mode.WATCHING, l.seenAt(t))
+    }
+
+    /** A second fall while a fall check is open neither reopens nor moves that check: SOS stays due 60 s after it opened. */
+    @Test fun second_fall_during_open_fall_check_does_not_move_it() {
+        val l = rule1()
+        l.onAccident(10_000)
+        assertEquals(Mode.CHECKING, l.seenAt(40_000))
+        l.onAccident(45_000)
+        assertEquals(Mode.CHECKING, l.seenAt(50_000))
+        assertEquals(50_000L, l.responseLeftMs(50_000))
+        assertEquals(Mode.SOS, l.seenAt(100_000))
+    }
+
     @Test fun unplug_fall_window_only_inside_safe_zone() {
         val l = rule1(charging = true)
         l.reportPower(false, 100_000)

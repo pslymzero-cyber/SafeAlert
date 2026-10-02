@@ -27,6 +27,23 @@ class ExtFlagCodecTest {
         assertFalse(BleConstants.decodeSos(0))   // missing byte is parsed as 0
     }
 
+    /** Deployed devices decode this 1-byte layout (CAT 7:6, STATE 5:4, TURN 3:2, RISK 1:0); it must never change. */
+    @Test
+    fun encodePayload_bitLayoutIsFrozen() {
+        fun enc(cat: Int, state: Int, turn: Int, risk: Int) = BleConstants.encodePayload(cat, state, turn, risk).toInt() and 0xFF
+        val c = BleConstants
+        assertEquals(0x00, enc(c.CAT_WALKER, c.PSTATE_IDLE, c.TURN_STRAIGHT, c.LEVEL_SAFE))
+        assertEquals(0xA6, enc(c.CAT_FORKLIFT, c.PSTATE_REVERSE, c.TURN_LEFT, c.LEVEL_DANGER))
+        assertEquals(0x79, enc(c.CAT_EPJ, c.PSTATE_LOADING, c.TURN_RIGHT, c.LEVEL_WARNING))
+        assertEquals(0x90, enc(c.CAT_FORKLIFT, c.PSTATE_FORWARD, c.TURN_STRAIGHT, c.LEVEL_SAFE))
+        assertEquals(0x65, enc(1, 2, 1, 1))
+        assertEquals(0xC0, enc(0b111, 0, 0, 0))   // category masked to 2 bits
+        assertEquals(2, BleConstants.decodeCategory(0xA6))
+        assertEquals(2, BleConstants.decodeState(0xA6))
+        assertEquals(1, BleConstants.decodeTurn(0xA6))
+        assertEquals(2, BleConstants.decodeRisk(0xA6))
+    }
+
     @Test
     fun byte0OnlyReader_unaffectedBySos() {
         for (cat in 0..2) for (state in 0..3) for (turn in 0..2) for (risk in 0..2) {

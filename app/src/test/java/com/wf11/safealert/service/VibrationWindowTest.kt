@@ -57,6 +57,23 @@ class VibrationWindowTest {
     }
 
     @Test
+    fun cut_ends_running_segments_at_the_cut_time() {
+        val w = VibrationWindow()
+        w.oneShot(0L, 100L)
+        w.oneShot(1_000L, 2_000L)
+        w.loopStart(1_500L, 100L, 500L)
+        assertTrue(w.covers(2_100L))
+        assertTrue(w.covers(2_500L))
+        w.cut(1_800L)
+        assertTrue(w.covers(1_999L))    // grace after the cut
+        assertFalse(w.covers(2_001L))
+        assertFalse(w.covers(2_100L))
+        assertFalse(w.covers(2_500L))
+        assertTrue(w.covers(250L))      // a finished segment is untouched (not stretched to the cut)
+        assertFalse(w.covers(500L))
+    }
+
+    @Test
     fun segments_older_than_ten_seconds_are_pruned() {
         val w = VibrationWindow()
         w.oneShot(0L, 500L)

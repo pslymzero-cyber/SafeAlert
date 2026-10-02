@@ -45,6 +45,15 @@ class SosRecordParseTest {
         assertFalse(r!!.active)
     }
 
+    /** resolvedAt (server time of the resolve) is read as a number; absent or not a number = 0. */
+    @Test
+    fun resolvedAt_isReadOrZero() {
+        val r = SosRemote.parseSosRecord("k", valid().apply { put("status", "resolved"); put("resolvedAt", 1780000600000L) })
+        assertEquals(1780000600000L, r!!.resolvedAt)
+        assertEquals(0L, SosRemote.parseSosRecord("k", valid())!!.resolvedAt)
+        assertEquals(0L, SosRemote.parseSosRecord("k", valid().apply { put("resolvedAt", "x") })!!.resolvedAt)
+    }
+
     @Test
     fun badRequiredFields_yieldNull() {
         assertNull(SosRemote.parseSosRecord("k", null))
