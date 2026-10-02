@@ -1,6 +1,7 @@
 /*
  * SafeAlert 단독 작업자 구조 요청 메일 (v1.2.2)
  * 앱이 구조 요청·해제를 서버에 기록한 뒤 이 웹 앱에 알리면, 서버 기록을 직접 확인하고 정해진 양식의 메일을 한 번 보낸다.
+ * 평문과 같은 내용을 표로 정리한 HTML 본문도 함께 보낸다.
  *
  * 설치 순서
  *  1. 알림 전용 구글 계정으로 로그인한다. 메일은 이 계정 이름으로 나간다.
@@ -129,7 +130,7 @@ function handle(p) {
     // 보낼 기록을 먼저 남긴다. 저장이 안 되면 보내지 않고, 보내기가 실패하면 기록을 지운다.
     store.setProperty(key, String(now));
     try {
-      MailApp.sendEmail({ to: to, subject: m.subject, body: m.body, name: 'SafeAlert' });
+      MailApp.sendEmail({ to: to, subject: m.subject, body: m.body, htmlBody: m.html, name: 'SafeAlert' });
     } catch (err) {
       store.deleteProperty(key);
       throw err;
@@ -172,11 +173,18 @@ function buildMail(event, sc, id, rec, stillMin) {
   var name = oneLine(rec.name);
   var role = roleName(rec.role);
   var no = id.slice(-6);
+  var who = esc(sc) + ' · ' + esc(name) + ' (' + esc(role) + ')';
   if (event === 'resolved') {
     var sec = Math.floor((rec.resolvedAt - rec.createdAt) / 1000);
     if (!(sec > 0)) sec = 0;
     return {
       subject: '[SafeAlert 해제] ' + sc + ' ' + name + ' - 구조 요청 해제 (기록 ' + no + ')',
+      html: mailHtml('#2e7d32', '구조 요청 해제', who, '작업자가 [괜찮아요]로 해제했습니다.', [
+        ['해제 시각', esc(fmt(rec.resolvedAt, 'HH:mm:ss')) + ' (서버 기록)', true],
+        ['걸린 시간', '구조 요청 기록 후 ' + Math.floor(sec / 60) + '분 ' + (sec % 60) + '초'],
+        ['상태', badge('#e8f5e9', '#2e7d32', '해제됨')],
+        ['기록 번호', esc(no)]
+      ]),
       body: name + '(' + role + ') 작업자가 서버 기록 ' + fmt(rec.resolvedAt, 'HH:mm:ss') +
         '에 [괜찮아요]로 구조 요청을 해제했습니다. (구조 요청 기록 후 ' + Math.floor(sec / 60) + '분 ' + (sec % 60) + '초)' +
         '\n기록 번호: ' + no + '\n\n' + TAIL
@@ -187,12 +195,22 @@ function buildMail(event, sc, id, rec, stillMin) {
   var cause = fall ? '넘어짐 감지 후 응답 없음'
     : (n ? n + '분 동안 움직임 없음 후 응답 없음' : '움직임 없음 후 응답 없음');
   var beacon = oneLine(rec.beacon) || '알 수 없음';
-  var state = rec.status === 'resolved' && typeof rec.resolvedAt === 'number'
+  var done = rec.status === 'resolved' && typeof rec.resolvedAt === 'number';
+  var state = done
     ? '상태: 해제됨 (' + fmt(rec.resolvedAt, 'HH:mm:ss') + ')'
     : '상태: 구조 요청 중 (작업자가 [괜찮아요]를 누르면 해제 메일이 갑니다)';
   return {
     subject: '[SafeAlert 구조 요청] ' + sc + ' ' + name + (fall ? ' - 넘어짐 감지' : ' - 움직임 없음') +
       ' (기록 ' + no + ')',
+    html: mailHtml('#c62828', '구조 요청', who, '즉시 작업자 상태를 확인해 주십시오.', [
+      ['원인', esc(cause), true],
+      ['서버 기록 시각', esc(fmt(rec.createdAt, 'yyyy-MM-dd HH:mm:ss')) + ' (한국 시간)'],
+      ['마지막 위치', esc(beacon)],
+      ['상태', done ? badge('#e8f5e9', '#2e7d32', '해제됨 (' + esc(fmt(rec.resolvedAt, 'HH:mm:ss')) + ')')
+        : badge('#fdecea', '#c62828', '구조 요청 중') +
+          '<br><span style="font-size:12px;color:#666666;">작업자가 [괜찮아요]를 누르면 해제 메일이 갑니다.</span>'],
+      ['기록 번호', esc(no)]
+    ]),
     body: [
       'SafeAlert 단독 작업자 구조 요청이 발생했습니다. 즉시 작업자 상태를 확인해 주십시오.',
       '',
@@ -229,6 +247,42 @@ function oneLine(v) {
   return str(v)
     .replace(/[\u0000-\u001f\u007f-\u009f\u200B-\u200F\u2028-\u202E\u2060-\u206F\uFEFF]+/g, ' ')
     .trim().slice(0, 64);
+}
+
+/** HTML 특수 문자 다섯 개(& < > " ')를 바꿔 넣는다. */
+function esc(v) {
+  var map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+  return str(v).replace(/[&<>"']/g, function (c) { return map[c]; });
+}
+
+/** 상태 칸의 색 글자 상자. */
+function badge(bg, fg, html) {
+  return '<span style="background:' + bg + ';color:' + fg + ';font-weight:bold;padding:2px 8px;">' + html + '</span>';
+}
+
+/**
+ * 색 띠 + 표 메일 본문(표와 인라인 style 만, 가운데 최대 600px). 받은 문자열을 그대로 넣으므로
+ * 바뀌는 값은 esc 로 감싸서 넘긴다. rows 는 [라벨, 값 html, 굵게] 목록.
+ */
+function mailHtml(color, title, who, lead, rows) {
+  var cells = rows.map(function (r, i) {
+    var line = i < rows.length - 1 ? 'border-bottom:1px solid #eeeeee;' : '';
+    return '<tr><td style="' + (i === 0 ? 'width:110px;' : '') + 'padding:9px 0;color:#666666;' + line +
+      'vertical-align:top;">' + r[0] + '</td><td style="padding:9px 0;' + (r[2] ? 'font-weight:bold;' : '') + line +
+      '">' + r[1] + '</td></tr>';
+  }).join('');
+  return '<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">' +
+    '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;' +
+    'max-width:600px;background:#ffffff;font-family:\'Malgun Gothic\',\'Apple SD Gothic Neo\',Arial,sans-serif;">' +
+    '<tr><td style="background:' + color + ';color:#ffffff;padding:16px 20px;">' +
+    '<div style="font-size:13px;">SafeAlert 단독 작업자</div>' +
+    '<div style="font-size:22px;font-weight:bold;margin-top:2px;">' + title + '</div>' +
+    '<div style="font-size:15px;margin-top:4px;">' + who + '</div></td></tr>' +
+    '<tr><td style="padding:16px 20px 4px;font-size:15px;font-weight:bold;color:' + color + ';">' + lead + '</td></tr>' +
+    '<tr><td style="padding:6px 20px 16px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0"' +
+    ' style="border-collapse:collapse;font-size:14px;">' + cells + '</table></td></tr>' +
+    '<tr><td style="padding:10px 20px;background:#f5f6f8;color:#888888;font-size:12px;">' + TAIL + '</td></tr>' +
+    '</table></td></tr></table>';
 }
 
 function fmt(ms, pattern) {

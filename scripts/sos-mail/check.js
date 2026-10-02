@@ -91,6 +91,16 @@ const fallDone = { name: 'Lee', role: 'FORKLIFT', trigger: 'fall', beacon: 'Rack
   resolvedAt: NOW - 200000 + 125000, status: 'resolved', uid: 'u' };
 const NO = '\uAE30\uB85D ';             // record
 const NO_LINE = '\uAE30\uB85D \uBC88\uD638: ';
+const ACTIVE = '\uAD6C\uC870 \uC694\uCCAD \uC911';       // sos still open
+const DONE = '\uD574\uC81C\uB428';                       // resolved
+const RES_TITLE = '\uAD6C\uC870 \uC694\uCCAD \uD574\uC81C';
+// html body: tables and inline style only, centred at 600px, no images or emoji
+function htmlOk(h) {
+  assert.strictEqual(typeof h, 'string');
+  assert.ok(h.includes('max-width:600px'), 'max-width');
+  assert.ok(!/<(img|style|link|script)\b|\bclass=|display\s*:\s*(flex|grid)|@media/i.test(h), 'markup');
+  assert.ok(!/[\u2600-\u27BF]|[\uD83C-\uD83E][\uDC00-\uDFFF]/.test(h), 'emoji');
+}
 
 // bad_request (address rules: no leading/trailing/double dot in the local part)
 let t = make({ db: { k1: still } });
@@ -142,6 +152,9 @@ assert.ok(m.body.includes('\uBCF4\uD589\uC790'));
 assert.ok(m.body.includes('\uC54C \uC218 \uC5C6\uC74C'));
 assert.ok(!m.body.includes('\uD574\uC81C\uB428'));
 assert.ok(t.w.zones.length > 0 && t.w.zones.every((z) => z === 'Asia/Seoul'));
+htmlOk(m.htmlBody);
+for (const s of ['#c62828', ACTIVE, 'WF11', 'Kim', '>k1<']) assert.ok(m.htmlBody.includes(s), 'sos html ' + s);
+for (const s of ['#2e7d32', DONE, RES_TITLE]) assert.ok(!m.htmlBody.includes(s), 'sos html no ' + s);
 const url = t.w.fetched[t.w.fetched.length - 1];
 assert.ok(url.startsWith('https://db.example.com/wf11/sos/WF11/k1.json?auth='));
 assert.ok(url.endsWith(encodeURIComponent(SECRET)) && !url.endsWith(SECRET));
@@ -172,8 +185,14 @@ assert.ok(m.subject.includes('\uB118\uC5B4\uC9D0 \uAC10\uC9C0'));
 assert.ok(m.subject.endsWith('(' + NO + 'KLMNOP)'));
 assert.ok(m.body.includes('Rack A') && !/[\r\n]/.test(m.subject));
 assert.ok(m.body.includes('\uD574\uC81C\uB428 (T(HH:mm:ss))'));
+htmlOk(m.htmlBody);
+assert.ok(m.htmlBody.includes('#c62828') && m.htmlBody.includes(DONE + ' (T(HH:mm:ss))'), 'resolved sos html state');
+assert.ok(!m.htmlBody.includes(ACTIVE), 'resolved sos html not active');
 assert.strictEqual(t.post({ id: LONG, event: 'resolved' }), 'sent');
 m = t.w.mails[5];
+htmlOk(m.htmlBody);
+for (const s of ['#2e7d32', RES_TITLE, 'WF11', 'Lee', '>KLMNOP<', '2\uBD84 5\uCD08']) assert.ok(m.htmlBody.includes(s), 'resolved html ' + s);
+assert.ok(!m.htmlBody.includes('#c62828'), 'resolved html no red');
 assert.ok(m.subject.includes('Lee'));
 assert.ok(m.subject.endsWith('(' + NO + 'KLMNOP)'));
 assert.ok(m.body.includes(NO_LINE + 'KLMNOP'));
@@ -248,8 +267,21 @@ t = make({ db: { k1: Object.assign({}, still, { name: 'K\u2028i\u202Em\u200B\uFE
 assert.strictEqual(t.post({}), 'sent');
 m = t.w.mails[0];
 for (const ch of ['\u2028', '\u2029', '\u202E', '\u200B', '\uFEFF', '\u0085', '\u2066']) {
-  assert.ok(!m.subject.includes(ch) && !m.body.includes(ch), 'char ' + ch.charCodeAt(0).toString(16));
+  assert.ok(!m.subject.includes(ch) && !m.body.includes(ch) && !m.htmlBody.includes(ch), 'char ' + ch.charCodeAt(0).toString(16));
 }
+
+// html escapes special characters; plain text keeps them
+const RAW = '<b>&"\'';
+t = make({ db: { k1: Object.assign({}, fallDone, { name: RAW, beacon: '<i>' }) } });
+assert.strictEqual(t.post({}), 'sent');
+assert.strictEqual(t.post({ event: 'resolved' }), 'sent');
+for (const x of t.w.mails) {
+  assert.ok(x.htmlBody.includes('&lt;b&gt;&amp;&quot;&#39;'), 'escaped name');
+  assert.ok(!x.htmlBody.includes('<b>') && !x.htmlBody.includes('<i>'), 'no raw tag');
+}
+assert.ok(t.w.mails[0].htmlBody.includes('&lt;i&gt;'), 'escaped beacon');
+assert.ok(t.w.mails[0].subject.includes(RAW) && t.w.mails[0].body.includes(RAW + ' ('));
+assert.ok(t.w.mails[1].body.startsWith(RAW + '('));
 
 // sent records: sos kept 7 days, resolved kept 24 hours
 const OLD = 'S|sos|wf11|WF11|old|aaaaaaaaaaaa', FRESH = 'S|sos|wf11|WF11|new|bbbbbbbbbbbb';
