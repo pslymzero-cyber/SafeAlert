@@ -59,7 +59,7 @@ function make(o) {
       createTextOutput: (s) => { const t = { mime: null, getContent: () => s }; t.setMimeType = (m) => { t.mime = m; return t; }; return t; }
     },
     Utilities: {
-      formatDate: (d, tz, p) => { w.zones.push(tz); return 'T(' + p + ')'; },
+      formatDate: (d, tz, p) => { w.zones.push(tz); return o.fmt ? o.fmt[p] : 'T(' + p + ')'; },
       DigestAlgorithm: { SHA_256: 'sha256' },
       Charset: { UTF_8: 'utf8' },
       computeDigest: (alg, s, cs) => {
@@ -341,3 +341,17 @@ assert.strictEqual(t.w.locked, locked);
 assert.strictEqual(t.w.mails.length, 1);
 
 console.log('sos-mail check OK (' + scenes + ' scenes)');
+
+// With a folder argument: write the sos and resolved html bodies there for a visual check.
+if (process.argv[2]) {
+  const rec = { name: 'RT-02', role: 'FORKLIFT', trigger: 'still', createdAt: NOW - 30000, status: 'active', uid: 'u' };
+  t = make({ db: { aFO78S: rec }, fmt: { 'yyyy-MM-dd HH:mm:ss': '2026-10-02 10:33:28', 'HH:mm:ss': '10:33:52' } });
+  assert.strictEqual(t.post({ id: 'aFO78S' }), 'sent');
+  Object.assign(rec, { status: 'resolved', resolvedAt: NOW - 7000 });
+  assert.strictEqual(t.post({ id: 'aFO78S', event: 'resolved' }), 'sent');
+  ['preview_sos.html', 'preview_resolved.html'].forEach((f, i) => {
+    const p = path.join(process.argv[2], f);
+    fs.writeFileSync(p, '<!doctype html><meta charset="utf-8">' + t.w.mails[i].htmlBody, 'utf8');
+    console.log('preview: ' + p);
+  });
+}
