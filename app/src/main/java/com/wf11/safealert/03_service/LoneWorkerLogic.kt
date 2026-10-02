@@ -17,7 +17,8 @@ package com.wf11.safealert.service
  *
  * 규칙 2(무동작): 지님(Rest.NONE)일 때만 stillMs 무동작이면 무동작 확인 창("still", responseMs)을 연다.
  * 충전 안 함은 시작·전원 해제 뒤 첫 뚜렷한 움직임(또는 센서 1분 무응답)부터 지님이고 그 전은 대기(WAIT)다.
- * 충전 중은 최근 30초 안 10걸음(걸음 센서가 없으면 30초 안 걷는 모양 창 5개)부터 다음 연결까지 지님, 그 전은 거치(DOCKED)다.
+ * 충전 중은 최근 30초 안 10걸음(걸음 센서가 없으면 30초 안 걷는 모양 창 5개)부터 다음 연결까지 지님, 그 전은 거치(DOCKED)다 — 장비 모드(지게차·EPJ) 거치는 쉬지 않고 Rest.NONE 이다.
+ * 장비 거치는 MOVED·회전으로 다시 세고, 열린 무동작 창은 회전·3초 걷기 수준 흔들림·[괜찮아요]로 닫힌다(걸음은 안 씀). 낙상 규칙·보행 모드 거치는 그대로(B1~B5).
  * 정착한 안전구역(원시 안쪽 60초 연속)에서는 무동작을 세지 않고 벗어난 시각부터 센다. 정착 시 열린 무동작 확인 창은 거둔다.
  * 동료 사이렌이 이 기기에서 진동하는 동안도 셈을 멈추고, 끝나면 쌓인 시간에 이어서 센다(멈춘 시간이 stillMs 에 이르면 사이렌이 계속 울려도 다시 세고, 진동기가 없는 기기는 멈추지 않는다).
  *
@@ -98,6 +99,8 @@ class LoneWorkerLogic(var myBleId: String) {
     private var charging = false // 로직에 적용한 전원 — JudgeOrder 가 마감 순서에 맞춰 옮기므로 디바운스 확정값(PowerDebounce.reported)과 미루는 동안 다르다
     private var chargeAt = 0L
     private var carried = false
+    private var equipment = false // 장비 모드(지게차·EPJ 선택, 모니터가 역할로 넣음)
+    private val mounted: Boolean get() = equipment && charging && !carried // 장비 거치 = 장비 모드 + 충전 중 + 지님 아님 (B1)
 
     // 걸음·걷는 모양 창 기록. floorAt = 창 닫기·사고 리셋 걸음 셈 기준(시작·트리거·창 열림·뚜렷한 움직임), 지님은 chargeAt 기준(M2)
     private val walk = WalkingSteps()
@@ -117,7 +120,7 @@ class LoneWorkerLogic(var myBleId: String) {
     /** 무동작 확인을 쉬는 이유. */
     val rest: Rest get() = when {
         carried -> Rest.NONE
-        charging -> Rest.DOCKED
+        charging -> if (equipment) Rest.NONE else Rest.DOCKED // 장비 거치는 쉬지 않는다 (B1)
         else -> Rest.WAIT
     }
 
@@ -159,6 +162,8 @@ class LoneWorkerLogic(var myBleId: String) {
             closeCheck(nowMs)
         }
     }
+    /** 장비 모드(지게차·EPJ 선택)를 모니터가 역할로 넣는다 — 바뀌면 그 시각부터 센다, 옛 기준으로 창을 바로 열지 않는다 (B1). */
+    fun setEquipment(on: Boolean, nowMs: Long) { if (on != equipment) { equipment = on; raiseStillBase(nowMs) } }
 
     /**
      * 디바운스가 확정한 실제 전원 변화(JudgeOrder 가 마감 순서대로 적용한다, atMs = 디바운스 전 첫 변화 시각). 연결: 새 거치 — 지님을 지우고, 열린 확인 창은 응답으로 보고 닫으며,
@@ -172,6 +177,7 @@ class LoneWorkerLogic(var myBleId: String) {
         // 재시작 때 적용한 변화는 거치 동작·크래들 낙하 기준이 아니다(H4·L2)
         if (on) {
             if (!restart) lastPlugAt = atMs
+            if (equipment) raiseStillBase(atMs) // 장비에 거치하면 그때부터 장비가 멈춘 시간을 센다 (B1)
             closeCheck(atMs)
             if (mode != Mode.SOS) clearAccident()
         } else {
@@ -186,6 +192,8 @@ class LoneWorkerLogic(var myBleId: String) {
         if (order.keep { onWindow(w) }) return
         val accepted = walk.onWindow(w.endMs, w.strong) ?: return
         for (t in accepted) acceptStep(t)
+        // 장비 거치: 창이 열린 뒤 3초 연속 걷기 수준 흔들림이면 무동작 창을 닫는다(걸음은 안 씀, B4)
+        if (mounted && w.strong) walk.firstRunEnd(floorAt, STRONG_RUN_MS)?.let { closeCheck(it, "still") }
         if (stepsAvailable || !w.strong) return
         val end = w.endMs
         if (!carried) (if (charging) end.takeIf { walk.strongIn(maxOf(chargeAt, end - CARRY_STEP_WINDOW_MS), end) >= CARRY_FALLBACK_WINDOWS } else firstDistinct(chargeAt))?.let { carry(it) }
@@ -215,6 +223,8 @@ class LoneWorkerLogic(var myBleId: String) {
 
     /** 움직임(MOVED)은 무동작 타이머만 갱신한다. 열린 확인 창은 닫지 않는다 (D-02, D-07). */
     fun onMoved(nowMs: Long) { if (!order.keep { onMoved(nowMs) }) raiseStillBase(nowMs) }
+    /** 장비 회전(BleService 1.5초 폴링, 직진 아닐 때만): 장비 거치면 무동작을 다시 세고 무동작 창을 닫는다(B2·B4). 지금 시각 실시간 값이라 sensedTo 에 안 보태고, MOVED 처럼 막힌 마감 뒤엔 보관했다 판정 뒤 재생(N1). */
+    fun onTurn(nowMs: Long) { if (!order.keep { onTurn(nowMs) } && mounted) { raiseStillBase(nowMs); closeCheck(nowMs, "still") } }
 
     /** 가속도 센서가 1분 동안 응답하지 않았다: 움직임 대기를 끝내고 지님으로 센다. */
     fun sensorSilent(nowMs: Long) {
@@ -414,8 +424,9 @@ class LoneWorkerLogic(var myBleId: String) {
     /** 뚜렷한 움직임: 무동작 시간을 새로 세고, 열린 확인 창을 닫는다(사고 의심은 계속). 대기 끝(지님)은 chargeAt 기준 규칙이 따로 본다. */
     private fun onDistinct(t: Long) {
         if (t > lastDistinctAt) lastDistinctAt = t
-        raiseStillBase(t)
         floorAt = t
+        if (mounted) return closeCheck(t, "fall") // 장비 거치: 걸음은 무동작을 다시 세지도 닫지도 않고, 사고 창만 전처럼 닫는다 (B4·B5)
+        raiseStillBase(t)
         closeCheck(t)
     }
 
@@ -470,15 +481,11 @@ class LoneWorkerLogic(var myBleId: String) {
     }
 
     // ── 동료 SOS (D-06): 회차 단위 항목은 LoneWorkerPeers 가 맡는다 ─────────
-
     fun onPeerServer(rec: LoneWorkerPeers.ServerRec, nowMs: Long) = peerStore.onServer(rec, nowMs)
-
     fun onPeerBle(bleId: String, sos: Boolean, nowMs: Long, episode: Int = 0, beacon: String = "") =
         peerStore.onBle(bleId, sos, nowMs, episode, beacon)
-
     /** 확인 버튼. targets = 항목 id -> 회차 ID. 그 항목만 묵음으로 만든다. */
     fun silencePeers(nowMs: Long, targets: Map<String, String>) = peerStore.silence(nowMs, targets)
-
     fun audiblePeers(): List<LoneWorkerPeers.Peer> = peerStore.audible()
 
     /** 경보 진동은 진동기가 있을 때 동료 구조 요청 사이렌에서만. 확인 창·본인 SOS·사고 의심 중인 요구조자 의심 기기는 진동 없이 소리·화면만 쓴다. */
@@ -486,7 +493,6 @@ class LoneWorkerLogic(var myBleId: String) {
         get() = canVibrate && mode == Mode.WATCHING && accidentUntil == Long.MIN_VALUE && peerStore.audible().isNotEmpty()
 
     // ── 최근 가장 강한 비콘 힌트(BeaconHints) ──────────────────
-
     fun noteBeacon(label: String, rssi: Int, nowMs: Long, sid: Int = 0) = beacons.noteBeacon(label, rssi, nowMs, sid)
     fun beaconHint(nowMs: Long): Pair<String, Int>? = beacons.beaconHint(nowMs)
     fun beaconSid(nowMs: Long): Int = beacons.beaconSid(nowMs)

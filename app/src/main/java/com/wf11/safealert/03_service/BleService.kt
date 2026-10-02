@@ -521,7 +521,9 @@ class BleService : LifecycleService() {
                 bleAdvertiser?.updateState(pState)
             }
             // [v1.1.7 #1] 속도 비트 제거 → IMU 회전(좌/우/직진) 추정값을 송출 페이로드에 탑재.
-            bleAdvertiser?.updateTurn(ImuFusion.turnDirection)
+            val turn = ImuFusion.turnDirection
+            bleAdvertiser?.updateTurn(turn)
+            if (turn != BleConstants.TURN_STRAIGHT) loneWorker.onTurn()   // (B2) 장비 거치 무동작 감시: 회전 = 움직임
             // [v1.1.14] 폴링 안전망 — 스캔이 잠시 끊겨도 내 최고 경보레벨을 위험상태(RISK)로 유지 송출.
             //   (주 송출은 onDeviceDetected 스캔주기. 동일레벨 no-op 라 중복 호출 무해.)
             bleAdvertiser?.updateRisk(getCurrentMaxLevel())

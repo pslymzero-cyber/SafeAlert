@@ -74,6 +74,8 @@ class LoneWorkerMonitor(
     val stepPermissionMissing: Boolean get() = started && sensors.stepPermissionMissing
     private var name = ""
     private var roleName = ""
+    /** 장비 모드: BleConstants.categoryName 의 장비 선택 — 역할로만 정한다 (B1). */
+    private val equipment: Boolean get() = roleName == "FORKLIFT" || roleName == "EPJ"
     private var lastMode = LoneWorkerLogic.Mode.WATCHING
     private var lastAudible: Set<String> = emptySet()
     private val watchdog = LoneWorkerWatchdog(ctx, { onWatchdog() }, { onNotificationDismissed() })
@@ -113,6 +115,7 @@ class LoneWorkerMonitor(
         this.name = name
         this.roleName = roleName
         logic.myBleId = bleId
+        logic.setEquipment(equipment, now()) // applyMode 가 역할이 바뀔 때마다 부르므로 바로 적용된다 (B1)
         if (started) return
         started = true
         // 충전 중이면 거치로, 아니면 첫 뚜렷한 움직임 대기로 시작한다 (v1.1.99)
@@ -286,6 +289,15 @@ class LoneWorkerMonitor(
         if (!started) return
         val t = now()
         logic.onZone(inside, t)
+        tick(t)
+        render()
+    }
+
+    /** BleService 회전 폴링(1.5초, 직진 아닐 때만). 장비 모드에서만 넘긴다 — 보행 모드는 그대로 (B2·B5). */
+    fun onTurn() {
+        if (!started || !equipment) return
+        val t = now()
+        logic.onTurn(t)
         tick(t)
         render()
     }
