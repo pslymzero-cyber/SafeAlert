@@ -170,7 +170,8 @@ class ZoneFallTest {
         val short = MotionAnalyzer().apply { assertEquals(1, fall(3000, 100).size) }
         val left = rule1(zoneInside = true)
         left.tick(60_000)
-        left.onZone(false, 105_000)
+        // H8: an exit confirmed within 12 s after the impact means outside; 13 s later keeps the inside rule
+        left.onZone(false, 113_000)
         left.onAccident(100_000, short.fallShape)
         assertDiscarded(left)
     }
@@ -187,7 +188,8 @@ class ZoneFallTest {
     @Test fun charging_in_zone_at_impact_ignored_after_leaving() {
         val l = rule1(charging = true)
         l.onZone(true, 5_000)
-        l.onZone(false, 8_000)
+        // A1: inside at the impact; H8: the exit is confirmed 15 s after it, so the inside rule still applies
+        l.onZone(false, 21_000)
         l.onAccident(6_000, FallShape(400, 5.0, 90.0))
         for (t in 40_000L..400_000L step 10_000L) assertEquals(Mode.WATCHING, l.seenAt(t))
     }
@@ -241,5 +243,54 @@ class ZoneFallTest {
                 prev = v
             }
         }
+    }
+
+    // -- zone exit lag (H8) and NaN range (H9a) --
+
+    private val short = FallShape(60, 2.6, 46.0)
+
+    @Test fun zone_exit_confirmed_within_12s_uses_outside_rule() {
+        assertEquals(12_000L, ZoneHistory.EXIT_LAG_MS)
+        assertTrue(ZoneHistory.EXIT_LAG_MS <= MotionAnalyzer.POST_END_MS)
+        for (exit in 108_000L..112_000L step 1_000L) {
+            val l = rule1(zoneInside = true)
+            l.tick(60_000)
+            l.onZone(false, exit)
+            l.onAccident(100_000, short)
+            assertChecking(l)
+        }
+    }
+
+    @Test fun zone_exit_confirmed_after_12s_keeps_inside_rule() {
+        val l = rule1(zoneInside = true)
+        l.tick(60_000)
+        l.onZone(false, 115_000)
+        l.onAccident(100_000, short)
+        assertDiscarded(l)
+    }
+
+    @Test fun charging_in_zone_exit_within_12s_uses_outside_rule() {
+        val l = rule1(charging = true)
+        l.onZone(true, 5_000)
+        l.onZone(false, 8_000)
+        l.onAccident(6_000, FallShape(400, 5.0, 90.0))
+        assertEquals(Mode.CHECKING, l.seenAt(36_000))
+        assertEquals("fall", l.trigger)
+    }
+
+    /** The restored zone is held until 10 s; the FALL (processed 12 s after the impact) sees that hold end as the exit. */
+    @Test fun restart_zone_hold_exit_within_12s_uses_outside_rule() {
+        val l = LoneWorkerLogic("SAFEALERT_WALKER_ME")
+        l.stillMs = 3_600_000L
+        l.startFrom(0, false, false, LoneWorkerResume.State(null, null, "", false, true, -200_000L, true, -100_000L))
+        l.onAccident(2_000, short)
+        assertEquals(Mode.CHECKING, l.seenAt(32_000))
+        assertEquals("fall", l.trigger)
+    }
+
+    @Test fun nan_sensor_range_uses_base_threshold() {
+        assertEquals(2.5, MotionAnalyzer.impactGFor(Float.NaN), 1e-9)
+        assertEquals(3.0, MotionAnalyzer.impactGFor(Float.NaN, 3.0), 1e-9)
+        assertEquals(2.5, MotionAnalyzer.impactGFor(Float.NaN, 1.5), 1e-9)
     }
 }

@@ -216,3 +216,14 @@ class LoneWorkerPeers {
     private fun coldServer(kId: String, epId: String, nowMs: Long) =
         live(pendingIds[kId], nowMs) || live(pendingIds["b:$epId"], nowMs)
 }
+
+// ── LoneWorkerLogic 의 동료 SOS 위임(D-06): 회차 단위 항목은 LoneWorkerPeers 가 맡는다 ─────────
+/** 서버 기록 수신 — LoneWorkerLogic 의 위임, 500줄 제한으로 여기 둔다. */
+fun LoneWorkerLogic.onPeerServer(rec: LoneWorkerPeers.ServerRec, nowMs: Long) = peerStore.onServer(rec, nowMs)
+/** BLE 비트 수신 — LoneWorkerLogic 의 위임, 500줄 제한으로 여기 둔다. */
+fun LoneWorkerLogic.onPeerBle(bleId: String, sos: Boolean, nowMs: Long, episode: Int = 0, beacon: String = "") =
+    peerStore.onBle(bleId, sos, nowMs, episode, beacon)
+/** 확인 버튼. targets = 항목 id -> 회차 ID. 그 항목만 묵음으로 만든다 — LoneWorkerLogic 의 위임, 500줄 제한으로 여기 둔다. */
+fun LoneWorkerLogic.silencePeers(nowMs: Long, targets: Map<String, String>) = peerStore.silence(nowMs, targets)
+/** 울리는 동료 항목 — LoneWorkerLogic 의 위임, 500줄 제한으로 여기 둔다. */
+fun LoneWorkerLogic.audiblePeers(): List<LoneWorkerPeers.Peer> = peerStore.audible()

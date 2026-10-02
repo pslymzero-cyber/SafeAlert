@@ -37,3 +37,11 @@ class BeaconHints {
         return best?.sid ?: 0
     }
 }
+
+// ── LoneWorkerLogic 의 최근 가장 강한 비콘 힌트(BeaconHints) 위임 ──────────────────
+/** 비콘 표본 기록 — LoneWorkerLogic 의 위임, 500줄 제한으로 여기 둔다. */
+fun LoneWorkerLogic.noteBeacon(label: String, rssi: Int, nowMs: Long, sid: Int = 0) = beacons.noteBeacon(label, rssi, nowMs, sid)
+/** 최근 가장 강한 비콘 힌트 — LoneWorkerLogic 의 위임, 500줄 제한으로 여기 둔다. */
+fun LoneWorkerLogic.beaconHint(nowMs: Long): Pair<String, Int>? = beacons.beaconHint(nowMs)
+/** 최근 가장 강한 비콘의 sid — LoneWorkerLogic 의 위임, 500줄 제한으로 여기 둔다. */
+fun LoneWorkerLogic.beaconSid(nowMs: Long): Int = beacons.beaconSid(nowMs)

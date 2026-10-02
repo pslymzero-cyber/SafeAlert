@@ -82,12 +82,12 @@ class MotionAnalyzer(
         /**
          * 낙상 충격 임계(G). 기본(base) = 센서 범위가 IMPACT_G 보다 작으면 범위의 90%, 아니면 IMPACT_G.
          * 결과 = max(base, min(wantG, 범위의 90%)) — wantG 를 올려도 내려가지 않고(단조), base 아래로 가지 않으며, 범위의 90% 를 넘지 않는다(A4).
-         * 범위를 모르면(MIN_RANGE_G 미만) max(IMPACT_G, wantG). 범위를 G 로 나눈 값이 MIN_RANGE_G 보다 작으면 g 단위로 보고한 것으로 해석한다.
+         * 범위를 모르면(MIN_RANGE_G 미만, 범위가 숫자가 아니면(NaN) 모르는 것으로 본다) max(IMPACT_G, wantG). 범위를 G 로 나눈 값이 MIN_RANGE_G 보다 작으면 g 단위로 보고한 것으로 해석한다.
          * wantG 기본값 IMPACT_G = 기본 낙상 임계. 세이프존 기준 G 도 같은 보정을 거친다 (D-02).
          */
         fun impactGFor(maxRangeMs2: Float, wantG: Double = IMPACT_G): Double {
             val rangeG = (maxRangeMs2 / G).let { if (it < MIN_RANGE_G) maxRangeMs2.toDouble() else it }
-            if (rangeG < MIN_RANGE_G) return maxOf(IMPACT_G, wantG)
+            if (!(rangeG >= MIN_RANGE_G)) return maxOf(IMPACT_G, wantG)
             val base = if (rangeG < IMPACT_G) 0.9 * rangeG else IMPACT_G
             return maxOf(base, minOf(wantG, 0.9 * rangeG))
         }

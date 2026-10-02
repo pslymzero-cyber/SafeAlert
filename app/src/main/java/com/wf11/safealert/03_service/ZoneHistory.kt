@@ -26,8 +26,16 @@ internal class ZoneHistory {
     /** t 에 걸려 있던 상태: t 이하 마지막 표시, t 가 모든 표시보다 이르면 가장 오래된 표시. */
     fun insideAt(t: Long): Boolean = (marks.lastOrNull { it.first <= t } ?: marks.firstOrNull())?.second ?: false
 
+    /** 충격 순간(t) 안이었고 충격 뒤 EXIT_LAG_MS 안(t 초과, t + EXIT_LAG_MS 이하)에 확정된 이탈이 없다 — 낙상의 구역 판정(A1·H8). */
+    fun insideAtImpact(t: Long): Boolean = insideAt(t) && marks.none { !it.second && it.first > t && it.first <= t + EXIT_LAG_MS }
+
     companion object {
         /** FALL 은 충격 뒤 12~17초에 오고, 배치 전달·JudgeOrder 미룸이 더해진다 — 넉넉히 2분. */
         const val KEEP_MS = 120_000L
+        /**
+         * BleService 는 이탈을 약 10초 늦게 확정한다(약한 표본 3개 또는 10초 무수신, 재시작 구역 보류도 10초에 끝남). 그래서 충격 뒤 12초 안에
+         * 확정된 이탈은 충격 때 이미 밖이었다고 본다(사용자 결정 "밖 기준"). MotionAnalyzer.POST_END_MS 이하여야 FALL 이 이 창이 지난 뒤에 온다.
+         */
+        const val EXIT_LAG_MS = 12_000L
     }
 }

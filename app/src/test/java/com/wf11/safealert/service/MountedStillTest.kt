@@ -127,4 +127,52 @@ class MountedStillTest {
         assertEquals(Mode.CHECKING, l.mode)
         assertEquals("fall", l.trigger)
     }
+
+    /** H4: an equipment device on the charger is not carried by steps or by strong windows; turns keep counting. */
+    @Test fun mounted_device_not_carried_by_steps_or_strong_windows() {
+        val a = mounted()
+        a.walk(60_000, 12)
+        assertTrue(a.mounted)
+        assertEquals(Rest.NONE, a.rest)
+        a.onTurn(100_000)
+        a.opensAt(280_000)
+
+        val b = mounted()
+        b.stepsAvailable = false
+        b.strongWindows(50_000, 52_000, 54_000, 56_000, 58_000)
+        assertTrue(b.mounted)
+        assertEquals(Rest.NONE, b.rest)
+        b.onTurn(100_000)
+        b.opensAt(280_000)
+    }
+
+    /** H5: steps during a shake move the step floor but not the shake-close floor (3 s run 181..184 s). */
+    @Test fun steps_during_shake_do_not_block_mounted_close() {
+        val l = mounted()
+        l.opensAt(180_000)
+        l.step(181_100); l.step(181_400); l.step(181_700); l.step(182_100); l.step(182_400)
+        assertEquals(Mode.CHECKING, l.mode)
+        l.strongWindows(184_000)
+        assertEquals(Mode.WATCHING, l.mode)
+    }
+
+    /** H7: a turn stamped after a passed SOS deadline (still waiting on sensor data) does not cancel the SOS. */
+    @Test fun turn_after_passed_sos_deadline_does_not_cancel_sos() {
+        val l = mounted()
+        l.opensAt(180_000)
+        l.sensed(299_000)
+        assertEquals(Mode.CHECKING, l.modeAt(300_500))
+        l.onTurn(301_500)
+        assertEquals(Mode.CHECKING, l.mode)
+        assertEquals(Mode.SOS, l.seenAt(302_000))
+    }
+
+    /** H7: a mounted shake run that ends after a passed SOS deadline does not cancel the SOS. */
+    @Test fun shake_after_passed_sos_deadline_does_not_cancel_sos() {
+        val l = mounted()
+        l.opensAt(180_000)
+        l.strongWindows(301_000, 302_000, 303_000)
+        assertEquals(Mode.CHECKING, l.mode)
+        assertEquals(Mode.SOS, l.seenAt(304_000))
+    }
 }
