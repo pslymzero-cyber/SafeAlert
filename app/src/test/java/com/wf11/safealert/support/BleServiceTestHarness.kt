@@ -13,7 +13,9 @@ import org.robolectric.util.ReflectionHelpers.ClassParameter
 
 /**
  * Golden cascade harness: the minimal wiring to drive BleService.processAlert() through reflection on Robolectric.
- * processAlert is private, so reflection is used only here and app/src/main carries not a single line of test-only code.
+ * processAlert is private, so this is the only place that calls it by reflection. app/src/main carries no test-only
+ * logic, but BleService keeps a few private alias fields of AlertStateMachine and UwbDistanceManager state (e.g.
+ * dangerContactStreakMap, trackingStateMap, uwbSafeStreakMap) that only reflection tests read.
  *
  * Scenario repetition (multi-device, multi-frame loops) does not live here; that belongs to the golden tests using it.
  * This file is only responsible for "how to drive and observe a single processAlert call".
@@ -33,11 +35,14 @@ object BleServiceTestHarness {
     }
 
     /**
-     * Golden DevSettings profile: explicitly assigns, in alphabetical order, all 30 assignable vars among the 32 DevSettings
-     * symbols that processAlert (implemented in AlertStateMachine) reads, plus beaconGainPercent (indirect). Values are
-     * pinned as literals, not constant references, so this golden profile stays the same and behavior does not drift
-     * even if the shipped defaults change later.
-     * Excluded (2): KALMAN_PRESET_FAST (a constant, not a setting) and beaconGainDbm (a val, set indirectly through
+     * Golden DevSettings profile: explicitly assigns, in alphabetical order, the DevSettings vars that processAlert
+     * (implemented in AlertStateMachine) reads in its own body, plus uwbProbeUploadEnabled (read by its uploadUwbProbe
+     * helper) and beaconGainPercent (indirect). Values are pinned as literals rather than references to the default
+     * constants, so these pins stay the same if those defaults change.
+     * Settings that processAlert reaches through getter properties or other helpers are not pinned and ride on the shipped
+     * defaults, for example rssiDanger (via BleConstants), hysteresis, TTC, alert cooldowns, receding, the filter-keep band,
+     * the time gate and the payload biases; changing one of those defaults moves the goldens.
+     * Not assigned: KALMAN_PRESET_FAST (a constant, not a setting) and beaconGainDbm (a val, set indirectly through
      * beaconGainPercent). The four side-effect flags (vibrationEnabled, soundEnabled, autoSaveAlerts, uwbProbeUploadEnabled)
      * are pinned to false to block vibration, sound and Firebase writes (both alerts and UWB samples); the overlay is
      * already harmless because canDrawOverlays() defaults to false. When uwbProbeUploadEnabled is on, processAlert calls
@@ -78,14 +83,16 @@ object BleServiceTestHarness {
     }
 
     /**
-     * KalmanFilter seam: KalmanFilter (app/.../02_ble/KalmanFilter.kt:29) uses its nowMs default (the real
-     * System.currentTimeMillis()) when created. Both creation sites in AlertStateMachine (including the getOrPut cold
-     * start) omit nowMs, so dt would come from the real wall clock regardless of the frame-time seam injected into
-     * processAlert itself, and the kfVel golden would vary from run to run.
-     * Production code is left as is: right after each call the harness uses reflection to align nowMs/lastTsMs of only
-     * the KalmanFilter instance "newly created by this call" with the injected time. It is a minimal mechanical seam that
-     * only matches the frame-interval arithmetic the golden itself encodes; it does not touch decision logic or
-     * initialization paths (including injectWarmup).
+     * KalmanFilter seam: KalmanFilter uses its nowMs default (the real System.currentTimeMillis()) when created. Both
+     * creation sites in AlertStateMachine (the kalmanFilters getOrPut cold start and the ShadowFusion default) omit nowMs,
+     * so dt would come from the real wall clock regardless of the frame-time seam injected into processAlert itself, and
+     * the kfVel golden would vary from run to run.
+     * Production code is left as is: right after each call the harness uses reflection to align nowMs/lastTsMs of the
+     * kalmanFilters entry for deviceId with the injected time, only when this call newly created it. It is a minimal
+     * mechanical seam that only matches the frame-interval arithmetic the golden itself encodes; it does not touch decision
+     * logic or initialization paths (including injectWarmup).
+     * The ShadowFusion Kalman filter (created when imuShadowFusionEnabled && payloadPresent) is not re-timed and still runs
+     * on wall-clock time; no golden depends on its output today.
      */
     private var liveNowMs: Long = 0L
     private val liveNowMsFn: () -> Long = { liveNowMs }

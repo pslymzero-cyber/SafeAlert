@@ -5,8 +5,8 @@
 Hand-maintained counts always go stale. A session that trusts a stale table to stay within budget
 can burn its whole budget on a single file, so a stale guard turns into a trap.
 
-This script is read-only: it only prints the numbers as a table and writes no files.
-GSD updates CLAUDE.md (it owns that file through claude_md_path in config.json).
+This script is read-only: it prints the table and writes no files. Paste the printed table into
+.claude/CLAUDE.md by hand; GSD never updates that table, which sits outside its marker blocks.
 
 Usage:
     python3 scripts/context-budget.py                # default threshold 10,000 tokens
@@ -18,9 +18,9 @@ import os
 import subprocess
 import sys
 
-# Token estimate factor, calibrated on this repo's AlertStateMachine.kt:
-# 157,667 bytes / 47,948 tokens (measured value in CLAUDE.md) = 3.29 bytes/token.
-# Based on Kotlin and Markdown mixed with Korean comments; assume a ±10% error.
+# Token estimate factor (bytes per token), calibrated on this repo's AlertStateMachine.kt:
+# its size divided by its measured token count. Assume about ±10% error.
+# Re-measure it when the comment language or the mix of file types changes.
 BYTES_PER_TOKEN = 3.29
 
 # Binaries and generated files, where counting tokens is meaningless
@@ -49,7 +49,8 @@ def tracked_files():
 def report(threshold):
     rows = [(tokens(p), p) for p in tracked_files()]
 
-    # .planning/** is counted as one lump, not as individual rows — same as the CLAUDE.md table
+    # .planning/** gets one lump row, like the CLAUDE.md table. .planning is untracked in this repo,
+    # so git ls-files never lists it and the lump is always 0 here.
     planning = sum(t for t, p in rows if p.startswith(".planning/"))
     rows = [(t, p) for t, p in rows if not p.startswith(".planning/")]
     rows.sort(reverse=True)

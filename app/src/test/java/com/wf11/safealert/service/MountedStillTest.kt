@@ -8,11 +8,11 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Equipment-docked no-movement watch. B1: equipment mode (FORKLIFT/EPJ) + charging + not carried = mounted,
- * which does not rest; the count starts at the role switch or the plug-in. B2: MOVED and turns restart the count.
- * B3: same stillMs / responseMs, a settled safe zone counts nothing. B4: an open still window closes on a turn,
- * a 3 s walking-level window run or the ack, not on steps. B5: walker docking, carried devices and the fall rule
- * are unchanged. stillMs = 180_000, responseMs = 120_000.
+ * Equipment-docked no-movement watch. Equipment mode (FORKLIFT/EPJ) + charging + not carried = mounted,
+ * which does not rest; the count starts at the role switch or the plug-in. MOVED and turns restart the count.
+ * Same stillMs / responseMs as a carried device; a settled safe zone counts nothing. An open still window closes
+ * on a turn, a 3 s walking-level window run or the ack, not on steps. Walker docking, carried devices and the fall
+ * rule are unchanged. stillMs = 180_000, responseMs = 120_000.
  */
 class MountedStillTest {
 
@@ -123,7 +123,7 @@ class MountedStillTest {
         assertEquals("fall", l.trigger)
     }
 
-    /** H4: an equipment device on the charger is not carried by steps or by strong windows; turns keep counting. */
+    /** An equipment device on the charger is not carried by steps or by strong windows; turns keep counting. */
     @Test fun mounted_device_not_carried_by_steps_or_strong_windows() {
         val a = mounted()
         a.walk(60_000, 12)
@@ -141,7 +141,7 @@ class MountedStillTest {
         b.opensAt(280_000)
     }
 
-    /** H5: steps during a shake move the step floor but not the shake-close floor (3 s run 181..184 s). */
+    /** Steps during a shake move the step floor but not the shake-close floor (3 s run 181..184 s). */
     @Test fun steps_during_shake_do_not_block_mounted_close() {
         val l = mounted()
         l.opensAt(180_000)
@@ -151,7 +151,7 @@ class MountedStillTest {
         assertEquals(Mode.WATCHING, l.mode)
     }
 
-    /** H7: a turn stamped after a passed SOS deadline (still waiting on sensor data) does not cancel the SOS. */
+    /** A turn stamped after a passed SOS deadline (still waiting on sensor data) does not cancel the SOS. */
     @Test fun turn_after_passed_sos_deadline_does_not_cancel_sos() {
         val l = mounted()
         l.opensAt(180_000)
@@ -162,7 +162,7 @@ class MountedStillTest {
         assertEquals(Mode.SOS, l.seenAt(302_000))
     }
 
-    /** H7: a mounted shake run that ends after a passed SOS deadline does not cancel the SOS. */
+    /** A mounted shake run that ends after a passed SOS deadline does not cancel the SOS. */
     @Test fun shake_after_passed_sos_deadline_does_not_cancel_sos() {
         val l = mounted()
         l.opensAt(180_000)
@@ -171,7 +171,7 @@ class MountedStillTest {
         assertEquals(Mode.SOS, l.seenAt(304_000))
     }
 
-    /** H3: only a mounted still window says it closes by turning, shaking or the ack; the text has one source. */
+    /** Only a mounted still window says it closes by turning, shaking or the ack; the text has one source. */
     @Test fun mounted_still_check_says_turn_or_shake_closes_it() {
         val m = mounted()
         assertFalse(m.closesByTurn)
@@ -196,7 +196,7 @@ class MountedStillTest {
         assertEquals(2, activity.split("if (st.closesByTurn) LoneWorkerNotifier.TURN_CLOSE_HINT else").size - 1)
     }
 
-    /** H6: the wake lock and its 5 s renew loop also run while mounted and the watch is on (screen-off turn poll). */
+    /** The wake lock and its 5 s renew loop also run while mounted and the watch is on (screen-off turn poll). */
     @Test fun mounted_keeps_wake_lock_and_renew_loop() {
         val m = mounted()
         assertTrue(m.wakeNeeded(false, 1_000))

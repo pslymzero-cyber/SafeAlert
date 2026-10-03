@@ -22,25 +22,27 @@ import org.robolectric.util.ReflectionHelpers.ClassParameter
 /**
  * End-to-end golden (tracer) for UwbRanger injection + the Case A (UWB↔UWB exclusive judging) early branch.
  *
- * Targets: UwbDistanceManager.uwbJudgeModeExclusive/freshUwbDistM and AlertStateMachine.judgeUwbOnly (reached through
- * BleService's private delegates), and the UwbRanger constructor (06_utils/UwbRanger.kt). BleService.processAlert is
- * private, so it is driven only through BleServiceTestHarness.
+ * Targets: UwbDistanceManager.uwbJudgeModeExclusive and AlertStateMachine.judgeUwbOnly (reached through BleService's
+ * private delegates), UwbDistanceManager.freshUwbDistM (no delegate; reached only inside AlertStateMachine.processAlert,
+ * via uwbDist), and the UwbRanger constructor (06_utils/UwbRanger.kt). BleService.processAlert is private, so it is
+ * driven only through BleServiceTestHarness.
  *
  * ── Two-clock rule ──────────────────────────────────────────────────────────
  * processAlert's nowMs is a seam (an explicit argument of BleServiceTestHarness.callProcessAlert),
- * but freshUwbDistM reads System.currentTimeMillis() directly (no seam).
- * Only the difference between the two clocks matters, so: T0_MS is the test start time (arbitrary constant), fresh samples
- * use T0_MS+FRESH_OFFSET_MS (future offset — margin for slow CI runs), stale samples use T0_MS-STALE_OFFSET_MS
- * (past offset). Millisecond boundary checks (window-1/window/window+1) bypass both clocks through judgeMode()/callJudgeUwbOnly()
- * and pass now directly.
+ * but freshUwbDistM reads System.currentTimeMillis() directly (no seam; Robolectric may replace this clock).
+ * Sample times are chosen against nowMs: T0_MS is the test start time (arbitrary constant), fresh samples
+ * use T0_MS+FRESH_OFFSET_MS (future offset), stale samples use T0_MS-STALE_OFFSET_MS (past offset). These offsets
+ * decide uwbJudgeModeExclusive, which compares against nowMs, but not freshUwbDistM, so behavior 10, which depends on
+ * freshUwbDistM, uses extreme sample times that are stale/fresh under either clock. Millisecond boundary checks
+ * (window-1/window/window+1) bypass both clocks through judgeMode()/callJudgeUwbOnly() and pass now directly.
  *
  * ── Role pair / device ID design (minimal seams) ────────────────────────────
  * BleService.myMode (default "") and myCategory (default CAT_WALKER) already hold the wanted values without reflection,
- * because onCreate() never runs. Test device IDs use BleConstants.DEVICE_PREFIX, so they also bypass
- * the WALKER_PREFIX gate in judgeUwbOnly. deviceCategoryMap/deviceStateMap are not set either (both null), so forkliftPair=false
- * (myCategory=CAT_WALKER, rCategory=null) → routed to the regular role-pair radii (5.0/3.0m, golden DevSettings),
- * and the special-alert block (needs rCategory!=null && rState!=null) is skipped automatically —
- * no seams are needed beyond uwbRanger injection + uwbSampleAtMsMap reflection.
+ * because they are assigned only in onStartCommand, which the harness never runs. Test device IDs use
+ * BleConstants.DEVICE_PREFIX, so they also bypass the WALKER_PREFIX gate in judgeUwbOnly. deviceCategoryMap/deviceStateMap
+ * are not set either (both null), so forkliftPair=false (myCategory=CAT_WALKER, rCategory=null) → routed to the regular
+ * role-pair radii (5.0/3.0m, golden DevSettings), and the special-alert block (needs rCategory!=null && rState!=null)
+ * is skipped automatically — no seams are needed beyond uwbRanger injection + uwbSampleAtMsMap reflection.
  *
  * ── Safety invariant ────────────────────────────────────────────────────────
  * UwbRanger.initSession() is never called anywhere in this file (it needs real UWB hardware/permissions —
@@ -48,7 +50,7 @@ import org.robolectric.util.ReflectionHelpers.ClassParameter
  * computeDesiredLocked() returns Desired(Role.NONE) at once and the scope.launch path (scheduleRestartLocked)
  * is never entered — a coroutine scope is injected, but no helper in this file actually starts a coroutine.
  *
- * Chosen values: T0_MS=2_000_000L (arbitrary base time), FRESH_OFFSET_MS=+500L (slow-CI margin),
+ * Chosen values: T0_MS=2_000_000L (arbitrary base time), FRESH_OFFSET_MS=+500L (future offset),
  * FRAME_DT_MS=400L (unrelated to the cascade frame interval — arbitrary, since kinematics are unused),
  * DEVICE_ID prefix=BleConstants.DEVICE_PREFIX (not WALKER_PREFIX — bypasses the walker gate),
  * role pair=regular pair (not a forklift, deviceCategoryMap unset) → warnM=5.0f/dangM=3.0f
@@ -59,7 +61,7 @@ class UwbSessionGoldenTest {
 
     companion object {
         private const val T0_MS = 2_000_000L
-        private const val FRESH_OFFSET_MS = 500L    // Future offset — margin for slow CI runs
+        private const val FRESH_OFFSET_MS = 500L    // Future offset: the sample is newer than nowMs, so it counts as fresh
         private const val FRAME_DT_MS = 400L
 
         // Must be kept in sync by hand with production UwbDistanceManager.UWB_MEAS_FRESH_MS (private val 1_000L) —
@@ -299,10 +301,12 @@ class UwbSessionGoldenTest {
         assertTrue("신선한 1.5m 표본은 DANGER 로 올려야 한다(대조군) $fresh", fresh.any { it == BleConstants.LEVEL_DANGER })
     }
 
-    // ── Behavior 12: device lost — calls BleService's real lost path (BleService.kt onDeviceLost: uwbRanger.onDeviceLost →
-    //    asm.registry.purge, in that order) as is. Only that device's UWB state (measured distance, sample time, 0x9ABC sighting,
-    //    demotion streak) is cleared and the other device is untouched; once a fresh sample arrives again, Case A returns
-    //    at once in that same frame. If a UWB map were not registered with the registry, purge would leave its key and it would show here.
+    // ── Behavior 12: device lost — replays the two steps of BleService's lost path (the scan callback's onDeviceLost:
+    //    uwbRanger.onDeviceLost, then asm.registry.purge) by calling ranger.onDeviceLost and asm.registry.purge(cold = true)
+    //    directly, in that order; the scan-callback handler itself is not invoked. Only that device's UWB state (measured
+    //    distance, sample time, 0x9ABC sighting, demotion streak) is cleared and the other device is untouched; once a fresh
+    //    sample arrives again, Case A returns at once in that same frame. If a UWB map were not registered with the registry,
+    //    purge would leave its key and it would show here.
     @Test
     fun behavior12_deviceLost_registryPurgeClearsOnlyThatDevicesUwbState() {
         val service = newUwbGoldenService()

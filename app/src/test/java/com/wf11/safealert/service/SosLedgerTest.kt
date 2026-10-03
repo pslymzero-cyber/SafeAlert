@@ -242,12 +242,12 @@ class SosLedgerTest {
             tr.creates[0].cb(false); tr.reads[0].cb(Remote.ERROR)
             l.resolve(); tr.resolves[0].cb(true)
         })
-        // (5) D2: create rejected, resolve(), create read resolved, then resolve ok
+        // (5) create rejected, resolve(), create read resolved, then resolve ok
         assertEquals(both, case { _, tr, l, _ ->
             tr.creates[0].cb(false); l.resolve()
             tr.reads[0].cb(Remote.MINE_RESOLVED); tr.resolves[0].cb(true)
         })
-        // (6) D2 reversed: resolve ok first, then the late create read
+        // (6) as (5) in the other order: resolve ok first, then the late create read
         assertEquals(both, case { _, tr, l, _ ->
             tr.creates[0].cb(false); l.resolve()
             tr.resolves[0].cb(true); tr.reads[0].cb(Remote.MINE_RESOLVED)

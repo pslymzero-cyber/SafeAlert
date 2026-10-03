@@ -328,7 +328,7 @@ class LoneWorkerPeerTest {
         assertEquals(1_000L, l.peer("X").firstSeenMs)
     }
 
-    /** Sound priority (F2): own SOS siren, then the check tone, then a peer siren; the check has no vibration. */
+    /** Sound priority: own SOS siren, then the check tone, then a peer siren; the check has no vibration. */
     @Test fun check_tone_wins_over_peer_siren() {
         assertEquals(Pattern.SIREN, Pattern.of(Mode.SOS, false))
         assertEquals(Pattern.SIREN, Pattern.of(Mode.SOS, true))

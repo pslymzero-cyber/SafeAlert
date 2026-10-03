@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Drag grip bar in the sidebar header. -->
+<!-- Drag grip bar in the sidebar: the horizontal one in the header (overlay_grip) and
+     the vertical one on the collapsed handle (overlay_handle_grip). -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="rectangle">
     <solid android:color="@color/sa_text_tertiary" />

@@ -15,11 +15,13 @@ import org.robolectric.util.ReflectionHelpers.ClassParameter
 
 /**
  * Simulation: the 300ms approach-streak grace (APPROACH_STREAK_GRACE_MS) and re-approach after release or loss.
- * Newer symbols go through reflection + runCatching so the test still compiles on 16ee857 (which predates the grace);
- * missing ones print N/A. Measurement output format: "[S0914-A2] <scenario> key=value".
- * Expected values are based on: the b2edcec commit message; in AlertStateMachine.kt, APPROACH_STREAK_GRACE_MS (grace
- * within 300ms), the `<=` check in evalTimeGate and the map cleanup on release;
- * SpecialAlertTimeGateTest.shortNonApproachFrameKeepsApproachStreak.
+ * Symbols that may be missing (evalTimeGate, approachLastSeenMap) are reached through reflection + runCatching, so the
+ * file compiles and runs without them; missing values print N/A and the checks that need evalTimeGate are skipped.
+ * Measurement output format: "[S0914-A2] <scenario> key=value".
+ * Expected values follow AlertStateMachine.kt (APPROACH_STREAK_GRACE_MS, the `<=` check in evalTimeGate and the map
+ * cleanup on release) and SpecialAlertTimeGateTest.shortNonApproachFrameKeepsApproachStreak: a non-approach gap of up
+ * to 300ms (exactly 300ms included) keeps the streak without delaying confirmation, a longer gap resets it, and release
+ * or device loss leaves no stale start or grace time for re-approach.
  */
 @RunWith(RobolectricTestRunner::class)
 class Sim0914StreakGraceTest {
@@ -37,11 +39,11 @@ class Sim0914StreakGraceTest {
         runCatching { ReflectionHelpers.getField<Any>(o, name) as T }.getOrNull()
 
     private fun starts(asm: Any): MutableMap<String, Long> = fieldOrNull(asm, "approachStreakStartMap")!!
-    private fun lastSeen(asm: Any): MutableMap<String, Long>? = fieldOrNull(asm, "approachLastSeenMap") // 16ee857: null
+    private fun lastSeen(asm: Any): MutableMap<String, Long>? = fieldOrNull(asm, "approachLastSeenMap") // null when the field is absent
 
     private data class G(val streakMs: Long, val sustained: Boolean)
 
-    /** Calls evalTimeGate directly. Absent in 16ee857 → null. */
+    /** Calls evalTimeGate directly via reflection; null when it is missing. */
     private fun gate(asm: Any, v: Double, now: Long): G? = runCatching {
         val g = ReflectionHelpers.callInstanceMethod<Any>(
             asm, "evalTimeGate",
@@ -86,7 +88,7 @@ class Sim0914StreakGraceTest {
         val r100 = (0..4).associateWith { dipRun(it, 100L) }
         r120.forEach { (n, d) -> out("a.direct120", "dips=$n kept=${na(d?.kept)} resumeStreakMs=${na(d?.resumeStreakMs)} sustainedAt=${na(d?.sustainedAt)}") }
         r100.forEach { (n, d) -> out("b.frame100", "dips=$n gapMs=${n * 100} kept=${na(d?.kept)} sustainedAt=${na(d?.sustainedAt)}") }
-        if (r120[0] == null) return   // 16ee857: no evalTimeGate
+        if (r120[0] == null) return   // evalTimeGate missing: gate() returns null
         val base = r120[0]!!.sustainedAt
         assertTrue("1프레임(120ms) 비접근은 streak 유지", r120[1]!!.kept)
         assertTrue("2프레임(240ms) 비접근은 streak 유지", r120[2]!!.kept)

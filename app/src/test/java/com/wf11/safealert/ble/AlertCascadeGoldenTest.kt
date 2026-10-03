@@ -23,8 +23,8 @@ import org.robolectric.util.ReflectionHelpers
  * processAlert() is private, so it is entered by reflection (via support/BleServiceTestHarness.kt).
  * Expected values are snapshots frozen by hand here; there is no auto-regeneration path (manual re-freezing only).
  *
- * Assumption A1, the biggest risk, is checked first: Robolectric.buildService(...).get() returns the instance
- * without running onCreate(). If that premise breaks, the whole harness/seam design is invalid, so this check
+ * The biggest risk is checked first: Robolectric.buildService(...).get() returns the instance without
+ * running onCreate(). If that premise breaks, the whole harness/seam design is invalid, so this check
  * is decided before anything else.
  *
  * Note on the "one-frame call": a new detection must pass the shouldAlert gate in AlertStateMachine.processAlert,
@@ -117,12 +117,15 @@ class AlertCascadeGoldenTest {
      * frame=042~089), recorded with the default thresholds (DANGER -65, WARNING -78) and filter-keep band 10.
      * Observed: starts in DANGER (level=2, entry=3840) at frame=042, switches to level=null (SAFE) at
      * frame=059 (rssi=-71) and stays SAFE to the end, which meets the acceptance criterion ("starts DANGER,
-     * ends SAFE"). **WARNING (level=1) is never passed through in this release window**: the DANGER
-     * hysteresis releases fast enough to drop straight to SAFE. This comes from the level re-entry logic
-     * itself and does not change with a wider sequence, so it is frozen as is.
-     * At frame=049 (rssi=-61) entry changes 3840→5880 and bcast 2→3 while level stays 2: a re-entry
-     * (re-broadcast) while DANGER is held. This is observed behavior, not a bug to investigate
-     * (record-then-freeze: freeze what is observed).
+     * ends SAFE"). **WARNING (level=1) is never passed through in this release window**: SAFE comes from the
+     * trend release in AlertStateMachine.processAlert, not from level hysteresis. Its condition (the 2 s mean
+     * of medianValue TREND_DROP_DB = 2 dB below its peak, slope <= 0) holds from frame=057 and, after
+     * TREND_HOLD_MS (200 ms), clears the alert straight to SAFE at frame=059. The trend trough latch then holds
+     * SAFE until that mean rises TREND_REARM_DB above its trough, so the warnStreak that rebuilds from
+     * frame=060 (>= 2 at frames 061-063, while not yet departing) cannot re-enter WARNING.
+     * At frame=049 (rssi=-61) entry changes 3840→5880 and bcast 2→3 while level stays 2: this is the DANGER
+     * cooldown re-alarm (DEFAULT_DANGER_COOLDOWN_MS = 2000; 5880 - 3840 = 2040 ≥ 2000), which re-broadcasts and
+     * restamps the entry time while DANGER is held.
      */
     @Test
     fun release_goldenTimeline() {
@@ -140,13 +143,13 @@ class AlertCascadeGoldenTest {
      * Sudden first-contact sub-scenario, the counterpart of the gentle 1dBm/frame escalation ramp
      * (ESCALATION_RSSI): hold -95dBm for 5 frames, then step to -54dBm.
      *
-     * The step targets the immediate raw escalation in AlertStateMachine.processAlert (dangerStreak>=2
-     * raises stableLevel to DANGER without waiting out pEma smoothing lag). -95dBm is below the
-     * filter-keep band (effWarning - filterPreserveBandDb), though, so each far frame clears the median,
-     * pEma and Kalman state and the step starts cold: pEma restarts at the step value instead of lagging,
-     * and medianValue (unsmoothed median-of-3) gives dangerStreak=1 at frame=005 and 2 at frame=006.
-     * DANGER registers at frame=006 through the 2-frame fast-contact confirmation, so this golden pins the
-     * sudden-contact timing rather than proving that the override acts alone.
+     * Despite the test name, this golden pins the sudden-contact timing, not the dangerStreak>=2 immediate
+     * escalation in AlertStateMachine.processAlert: that override never runs here. -95dBm is below the
+     * filter-keep band (effWarning - filterPreserveBandDb), so each far frame clears the median, pEma and
+     * Kalman state and the step starts cold: pEma restarts at -54, so stableLevel is already DANGER from
+     * frame=005, before the streak reaches 2. medianValue (unsmoothed median-of-3) gives dangerStreak=1 at
+     * frame=005 and 2 at frame=006, and DANGER registers at frame=006 through the 2-frame fast-contact
+     * confirmation. In this file only release_goldenTimeline pins the override (DANGER at escalation frame=032).
      */
     @Test
     fun suddenContact_dangerOverride_bypassesPEmaLag() {
@@ -162,7 +165,9 @@ class AlertCascadeGoldenTest {
 // Observed per frame: alertState (level + entry time relative to T0), tracking state, the 3
 // streak maps and the cumulative broadcast count, rendered as one full line; kfVel
 // (estimatedVel) is kept in a separate DoubleArray, apart from the string.
-// medianValue/avgRssi are not observed here: the filter-pipeline tests (RssiCascadeTest) cover them, so no duplication.
+// medianValue and avgRssi (= pEma) are not observed here. RssiCascadeTest pins the median, pre-filter
+// and Kalman stages, but pEma is outside its golden as well, so no test pins pEma values directly:
+// these goldens constrain it only through level timing.
 
 private const val T0_MS = 1_000_000L
 private const val FRAME_DT_MS = 120L
@@ -280,9 +285,6 @@ private val RELEASE_KFVEL: DoubleArray = doubleArrayOf(
 )
 
 /**
- * BleService's private alertState (alias of AlertStateMachine.alertState): BleServiceTestHarness already reads its Pair(level, entryMs).
- */
-/**
  * BleService's private trackingStateMap (alias of
  * AlertStateMachine.trackingStateMap), read by reflection; values are used only
  * through toString().
@@ -373,10 +375,13 @@ private fun assertScenario(
  * Parameters: START_DBM=-95, STEP_DBM=+1, FRAMES=42, recorded with the default thresholds (DANGER -65,
  * WARNING -78) and filter-keep band 10. Observed (not predicted): warnStreak starts at frame=018 and
  * WARNING is first entered at frame=019 (rssi=-76, entry=2280); dangerStreak starts at frame=031
- * (rssi=-64) and DANGER is first entered at frame=032 (rssi=-63, entry=3840). The streak/hysteresis
- * gates put each entry 2 frames after the raw threshold crossing (WARNING -78 at frame=017, DANGER -65
- * at frame=030); no tuning needed (all three stages SAFE/WARNING/DANGER are observed, rising
- * monotonically).
+ * (rssi=-64) and DANGER is first entered at frame=032 (rssi=-63, entry=3840). Each entry lands 2 frames
+ * after the raw threshold crossing (WARNING -78 at frame=017, DANGER -65 at frame=030): the streaks
+ * count medianValue, and the median-of-3 trails a rising ramp by 1 frame, so a streak starts one frame
+ * after the crossing and the entry lands when it reaches 2. Level hysteresis only holds a level on the
+ * way down and plays no part in entry. pEma lags further still, so DANGER at frame=032 is raised by the
+ * dangerStreak>=2 immediate escalation in processAlert. No tuning needed (all three stages
+ * SAFE/WARNING/DANGER are observed, rising monotonically).
  *
  * Kalman clock: KalmanFilter computes dt from its own nowMs, which defaults to the real
  * System.currentTimeMillis() and ignores the frame-time seam injected into processAlert. In this tight

@@ -193,7 +193,8 @@ class ZoneStateMachineSimTest {
     @Test
     fun `02 실제 코드 - 존 밖 신호로는 억제가 지속되지 않는다`() {
         // With entry on a single sample (MIN_SAMPLES = 1), "never enters" no longer holds:
-        // mean -92 / s5 crosses the -80 threshold on about 0.8% of samples, and that one sample causes entry.
+        // mean -92 / s5, rounded to whole dBm, reaches the -80 threshold on about 1.1% of samples (P(N(-92,5) >= -80.5)),
+        // and that one sample causes entry.
         // With the exit debounce, suppression from such a spike is released not at once but only after
         // EXIT_SAMPLES samples below the exit line. So the safety property is narrowed to one mechanically exact rule:
         //   while suppression holds, there cannot be EXIT_SAMPLES consecutive samples below the exit line (-85).

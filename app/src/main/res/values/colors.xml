@@ -15,7 +15,7 @@
     <color name="sa_surface_alt">#161D2B</color>   <!-- secondary card, top bar -->
     <color name="sa_surface_veil">#E6141B2B</color><!-- translucent card over the background image -->
     <color name="sa_bar">#C20D1424</color>         <!-- main screen's translucent top/bottom bars -->
-    <color name="sa_overlay">#E8101A2C</color>     <!-- faint plate (button tint etc.) -->
+    <color name="sa_overlay">#E8101A2C</color>     <!-- 91%-opaque dark plate (alert sidebar handle/panel, tv_ble_status tint) -->
     <color name="sa_divider">#1FFFFFFF</color>     <!-- translucent white hairline -->
     <color name="sa_stroke">#56627A</color>        <!-- outline -->
 

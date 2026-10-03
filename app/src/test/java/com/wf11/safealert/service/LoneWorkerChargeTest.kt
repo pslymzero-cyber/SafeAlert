@@ -85,7 +85,7 @@ class LoneWorkerChargeTest {
         assertEquals(Rest.WAIT, early.rest)
     }
 
-    /** Four steps after the unplug edge and one after the fall check opened: carried, the check stays open (X1). */
+    /** Four steps after the unplug edge and one after the fall check opened: carried, the check stays open. */
     @Test fun unplug_steps_carry_whenever_they_are_accepted() {
         bothOrders { late, m ->
             val l = newLogic(charging = true)
@@ -106,7 +106,7 @@ class LoneWorkerChargeTest {
         }
     }
 
-    /** Three steps after the still check opened, an unplug, then two more: five steps close it in either arrival order (X3). */
+    /** Three steps after the still check opened, an unplug, then two more: five steps close it in either arrival order. */
     @Test fun unplug_after_the_check_opened_keeps_its_step_count() {
         bothOrders { late, m ->
             val l = carriedWhileCharging()
@@ -135,7 +135,7 @@ class LoneWorkerChargeTest {
 
     /**
      * Without a step sensor, a 3 s walking run after the unplug edge (10 s) carries from its end in either arrival
-     * order (M2): a window starting at the unplug counts, one ending at it does not, and a gap or a still window
+     * order: a window starting at the unplug counts, one ending at it does not, and a gap or a still window
      * breaks the run.
      */
     @Test fun without_step_sensor_unplug_run_carries_whenever_it_is_accepted() {
@@ -169,7 +169,7 @@ class LoneWorkerChargeTest {
     }
 
     /**
-     * An unplug that started before the fall deadline makes it wait (M1); the check then opens with its step floor
+     * An unplug that started before the fall deadline makes it wait; the check then opens with its step floor
      * at the deadline, so steps before it do not close it.
      */
     @Test fun unplug_report_keeps_the_fall_check_floor() {

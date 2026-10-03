@@ -4,32 +4,49 @@
  * the script checks the server record itself and sends one mail in a fixed format.
  * It also sends an HTML body that lays out the same content as the plain text in a table.
  *
- * Setup
+ * Setup (screen labels are written 'English' ('한국어'))
  *  1. Sign in with a Google account used only for alerts. Mail is sent from this account.
  *     Once this account's daily mail quota (100 recipients for a regular Google account, 1,500 for Workspace) runs out,
  *     resolution mails can be blocked too until the next day (the SOS mail is sent first).
- *  2. script.google.com → New project. Name it 'SafeAlert 구조 요청 메일'.
- *  3. Delete the default code, paste in this whole file and save.
- *  4. Gear icon on the left (Project Settings) → set the time zone to (GMT+09:00) Seoul.
- *  5. Further down the same page, add these under 'Script Properties' ('스크립트 속성').
- *     - FIREBASE_DB_URL : the address at the top of the Realtime Database page in
- *     the Firebase console (https://….firebaseio.com or similar)
- *     - FIREBASE_DB_SECRET : Firebase Project settings > Service accounts > Database secrets
+ *  2. script.google.com → 'New project' ('새 프로젝트'). Click the name 'Untitled project' ('제목 없는 프로젝트') at the top
+ *     and rename it 'SafeAlert 구조 요청 메일'; this name appears on the permission screens in step 7.
+ *  3. Delete the default code, paste in this whole file and save (disk icon or Ctrl+S).
+ *  4. Gear icon ('톱니') on the left → 'Project Settings' ('프로젝트 설정') → set 'Time zone' ('시간대')
+ *     to (GMT+09:00) Seoul ('서울').
+ *  5. Further down the same page, under 'Script Properties' ('스크립트 속성'), add each entry below with
+ *     'Add script property' ('스크립트 속성 추가'): name in 'Property' ('속성'), value in 'Value' ('값').
+ *     Then press 'Save script properties' ('스크립트 속성 저장'). The script reads its settings and the secret from here.
+ *     - FIREBASE_DB_URL    : the address at the top of the 'Realtime Database' page in
+ *                            the Firebase console (https://….firebaseio.com or similar)
+ *     - FIREBASE_DB_SECRET : Firebase console gear icon ('톱니') → 'Project settings' ('프로젝트 설정') >
+ *                            'Service accounts' ('서비스 계정') > 'Database secrets' ('데이터베이스 비밀번호')
  *     - ALLOWED_DOMAINS    : domains that may receive the mail; empty means coupangfs.com. Separate entries with commas,
- *                            semicolons, spaces or newlines; a leading '@' and
- *                            letter case are ignored. An exact address
- *                            (me@example.com) also works.
+ *                            semicolons, spaces or newlines; a leading '@' and letter case are ignored.
+ *                            An exact address (me@example.com) also works.
  *     - DAILY_MAX          : (optional) cap on SOS mails sent per site (root + center) in the last 24 hours. Default 50, range 1–60.
  *                            Resolution mails are neither counted nor blocked.
  *     Properties starting with 'S|' are the script's own sent log; leave them alone (SOS entries are kept 7 days and
  *     resolution entries 24 hours, then deleted automatically; beyond 3,000 in total the oldest go first, and a deleted SOS entry
  *     only stops its resolution mail. A leftover SENT_LOG property can be deleted).
- *  6. Deploy > New deployment > type 'Web app' ('웹 앱'), execute as 'Me' ('나'), access 'Anyone' ('모든 사용자') → Deploy.
- *  7. In the permission window pick the account → 'Advanced' ('고급') → go to the project → Allow (send mail, connect to external services).
- *  8. Save the resulting web app URL as the secret SA_SOS_MAIL_URL under the
- *  GitHub repository's Settings > Secrets and variables > Actions.
- *  9. After changing the code: Deploy > Manage deployments > pencil > Version 'New version' ('새 버전') → Deploy. The URL stays the same
- *     (running 'New deployment' ('새 배포') again changes the URL, and the app must be rebuilt).
+ *  6. Deploy: this gives the script the web address the app calls; without it no mail is sent.
+ *     'Deploy' ('배포') at the top right > 'New deployment' ('새 배포') > gear beside 'Select type' ('유형 선택') > 'Web app' ('웹 앱').
+ *     'Execute as' ('다음 사용자 인증 정보로 실행'): 'Me' ('나'), so mail goes out from the alert account.
+ *     'Who has access' ('액세스 권한이 있는 사용자'): 'Anyone' ('모든 사용자'), because the app calls it without a Google sign-in;
+ *     the script checks the server record before it sends anything. Then press 'Deploy' ('배포').
+ *  7. The first deployment asks for permission: 'Authorize access' ('액세스 승인') → choose the alert account.
+ *     Google then warns 'Google hasn't verified this app' ('Google에서 확인하지 않은 앱'); it shows this for any script
+ *     it has not reviewed, including your own. Do not press 'Back to safety' ('안전한 환경으로 돌아가기'). Press 'Advanced' ('고급')
+ *     → 'Go to SafeAlert 구조 요청 메일 (unsafe)' ('SafeAlert 구조 요청 메일(으)로 이동(안전하지 않음)').
+ *     The permission screen lists sending mail and connecting to an external service (Firebase); the script needs both.
+ *     If it shows checkboxes, tick 'Select all' ('모두 선택'). Then press 'Allow' ('허용') or 'Continue' ('계속').
+ *     The deployment then shows the 'Web app' ('웹 앱') URL, https://script.google.com/macros/s/…/exec.
+ *     Press 'Copy' ('복사') next to it, then 'Done' ('완료').
+ *  8. Save that URL as a GitHub secret (GitHub's screens are in English only): repository 'Settings' > 'Secrets and variables'
+ *     > 'Actions' > 'New repository secret', name SA_SOS_MAIL_URL, value the URL → 'Add secret'.
+ *     The next release build puts the URL into the app; without it the app's mail feature stays off.
+ *  9. After changing the code: 'Deploy' ('배포') > 'Manage deployments' ('배포 관리') > pencil 'Edit' ('수정') >
+ *     'Version' ('버전'): 'New version' ('새 버전') → 'Deploy' ('배포'). The URL stays the same
+ *     (running 'New deployment' ('새 배포') again changes the URL; SA_SOS_MAIL_URL must then be updated and the app rebuilt).
  * Secrets go only in the script properties, never in this file or the repository.
  */
 
@@ -259,7 +276,10 @@ function stillMinutes(v) {
   return n >= 1 && n <= 30 ? n : 0;
 }
 
-/** Replaces control, line-separator, zero-width and bidi-control characters and the BOM with spaces, making one line. */
+/**
+ * Replaces control, line-separator, zero-width and bidi-control characters and the
+ * BOM with spaces, then trims and keeps the first 64 characters.
+ */
 function oneLine(v) {
   return str(v)
     .replace(/[\u0000-\u001f\u007f-\u009f\u200B-\u200F\u2028-\u202E\u2060-\u206F\uFEFF]+/g, ' ')
@@ -272,7 +292,7 @@ function esc(v) {
   return str(v).replace(/[&<>"']/g, function (c) { return map[c]; });
 }
 
-/** Colored text box for the status cell. */
+/** Colored text box for the '상태' (status) and '사업장' (site) cells. */
 function badge(bg, fg, html) {
   return '<span style="background:' + bg + ';color:' + fg + ';font-weight:bold;padding:2px 8px;">' + html + '</span>';
 }

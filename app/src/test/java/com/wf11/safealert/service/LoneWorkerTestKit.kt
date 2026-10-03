@@ -68,7 +68,7 @@ internal class Feed(val at: Long, val on: Boolean? = null, val sense: (LoneWorke
 
 /**
  * Monitor model: tick at from, the scheduled ticks (nextCheckAt) before each feed, a sensor callback then its end and
- * an immediate tick when a passed deadline is due (C5), a raw power value then a tick when it changed. Sensor feeds
+ * an immediate tick when a passed deadline is due, a raw power value then a tick when it changed. Sensor feeds
  * with `at` in late are held back and delivered in order at deliverAt, after the ticks and power feeds up to that
  * time. Returns each observed change of "mode trigger @modeSinceMs", then "end mode trigger rest".
  */

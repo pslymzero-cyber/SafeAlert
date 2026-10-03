@@ -103,7 +103,7 @@ class ZoneFallTest {
     @Test fun impact_g_scaling_and_free_fall_ms() {
         assertEquals(1.8, MotionAnalyzer.impactGFor(19.6f, 4.0), 0.01)
         assertEquals(4.0, MotionAnalyzer.impactGFor(78.4f, 4.0), 0.0)
-        // A4: a zone G below the base never lowers the threshold
+        // a zone G below the base never lowers the threshold
         assertEquals(2.5, MotionAnalyzer.impactGFor(78.4f, 1.5), 0.0)
         assertEquals(1.8, MotionAnalyzer.impactGFor(19.6f), 0.01)
         assertEquals(247L, MotionAnalyzer.freeFallMsFor(30))
@@ -132,9 +132,9 @@ class ZoneFallTest {
         assertChecking(zoneFall(FallShape(300, 4.2, 90.0), ZoneFall(impactG = 4.0)))
     }
 
-    // -- review fixes A1-A4 --
+    // -- drop length, posture, zone state at the impact, zone impact threshold --
 
-    /** Tracer: a mid-air upright blip no longer shortens the drop (A2), and the zone is read at the impact (A1). */
+    /** Tracer: a mid-air upright blip does not shorten the drop, and the zone is read at the impact. */
     @Test fun tracer_blip_split_fall_and_impact_zone_state() {
         val a = MotionAnalyzer()
         val falls = a.trace(
@@ -165,7 +165,7 @@ class ZoneFallTest {
     @Test fun charging_in_zone_at_impact_ignored_after_leaving() {
         val l = rule1(charging = true)
         l.onZone(true, 5_000)
-        // A1: inside at the impact; H8: the exit is confirmed 15 s after it, so the inside rule still applies
+        // inside at the impact; the exit is confirmed 15 s after it, so the inside rule still applies
         l.onZone(false, 21_000)
         l.onAccident(6_000, FallShape(400, 5.0, 90.0))
         for (t in 40_000L..400_000L step 10_000L) assertEquals(Mode.WATCHING, l.seenAt(t))
@@ -222,7 +222,7 @@ class ZoneFallTest {
         }
     }
 
-    // -- zone exit lag (H8) and NaN range (H9a) --
+    // -- zone exit lag and NaN range --
 
     private val short = FallShape(60, 2.6, 46.0)
 

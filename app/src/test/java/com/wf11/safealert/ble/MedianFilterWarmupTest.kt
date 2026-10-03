@@ -9,9 +9,11 @@ import org.junit.Test
  *
  * [Why a separate file] The golden cascade test (RssiCascadeTest) compares only the median stage's **output**, not
  *   whether the window is **full**, and the isolation test (RssiCascadeIsolationTest) has a single `assertFalse`, so
- *   nothing else checks the true path of `isFull()`. A regression where `isFull()` always returns false would pass
- *   every other test, yet make `val warmingUp = !fx.medianFilter.isFull(deviceId)` in AlertStateMachine.kt (the only
- *   production call site) permanently true and suppress alerts.
+ *   no other test checks the true path of `isFull()` directly. Other suites cover warm-up only indirectly: an
+ *   always-false `isFull()` would make `val warmingUp = !fx.medianFilter.isFull(deviceId)` in AlertStateMachine.kt
+ *   (the only production call site) permanently true, which blocks the special-alert and TTC paths (both gate on
+ *   `!warmingUp`) and lets normal alerts through only on fastContact, so tests such as SpecialAlertTimeGateTest and
+ *   Sim0914SpecialGateTest would fail, but only indirectly. This test pins the `isFull()` true path directly.
  *
  * [Coverage] the false→true transition point, staying true after the window overflows, back to false after `clear()`,
  *   per-device independence, a custom windowSize, and an unknown device. Kills both the always-false and the

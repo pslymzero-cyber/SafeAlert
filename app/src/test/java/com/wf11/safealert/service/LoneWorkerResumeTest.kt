@@ -145,7 +145,7 @@ class LoneWorkerResumeTest : RestartKit() {
         assertEquals(setOf("running_mode", "running_since", "running_category", LoneWorkerResume.KEY), removed.toSet())
     }
 
-    // -- safe zone state (C3) --
+    // -- safe zone state --
 
     @Test fun restart_in_settled_zone_keeps_zone_until_zone_report() {
         val l = reboot(settledInZone(), 100_000, 5_000, 20_000).apply { stillMs = 60_000 }
@@ -345,7 +345,7 @@ class LoneWorkerResumeTest : RestartKit() {
         assertEquals("still", old.trigger)
         val l = reboot(old, 200_000, 5_000, 20_000)
         assertEquals(listOf(Mode.WATCHING, Mode.WATCHING), beforePower)
-        // the unplug keeps the check (E9): it opens once the power is confirmed, the response counts from there
+        // the unplug keeps the check: it opens once the power is confirmed, the response counts from there
         assertEquals(Mode.CHECKING, l.seenAt(5_000 + PowerDebounce.CONFIRM_MS))
         assertEquals("still", l.trigger)
         assertEquals(Rest.WAIT, l.rest)
@@ -382,7 +382,7 @@ class LoneWorkerResumeTest : RestartKit() {
         assertTrue(LoneWorkerResume.shouldSave(settled, settled.copy(zoneSettled = false, stillBase = 1_000)))
     }
 
-    // -- mounted equipment restart (H1, H2) --
+    // -- mounted equipment restart --
 
     /** Restart in the monitor's order: equipment first, then startFrom (charging). */
     private fun mountedRestart(s: LoneWorkerResume.State): LoneWorkerLogic =
@@ -392,7 +392,7 @@ class LoneWorkerResumeTest : RestartKit() {
         }
 
     /**
-     * H1 tracer: a docked equipment device saves its still base and continues it after a restart.
+     * Tracer: a docked equipment device saves its still base and continues it after a restart.
      * 10 s still before the save + 20 s downtime = 30 s at the restart, so the base is -25 s.
      */
     @Test fun mounted_restart_continues_still_count() {
@@ -406,7 +406,7 @@ class LoneWorkerResumeTest : RestartKit() {
         assertEquals("still", l.trigger)
     }
 
-    /** H2: a v2 state (no mounted field) restored into a mounted device counts from the restart. */
+    /** A v2 state (no mounted field) restored into a mounted device counts from the restart. */
     @Test fun old_format_state_for_mounted_device_counts_from_restart() {
         val s = LoneWorkerResume.decode("v2|7|110000|1000000000||||1|0|0|0|", 5_000, wall0 + 20_000, 8)
         assertNotNull(s)
@@ -433,7 +433,7 @@ class LoneWorkerResumeTest : RestartKit() {
         assertEquals(60_000L, l.responseLeftMs(5_000))
     }
 
-    // -- peer siren pause (C2) --
+    // -- peer siren pause --
 
     @Test fun snapshot_during_siren_excludes_paused_time() {
         val old = newLogic(carried = true)
@@ -446,7 +446,7 @@ class LoneWorkerResumeTest : RestartKit() {
     }
 
     /**
-     * F1: a siren that goes on after a restart starts a new pause with a new cap. Restart base -55 s (60 s
+     * A siren that goes on after a restart starts a new pause with a new cap. Restart base -55 s (60 s
      * still), pause at 8 s (63 s still), cap at 188 s moves the base to 125 s, deadline 305 s.
      */
     @Test fun siren_after_restart_starts_a_new_pause() {

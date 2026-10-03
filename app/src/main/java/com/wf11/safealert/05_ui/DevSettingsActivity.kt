@@ -515,7 +515,7 @@ class DevSettingsActivity : AppCompatActivity() {
         binding.tvCoopSlack.text = if (v == 0) "0 dB (완화 없음)" else "+${v} dB"
     }
 
-    // ── Accordion — all 6 sections collapsed by default (layout SA.SectionBody visibility=gone); header tap toggles ──
+    // ── Accordion — all 7 sections collapsed by default (layout SA.SectionBody visibility=gone); header tap toggles ──
     private fun setupAccordion() {
         bindSection(binding.secTxrxHeader,    binding.secTxrxBody,    binding.secTxrxChevron)
         bindSection(binding.secSoundHeader,   binding.secSoundBody,   binding.secSoundChevron)

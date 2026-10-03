@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Background of a hazard-device row in the sidebar.
-     The solid white is a placeholder for the runtime backgroundTintList multiply (same technique as shape_target_box).
+     The solid white is a placeholder: no tint mode is set, so the default SRC_IN replaces its color with the
+     runtime backgroundTintList (same technique as shape_target_box). It does not multiply.
      OverlayManager swaps the tint per alert level (sa_tint_rose / sa_tint_amber).
-     ★ Never change this color — any other value darkens the tinted result. -->
+     ★ Only the solid's alpha carries through — keep it fully opaque, or the tinted row turns see-through. -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="rectangle">
     <solid android:color="#FFFFFFFF" />

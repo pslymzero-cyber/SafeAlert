@@ -243,7 +243,7 @@ class LoneWorkerHoldTest : RestartKit() {
         assertEquals(l.responseMs, l.responseLeftMs(holdEnd + LoneWorkerLogic.LATE_MS))
     }
 
-    /** Steps after the restart arriving late still count from the restart: they drop the held check (X2). */
+    /** Steps after the restart arriving late still count from the restart: they drop the held check. */
     @Test fun restart_bounce_late_steps_drop_the_held_check() {
         val l = heldStill()
         l.rebounce(now = false, gapTick = false, m = "late steps")

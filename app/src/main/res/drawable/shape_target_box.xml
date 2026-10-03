@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Received-target list box — the solid white is a placeholder; the real color comes from backgroundTint
-     (updateDetectedDisplay sets a per-alert-level color via backgroundTintList, which keeps the rounded corners) -->
+<!-- Received-target list box (tv_ble_status) and lone-worker reason chip (tv_lw_chip) — the
+     solid white is a placeholder; the real color comes from backgroundTint
+     (updateDetectedDisplay sets a per-alert-level color via backgroundTintList, which keeps the rounded corners;
+     LoneWorkerActivity.paint tints the chip per screen state the same way) -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
     <solid android:color="#FFFFFFFF" />
     <corners android:radius="@dimen/sa_radius_sm" />

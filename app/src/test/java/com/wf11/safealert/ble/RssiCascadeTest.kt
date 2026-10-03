@@ -117,7 +117,9 @@ class RssiCascadeTest {
     /**
      * Reproduces the cascade wiring in AlertStateMachine.processAlert:
      * `medianFilter.push` → `rssiPreFilter.push(prevVel=0.0, fallBoost=false)` → `kf.update(imuQScale=1.0)`.
-     * `pEmaFilter` (the post-Kalman P-EMA whose output is the distance used for level decisions) is outside the golden boundary.
+     * `pEmaFilter` (the post-Kalman P-EMA whose output is the distance used for level decisions) is outside the
+     * golden boundary, and no other test pins pEma values directly either: AlertCascadeGoldenTest sees pEma only
+     * through level timing.
      *
      * The fake clock starts at `1_000_000L` (0L would be misleading, since it equals the `lastTsMs` field's initial
      * value) and advances by `FRAME_DT_MS` before each frame's `kf.update(...)` call.

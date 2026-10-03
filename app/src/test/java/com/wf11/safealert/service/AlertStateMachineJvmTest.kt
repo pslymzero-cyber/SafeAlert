@@ -122,7 +122,9 @@ class AlertStateMachineJvmTest {
     }
 
     /**
-     * Single path for removing state: one registry.purge empties every slot of that device.
+     * Single path for removing state: a cold registry.purge clears that device's immediate and deferred slots (a warm
+     * purge leaves the deferred ones to the TTL prune). Teardown slots such as filterPreserveMap are cleared only by
+     * clearAll; judgeUwbOnly writes none of them, so a cold purge must bring the entry count back to the baseline.
      * entryCount counts only registered slots, so a map that was never registered is invisible to the purge residue comparison.
      * So the test also scans every Map/Set field of AlertStateMachine and UwbDistanceManager by reflection and checks
      * each is a registered slot (sizeOf != null) - adding a new per-device map without registering it fails here.

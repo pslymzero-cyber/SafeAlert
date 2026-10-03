@@ -15,8 +15,8 @@ import org.robolectric.util.ReflectionHelpers
  * Simulation: escalation and departure of a normal device (no payload, no UWB).
  * Measurements print as `[S0914-A4] <scenario> key=value`; ms values are relative to T0.
  * Assertions cover only items whose intent is documented in commits, comments or existing
- * goldens (measurements still print when an assertion fails on the baseline).
- * approachLastSeenMap is probed only through runCatching reflection (graceField), so the test also runs on 16ee857, which lacks it.
+ * goldens (measurements still print when an assertion fails).
+ * approachLastSeenMap may be absent, so it is probed only through runCatching reflection (graceField=false when missing).
  */
 @RunWith(RobolectricTestRunner::class)
 class Sim0914NormalEscalationDepartTest {
@@ -95,7 +95,9 @@ class Sim0914NormalEscalationDepartTest {
         assertEquals("b2 첫 경보는 WARNING", BleConstants.LEVEL_WARNING, t.firstAlertLevel)
     }
 
-    // c. Fast approach, 4dB/frame — the kfVel>=2.0 two-frame Time-Gate bypass (fastApproach in evalTimeGate).
+    // c. Fast approach, 4dB/frame — checks only that an alert fires and that fastApproachStreakMap reaches 2
+    // (kfVel>=2.0 on two Time-Gate evaluations in a row, the fastApproach condition in evalTimeGate); it does not
+    // show which path released the first alert (fastContact can release it too).
     @Test fun c_fastApproach() {
         val t = run("c_fast4dB", 30) { f, _ -> minOf(-95 + 4 * f, -45) }
         assertNotNull("c 경보 없음", t.firstAlertMs)

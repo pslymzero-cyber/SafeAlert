@@ -10,7 +10,7 @@ import org.junit.Test
 
 /*
  * Judgment order (JudgeOrder): the same sensor values and raw power values with their times give the same result
- * whenever the sensor batches arrive and whenever the power confirm tick runs (N1, Y2).
+ * whenever the sensor batches arrive and whenever the power confirm tick runs.
  */
 class LoneWorkerOrderTest : RestartKit() {
 
@@ -46,7 +46,7 @@ class LoneWorkerOrderTest : RestartKit() {
         }
     }
 
-    /** A change at the restart is applied first even when the saved still deadline has passed (E9, L1). */
+    /** A change at the restart is applied first even when the saved still deadline has passed. */
     @Test fun restart_change_is_not_deferred_by_an_old_deadline() {
         for (plugged in listOf(true, false)) {
             val m = "plugged=$plugged"
@@ -61,7 +61,7 @@ class LoneWorkerOrderTest : RestartKit() {
 
     /**
      * Charging inside the zone, impact at 89 s, unplug at 100 s: the fall happened while charging and is ignored
-     * whether it is processed before or after the unplug confirms (N2).
+     * whether it is processed before or after the unplug confirms.
      */
     @Test fun fall_before_an_unplug_is_ignored_whenever_it_is_processed() {
         bothOrders { late, m ->
@@ -96,7 +96,7 @@ class LoneWorkerOrderTest : RestartKit() {
         assertNotNull(control.snapshot(32_000).accidentUntil)
     }
 
-    /** Steps before the impact at 20 s do not count for the accident: check at 50 s in either processing order (Y5). */
+    /** Steps before the impact at 20 s do not count for the accident: check at 50 s in either processing order. */
     @Test fun fall_counts_only_motion_after_the_impact_in_either_order() {
         bothOrders { late, m ->
             val l = newLogic(carried = true)
@@ -120,7 +120,7 @@ class LoneWorkerOrderTest : RestartKit() {
         assertEquals(180_000L, l.nextCheckAt(5_000))
     }
 
-    /** A sticky check that only confirms a stable change still asks the monitor for a tick (Y8). */
+    /** A sticky check that only confirms a stable change still asks the monitor for a tick. */
     @Test fun sticky_call_that_only_confirms_asks_for_a_tick() {
         val l = newLogic(carried = true)
         l.powerRaw(true, 10_000)

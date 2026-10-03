@@ -387,7 +387,7 @@ class LoneWorkerAccidentTest {
         for (t in 50_000L..400_000L step 10_000L) assertEquals(Mode.WATCHING, chk.seenAt(t))
     }
 
-    // C1, N2: charging at the impact inside the zone ignores the fall - an unplug after the impact means it was charging,
+    // charging at the impact inside the zone ignores the fall - an unplug after the impact means it was charging,
     // and a real unplug within 10 s before the impact counts too (fell off the cradle)
 
     @Test fun fall_just_after_unplug_in_safe_zone_is_ignored() {

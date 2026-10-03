@@ -8,7 +8,7 @@ on:
 
 jobs:
   release:
-    runs-on: ubuntu-24.04   # ubuntu-latest becomes Ubuntu 26 on 2026-10-19; pinned for reproducible releases
+    runs-on: ubuntu-24.04   # ubuntu-latest moves to newer Ubuntu releases; pinned for reproducible releases
     permissions:
       contents: write   # to create the GitHub Release and upload the APK
 
@@ -150,8 +150,9 @@ jobs:
         run: echo "sha256=$(sha256sum safealert-${{ steps.ver.outputs.name }}.apk | cut -d' ' -f1)" >> $GITHUB_OUTPUT
 
       # Overwrite the DB security rules with the repo's database.rules.json. No manual console work.
-      #   Runs before the APK is published and the version is updated — the new rules also work with old apps, so changing them first is safe,
-      #   and if the replacement fails the job stops here, so a new app never meets the old rules.
+      #   Runs before the APK is published and the version is updated, so the new rules go live while devices still run
+      #   older app versions: any rules change must keep accepting the reads and writes of every app version still in the field.
+      #   If the replacement fails the job stops here, so a new app never meets the old rules.
       #   The legacy secret is an admin credential that bypasses the rules, so the version PATCH below still passes after the rules change.
       - name: Deploy DB security rules
         if: ${{ steps.ver.outputs.is_release == 'true' }}
@@ -164,7 +165,7 @@ jobs:
         with:
           name: SafeAlert v${{ steps.ver.outputs.name }}
           files: safealert-${{ steps.ver.outputs.name }}.apk
-          generate_release_notes: true   # auto-summarizes commits since the last release
+          generate_release_notes: true   # notes list merged pull requests plus a compare link; direct commits to master are not listed
 
       - name: Update Firebase Realtime DB
         if: ${{ steps.ver.outputs.is_release == 'true' }}

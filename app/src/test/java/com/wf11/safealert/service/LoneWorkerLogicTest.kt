@@ -118,7 +118,7 @@ class LoneWorkerLogicTest {
         assertEquals(Mode.CHECKING, l.mode)
     }
 
-    // -- safe zone (D-03) --
+    // -- safe zone --
 
     @Test fun settled_zone_cancels_still_check_but_not_accident() {
         val l = carriedLogic()
@@ -173,7 +173,7 @@ class LoneWorkerLogicTest {
         assertEquals(1, l.audiblePeers().size)
     }
 
-    // -- peer SOS (D-06) --
+    // -- peer SOS --
 
     @Test fun same_bleid_as_mine_still_alarms() {
         val l = carriedLogic()

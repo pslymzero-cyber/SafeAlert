@@ -34,7 +34,7 @@ class SensorStallTest {
         assertEquals(SensorStall.Action.REREGISTER, s.check(811_000L))
     }
 
-    /** Gyro measurement log (D3): one line per whole sensor second, magnitude mean and max. */
+    /** Gyro measurement log: one line per whole sensor second, magnitude mean and max. */
     @Test
     fun gyro_stats_log_one_line_per_second() {
         val g = GyroStats()
@@ -43,7 +43,7 @@ class SensorStallTest {
         assertEquals("gyro 1s n=2 mean=3.000 max=5.000 rad/s", g.add(1_000L, 0f, 0f, 2f))
     }
 
-    /** Turning the gyro log off flushes the open second once (I10). */
+    /** Turning the gyro log off flushes the open second once. */
     @Test
     fun gyro_stats_flush_emits_the_open_second_once() {
         val g = GyroStats()
@@ -53,7 +53,7 @@ class SensorStallTest {
         assertNull(g.flush())
     }
 
-    /** The gyro registration is tried and logged once per peer siren, and only while it vibrates (G1, D3). */
+    /** The gyro registration is tried and logged once per peer siren, and only while it vibrates. */
     @Test
     fun gyro_gate_tries_once_per_siren() {
         val g = GyroGate()
@@ -81,7 +81,7 @@ class SensorStallTest {
     /**
      * The monitor feeds broadcasts (not sticky) and the 10 s sticky check to the logic and ticks and renders on one path
      * when it applied or the wait changed, tells the logic each sensor callback ended, schedules its first tick at the
-     * end of start and flushes only for missing data (X7, M1, N1, Y4, Y16). The wake-lock decision is a behavior test
+     * end of start and flushes only for missing data. The wake-lock decision is a behavior test
      * (MountedStillTest.mounted_keeps_wake_lock_and_renew_loop).
      */
     @Test

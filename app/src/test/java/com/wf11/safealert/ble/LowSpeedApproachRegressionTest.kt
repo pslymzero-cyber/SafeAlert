@@ -101,8 +101,9 @@ private fun kfVelOf(service: BleService, deviceId: String): Double {
 }
 
 /**
- * BleService's private pendingDisplayMap (alias of the AlertStateMachine map): whether the device is listed but
- * not yet registered in alertState, i.e. its first registration is still held (pending column).
+ * BleService's private pendingDisplayMap (alias of the AlertStateMachine map): display membership (pending column).
+ * AlertStateMachine.processAlert adds every detected device that is not in alertState, so Y means listed but not
+ * alerting; a held first alert is only one of the reasons.
  */
 @Suppress("UNCHECKED_CAST")
 private fun pendingOf(service: BleService, deviceId: String): Boolean {
@@ -111,8 +112,10 @@ private fun pendingOf(service: BleService, deviceId: String): Boolean {
 }
 
 /**
- * BleService's private approachStreakStartMap (alias of the AlertStateMachine
- * map): whether kfApproaching was true on this frame (kfAppr column).
+ * BleService's private approachStreakStartMap (alias of the AlertStateMachine map): whether an approach streak is open
+ * (kfAppr column). Entries are added only when evalTimeGate runs, which is not every frame, and survive non-approach
+ * evaluations within the 300 ms grace (APPROACH_STREAK_GRACE_MS), so Y reflects the last Time-Gate evaluation, not
+ * whether kfApproaching was true on this frame.
  */
 @Suppress("UNCHECKED_CAST")
 private fun kfApproachingOf(service: BleService, deviceId: String): Boolean {

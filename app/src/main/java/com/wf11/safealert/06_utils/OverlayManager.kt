@@ -582,7 +582,7 @@ object OverlayManager {
             holder.name.setTextColor(lvColor)
             val meas = if (item.distText.isNotEmpty()) item.distText else "${item.rssi}dBm"
             holder.meas.text = "${meas} · 탭하면 30초 확인"
-            // shape_overlay_row is a white plate; the danger/warning tint multiplied here sets its color.
+            // shape_overlay_row is an opaque plate; the danger/warning tint set here replaces its color (default SRC_IN).
             holder.itemView.backgroundTintList = ColorStateList.valueOf(
                 ContextCompat.getColor(ctx, if (item.danger) R.color.sa_tint_rose else R.color.sa_tint_amber)
             )

@@ -5,7 +5,7 @@
 #      The "do not read" note in CLAUDE.md is only advice; it cannot enforce anything.
 #
 # It judges by size, not by a list, so no per-project table needs maintaining.
-# It points to graphify commands when a graph exists, otherwise to grep.
+# Its message always suggests grep, sed and a ranged Read; when graphify-out/graph.json exists it lists graphify commands first.
 #
 # Read            only range reads with limit <= MAX_LINES pass. offset alone means the default 2000 lines, so it is blocked.
 # Bash/PowerShell printing a large file with cat/type/more/less/Get-Content and no pipe or redirect is blocked.

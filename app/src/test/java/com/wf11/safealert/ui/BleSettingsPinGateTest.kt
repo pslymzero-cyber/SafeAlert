@@ -54,7 +54,10 @@ class BleSettingsPinGateTest {
         }
     }
 
-    /** The correct PIN unlocks them, and once unlocked the rows are no longer presented as clickable. */
+    /**
+     * The correct PIN enables seek_beacon_gain and makes both rows non-clickable; the UWB
+     * switch unlock is not asserted (it also depends on UWB hardware support).
+     */
     @Test
     fun `PIN 을 맞히면 풀리고 행은 더 이상 클릭 대상이 아니다`() {
         val activity = Robolectric.buildActivity(BleSettingsActivity::class.java).setup().get()

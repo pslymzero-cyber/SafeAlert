@@ -12,10 +12,15 @@ import org.robolectric.util.ReflectionHelpers
 /**
  * Simulation of the first-detection gate for special alerts (reverse/loading).
  * Measurements print as "[S0914-A1] <scenario> key=value"; assertions are collected and made at
- * the end of each test (so measurements still print on the baseline tree 16ee857).
- * Symbols missing in 16ee857 (approachLastSeenMap etc.) are accessed only through runCatching reflection.
- * Expectations are based on: the b2edcec commit message, the special-alert block comment and
- * the evalTimeGate comment in AlertStateMachine.kt, and SpecialAlertTimeGateTest.
+ * the end of each test, so every measurement prints even when an assertion fails.
+ * Symbols that may be missing (approachLastSeenMap etc.) are accessed only through runCatching reflection;
+ * tree() reports "b2edcec" when approachLastSeenMap exists and "16ee857" otherwise, and the first-detection
+ * checks in a_e2e_firstDetectionReverse and b_departingReverseNotPromoted assert only under "b2edcec".
+ * Expected behavior: on first detection the special alert fires only through a confirmation (waiver, a
+ * 2-frame contact streak while not departing, or a sustained Time-Gate approach) and never while the peer
+ * declares IN_ZONE; reverse never delays the TTC pre-alert, DANGER or the cooldown re-alarm compared with
+ * IDLE; and a fast-approaching reversing forklift is alerted before it passes CPA. Sources: the special-alert
+ * block comment and the evalTimeGate comment in AlertStateMachine.kt, and SpecialAlertTimeGateTest.
  */
 @RunWith(RobolectricTestRunner::class)
 class Sim0914SpecialGateTest {
@@ -214,8 +219,10 @@ class Sim0914SpecialGateTest {
             if (dep) judge("b-surgeryDep", s, trkBefore, fr)
             else out("b-surgeryCtrl tree=${tree(s)} promoted=${fr.before == null && fr.label} ${fr.fmt()}")
         }
-        // b2 natural: pass by in IDLE (rise -60→-40, hold 30 frames, fall 0.5dB/frame) → once departure cleanup (SAFE
-        // handling, AlertStateMachine.kt 1468-1495) leaves it unregistered + DEPARTING, send REV right away
+        // b2 natural: pass by in IDLE (rise -60→-40, hold 30 frames, fall 0.5dB/frame) → once a departure cleanup
+        // leaves it unregistered + DEPARTING (the receding departure-clear in AlertStateMachine.processAlert sets
+        // TrackingState.DEPARTING), send REV right away; if that never happens during the fall, the REV frames are
+        // only printed as unknown
         run {
             val s = H.newService()
             var t = t0; var f = 0

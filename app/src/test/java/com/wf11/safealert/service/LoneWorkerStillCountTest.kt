@@ -8,12 +8,12 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /*
- * Rule 2 (still) counting: the count pauses while a peer siren vibrates on this device (C2) for at most
- * stillMs per vibration (D1; a device without a vibrator never pauses, D2), is not kept
- * inside a settled safe zone (C3), and the still check opens on sensor time like the accident deadline (C5).
- * A suspect device (accident suspicion running) does not vibrate for a peer siren (C4).
+ * Rule 2 (still) counting: the count pauses while a peer siren vibrates on this device for at most
+ * stillMs per vibration (a device without a vibrator never pauses), is not kept
+ * inside a settled safe zone, and the still check opens on sensor time like the accident deadline.
+ * A suspect device (accident suspicion running) does not vibrate for a peer siren.
  * A deadline also waits while a power change that started at or before it is pending (at most about 2 s), then is
- * judged with the reported power, or with the power before it if the change drops (M1).
+ * judged with the reported power, or with the power before it if the change drops.
  */
 class LoneWorkerStillCountTest {
 
@@ -160,7 +160,7 @@ class LoneWorkerStillCountTest {
         assertFalse(l.dueNow(180_000))
     }
 
-    /** A still deadline that passed before the siren started is still judged once sensor data covers it (S1). */
+    /** A still deadline that passed before the siren started is still judged once sensor data covers it. */
     @Test fun siren_does_not_swallow_a_passed_still_deadline() {
         val l = newLogic(carried = true)
         l.sensed(178_000)
@@ -175,7 +175,7 @@ class LoneWorkerStillCountTest {
         assertEquals("still", l.trigger)
     }
 
-    /** A still deadline that passed before the siren keeps its base when the vibration stops before the data comes (S1, C5). */
+    /** A still deadline that passed before the siren keeps its base when the vibration stops before the data comes. */
     @Test fun siren_stopping_before_data_keeps_a_passed_still_deadline() {
         val l = newLogic(carried = true)
         l.sensed(178_000)
@@ -198,7 +198,9 @@ class LoneWorkerStillCountTest {
         assertEquals("still", l.trigger)
     }
 
-    /** A plug started 1 s before the SOS deadline holds it until confirmed and closes the check; an unplug only delays the SOS (M1). */
+    /**
+     * A plug started 1 s before the SOS deadline holds it until confirmed and closes the check; an unplug only delays the SOS.
+     */
     @Test fun sos_deadline_waits_for_a_power_change_started_before_it() {
         val l = newLogic(carried = true)
         assertEquals(Mode.CHECKING, l.seenAt(180_000))
@@ -219,7 +221,7 @@ class LoneWorkerStillCountTest {
         assertEquals(Mode.SOS, u.seenAt(s2 - 1_000 + PowerDebounce.DEBOUNCE_MS))
     }
 
-    /** A plug started at or before a still or fall deadline holds it; a plug started after it does not (M1). */
+    /** A plug started at or before a still or fall deadline holds it; a plug started after it does not. */
     @Test fun window_deadlines_wait_for_a_plug_started_at_or_before_them() {
         for (at in listOf(179_000L, 180_000L)) {
             val m = "at=$at"
@@ -245,7 +247,7 @@ class LoneWorkerStillCountTest {
         assertEquals(Mode.WATCHING, c.seenAt(180_500 + PowerDebounce.DEBOUNCE_MS))
     }
 
-    /** A dropped power wait lets the deadline be judged with the power before it, the response counted from the opening (M1). */
+    /** A dropped power wait lets the deadline be judged with the power before it, the response counted from the opening. */
     @Test fun dropped_power_wait_judges_in_the_power_state_before_it() {
         val l = newLogic(carried = true)
         l.powerRaw(true, 179_500)
@@ -257,7 +259,7 @@ class LoneWorkerStillCountTest {
         assertEquals(LoneWorkerLogic.Rest.NONE, l.rest)
     }
 
-    /** A power wait keeps the CPU awake but asks for a flush only when data up to the deadline is missing (X4). */
+    /** A power wait keeps the CPU awake but asks for a flush only when data up to the deadline is missing. */
     @Test fun power_wait_keeps_the_cpu_awake_but_flushes_only_for_missing_data() {
         val l = newLogic(carried = true)
         l.powerRaw(true, 179_500)

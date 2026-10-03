@@ -35,7 +35,7 @@
     <dimen name="sa_type_section">15sp</dimen>
     <dimen name="sa_type_topbar">17sp</dimen>
     <dimen name="sa_type_display">22sp</dimen>
-    <!-- Main gauge values only (status text, distance figures). Not used on settings screens. -->
+    <!-- Running-card role label (tv_running_mode) only. Not used on settings screens. -->
     <dimen name="sa_type_metric">26sp</dimen>
 
     <!-- ── Fixed sizes ──────────────────────────────────────────────────── -->

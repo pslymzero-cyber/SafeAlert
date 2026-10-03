@@ -1,14 +1,15 @@
 # ============================================================
-#  SafeAlert version release script (GitHub Releases + Firebase DB)
+#  SafeAlert version release script (GitHub Releases + Firebase DB). OBSOLETE: do not run it.
 #
-#  Usage:
-#    .\scripts\deploy.ps1 -version "1.1.0" -changelog "버그 수정"
-#    .\scripts\deploy.ps1 -version "1.2.0" -changelog "긴급 패치" -force $true
+#  Releases go through .github/workflows/release.yml: pushing a vX.Y.Z tag builds and signs the release APK,
+#  publishes it, deploys the DB rules and writes the version and the APK's SHA-256 to /version.
 #
-#  One-time setup:
-#    gh auth login          (GitHub login)
-#    No Firebase CLI setup (firebase login / firebase use) is needed:
-#    step 4 writes to the safealert-98d7e database over the REST API.
+#  Why this script no longer works:
+#    step 1  its regex no longer matches UpdateManager.kt (CURRENT_VERSION is BuildConfig.VERSION_NAME).
+#    step 2  it ships a debug-signed APK, which cannot install over the release-signed app.
+#    step 3  it uploads to a separate repository (safealert-releases, created private if missing), not this one.
+#    step 4  it PUTs /wf11/version without auth, which database.rules.json refuses ("version" .write false);
+#            the app reads /version, and an entry without apk_sha256 makes it refuse the install.
 # ============================================================
 
 param(
