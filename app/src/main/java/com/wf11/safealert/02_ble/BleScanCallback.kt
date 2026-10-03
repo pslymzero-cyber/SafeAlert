@@ -1,20 +1,27 @@
 ﻿package com.wf11.safealert.ble
 
 interface BleScanCallback {
-    // [v1.0.29] remoteState: 상대 기기의 1바이트 페이로드(0~255). BleService 가 Category/State 언패킹.
-    // [v1.1.7 #1] remoteTurn: 상대 송신 회전 방향(TURN_*, bits 3:2 디코드). 미지원/비콘은 TURN_STRAIGHT.
-    // [v1.1.11 C2] payloadPresent: 상대가 실제 1바이트 자기-신고를 송신했는지(true) / 비콘·구버전 부재(false).
-    //   IDLE-IDLE 가청 억제를 '진짜 정지 자기-신고' 기기에만 적용해 이동 비콘 장비의 DANGER 무음화 구멍을 막는다.
-    // [v1.1.53 상호RSSI] peerEchoRssi: 상대가 되돌려 보낸 '상대가 측정한 나의 RSSI'(rssi_me→peer). 부재/구버전=NO_ECHO_RSSI.
-    // (v1.1.62) peerInZone: 상대가 존 비콘 접촉(IN_ZONE) 선언 중인지(ServiceData 확장 바이트 bit0). 구버전/비콘=false.
+    // remoteState: the peer's 1-byte payload (0~255); AlertStateMachine unpacks Category/State/Risk.
+    // remoteTurn: the peer's transmitted turn direction (TURN_*, decoded from bits 3:2). TURN_STRAIGHT if
+    //   unsupported or a beacon.
+    // payloadPresent: whether the peer actually sent the 1-byte self-report (true), or it is absent for beacons and
+    //   old versions (false). IDLE-IDLE audible suppression applies only to devices that truly self-report being
+    //   stopped, closing the hole where equipment carrying a moving beacon would have its DANGER muted.
+    // peerEchoRssi: the peer's echoed 'RSSI the peer measured from me' (rssi_me→peer). Absent or old version =
+    //   NO_ECHO_RSSI.
+    // peerInZone: whether the peer declares zone beacon contact (IN_ZONE) (ServiceData extension byte bit0).
+    //   Old version or beacon = false.
     fun onDeviceDetected(deviceId: String, rssi: Int, remoteState: Int, remoteTurn: Int = BleConstants.TURN_STRAIGHT, payloadPresent: Boolean = false, peerEchoRssi: Int = BleConstants.NO_ECHO_RSSI, peerInZone: Boolean = false)
     fun onDeviceLost(deviceId: String)
     fun onScanError(errorCode: Int)
-    // (v1.1.99) 상대의 구조 요청(확장 바이트 bit1)은 존·보행자 게이트를 거치는 onDeviceDetected 와 분리해 따로 전달(기본: 무시)
-    //   episode = 광고된 구조 요청 회차(byte2, 없으면 0), hint = 최근 비콘 짧은 ID(byte3-4, 없으면 0)
+    // A peer's rescue request (extension byte bit1) is delivered separately from onDeviceDetected, which passes
+    //   through the zone and walker gates (default: ignored).
+    //   episode = advertised rescue request episode (byte2, 0 if none), hint = short ID of the latest beacon
+    //   (byte3-4, 0 if none)
     fun onPeerSos(deviceId: String, sos: Boolean, episode: Int = 0, hint: Int = 0) {}
-    // UWB 주소가 스캔 응답에서 파싱됐을 때 (기본: 무시)
+    // When a UWB address is parsed from the scan response (default: ignored)
     fun onUwbAddressReceived(deviceId: String, uwbAddress: ByteArray) {}
-    // (v1.1.62) 존 비콘(zoneMute 프로파일) 신호 — 기기 목록·판정에 넣지 않고 존 상태 머신에만 전달(기본: 무시)
+    // Zone beacon (zoneMute profile) signal: not added to the device list or judgment, only passed to the zone
+    //   state machine (default: ignored)
     fun onZoneBeaconSignal(beaconKey: String, rssi: Int, enterRssi: Int) {}
 }

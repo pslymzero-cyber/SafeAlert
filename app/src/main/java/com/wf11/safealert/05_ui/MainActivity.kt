@@ -60,34 +60,35 @@ class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private val prefs by lazy { getSharedPreferences("safealert_prefs", MODE_PRIVATE) }
     private var currentMode: String? = null
-    // [v1.0.34] 선택된 역할(Category) — 1바이트 페이로드 bits[1:0] 로 BleService→BleAdvertiser 에 전달
+    // Selected role (Category) — passed BleService → BleAdvertiser as bits[1:0] of the 1-byte payload
     private var currentCategory: Int = BleConstants.CAT_WALKER
     private var testAlertRunning = false
 
-    // [v1.0.26 Req2] 감지 기기 목록 — BleService.alertState 스냅샷을 통째로 받아 매번 교체.
-    // (displayName, alertLevel, rssi, dist) 정렬 리스트. 단일 진실 공급원이라 부분 add/remove 없음 = 불일치 불가.
-    // (v1.1.31) dist = 서비스가 산출한 거리 문자열(4번째 필드, 빈값 가능) — 빈값이면 렌더가 dBm 으로 폴백.
+    // Detected-device list — replaced wholesale with each BleService.alertState snapshot.
+    // Sorted list of (displayName, alertLevel, rssi, dist). Single source of truth: no partial add/remove, so it cannot drift.
+    // dist = distance string computed by the service (4th field, may be empty); when empty, rendering falls back to dBm.
     private data class DetectedRow(val name: String, val level: Int, val rssi: Int, val dist: String)
     private val detectedDevices = mutableListOf<DetectedRow>()
 
-    // [v1.0.42] Broadcast 수신과 폴링 폴백이 공유하는 '마지막 반영 스냅샷'.
-    //   같은 값이면 양쪽 모두 no-op → 중복 렌더 방지. 초기 sentinel()은 빈 목록("")과도 구분.
+    // Last-applied snapshot shared by the broadcast receiver and the polling fallback.
+    //   Same value → both are no-ops (no duplicate render). The initial sentinel() also differs from an empty list ("").
     private var lastSyncedSnapshot = ""
 
-    // [v1.0.42 Req2] 내 장비(Local) 상태 전용 '마지막 반영 스냅샷'.
-    //   Broadcast(BROADCAST_LOCAL_STATE)와 800ms 폴링(BleService.localSnapshot)이 공유한다.
-    //   ※ 이 채널은 '내가 송출하는' 상태만 운반한다 — 수신 타겟(detectedSnapshot)과 물리적으로 분리되어
-    //     상대 페이로드가 내 장비 표시를 절대 덮어쓸 수 없다(Req2 핵심 불변식).
+    // Last-applied snapshot for my own device (Local) state only.
+    //   Shared by the broadcast (BROADCAST_LOCAL_STATE) and the 800ms poll (BleService.localSnapshot).
+    //   Note: this channel carries only the state I advertise. It is physically separate from received targets
+    //     (detectedSnapshot), so a peer payload can never overwrite my device display (core invariant).
     private var lastLocalSnapshot = ""
 
-    // 1초마다 서비스 상태 직접 폴링 (Broadcast 실패 대비)
+    // Poll the service state directly every second (in case broadcasts fail)
     private val statusHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private var muteAnimator: ObjectAnimator? = null
 
-    // [v1.0.37] UI 렌더 스로틀 — 감지 목록(TextView) 갱신을 최소 uiRenderThrottleMs(500ms)
-    //   간격으로 코얼레싱해 UI 스레드/GPU 재드로우 부하·전력을 줄인다. 데이터 수신(detectedDevices)과
-    //   백그라운드 계산(BleService/Kalman)은 실시간 유지 — '화면에 뿌리는' 작업만 제한한다.
-    //   단 위험도 '상승'(특히 DANGER 진입=경고 배경색/아이콘)은 스로틀 우회 즉시 렌더(안전 우선).
+    // UI render throttle — coalesces detected-list (TextView) updates to at least uiRenderThrottleMs (500ms)
+    //   apart to cut UI-thread/GPU redraw load and power. Data intake (detectedDevices) and
+    //   background computation (BleService/Kalman) stay real-time — only drawing to the screen is limited.
+    //   A risk-level increase (especially entering DANGER = warning background/icon)
+    //   bypasses the throttle and renders immediately (safety first).
     private val uiThrottleHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private val uiRenderThrottleMs = 500L
     private var lastRenderMs = 0L
@@ -104,26 +105,26 @@ class MainActivity : AppCompatActivity() {
         private var lastText = ""
         private var lastMuted = false
         override fun run() {
-            LoneWorkerUi.onPoll(this@MainActivity, binding.tvLwStatus, binding.layoutPermissionWarning, binding.tvPermissionMsg, currentMode == null, this@MainActivity::showPermissionWarning) { restoreRunningState() }   // 확인·구조 요청 화면 진입·정지 경합 복구·충전 안내·도달성 경고 재판정 (v1.1.99)
+            LoneWorkerUi.onPoll(this@MainActivity, binding.tvLwStatus, binding.layoutPermissionWarning, binding.tvPermissionMsg, currentMode == null, this@MainActivity::showPermissionWarning) { restoreRunningState() }   // Check/SOS screen entry, stop-race recovery, charging hint, reachability recheck
             if (binding.cardRunning.visibility == View.VISIBLE) {
-                // [v1.0.42] Broadcast 누락 대비 폴백 — 서비스 스냅샷(BleService.detectedSnapshot)을
-                //   직접 읽어 목록을 동기화한다. 브로드캐스트가 정상이면 같은 값이라 no-op,
-                //   누락(RECEIVER_NOT_EXPORTED/암시적 전달 실패)되면 여기서 800ms 내 복구된다.
+                // Fallback for missed broadcasts — reads the service snapshot (BleService.detectedSnapshot)
+                //   directly to sync the list. With working broadcasts the value is the same (no-op);
+                //   if one is missed (RECEIVER_NOT_EXPORTED / implicit delivery failure) this recovers within 800ms.
                 val snap = BleService.detectedSnapshot
                 if (snap != lastSyncedSnapshot) {
                     lastSyncedSnapshot = snap
                     applyDeviceListSnapshot(snap)
                     requestDetectedRender()
                 }
-                // [v1.0.42 Req2] 내 장비(Local) 상태/속도 — '내 송출' 전용 채널(localSnapshot)만 폴링.
-                //   tv_ble_status(수신 타겟)와 완전히 다른 소스라 수신 데이터가 여기로 새지 않는다.
+                // My device (Local) state/speed — polls only the own-advertising channel (localSnapshot).
+                //   It is a completely different source from tv_ble_status (received targets), so received data cannot leak in here.
                 val localSnap = BleService.localSnapshot
                 if (localSnap != lastLocalSnapshot) {
                     lastLocalSnapshot = localSnap
                     parseLocalSnapshot(localSnap)?.let { updateLocalDisplay(it) }
                 }
-                // [v1.0.26 Req2] tv_ble_status 는 '감지 기기 목록' 전용 영역으로 전환.
-                // 목록이 비었을 때만 그 자리에 '서비스 상태' 1줄을 임시로 표시한다.
+                // tv_ble_status is dedicated to the detected-device list.
+                // Only when the list is empty does it temporarily show a one-line service status there.
                 val text = when {
                     !BleService.isRunning -> "서비스 시작 중..."
                     BleService.lastStatus.isNotEmpty() -> BleService.lastStatus
@@ -135,16 +136,16 @@ class MainActivity : AppCompatActivity() {
                         lastText = text
                     }
                 } else {
-                    // 목록 표시 중 → 다음에 목록이 비면 무조건 상태로 되돌리도록 캐시 무효화
+                    // List is showing → invalidate the cache so the status line always comes back once the list empties
                     lastText = ""
                 }
-                // 서비스가 완전히 종료되면 감지 목록 초기화
+                // Clear the detected list once the service has fully stopped
                 if (!BleService.isRunning && detectedDevices.isNotEmpty()) {
                     detectedDevices.clear()
                     updateDetectedDisplay()
                 }
 
-                // 무음 인디케이터 (깜빡이는 배너)
+                // Mute indicator (blinking banner)
                 val muted = BleService.isMutedPublic
                 if (muted != lastMuted) {
                     lastMuted = muted
@@ -169,17 +170,17 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private val blePermissions = LoneWorkerUi.runPermissions   // 서비스 시작 권한(ServiceStartGate.required) + 정밀 위치 (v1.1.99)
+    private val blePermissions = LoneWorkerUi.runPermissions   // Service start permissions (ServiceStartGate.required) + fine location
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { _ ->
-        // (v1.1.30) 판정은 BLE 필수 권한만 — UWB_RANGING 은 선택(거부돼도 BLE 로 동작)
+        // Only the required BLE permissions are checked — UWB_RANGING is optional (BLE works if denied)
         if (hasAllPermissions()) afterPermissions()
         else showPermissionWarning("BLE · 위치 권한이 필요합니다. 탭하여 허용해주세요.") { openAppSettings() }
     }
 
-    // (v1.1.99) Android 11 위치 '항상 허용' — 거부해도 시작 흐름은 계속된다(메인 화면 경고만)
+    // Android 11 location "항상 허용" (allow all the time) — if denied, startup continues (main-screen warning only)
     private val bgLocationLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { _ ->
         requestBatteryOptimizationExclusion()
     }
@@ -192,33 +193,33 @@ class MainActivity : AppCompatActivity() {
         ActivityResultContracts.StartActivityForResult()
     ) { startServiceWithCurrentMode() }
 
-    // 경보 / 감지 브로드캐스트 수신
+    // Alert / detection broadcast receiver
     private val alertReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             when (intent.action) {
 
-                // [v1.0.26 Req2/Req3] BleService 가 보낸 alertState 전체 스냅샷(직렬화 목록)을
-                // 통째로 수신 → detectedDevices 를 매번 새로 구성. 부분 add/remove 없음 = 불일치 불가.
+                // Receives the full alertState snapshot (serialized list) sent by BleService
+                // and rebuilds detectedDevices each time. No partial add/remove, so it cannot drift.
                 BleService.BROADCAST_DETECTED -> {
                     val raw = intent.getStringExtra(BleService.EXTRA_DEVICE_LIST) ?: ""
-                    // [v1.0.42] 폴링 폴백과 '동일 파서' 공유 + lastSyncedSnapshot 동기화(중복 렌더 방지).
+                    // Shares the same parser as the polling fallback and syncs lastSyncedSnapshot (no duplicate render).
                     lastSyncedSnapshot = raw
                     applyDeviceListSnapshot(raw)
-                    // [v1.0.37] 즉시 렌더 대신 throttle 경유(500ms 코얼레싱, 위험도 상승은 우회 즉시).
-                    //   데이터(detectedDevices)는 위에서 이미 최신으로 반영됨 — 화면 출력만 제한된다.
+                    // Render through the throttle instead of immediately (500ms coalescing; risk-level increases bypass it).
+                    //   Data (detectedDevices) is already up to date above — only screen output is limited.
                     requestDetectedRender()
                 }
 
                 BleService.BROADCAST_BLE_STATUS -> {
                     val status = intent.getStringExtra(BleService.EXTRA_STATUS) ?: return
-                    // [v1.0.26 Req2] 목록이 비었을 때만 하단에 서비스 상태 표시(목록이 있으면 목록 유지).
+                    // Show the service status at the bottom only when the list is empty (otherwise keep the list).
                     if (detectedDevices.isEmpty()) {
                         binding.tvBleStatus.text = status
                     }
                 }
 
-                // [v1.0.42 Req2] 내 장비(Local) 상태 푸시 — 수신 타겟 데이터가 절대 건드리지 못하는 별도 채널.
-                //   tv_local_state(내 장비) 만 갱신한다. detectedDevices/tv_ble_status 는 손대지 않는다.
+                // My device (Local) state push — a separate channel that received-target data can never touch.
+                //   Updates only tv_local_state (my device); never touches detectedDevices/tv_ble_status.
                 BleService.BROADCAST_LOCAL_STATE -> {
                     val raw = intent.getStringExtra(BleService.EXTRA_LOCAL_STATE) ?: return
                     lastLocalSnapshot = raw
@@ -234,12 +235,12 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        // [v1.0.50 #3] 다크 리워크 — 시스템 바를 화면 배경색에 맞춤 (이 화면 한정, 테마 리소스는 불변)
+        // Dark UI — match the system bars to the screen background (this screen only; theme resources unchanged)
         window.statusBarColor = 0xFF0B1220.toInt()
         window.navigationBarColor = 0xFF0B1220.toInt()
 
-        // [v1.1.1] 시작 스플래시 — 신규 실행 시 1.5초 표시 후 페이드아웃. 화면 재생성(회전 등)은
-        //   savedInstanceState 가 남아 있으므로 다시 띄우지 않고 즉시 숨긴다.
+        // Launch splash — shown for 1.5 s on a fresh launch, then fades out. On re-creation (rotation etc.)
+        //   savedInstanceState is present, so hide it immediately instead of showing it again.
         if (savedInstanceState == null) {
             binding.ivSplash.postDelayed({
                 binding.ivSplash.animate().alpha(0f).setDuration(300L)
@@ -250,15 +251,15 @@ class MainActivity : AppCompatActivity() {
             binding.ivSplash.visibility = View.GONE
         }
 
-        // [v1.0.54] 선택 화면 배경 — 창고 전경(bg_main) + 스크림. 실행 전환 시 applyRoleVisual 이
-        //   역할별 배경으로 덮어쓰고, 중지 복귀 시 stopServiceImmediately 가 bg_main 으로 되돌린다.
+        // Selection screen background — warehouse view (bg_main) + scrim. When running starts, applyRoleVisuals
+        //   replaces it with the role background; on stop, stopServiceImmediately restores bg_main.
         binding.ivRoleBackground.setImageResource(R.drawable.bg_main)
         binding.ivRoleBackground.visibility = View.VISIBLE
         binding.viewBgScrim.visibility      = View.VISIBLE
 
-        // 하단 버전 표시 — BuildConfig에서 읽어 항상 최신값 반영
+        // Version shown at the bottom — read from BuildConfig so it is always current
         binding.tvVersionFooter.text = "v${BuildConfig.VERSION_NAME}  ·  Created by Ian"
-        // (v1.1.88) 업데이트 후 첫 실행 1회 — 변경 사항 안내 (새 설치 포함). 문구 = strings.xml whats_new
+        // Once on the first launch after an update (fresh installs included) — show what's new. Text = strings.xml whats_new
         if (prefs.getInt("last_seen_version_code", 0) < BuildConfig.VERSION_CODE) {
             prefs.edit().putInt("last_seen_version_code", BuildConfig.VERSION_CODE).apply()
             AlertDialog.Builder(this)
@@ -267,36 +268,36 @@ class MainActivity : AppCompatActivity() {
                 .setPositiveButton("확인", null)
                 .show()
         }
-        // (v1.1.90 SA-1) 구 형식(사람 이름) 저장값 이행 — 복원보다 먼저 돌려 낡은 값이 화면에 뜨지 않게 한다
+        // Migrate stored old-format values (person names) — runs before restore so stale values never show on screen
         migrateDisplayNameToPitId()
-        // (v1.1.90 SA-1) 표시 이름은 더 이상 타이핑하지 않는다. 탭하면 종류·번호 선택 팝업이 뜬다.
-        //   입력 수단 자체를 없애는 것이 이번 변경의 핵심이다 — 사람 이름이 들어올 경로가 화면에 없다.
+        // The display name is not typed. Tapping opens a type/number picker popup.
+        //   Removing the input method itself is the point — the screen has no path for a person's name to come in.
         binding.etDisplayName.apply {
             isFocusable = false
             isFocusableInTouchMode = false
             isCursorVisible = false
-            keyListener = null                     // 소프트 키보드·하드웨어 키 입력 차단
-            setOnClickListener { showPitSelectDialog { } }   // 시작 전 미리 골라두는 용도
+            keyListener = null                     // Block soft-keyboard and hardware-key input
+            setOnClickListener { showPitSelectDialog { } }   // For picking in advance, before starting
         }
         renderDisplayName()
-        // (v1.1.77) 저장된 사업장 코드 복원 — BLE 설정 UWB 섹션과 같은 값(dev_settings.uwb_site_code)
-        // (v1.1.90) 비어 있을 때만 입력 가능. 값이 있으면 잠그고 변경은 개발자 설정에서만.
+        // Restore the saved site code — same value as the BLE settings UWB section (dev_settings.uwb_site_code).
+        // Editable only while empty; once set it is locked and can be changed only in developer settings.
         refreshSiteCodeField()
 
-        // [v1.0.34] 3-Role 선택 — 보행자(WALKER) / EPJ·지게차(DEVICE) + Category 동시 지정
-        //   (v1.1.77) 사업장 코드가 없으면 requireSiteCode 가 입력 팝업을 띄우고 시작을 막는다.
-        // (v1.1.90 SA-1) 장비 카드는 하나다. 역할(Category)은 고른 장비가 정한다 —
-        //   역할을 먼저 고르고 장비를 또 고르면 둘이 어긋날 수 있다.
-        //   card_role_epj 는 레이아웃에서 gone 이라 리스너를 달지 않는다(EPJ·워키는 장비 목록에 있다).
+        // Role selection — walker (WALKER) / EPJ·forklift (DEVICE), setting Category at the same time.
+        //   Without a site code, requireSiteCode shows the input popup and blocks start.
+        // There is a single equipment card. The chosen equipment sets the role (Category) —
+        //   picking a role first and then equipment could make the two disagree.
+        //   card_role_epj is gone in the layout, so it gets no listener (EPJ and walkie stacker are in the equipment list).
         binding.cardRoleWalker.setOnClickListener   { requireSiteCode { onRoleSelected("WALKER", BleConstants.CAT_WALKER) } }
         binding.cardRoleForklift.setOnClickListener { requireSiteCode { startAsPitOperator() } }
         binding.btnStop.setOnClickListener       { if (!LoneWorkerUi.blockIfOwnSos(this)) stopServiceImmediately() }
-        binding.btnSwitchRole.setOnClickListener { confirmSwitchRole() }   // [v1.1.60] 역할 전환
+        binding.btnSwitchRole.setOnClickListener { confirmSwitchRole() }   // Role switch
         binding.cardSettings.setOnClickListener  { showDevPinDialog { startActivity(Intent(this, DevSettingsActivity::class.java)) } }
         binding.cardBleSettings.setOnClickListener {
             startActivity(Intent(this, BleSettingsActivity::class.java))
         }
-        // (v1.1.97) 비콘 관리(등록·안전구역·삭제·검색·공유 받기)는 PIN 확인 후 진입
+        // Beacon management (register, safe zone, delete, search, receive shared) opens after a PIN check
         binding.cardBeacon.setOnClickListener    {
             showDevPinDialog { startActivity(Intent(this, BeaconManagerActivity::class.java)) }
         }
@@ -308,21 +309,21 @@ class MainActivity : AppCompatActivity() {
         }
 
         val filter = IntentFilter().apply {
-            // [v1.0.26 Req2] BROADCAST_ALERT 구독 제거 — 목록·플로팅 모두 BleService(alertState)가 단일 관리.
+            // Not subscribed to BROADCAST_ALERT — BleService (alertState) alone manages both the list and the floating view.
             addAction(BleService.BROADCAST_DETECTED)
             addAction(BleService.BROADCAST_BLE_STATUS)
-            addAction(BleService.BROADCAST_LOCAL_STATE)   // [v1.0.42 Req2] 내 장비 상태 채널
+            addAction(BleService.BROADCAST_LOCAL_STATE)   // My device state channel
         }
         registerReceiver(alertReceiver, filter, RECEIVER_NOT_EXPORTED)
         restoreRunningState()
         checkBluetoothStatus()
         requestBatteryOptimizationOnStart()
-        requestOverlayPermissionIfNeeded()  // 오버레이 권한 요청
-        handleSwitchRoleIntent(intent)      // (v1.1.67) 상시 알림 '전환' 액션으로 진입한 경우
+        requestOverlayPermissionIfNeeded()  // Request overlay permission
+        handleSwitchRoleIntent(intent)      // Entered via the persistent notification's switch action
     }
 
-    // (v1.1.67) 앱이 이미 떠 있는 상태에서 알림 액션을 누른 경로.
-    //   PendingIntent 가 CLEAR_TOP|SINGLE_TOP 이라 새 인스턴스 대신 여기로 들어온다.
+    // Path for a notification action tapped while the app is already open.
+    //   The PendingIntent is CLEAR_TOP|SINGLE_TOP, so it arrives here instead of in a new instance.
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
@@ -331,15 +332,15 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        // [v1.0.46 배터리(b)] 800ms 상태 폴링을 화면 가시 구간으로 한정 — onResume 게시 / onPause 중단.
-        //   백그라운드 감시는 BleService 단독 책임이라 Activity 폴링은 순수 전력 낭비였다.
+        // Limit the 800ms status poll to when the screen is visible — post in onResume / stop in onPause.
+        //   Background monitoring is BleService's job alone, so Activity polling would only waste power.
         statusHandler.removeCallbacks(statusRunnable)
         statusHandler.post(statusRunnable)
-        // 교대 인계(저장된 구조 요청) 또는 시작 실패·강제 종료 뒤 실행 상태만 남은 서비스 복원 (v1.1.99)
+        // Restore the service after a shift handover (saved SOS), or when only the running state remains after a failed start / force stop
         if (!LoneWorkerUi.reviveIfStoredSos(this)) LoneWorkerUi.reviveIfStopped(this)
-        // (v1.1.90) 개발자 설정에서 사업장 코드를 바꾸고 돌아온 경우 입력칸 반영
+        // Reflect a site code changed in developer settings when returning to this screen
         refreshSiteCodeField()
-        // BLE 설정 요약 업데이트 — [v1.1.8] 칼만 단일화(고정값·혼합 제거)
+        // Update the BLE settings summary — Kalman filter only (no fixed/mixed modes)
         binding.tvBleModeSummary.text =
             "칼만 필터 · 위험 ${DevSettings.rssiDanger}dBm / 경고 ${DevSettings.rssiWarning}dBm"
         val beaconCount = BeaconRegistry.count()
@@ -348,43 +349,43 @@ class MainActivity : AppCompatActivity() {
         else
             "iOS/앱 없는 보행자 감지 설정"
 
-        // [v1.1.2] 버전 체크를 onCreate → onResume 으로 이동 — 앱이 백그라운드에 살아 있다가
-        //   메인 화면에 재진입할 때도 매번 확인한다. (onCreate 단독이던 시절엔 프로세스가 죽기
-        //   전까지 재체크가 없어 새 버전 팝업을 놓침. 중복 팝업은 showUpdateDialog 가드가 차단)
+        // Check the version in onResume, not onCreate — so it is also checked every time the main screen is re-entered while
+        //   the app stays alive in the background. (Checking only in onCreate would miss the update popup until the process
+        //   dies. The showUpdateDialog guard blocks duplicate popups.)
         checkUpdate()
     }
 
     override fun onPause() {
         super.onPause()
-        statusHandler.removeCallbacks(statusRunnable)   // [v1.0.46 배터리(b)]
-        saveSiteCode()   // (v1.1.77) 모드 시작 없이 나가도 입력한 코드는 남긴다
+        statusHandler.removeCallbacks(statusRunnable)
+        saveSiteCode()   // Keep the entered code even when leaving without starting a mode
     }
 
     override fun onDestroy() {
         super.onDestroy()
         statusHandler.removeCallbacks(statusRunnable)
-        uiThrottleHandler.removeCallbacks(renderRunnable)   // [v1.0.37] UI 스로틀 타이머 정리
+        uiThrottleHandler.removeCallbacks(renderRunnable)   // Clean up the UI throttle timer
         try { unregisterReceiver(alertReceiver) } catch (_: Exception) {}
         muteAnimator?.cancel()
     }
 
     /**
-     * [v1.0.42 공용 파서] BleService 직렬화 스냅샷을 detectedDevices 로 파싱.
-     *   레코드 구분 = U+001E, 필드 = "level / rssi / name"(U+001F 구분).
-     *   Broadcast 수신과 800ms 폴링 폴백이 '같은 파서'를 쓰게 해 두 경로 결과가 절대 어긋나지 않게 한다.
+     * Shared parser: parses the BleService serialized snapshot into detectedDevices.
+     *   Records are separated by U+001E; fields = "level / rssi / name" (separated by U+001F).
+     *   The broadcast receiver and the 800ms polling fallback use this same parser so the two paths never disagree.
      */
     private fun applyDeviceListSnapshot(raw: String) {
         detectedDevices.clear()
         if (raw.isEmpty()) return
-        val recSep  = 30.toChar()   // U+001E 레코드 구분자 (BleService 출력과 동일)
-        val unitSep = 31.toChar()   // U+001F 필드 구분자
+        val recSep  = 30.toChar()   // U+001E record separator (same as BleService output)
+        val unitSep = 31.toChar()   // U+001F field separator
         raw.split(recSep).forEach { rec ->
             val f = rec.split(unitSep)
             if (f.size >= 3) {
                 val level = f[0].toIntOrNull() ?: BleConstants.LEVEL_SAFE
                 val rssi  = f[1].toIntOrNull() ?: -99
                 val name  = f[2]
-                // (v1.1.31) 4번째 필드 = 거리 문자열(옵션) — 3필드 구버전 스냅샷과도 뒤호환.
+                // 4th field = distance string (optional) — still compatible with old 3-field snapshots.
                 val dist  = if (f.size >= 4) f[3] else ""
                 detectedDevices.add(DetectedRow(name, level, rssi, dist))
             }
@@ -392,25 +393,25 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * [v1.0.42 Req2] 내 장비(Local) 스냅샷 파서 — BleService.localSnapshot / EXTRA_LOCAL_STATE 전용.
-     *   형식: "category / state / turnDir" (U+001F 필드 구분, BleService.broadcastLocalState 와 동일).
-     *   수신 타겟 파서(applyDeviceListSnapshot)와 의도적으로 분리 — 두 채널이 절대 섞이지 않는다.
+     * Parser for my device (Local) snapshot — only for BleService.localSnapshot / EXTRA_LOCAL_STATE.
+     *   Format: "category / state / turnDir" (U+001F field separator, same as BleService.broadcastLocalState).
+     *   Deliberately separate from the received-target parser (applyDeviceListSnapshot) — the two channels never mix.
      */
     private fun parseLocalSnapshot(raw: String): LocalState? {
         if (raw.isEmpty()) return null
-        val f = raw.split(31.toChar())   // U+001F 필드 구분자
+        val f = raw.split(31.toChar())   // U+001F field separator
         if (f.size < 3) return null
         val cat     = f[0].toIntOrNull() ?: return null
         val st      = f[1].toIntOrNull() ?: return null
-        val turnDir = f[2].toIntOrNull() ?: BleConstants.TURN_STRAIGHT   // [v1.1.7 #1] 속도→회전
-        val inZone  = f.getOrNull(3) == "1"                              // 4번째 필드 없으면 false(구포맷 하위호환)
+        val turnDir = f[2].toIntOrNull() ?: BleConstants.TURN_STRAIGHT
+        val inZone  = f.getOrNull(3) == "1"                              // No 4th field → false (old-format compatibility)
         return LocalState(cat, st, turnDir, inZone)
     }
 
     /**
-     * [v1.0.42 Req2→v1.1.7 #1] 내 장비(Local) 상태/회전을 tv_local_state 에만 출력.
-     *   역할(Category)은 tv_running_mode(roleDisplayName)가 담당 → 여기선 상태·회전만 표시(중복 방지).
-     *   이 메서드는 tv_ble_status(수신 타겟)·detectedDevices 를 절대 건드리지 않는다.
+     * Writes my device (Local) state/turn only to tv_local_state.
+     *   The role (Category) is shown by tv_running_mode (roleDisplayName), so only state and turn are shown here (no duplication).
+     *   This method never touches tv_ble_status (received targets) or detectedDevices.
      */
     private fun updateLocalDisplay(local: LocalState) {
         binding.tvLocalState.text =
@@ -418,47 +419,47 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * [v1.0.37 UI 스로틀] 감지 목록 렌더 요청 — 최소 uiRenderThrottleMs(500ms) 간격으로 코얼레싱한다.
-     *  - 위험도 '상승'(직전 렌더 대비 topLevel↑, 특히 DANGER 진입)은 스로틀 우회 즉시 렌더:
-     *    위험 경고의 배경색·아이콘·크기 강조가 지연 없이 즉각 화면에 반영된다(안전 최우선).
-     *  - 그 외 일반 갱신(RSSI 숫자 변동·안전/경고 목록 증감)은 500ms 간격으로만 화면 반영해
-     *    UI 스레드·GPU 재드로우 빈도를 낮춘다(전력 절감). 백그라운드 계산은 영향받지 않는다.
-     *  - 마지막 변경이 스로틀에 걸리면 trailing 타이머(renderRunnable)가 최신 스냅샷으로 1회 렌더.
+     * UI throttle: request a detected-list render, coalesced to at least uiRenderThrottleMs (500ms) apart.
+     *  - A risk-level increase (topLevel↑ vs the last render, especially entering DANGER) bypasses the throttle:
+     *    the danger background color, icon and size emphasis reach the screen with no delay (safety first).
+     *  - Other updates (RSSI number changes, safe/warning list changes) reach the screen only every 500ms,
+     *    lowering UI-thread/GPU redraw frequency (saves power). Background computation is unaffected.
+     *  - If the last change is throttled, a trailing timer (renderRunnable) renders once with the latest snapshot.
      */
     private fun requestDetectedRender() {
         val topLevel = detectedDevices.maxOfOrNull { it.level } ?: BleConstants.LEVEL_SAFE
         val now = android.os.SystemClock.elapsedRealtime()
-        val escalated = topLevel > lastRenderedTopLevel          // 위험도 상승 = 크리티컬 → 즉시
+        val escalated = topLevel > lastRenderedTopLevel          // Risk level up = critical → render now
         if (escalated || now - lastRenderMs >= uiRenderThrottleMs) {
-            uiThrottleHandler.removeCallbacks(renderRunnable)     // 예약된 trailing 렌더 무효화
+            uiThrottleHandler.removeCallbacks(renderRunnable)     // Cancel the scheduled trailing render
             pendingRender = false
             lastRenderMs = now
             lastRenderedTopLevel = topLevel
             updateDetectedDisplay()
         } else if (!pendingRender) {
-            // 스로틀 구간 내 첫 갱신 → 남은 시간 뒤 1회 trailing 렌더 예약(중복 예약 방지)
+            // First update within the throttle window → schedule one trailing render after the remaining time (no duplicate scheduling)
             pendingRender = true
             uiThrottleHandler.postDelayed(renderRunnable, uiRenderThrottleMs - (now - lastRenderMs))
         }
-        // pendingRender==true 면 이미 예약됨 — 추가 동작 불필요(최신 데이터는 detectedDevices 에 보존)
+        // pendingRender==true means already scheduled — nothing more to do (latest data is kept in detectedDevices)
     }
 
     /**
-     * [v1.0.26 Req2/Req3] 감지 기기 목록을 '화면 하단' tv_ble_status(파란 박스)에 직접 출력.
-     * - 기기 1대라도 있으면: 중앙 안내(tv_approaching)를 GONE 으로 숨기고(고스트 텍스트 제거),
-     *   하단 tv_ble_status 에 위험도 색상 Spannable 목록(최대 10)을 setText.
-     * - 비어 있으면: 중앙 안내를 다시 보이고, 하단은 밝은 배경의 '서비스 상태' 1줄로 복귀.
-     * detectedDevices 는 BleService 스냅샷 단일 소스라 알람과 목록이 절대 어긋나지 않는다.
+     * Writes the detected-device list directly to tv_ble_status, the box at the bottom of the screen.
+     * - At least one device: hide the center hint (tv_approaching) with GONE (no ghost text),
+     *   and setText a risk-colored Spannable list (max 10) on a dark background tinted by the top risk level.
+     * - Empty: show the center hint again; the bottom box returns to the dark inset style with a one-line service status.
+     * detectedDevices has a single source (the BleService snapshot), so alarms and the list never disagree.
      */
     private fun updateDetectedDisplay() {
         if (detectedDevices.isEmpty()) {
-            // 중앙 안내 복귀
+            // Restore the center hint
             binding.tvApproaching.visibility = View.VISIBLE
             binding.tvApproaching.setBackgroundColor(Color.TRANSPARENT)
             binding.tvApproaching.setTextColor(0xFF8AAFC4.toInt())
             binding.tvApproaching.text = "주변 감지 기기 없음 · 감시 중"
-            // 하단 목록 영역 → 어두운 인셋 박스 + 서비스 상태 1줄로 복귀
-            // [v1.0.50 #3] backgroundTint 갱신 — shape_target_box 의 둥근 모서리를 유지한다.
+            // Bottom list area → back to the dark inset box + one-line service status
+            // Set backgroundTint so shape_target_box keeps its rounded corners.
             binding.tvBleStatus.backgroundTintList = ColorStateList.valueOf(0xE8101A2C.toInt())
             binding.tvBleStatus.setTextColor(0xFF7C93A8.toInt())
             val status = BleService.lastStatus
@@ -466,10 +467,10 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        // [Req3] 기기가 있으면 중앙 '감지 없음' 고스트 텍스트를 즉시 숨긴다.
+        // With devices present, hide the center 'no detection' ghost text immediately.
         binding.tvApproaching.visibility = View.GONE
 
-        // 위험도 우선 → 같은 위험도면 RSSI 강한(가까운) 순, 최대 10개
+        // Risk level first → same level: stronger (closer) RSSI first; max 10
         val sorted = detectedDevices
             .sortedWith(
                 compareByDescending<DetectedRow> { it.level }
@@ -478,7 +479,7 @@ class MainActivity : AppCompatActivity() {
             .take(10)
 
         val sb = SpannableStringBuilder()
-        // [v1.0.42] 사용자 요청 — 목록 최상단에 '주변 감지 기기 N건' 헤더(연회색 소형).
+        // Header "주변 감지 기기 N건" (nearby detected devices: N) at the top of the list (small, light gray).
         run {
             val hStart = sb.length
             sb.append("주변 감지 기기 ${detectedDevices.size}건\n")
@@ -492,16 +493,16 @@ class MainActivity : AppCompatActivity() {
                 BleConstants.LEVEL_WARNING -> "경고"
                 else                       -> "감지"
             }
-            // (v1.1.31) 서비스가 준 거리 문자열이 있으면 그대로, 없으면 기존 dBm 표기 폴백.
+            // Use the distance string from the service as is if present; otherwise fall back to dBm.
             val meas = if (dist.isNotEmpty()) dist else "${rssi}dBm"
             val line = "$prefix  $name   $meas"
             val start = sb.length
             sb.append(line)
             val end = sb.length
             val color = when (level) {
-                BleConstants.LEVEL_DANGER  -> Color.rgb(255,  80,  70)   // 위험 = 빨강
-                BleConstants.LEVEL_WARNING -> Color.rgb(255, 200,  40)   // 경고 = 노랑
-                else                       -> Color.rgb(170, 210, 230)   // 안전 = 연청
+                BleConstants.LEVEL_DANGER  -> Color.rgb(255,  80,  70)   // Danger = red
+                BleConstants.LEVEL_WARNING -> Color.rgb(255, 200,  40)   // Warning = yellow
+                else                       -> Color.rgb(170, 210, 230)   // Safe = light blue
             }
             val sizeMul = when (level) {
                 BleConstants.LEVEL_DANGER  -> 1.22f
@@ -514,15 +515,15 @@ class MainActivity : AppCompatActivity() {
                 sb.setSpan(StyleSpan(Typeface.BOLD),  start, end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
 
-        // [Req2] 목록을 하단 tv_ble_status 에 출력 — 밝은 기본 배경에선 노랑/연청이 묻히므로
-        // 위험도에 맞춰 어두운 배경을 동적으로 깔아 가독성 확보.
+        // Write the list to the bottom tv_ble_status — yellow/light blue get lost on the light default background,
+        // so a dark background matching the risk level is applied for readability.
         val topLevel = sorted.first().level
         val bgColor = when {
-            topLevel >= BleConstants.LEVEL_DANGER  -> 0xDD1A0000.toInt()  // 짙은 적
-            topLevel == BleConstants.LEVEL_WARNING -> 0xDD1A1400.toInt()  // 짙은 황
-            else                                   -> 0xDD051220.toInt()  // 짙은 남색
+            topLevel >= BleConstants.LEVEL_DANGER  -> 0xDD1A0000.toInt()  // Dark red
+            topLevel == BleConstants.LEVEL_WARNING -> 0xDD1A1400.toInt()  // Dark amber
+            else                                   -> 0xDD051220.toInt()  // Dark navy
         }
-        binding.tvBleStatus.backgroundTintList = ColorStateList.valueOf(bgColor)   // [v1.0.50 #3] 둥근 모서리 유지
+        binding.tvBleStatus.backgroundTintList = ColorStateList.valueOf(bgColor)   // Keep rounded corners
         binding.tvBleStatus.setTextColor(0xFFE0F0FF.toInt())
         binding.tvBleStatus.text = sb
     }
@@ -530,19 +531,19 @@ class MainActivity : AppCompatActivity() {
     private fun onRoleSelected(mode: String, category: Int) {
         currentMode = mode
         currentCategory = category
-        // 역할(Category) 복원용 저장 — 서비스 START_STICKY 재시작·앱 재실행 시 라벨 일관성 확보
+        // Save the role (Category) for restore — keeps labels consistent after a START_STICKY service restart or app relaunch
         prefs.edit().putInt("running_category", category).apply()
         binding.layoutPermissionWarning.visibility = View.GONE
-        // (v1.1.30) UWB 지원 기기는 UWB_RANGING 런타임 권한을 함께 요청 — 필수 판정은 BLE 셋만
+        // On UWB-capable devices also request the UWB_RANGING runtime permission — only the three BLE permissions are required
         val wantUwb = UwbRanger.isHardwareSupported(this) &&
                 ContextCompat.checkSelfPermission(this, Manifest.permission.UWB_RANGING) !=
                     PackageManager.PERMISSION_GRANTED
-        // (v1.1.69) 알림 권한. targetSdk 33+ 에서 이게 없으면 포그라운드 서비스 상시 알림도
-        //   상태바에 뜨지 않는다. UWB 와 같이 '선택' 취급 — 거부해도 감시·경보는 그대로 돈다.
+        // Notification permission. On targetSdk 33+ without it even the foreground service's persistent notification
+        //   doesn't show in the status bar. Treated as optional like UWB — monitoring and alerts keep running if denied.
         val wantNotif = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
                 ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
                     PackageManager.PERMISSION_GRANTED
-        // (v1.1.99) 신체 활동(걸음 감지)도 선택 — 거부하면 강한 움직임으로 대신 판단
+        // Physical activity (step detection) is optional too — if denied, strong motion is used instead
         val wantActivity = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
                 ContextCompat.checkSelfPermission(this, Manifest.permission.ACTIVITY_RECOGNITION) !=
                     PackageManager.PERMISSION_GRANTED
@@ -565,7 +566,7 @@ class MainActivity : AppCompatActivity() {
         return pm.isIgnoringBatteryOptimizations(packageName)
     }
 
-    // 앱 시작 시 배터리 최적화 제외 요청 (최초 1회)
+    // Request battery-optimization exemption at app start (first time only)
     private fun requestBatteryOptimizationOnStart() {
         if (isBatteryOptimizationExempt()) return
         AlertDialog.Builder(this)
@@ -590,7 +591,7 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    // 모드 선택 후 배터리 권한 확인
+    // Check the battery permission after mode selection
     private fun requestBatteryOptimizationExclusion() {
         if (isBatteryOptimizationExempt()) {
             startServiceWithCurrentMode(); return
@@ -607,7 +608,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // 제조사별 배터리 설정 화면으로 이동
+    // Open the manufacturer-specific battery settings screen
     private fun openManufacturerBatterySettings() {
         val brand = Build.MANUFACTURER.lowercase()
         val intent = when {
@@ -643,7 +644,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun startServiceWithCurrentMode() {
         val mode  = currentMode ?: return
-        // 이름 입력 시 그 이름을 BLE 송출 ID로 사용 (상대방 화면에 표시됨)
+        // If a name was entered, use it as the BLE advertising ID (shown on the peer's screen)
         val displayName = prefs.getString("display_name", "")?.trim()
         val id = if (!displayName.isNullOrEmpty()) displayName else myId()
         val since = System.currentTimeMillis()
@@ -652,7 +653,7 @@ class MainActivity : AppCompatActivity() {
         val intent = Intent(this, BleService::class.java).apply {
             this.action = action
             putExtra(BleService.EXTRA_ID, id)
-            putExtra(BleService.EXTRA_CATEGORY, currentCategory)   // [v1.0.34] 역할 Category 전달
+            putExtra(BleService.EXTRA_CATEGORY, currentCategory)   // Pass the role Category
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent)
         else startService(intent)
@@ -666,36 +667,36 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun stopServiceImmediately() {
-        // [v1.0.46 중지버그①] 500ms 지연 게시 제거 — 지연 틈에 START_STICKY 복원이 잔존
-        //   prefs(running_mode)를 읽어 서비스를 부활시키던 핵심 경로를 끊는다.
-        //   prefs 는 commit(동기) — ACTION_STOP 도착 전에 디스크 상태부터 '중지'로 확정.
+        // No delayed post: during a delay the START_STICKY restore could read leftover prefs (running_mode)
+        //   and revive the service. prefs are written with commit (synchronous) so the on-disk state is
+        //   'stopped' before ACTION_STOP arrives.
         prefs.edit()
             .remove("running_mode")
             .remove("running_since")
             .remove("running_category")
             .commit()
         currentMode = null
-        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)   // [v1.0.46 배터리(a)] 중지 후 화면 소등 허용
+        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)   // Allow the screen to turn off after stopping
 
-        // ── 소리/진동/오버레이 즉시 중지 (서비스 종료 기다리지 않음) ──
+        // ── Stop sound/vibration/overlay immediately (don't wait for the service to stop) ──
         com.wf11.safealert.service.AlertSoundPlayer.stopSound()
         com.wf11.safealert.service.VibrationHelper.stopVibration(this)
         com.wf11.safealert.utils.OverlayManager.hideOverlay()
 
-        // 감지 목록 비우기
+        // Clear the detected list
         detectedDevices.clear()
 
-        // 테스트 경보 실행 중이었으면 버튼 상태 초기화
+        // Reset the button state if a test alarm was running
         if (testAlertRunning) {
             testAlertRunning = false
-            styleTestButton(testAccent)   // [v1.0.50 #3] TEST 버튼 평상 스타일 복귀
+            styleTestButton(testAccent)   // Restore the TEST button's normal style
         }
 
-        // 무음 인디케이터 초기화
+        // Reset the mute indicator
         muteAnimator?.cancel()
         binding.tvMutedIndicator.visibility = View.GONE
 
-        // [v1.0.54] 선택 화면 복귀 — 역할 배경을 창고 전경(bg_main)으로 전환 (스크림 유지)
+        // Back to the selection screen — switch the role background to the warehouse view (bg_main), keeping the scrim
         binding.ivRoleBackground.setImageResource(R.drawable.bg_main)
         binding.ivRoleBackground.visibility = View.VISIBLE
         binding.viewBgScrim.visibility      = View.VISIBLE
@@ -704,19 +705,20 @@ class MainActivity : AppCompatActivity() {
         binding.layoutSelect.visibility = View.VISIBLE
         binding.layoutPermissionWarning.visibility = View.GONE
 
-        // [v1.0.46 중지버그①] 즉시 게시 — BLE 스택 정리는 BleService.stopAll() 내부 책임이다.
+        // Post immediately — BLE stack cleanup is BleService.stopAll()'s own job.
         startService(Intent(this, BleService::class.java).apply { action = BleService.ACTION_STOP })
     }
 
-    // [v1.1.60] 실행 중 역할 전환(B안: 정지→재시작) — 광고 fullId 에 역할 prefix(DEVICE_/WALKER_)가
-    //   박혀 실행 중 카테고리 갱신 API 가 없다. stopServiceImmediately()→onRoleSelected() 재사용이
-    //   유일 안전 경로. 전환 공백 1~2초는 EMA 워밍업(v1.1.29)이 콜드스타트를 완화한다.
-    //   매핑: WALKER→지게차(DEVICE·CAT_FORKLIFT) / DEVICE(레거시 EPJ 포함)→보행자(WALKER·CAT_WALKER).
+    // Role switch while running (stop → restart) — the role prefix (DEVICE_/WALKER_) is baked into the advertised fullId,
+    //   and there is no API to change the category while running, so stopServiceImmediately() and then a fresh start
+    //   is the only safe path. EMA warm-up softens the cold start in the switch gap.
+    //   Mapping: WALKER → equipment picker (startAsPitOperator; the chosen equipment sets the category) /
+    //   DEVICE (incl. legacy EPJ) → walker (WALKER, CAT_WALKER).
     private fun switchTargetLabel(): String =
         if (currentMode == "WALKER") "장비 작업자" else "보행자"
 
-    // (v1.1.67) 상시 알림의 '전환' 액션 처리. 액션을 소비(action=null)해 화면 회전·재개 때
-    //   같은 인텐트로 다이얼로그가 되살아나는 것을 막는다. 감시 중이 아니면 무시한다.
+    // Handle the persistent notification's switch action. Consume the action (action=null) so the same intent
+    //   doesn't revive the dialog on rotation/resume. Ignored when not monitoring.
     private fun handleSwitchRoleIntent(intent: Intent?) {
         if (intent?.action != BleService.ACTION_OPEN_SWITCH_ROLE) return
         intent.action = null
@@ -725,7 +727,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun confirmSwitchRole() {
-        if (LoneWorkerUi.blockIfOwnSos(this)) return   // 구조 요청 중 전환 차단 (v1.1.99)
+        if (LoneWorkerUi.blockIfOwnSos(this)) return   // Block switching during an SOS
         val mode = currentMode ?: return
         val target = switchTargetLabel()
         AlertDialog.Builder(this)
@@ -737,14 +739,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun performSwitchRole(fromMode: String) {
-        if (LoneWorkerUi.blockIfOwnSos(this)) return   // 확인 창이 열린 사이 구조 요청이 시작된 경우 (v1.1.99)
+        if (LoneWorkerUi.blockIfOwnSos(this)) return   // An SOS started while the confirm dialog was open
         stopServiceImmediately()
-        // (v1.1.62 버그B) 정지→재시작 800ms 유예 — ACTION_STOP 처리(BLE teardown)와 신규 시작이
-        //   겹치면 광고/스캔 재초기화가 이전 인스턴스 정리와 경합한다.
+        // 800ms delay between stop and restart — if ACTION_STOP handling (BLE teardown) overlaps the new start,
+        //   advertising/scan re-init races with the previous instance's cleanup.
         statusHandler.postDelayed({
             if (isFinishing || isDestroyed) return@postDelayed
-            if (LoneWorkerUi.blockIfOwnSos(this)) return@postDelayed   // 전환 대기 중 구조 요청이 시작된 경우 (v1.1.99)
-            // (v1.1.90 SA-1) 장비로 전환할 때도 장비를 고르게 한다 — 고른 장비가 역할을 정한다
+            if (LoneWorkerUi.blockIfOwnSos(this)) return@postDelayed   // An SOS started while waiting to switch
+            // Switching to equipment also asks to pick the equipment — the chosen equipment sets the role
             if (fromMode == "WALKER") startAsPitOperator()
             else onRoleSelected("WALKER", BleConstants.CAT_WALKER)
         }, 800L)
@@ -754,31 +756,31 @@ class MainActivity : AppCompatActivity() {
         val mode  = prefs.getString("running_mode", null) ?: return
         val since = prefs.getLong("running_since", 0L)
         currentMode = mode
-        currentCategory = prefs.getInt("running_category", BleConstants.CAT_WALKER)  // [v1.0.34] 역할 복원
+        currentCategory = prefs.getInt("running_category", BleConstants.CAT_WALKER)  // Restore role
         showRunningUi(mode, since)
     }
 
     private fun showRunningUi(mode: String, since: Long) {
-        // [v1.0.46 배터리(a)] 화면 상시 점등을 '감시 중' 화면으로 한정 — 대기(역할 선택) 화면은
-        //   정상 소등 허용. 기존엔 onCreate 무조건이라 앱만 띄워 두면 화면이 영구 점등됐다.
+        // Keep the screen on only on the monitoring screen, not unconditionally in onCreate — the idle (role selection)
+        //   screen may turn off normally; otherwise just leaving the app open would keep the screen on forever.
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         binding.layoutSelect.visibility  = View.GONE
         binding.cardRunning.visibility   = View.VISIBLE
-        binding.tvApproaching.visibility = View.VISIBLE  // [v1.0.26 Req3] 중앙 안내(목록은 하단 tv_ble_status 로 이동)
+        binding.tvApproaching.visibility = View.VISIBLE  // Center hint (the list is in the bottom tv_ble_status)
         binding.layoutPermissionWarning.visibility = View.GONE
-        updateDetectedDisplay()  // 초기 안내("감지 기기 없음") 표시
-        // [v1.0.42 Req2] 내 장비 상태 라인 초기화 — 서비스 첫 localSnapshot 수신 전 기본값.
+        updateDetectedDisplay()  // Show the initial hint ("감지 기기 없음")
+        // Init my device status line — default until the service's first localSnapshot arrives.
         binding.tvLocalState.text = "상태: 정지·일반 · 회전: 직진"
         lastLocalSnapshot = ""
-        binding.tvRunningMode.text  = roleDisplayName(currentCategory)   // [v1.0.34] 3-Role 라벨
-        binding.btnSwitchRole.text  = "${switchTargetLabel()}로 전환"    // [v1.1.60] 전환 대상 동적 라벨
+        binding.tvRunningMode.text  = roleDisplayName(currentCategory)   // 3-role label
+        binding.btnSwitchRole.text  = "${switchTargetLabel()}로 전환"    // Dynamic label for the switch target
         binding.tvRunningSince.text = SimpleDateFormat("HH:mm 시작", Locale.KOREA).format(Date(since))
-        // 이름 입력 시 이름, 없으면 자동 ID 표시
+        // Show the entered name, otherwise the auto ID
         val displayName = prefs.getString("display_name", "")?.trim()
         binding.tvRunningId.text = if (!displayName.isNullOrEmpty()) displayName else myId()
-        // [v1.0.50 #3] 다크 리워크 — 역할별 배경 사진/아이콘/TEST 액센트 적용 (시각 요소만, 기능 불변)
+        // Dark UI — apply the role background photo/icon/TEST accent (visuals only, no functional change)
         applyRoleVisuals(currentCategory)
-        // 블루투스 상태 즉시 표시
+        // Show Bluetooth state immediately
         val btManager = getSystemService(android.bluetooth.BluetoothManager::class.java)
         binding.tvBleStatus.text = when {
             btManager?.adapter?.isEnabled != true -> "블루투스 꺼짐! 설정에서 켜주세요"
@@ -786,7 +788,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** v1.0.34 Category(CAT_*) -> 실행 중 카드 역할명. [v1.0.50 #3] 이모지 제거 — 아이콘은 iv_role_icon(벡터)이 담당. */
+    /** Category (CAT_*) -> role name on the running card. No emoji — iv_role_icon (vector) shows the icon. */
     private fun roleDisplayName(category: Int): String = when (category) {
         BleConstants.CAT_EPJ      -> "EPJ 작업자"
         BleConstants.CAT_FORKLIFT -> "지게차"
@@ -794,12 +796,13 @@ class MainActivity : AppCompatActivity() {
         else                      -> "보행자"
     }
 
-    // [v1.0.50 #3] TEST 버튼 평상시 액센트(역할별) — toggleTestAlert/stopServiceImmediately 가 복귀에 사용
+    // TEST button's normal accent (per role) — used by toggleTestAlert/stopServiceImmediately to restore it
     private var testAccent = 0xFFD7DEE8.toInt()
 
     /**
-     * [v1.0.50 #3] 역할별 실행 화면 비주얼 — 배경 사진 / 역할 아이콘 / TEST 버튼 액센트.
-     *   시각 요소만 바꾼다(감지·경보·송출 로직과 무관). 선택 화면 복귀 시 stopServiceImmediately 가 숨긴다.
+     * Per-role running-screen visuals — background photo / role icon / TEST button accent.
+     *   Visuals only (unrelated to detection, alert and advertising logic).
+     *   stopServiceImmediately hides them when returning to the selection screen.
      */
     private fun applyRoleVisuals(category: Int) {
         val (bgRes, iconRes, accent) = when (category) {
@@ -814,7 +817,7 @@ class MainActivity : AppCompatActivity() {
         styleTestButton(accent)
     }
 
-    /** [v1.0.50 #3] TEST 버튼 평상시 스타일 — 투명 배경 + 역할 액센트 외곽선/텍스트/종 아이콘. */
+    /** TEST button normal style — transparent background + role-accent outline/text/bell icon. */
     private fun styleTestButton(accent: Int) {
         testAccent = accent
         val btn = binding.btnTestAlert as MaterialButton
@@ -825,7 +828,7 @@ class MainActivity : AppCompatActivity() {
         TextViewCompat.setCompoundDrawableTintList(btn, ColorStateList.valueOf(accent))
     }
 
-    /** (v1.1.90 SA-1) 표시 이름 필드 그리기 — 저장된 장비 ID, 없으면 자동 ID 안내 */
+    /** Draw the display-name field — saved equipment ID, else the auto-ID hint */
     private fun renderDisplayName() {
         val id = prefs.getString("display_name", "") ?: ""
         binding.etDisplayName.setText(id)
@@ -835,16 +838,16 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * (v1.1.90 SA-1) 장비 선택 팝업 — 종류 드롭다운 + 번호 드롭다운(1~99).
+     * Equipment picker popup — type dropdown + number dropdown (1~99).
      *
-     * 자유 입력을 대체한다. 키보드가 뜨지 않으므로 사람 이름이 들어올 경로가 없다.
-     * 드롭다운은 장갑 낀 손·창고 조명을 전제로 크게(항목 64dp·22sp) 잡았다.
+     * Replaces free text input. No keyboard appears, so there is no path for a person's name to come in.
+     * Dropdowns are large (items 64dp, 22sp) for gloved hands and warehouse lighting.
      *
-     * 목록은 항상 전체다. 역할을 먼저 고르고 장비를 고르는 구조가 아니라,
-     * **장비를 고르면 역할(Category)이 따라오는** 구조이기 때문이다 — 지게차를 고른
-     * 사람이 EPJ 반경으로 도는 불일치가 생길 수 없다.
+     * The list is always complete. Instead of picking a role and then equipment,
+     * **picking the equipment brings its role (Category)** — someone who picked a forklift
+     * can never end up running with EPJ radii.
      *
-     * [onPicked] 는 선택이 확정된 뒤에만 호출된다. 취소는 호출하지 않는다.
+     * [onPicked] is called only after a selection is confirmed; never on cancel.
      */
     private fun showPitSelectDialog(onPicked: (PitType) -> Unit) {
         val types = PitType.values().toList()
@@ -856,11 +859,11 @@ class MainActivity : AppCompatActivity() {
                 setDropDownViewResource(R.layout.item_spinner_dropdown_large)
             }
         }
-        // 약어는 송출 code 에서 만든다 — 상대 화면(CB-01)과 같고, 새 장비도 빠질 수 없다
+        // Abbreviations are built from the advertised code — they match the peer's screen (CB-01), and new equipment can't be missed
         bind(dlg.spPitType, types) { "${it.code} (${it.label})" }
         bind(dlg.spPitNo, nos) { "%02d".format(it) }
 
-        // 직전 선택 복원 — 같은 장비를 계속 타는 경우가 대부분이라 확인 1탭으로 끝나게 한다
+        // Restore the previous selection — most people keep the same equipment, so one confirm tap finishes it
         PitType.parse(prefs.getString("display_name", "") ?: "")?.let { (t, n) ->
             types.indexOf(t).takeIf { it >= 0 }?.let { dlg.spPitType.setSelection(it) }
             dlg.spPitNo.setSelection(n - PitType.NO_MIN)
@@ -896,23 +899,23 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * (v1.1.90 SA-1) 장비 작업자 시작 — 고른 장비의 Category 로 시작한다.
-     * 매번 고르게 한다. 교대마다 타는 장비가 바뀌는데 직전 값으로 그냥 시작하면
-     * 경보 로그가 다른 장비를 가리킨다. 직전 선택이 복원돼 있어 확인 1탭이면 끝난다.
+     * Start as an equipment operator — starts with the chosen equipment's Category.
+     * Asks every time: the equipment changes per shift, and just starting with the previous value would make
+     * alert logs point at different equipment. The previous choice is restored, so one confirm tap is enough.
      */
     private fun startAsPitOperator() {
         showPitSelectDialog { type -> onRoleSelected("DEVICE", type.category) }
     }
 
     /**
-     * (v1.1.90 SA-1) 장비 ID 형식 이행 — 구버전이 저장한 사람 이름을 송출 경로에서 걷어낸다.
+     * Equipment ID format migration — removes person names stored by old versions from the advertising path.
      *
-     * 두 키를 함께 본다. display_name 은 사용자가 입력하던 표시 이름이고,
-     * device_id 는 BleService.saveRunningMode 가 실행 시 그 표시 이름으로 덮어쓰는 값이라
-     * display_name 만 지우면 옛 이름이 자동 ID 자리에 그대로 남아 계속 송출된다.
+     * Checks both keys. display_name is the display name users used to type, and
+     * device_id is overwritten with that display name by BleService.saveRunningMode on start, so
+     * clearing only display_name would leave the old name in the auto-ID slot and keep advertising it.
      *
-     * 어느 경우에도 경보 동작은 끊지 않는다 — 값을 비우면 myId() 가 자동 ID 를 발급하고,
-     * 시작 경로(startServiceWithCurrentMode)는 그 값을 그대로 싣는다.
+     * Alerting is never interrupted either way — when a value is cleared, myId() issues an auto ID,
+     * and the start path (startServiceWithCurrentMode) carries that value as is.
      */
     private fun migrateDisplayNameToPitId() {
         val savedName = prefs.getString("display_name", "") ?: ""
@@ -924,9 +927,10 @@ class MainActivity : AppCompatActivity() {
             editor.remove("display_name")
             notify = true
         }
-        // 장비 ID 도 자동 ID 도 아닌 값 = 구버전이 밀어 넣은 사람 이름 → 자동 ID 로 즉시 교체.
-        //   지우기만 하면 START_STICKY 복원 경로(BleService.onStartCommand)가 "SA-DEFAULT" 를 싣게 되고,
-        //   이행된 기기 전부가 같은 ID 로 송출돼 피어 식별이 무너진다. 그래서 비우지 않고 새로 발급한다.
+        // A value that is neither an equipment ID nor an auto ID = a person's name pushed
+        // in by an old version → replace it with an auto ID right away.
+        //   Merely clearing it would make the START_STICKY restore path (BleService.onStartCommand) carry "SA-DEFAULT",
+        //   and every migrated device would advertise the same ID, breaking peer identification. So issue a new one instead of clearing.
         if (savedId.isNotEmpty() && !FirebaseManager.isUsableAdvertisedId(savedId)) {
             editor.putString("device_id", newAutoId())
             notify = true
@@ -947,19 +951,19 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * (v1.1.77) 사업장 코드 저장 — setter 가 대문자·[A-Z0-9_-] 로 정규화하므로 소문자 입력도 그대로 받는다.
-     * UwbCalibrator.applySite 는 코드가 안 바뀌면 no-op. 서비스가 꺼져 있으면 BleService 의 라이브
-     * 반영 경로가 돌지 않아 이전 사업장 프로파일이 남으므로 여기서 직접 전환한다.
+     * Save the site code — the setter normalizes to uppercase [A-Z0-9_-], so lowercase input is accepted as is.
+     * UwbCalibrator.applySite is a no-op if the code is unchanged. With the service off, BleService's live-apply
+     * path doesn't run and the previous site's profile would remain, so switch it here directly.
      */
     private fun saveSiteCode() {
-        // (v1.1.90) 잠긴 입력칸(값 있음)은 저장하지 않는다 — 옛 표시값이 개발자 설정에서 바꾼 값을 덮는 것 방지
+        // Don't save a locked field (has a value) — prevents a stale displayed value from overwriting one changed in developer settings
         if (!binding.etSiteCode.isEnabled) return
         DevSettings.siteCode = binding.etSiteCode.text?.toString() ?: ""
         UwbCalibrator.applySite()
         refreshSiteCodeField()
     }
 
-    /** (v1.1.90) 사업장 코드가 비어 있을 때만 메인에서 입력 허용. 값이 있으면 비활성화 + 안내. */
+    /** Site code is editable on the main screen only while empty. Once set, the field is disabled with a hint. */
     private fun refreshSiteCodeField() {
         val locked = DevSettings.siteCode.isNotEmpty()
         binding.etSiteCode.setText(DevSettings.siteCode)
@@ -968,9 +972,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * (v1.1.77) 모드 시작 게이트 — 사업장 코드가 있어야 시작한다.
-     * 코드가 비면 경보 로그·보정 데이터가 전 사업장 공용 네임스페이스로 섞이므로,
-     * 입력 팝업을 띄우고 받기 전에는 onReady 를 호출하지 않는다.
+     * Mode start gate — a site code is required to start.
+     * Without a code, alert logs and calibration data would mix in a namespace shared by all sites,
+     * so show the input popup and don't call onReady until a code is entered.
      */
     private fun requireSiteCode(onReady: () -> Unit) {
         saveSiteCode()
@@ -986,7 +990,7 @@ class MainActivity : AppCompatActivity() {
             .setTitle("센터명 입력")
             .setMessage("센터마다 경보 기록과 보정 데이터가 따로 관리됩니다.\n센터명을 입력해야 시작할 수 있습니다. (대소문자 무관)")
             .setView(input)
-            .setPositiveButton("확인", null)   // 아래에서 직접 처리 — 빈 값이면 닫히지 않게
+            .setPositiveButton("확인", null)   // Handled below so an empty value doesn't close the dialog
             .setNegativeButton("취소", null)
             .create()
         dialog.setOnShowListener {
@@ -1005,7 +1009,7 @@ class MainActivity : AppCompatActivity() {
         dialog.show()
     }
 
-    /** (v1.1.90) 자동 발급 ID 생성 — FirebaseManager.AUTO_ID_REGEX 와 같은 형식("SA-" + UUID 8자 대문자) */
+    /** Generate an auto-issued ID — same format as FirebaseManager.AUTO_ID_REGEX ("SA-" + 8 uppercase UUID chars) */
     private fun newAutoId(): String = "SA-" + UUID.randomUUID().toString().take(8).uppercase()
 
     private fun myId(): String {
@@ -1040,12 +1044,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun toggleTestAlert() {
-        // 서비스 미실행 상태면 테스트 불가
+        // Can't test while the service isn't running
         if (!BleService.isRunning && !testAlertRunning) return
         testAlertRunning = !testAlertRunning
         val action = if (testAlertRunning) BleService.ACTION_TEST_START else BleService.ACTION_TEST_STOP
         startService(Intent(this, BleService::class.java).apply { this.action = action })
-        // [v1.0.50 #3] 다크 리워크 — 테스트 중엔 적색 강조, 평상시엔 역할 액센트 외곽선 복귀
+        // Dark UI — red emphasis while testing; otherwise back to the role-accent outline
         if (testAlertRunning) {
             val btn = binding.btnTestAlert as MaterialButton
             btn.text = "STOP"
@@ -1076,8 +1080,8 @@ class MainActivity : AppCompatActivity() {
         })
     }
 
-    // ── 자동 업데이트 ──────────────────────────────────────────
-    // [v1.1.2] onResume 마다 체크하므로 다이얼로그 참조를 들고 중복 표시를 막는다
+    // ── Auto update ──────────────────────────────────────────
+    // Checked on every onResume, so hold the dialog reference to prevent duplicate dialogs
     private var updateDialog: AlertDialog? = null
 
     private fun checkUpdate() {
@@ -1088,7 +1092,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showUpdateDialog(info: UpdateManager.UpdateInfo) {
-        // [v1.1.2] 이미 떠 있으면 재표시 금지 + 비동기 콜백이 종료 중 액티비티에 닿는 크래시 방지
+        // Don't re-show if already showing, and prevent a crash when the async callback reaches a finishing activity
         if (updateDialog?.isShowing == true) return
         if (isFinishing || isDestroyed) return
         val msg = "v${UpdateManager.CURRENT_VERSION}  →  v${info.latest}" +

@@ -27,23 +27,19 @@ import com.wf11.safealert.databinding.ActivityDevSettingsBinding
 class DevSettingsActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityDevSettingsBinding
-    // [v1.1.15] 저장 버튼 제거에 따른 EditText 지연 확정용 — 포커스 아웃/onPause 시 일괄 commit
+    // Deferred EditText commits (there is no save button) — committed in bulk on focus loss/onPause
     private val editCommitters = mutableListOf<() -> Unit>()
 
-    // [v1.1.26 D] '앱 정보' 빠른 7회 터치로 숨김 고급 옵션 노출용 카운터
+    // Counter for revealing hidden advanced options with 7 quick taps on "앱 정보"
     private var appInfoTapCount = 0
     private var lastAppInfoTapMs = 0L
 
-    // [v1.0.42] 거리 교정(calibRssiAt1m/pathLossExp)·거리 교정 마법사 전면 제거.
-    //   거리 추정은 칼만 필터(RSSI)만으로 수행 — RSSI→거리 변환·교정 UI/핸들러 모두 폐지.
-    //   (rssiToDistance / updateCalibSummary / updatePathLossLabel / showCalibrateWizard /
-    //    updateCalibLabel 및 seekCalib·교정 마법사 버튼 핸들러 삭제됨.)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityDevSettingsBinding.inflate(layoutInflater)
         setContentView(binding.root)
-        // (v1.1.63) 테마 NoActionBar → supportActionBar 는 null(no-op). 헤더는 레이아웃 SA.TopBar 가 담당.
+        // NoActionBar theme → supportActionBar is null (no-op). The layout's SA.TopBar provides the header.
         supportActionBar?.apply { title = "개발자 설정"; setDisplayHomeAsUpEnabled(true) }
         loadValues()
         setupListeners()
@@ -52,10 +48,9 @@ class DevSettingsActivity : AppCompatActivity() {
     }
 
     private fun loadValues() {
-        // (v1.1.63) 경보 볼륨은 BLE 감지 설정 [경보 기본]으로 이동(50~100%).
-        // 송수신 모드
+        // Send/receive mode
         binding.switchWalkerDetectsWalker.isChecked = DevSettings.walkerDetectsWalker
-        // (v1.1.99) 단독 작업자 보호
+        // Lone-worker protection
         binding.switchLoneWorker.isChecked = DevSettings.lwEnabled
         binding.etLwStillMin.setText(DevSettings.lwStillMin.toString())
         binding.etLwResponseMin.setText(DevSettings.lwResponseMin.toString())
@@ -68,12 +63,12 @@ class DevSettingsActivity : AppCompatActivity() {
         binding.switchWalkerRx.isChecked = DevSettings.walkerRx
         binding.spinnerScanPeriod.setSelection(scanPeriodIndex(DevSettings.scanPeriodMs))
         binding.spinnerAdvertise.setSelection(advertiseIndex(DevSettings.advertiseInterval))
-        // 경보
+        // Alerts
         binding.switchVibration.isChecked = DevSettings.vibrationEnabled
         binding.spinnerVibWarning.setSelection(vibWarningIndex(DevSettings.vibrationWarningMs))
         binding.spinnerVibCount.setSelection(vibCountIndex(DevSettings.vibrationDangerCount))
         binding.switchSound.isChecked = DevSettings.soundEnabled
-        // (v1.1.77) BLE 감지 설정에서 이관된 원본 항목 — 같은 dev_settings prefs 라 값은 자동 연동된다
+        // Items BLE detection settings also shows — same dev_settings prefs, so the values stay in sync automatically
         binding.seekDevAlarmVolume.progress = DevSettings.alarmVolume.coerceIn(50, 100)
         binding.seekDevWarnRssi.progress    = (-DevSettings.rssiWarning).coerceIn(30, 100)
         binding.seekDevDangRssi.progress    = (-DevSettings.rssiDanger ).coerceIn(30, 100)
@@ -84,18 +79,18 @@ class DevSettingsActivity : AppCompatActivity() {
         binding.etDevEchoClamp.setText(DevSettings.echoCalClampDb.toString())
         // Firebase
         binding.etFirebaseRoot.setText(DevSettings.firebaseRoot)
-        binding.etDevSiteCode.setText(DevSettings.siteCode)   // (v1.1.90) 사업장 코드 변경 경로
+        binding.etDevSiteCode.setText(DevSettings.siteCode)   // Site code change path
         binding.etSosMailTo.setText(LoneWorkerSosSync.mailTo(this, DevSettings.siteCode))
         binding.etSosMailTo.isEnabled = DevSettings.siteCode.isNotEmpty()
         binding.tvSosMailOff.visibility = if (LoneWorkerSosSync.mailEnabled) View.GONE else View.VISIBLE
         binding.switchAutoSave.isChecked = DevSettings.autoSaveAlerts
-        // 디버그
+        // Debug
         binding.switchDebug.isChecked = DevSettings.debugMode
         binding.seekSimRssi.progress = DevSettings.simulatedRssi + 100
         binding.tvSimRssiVal.text = "${DevSettings.simulatedRssi} dBm"
         binding.switchVerbose.isChecked = DevSettings.logVerbose
-        // 판정 파라미터 (고급) — 저장값 표시(미설정 시 기본값 = 기존 하드코딩값)
-        //   소수 항목은 5단계 민감도 Spinner: 저장값과 가장 가까운 프리셋을 선택
+        // Judging parameters (advanced) — show stored values (defaults when unset)
+        //   Decimal items use a sensitivity-preset Spinner (9 steps; EMA fall 10): the preset closest to the stored value is selected
         binding.spTtcThreshold.setSelection(presetIndex(ttcPresets, DevSettings.ttcThresholdSec))
         binding.spMinApproachVel.setSelection(presetIndex(approachVelPresets, DevSettings.minApproachVelDbm))
         binding.etTimegateMs.setText(DevSettings.timeGateMs.toString())
@@ -119,14 +114,14 @@ class DevSettingsActivity : AppCompatActivity() {
         binding.etStaleMs.setText(DevSettings.signalStaleMs.toString())
         binding.etFbThrottle.setText(DevSettings.firebaseThrottleMs.toString())
         binding.etSpeedPush.setText(DevSettings.speedPushIntervalMs.toString())
-        // [v1.1.24] 역할별 조기경보 오프셋 — SeekBar(0~15) 값 직접 매핑
+        // Per-role early-warning offset — SeekBar (0~15) value mapped directly
         binding.seekWalkerEquipBias.progress = DevSettings.walkerVsEquipBiasDb
         binding.tvWalkerEquipBiasVal.text    = "${DevSettings.walkerVsEquipBiasDb} dB"
         binding.seekWalkerEpjBias.progress   = DevSettings.walkerVsEpjBiasDb
         binding.tvWalkerEpjBiasVal.text      = "${DevSettings.walkerVsEpjBiasDb} dB"
         binding.seekEquipEquipBias.progress  = DevSettings.equipVsEquipBiasDb
         binding.tvEquipEquipBiasVal.text     = "${DevSettings.equipVsEquipBiasDb} dB"
-        // [v1.1.7 #2] 후진(전진) 대비 감지 — Switch + 슬라이더(추천값 기본)
+        // Reverse (forward) prep detection — Switch + sliders (recommended values by default)
         binding.switchReversePrep.isChecked      = DevSettings.reversePrepEnabled
         binding.seekReverseRise.progress         = DevSettings.reverseRiseDbm - 2
         binding.tvReverseRiseVal.text            = "${DevSettings.reverseRiseDbm} dB"
@@ -139,22 +134,22 @@ class DevSettingsActivity : AppCompatActivity() {
         updateDebugBadge()
         updateSimRssiEnabled()
         updateReversePrepEnabled()
-        // (v1.1.38 B·C) UWB 강제 스위치 상태 복원 + 진단 라인 초기 갱신
+        // Restore the UWB force switch state + initial refresh of the diagnostic line
         binding.swUwbForce.isChecked = DevSettings.uwbForce
-        // (v1.1.76) UWB 실측 표본 업로드 — 기본 OFF. 하드웨어 미지원이면 켤 이유가 없어 비활성.
+        // UWB measurement sample upload — OFF by default. Disabled without hardware support, since there is no reason to turn it on.
         binding.swUwbProbeUpload.isChecked = DevSettings.uwbProbeUploadEnabled
         refreshUwbDiag()
-        // (v1.1.63) [협력·교환] — BLE 감지 설정에서 이관: 상호 RSSI 교환 + 협력 수용 완화(0~20 dB)
+        // "협력·교환" — mutual RSSI exchange + cooperative acceptance relaxation (0~20 dB)
         binding.swReciprocalRssi.isChecked = DevSettings.reciprocalRssiEnabled
         binding.seekCoopSlack.progress = DevSettings.coopSlackDb.coerceIn(0, 20)
         updateCoopSlackLabel()
-        // (v1.1.63) [UWB 고급] — BLE 감지 설정에서 이관: 위험 승격(v1.1.32)·접근속도 승격·이탈 해제(v1.1.34).
-        //   기본 OFF(옵트인) 유지, UWB 미지원 기기는 비활성.
+        // "UWB 고급" — danger escalation, approach-speed escalation, exit release.
+        //   OFF by default (opt-in); disabled on devices without UWB.
         binding.swUwbPromote.isChecked    = DevSettings.uwbPromoteEnabled
         binding.swUwbVelPromote.isChecked = DevSettings.uwbVelPromoteEnabled
         binding.swUwbVelRelease.isChecked = DevSettings.uwbVelReleaseEnabled
-        // (v1.1.79) 거리 표시 방식·UWB 판정 반경 — BLE 감지 설정에서 이관(그쪽은 읽기전용 표시).
-        //   0=dBm만 / 1=UWB만 m / 2=전부 m(비UWB는 역산 추정), 반경 progress = 미터 × 2(0.5m 스텝).
+        // Distance display mode and UWB judging radius — owned here (BLE detection settings shows them read-only).
+        //   0=dBm only / 1=m for UWB only / 2=m for all (non-UWB as back-calculated estimate); radius progress = meters × 2 (0.5m steps).
         binding.rgDevDistMode.check(
             when (DevSettings.distanceDisplayMode) {
                 0    -> binding.rbDevDistDbm.id
@@ -177,22 +172,20 @@ class DevSettingsActivity : AppCompatActivity() {
             binding.seekDevUwbPairWarn.isEnabled   = false
             binding.seekDevUwbPairDanger.isEnabled = false
         }
-        // [v1.1.55→v1.1.63] Level 2 에코 자동보정(스위치·튜너블 3종·진단·초기화)은 BLE 감지 설정으로 이관.
     }
 
     private fun setupListeners() {
-        // [v1.1.15] 저장 버튼 제거 — 모든 위젯 변경을 즉시 DevSettings 에 기록(라이브 반영).
-        //   BleService 가 SharedPreferences 변경을 구독(registerOnChange→applyLiveSettings)하므로,
-        //   슬라이더/스위치/스피너는 만지는 즉시, EditText 는 포커스가 빠질 때(또는 화면 이탈 시
-        //   onPause 안전망) 반영된다. 값 변환식은 이전 saveValues 와 동일. 화면 종료는 기기 뒤로가기.
+        // No save button — every widget change is written to DevSettings immediately (applied live).
+        //   BleService subscribes to SharedPreferences changes (registerOnChange→applyLiveSettings), so sliders/switches/spinners
+        //   apply as soon as they are touched, and EditTexts when they lose focus (or via the onPause safety net when leaving
+        //   the screen). Leave the screen with the device back button.
 
-        // ── SeekBar : 라벨 갱신 + 즉시 기록 ──────────────────────────────
-        //   (v1.1.63) 경보 볼륨 슬라이더는 BLE 감지 설정으로 이동.
+        // ── SeekBar: refresh label + write immediately ──────────────────────────────
         binding.seekSimRssi.setOnSeekBarChangeListener(seekListener { v ->
             binding.tvSimRssiVal.text = "${v - 100} dBm"
             DevSettings.simulatedRssi = v - 100
         })
-        // [v1.1.7 #2] 후진(전진) 대비 슬라이더 — progress↔실제값 변환 후 라벨 갱신 + 기록
+        // Reverse (forward) prep sliders — convert progress↔actual value, then refresh label + write
         binding.seekReverseRise.setOnSeekBarChangeListener(seekListener { v ->
             binding.tvReverseRiseVal.text = "${v + 2} dB"
             DevSettings.reverseRiseDbm = v + 2
@@ -209,7 +202,7 @@ class DevSettingsActivity : AppCompatActivity() {
             binding.tvReverseHoldVal.text = "${v * 1000 + 1000} ms"
             DevSettings.reversePrepHoldMs = v * 1000L + 1000L
         })
-        // [v1.1.24] 역할별 조기경보 오프셋 — 즉시 라이브 반영(0~15 직접 매핑)
+        // Per-role early-warning offset — applied live at once (0~15 mapped directly)
         binding.seekWalkerEquipBias.setOnSeekBarChangeListener(seekListener { v ->
             binding.tvWalkerEquipBiasVal.text = "$v dB"
             DevSettings.walkerVsEquipBiasDb = v
@@ -226,7 +219,7 @@ class DevSettingsActivity : AppCompatActivity() {
             updateSectionSummaries()
         })
 
-        // ── Switch : 즉시 기록 (+ 의존 UI 갱신) ─────────────────────────
+        // ── Switch: write immediately (+ refresh dependent UI) ─────────────────────────
         binding.switchWalkerDetectsWalker.setOnCheckedChangeListener { _, c -> DevSettings.walkerDetectsWalker = c }
         binding.switchLoneWorker.setOnCheckedChangeListener { _, c -> DevSettings.lwEnabled = c }
         bindIntField(binding.etLwStillMin,     { DevSettings.lwStillMin },     { DevSettings.lwStillMin = it })
@@ -240,7 +233,7 @@ class DevSettingsActivity : AppCompatActivity() {
         binding.switchWalkerRx.setOnCheckedChangeListener { _, c -> DevSettings.walkerRx = c }
         binding.switchVibration.setOnCheckedChangeListener { _, c -> DevSettings.vibrationEnabled = c; updateSectionSummaries() }
         binding.switchSound.setOnCheckedChangeListener { _, c -> DevSettings.soundEnabled = c; updateSectionSummaries() }
-        // (v1.1.77) 이관된 원본 항목 — BLE 감지 설정은 이 값을 잠긴 채 보여주기만 한다
+        // Source items — BLE detection settings only shows these values, locked
         binding.seekDevAlarmVolume.setOnSeekBarChangeListener(seekListener { v ->
             DevSettings.alarmVolume = v.coerceIn(50, 100); updateDevAlarmLabels()
         })
@@ -256,7 +249,7 @@ class DevSettingsActivity : AppCompatActivity() {
         bindIntField(binding.etDevEchoClamp,    { DevSettings.echoCalClampDb },  { DevSettings.echoCalClampDb = it })
         binding.btnDevEchoReset.setOnClickListener {
             CalibrationEngine.echoDiffLive.clear()
-            // 에코 보정은 사업장 무관 전역 파일 하나 — 통째로 비운다(fb 프라이어 캐시 포함, 다음 기동 시 재수신)
+            // Echo calibration is one global file, independent of site — clear it entirely (including the fb prior cache, re-fetched on next start)
             getSharedPreferences(CalibrationEngine.ECHO_PREFS, MODE_PRIVATE)
                 .edit().clear().apply()
             Toast.makeText(this, "에코편차 통계 초기화 완료", Toast.LENGTH_SHORT).show()
@@ -269,7 +262,7 @@ class DevSettingsActivity : AppCompatActivity() {
         binding.switchReversePrep.setOnCheckedChangeListener { _, c ->
             DevSettings.reversePrepEnabled = c; updateReversePrepEnabled()
         }
-        // (v1.1.38 B) UWB 강제 활성화 — 즉시 기록 + 서비스 재적용 넛지 + 진단 즉시 갱신
+        // UWB force enable — write immediately + nudge the service to re-apply + refresh diagnostics at once
         binding.swUwbForce.setOnCheckedChangeListener { _, c ->
             DevSettings.uwbForce = c
             nudgeUwbReapply()
@@ -277,9 +270,9 @@ class DevSettingsActivity : AppCompatActivity() {
             updateSectionSummaries()
         }
 
-        // ── Spinner : 선택 즉시 기록 ────────────────────────────────────
-        //   scanPeriod·advertise 는 적용 시 스캐너/광고 재구성을 유발 → 값이 실제로 바뀔 때만 기록
-        //   (화면 진입 시 복원 선택으로 인한 불필요한 스캔/광고 재시작 방지). 그 외는 라이브 read 라 무해.
+        // ── Spinner: write on selection ────────────────────────────────────
+        //   scanPeriod and advertise rebuild the scanner/advertiser when applied → write only when the value actually changes
+        //   (avoids needless scan/advertise restarts from the restored selection on screen entry). The rest are read live, so harmless.
         bindSpinner(binding.spinnerScanPeriod) { val nv = scanPeriodValues[it]; if (DevSettings.scanPeriodMs != nv) DevSettings.scanPeriodMs = nv; updateSectionSummaries() }
         bindSpinner(binding.spinnerAdvertise)  { val nv = advertiseValues[it];  if (DevSettings.advertiseInterval != nv) DevSettings.advertiseInterval = nv; updateSectionSummaries() }
         bindSpinner(binding.spinnerVibWarning) { DevSettings.vibrationWarningMs = vibWarningValues[it] }
@@ -294,33 +287,33 @@ class DevSettingsActivity : AppCompatActivity() {
         bindSpinner(binding.spEmaFall)         { DevSettings.emaAlphaFall = emaFallPresets[it] }
         bindSpinner(binding.spEmaDboost)       { DevSettings.emaAlphaDBoost = emaDBoostPresets[it] }
 
-        // ── EditText : 포커스 아웃 시 확정(+clamp 반영) · onPause 안전망(editCommitters) ──
+        // ── EditText: commit on focus loss (+clamp applied) · onPause safety net (editCommitters) ──
         run {
             val et = binding.etFirebaseRoot
             val commit = { DevSettings.firebaseRoot = et.text.toString().trim().ifEmpty { "wf11" } }
             editCommitters += commit
             et.setOnFocusChangeListener { _, hasFocus -> if (!hasFocus) { commit(); et.setText(DevSettings.firebaseRoot) } }
         }
-        // (v1.1.90) 사업장 코드 — 저장 시 UwbCalibrator 프로파일 전환. 경보 로그 경로 alerts/<사업장>/<날짜>/ 는 그대로
+        // Site code — saving switches the UwbCalibrator profile. The alert log path alerts/<site>/<date>/ stays the same
         run {
             val et = binding.etDevSiteCode
             val commit: () -> Unit = {
                 val before = DevSettings.siteCode
                 DevSettings.siteCode = et.text.toString(); UwbCalibrator.applySite()
-                // 사업장이 바뀌면 메일 칸을 그 사업장 값으로 다시 채운다(바뀌지 않았으면 입력 중인 값을 지우지 않는다)
+                // When the site changes, refill the mail field with that site's value (if unchanged, don't wipe what is being typed)
                 if (DevSettings.siteCode != before) binding.etSosMailTo.setText(LoneWorkerSosSync.mailTo(this, DevSettings.siteCode))
                 binding.etSosMailTo.isEnabled = DevSettings.siteCode.isNotEmpty()
             }
             editCommitters += commit
             et.setOnFocusChangeListener { _, hasFocus -> if (!hasFocus) { commit(); et.setText(DevSettings.siteCode) } }
         }
-        // (v1.2.2) 구조 요청 메일 받는 주소 — 사업장별. 빈 값 = 보내지 않음, 형식이 틀리면 저장하지 않는다
+        // SOS mail recipient address — per site. Empty = don't send; an invalid format is not saved
         run {
             val et = binding.etSosMailTo
             val commit: () -> Unit = {
                 val sc = DevSettings.siteCode
                 val v = et.text.toString().trim()
-                // 사업장 코드가 없거나 바꾸지 않은 값이면 저장하지 않는다(열고 나가기만 해서 기본값이 고정되지 않게)
+                // Don't save without a site code or when the value is unchanged (so just opening and leaving doesn't pin the default)
                 if (sc.isNotEmpty() && v != LoneWorkerSosSync.mailTo(this, sc)) {
                     if (v.isEmpty() || SosMail.validAddress(v)) LoneWorkerSosSync.setMailTo(this, sc, v)
                     else Toast.makeText(this, "이메일 주소 형식이 맞지 않아 저장하지 않았습니다.", Toast.LENGTH_LONG).show()
@@ -346,9 +339,10 @@ class DevSettingsActivity : AppCompatActivity() {
         bindLongField(binding.etFbThrottle,          { DevSettings.firebaseThrottleMs },     { DevSettings.firebaseThrottleMs = it })
         bindLongField(binding.etSpeedPush,           { DevSettings.speedPushIntervalMs },    { DevSettings.speedPushIntervalMs = it })
 
-        // [v1.1.55→v1.1.63] Level 2 에코 자동보정(스위치·튜너블·진단·통계 초기화)은 BLE 감지 설정으로 이관.
+        // Level 2 echo auto-calibration: the switch, tunables and stats reset are bound above (source items); the
+        //   BLE detection settings shows them locked and owns the diagnostics panel.
 
-        // (v1.1.63) [협력·교환] — BLE 감지 설정에서 이관. 값 변환·기록 로직은 원본 그대로(즉시 라이브 반영).
+        // "협력·교환" (cooperation/exchange) section — values are converted and written immediately (applied live).
         binding.swReciprocalRssi.setOnCheckedChangeListener { _, c ->
             DevSettings.reciprocalRssiEnabled = c
             updateSectionSummaries()
@@ -358,13 +352,14 @@ class DevSettingsActivity : AppCompatActivity() {
             DevSettings.coopSlackDb = v
             updateSectionSummaries()
         })
-        // (v1.1.63) [UWB 고급] — BLE 감지 설정에서 이관. 스위치 3종 즉시 기록(BleService 가 라이브 read).
+        // "UWB 고급" (UWB advanced) section — its 4 switches (probe upload, promote, speed promote, separation release) are
+        // written immediately; AlertStateMachine reads them live.
         binding.swUwbProbeUpload.setOnCheckedChangeListener { _, c -> DevSettings.uwbProbeUploadEnabled = c; updateSectionSummaries() }
         binding.swUwbPromote.setOnCheckedChangeListener    { _, c -> DevSettings.uwbPromoteEnabled    = c; updateSectionSummaries() }
         binding.swUwbVelPromote.setOnCheckedChangeListener { _, c -> DevSettings.uwbVelPromoteEnabled = c; updateSectionSummaries() }
         binding.swUwbVelRelease.setOnCheckedChangeListener { _, c -> DevSettings.uwbVelReleaseEnabled = c; updateSectionSummaries() }
 
-        // (v1.1.79) 거리 표시 방식 — 즉시 라이브 반영(다음 목록 브로드캐스트부터 적용)
+        // Distance display mode — applied live immediately (from the next list broadcast)
         binding.rgDevDistMode.setOnCheckedChangeListener { _, checkedId ->
             DevSettings.distanceDisplayMode = when (checkedId) {
                 binding.rbDevDistDbm.id  -> 0
@@ -372,9 +367,9 @@ class DevSettingsActivity : AppCompatActivity() {
                 else                     -> 2
             }
         }
-        // (v1.1.79) UWB 판정 반경 — progress/2 = 미터(0.5m 스텝). judgeUwbOnly 가 매 판정마다
-        //   DevSettings 를 직독하므로 별도 서비스 통지 불필요. 경고<위험 역설정은 자동 보정하지
-        //   않는다 — 위험 분기가 먼저 평가돼 위험 반경이 우선(무해).
+        // UWB judgment radius — progress/2 = meters (0.5m steps). judgeUwbOnly reads DevSettings directly
+        //   on every judgment, so no service notification is needed. A warning < danger misconfiguration is not
+        //   auto-corrected — the danger branch is evaluated first, so the danger radius wins (harmless).
         binding.seekDevUwbFkWarn.setOnSeekBarChangeListener(seekListener { v ->
             DevSettings.uwbForkliftWarnMeters = v / 2f
             updateDevUwbRadiusLabels(); updateSectionSummaries()
@@ -394,12 +389,12 @@ class DevSettingsActivity : AppCompatActivity() {
 
         binding.btnReset.setOnClickListener { resetValues() }
 
-        // 앱 정보 — 버전 표시 + 오픈소스 라이선스 이동
+        // App info — version display + link to open-source licenses
         binding.tvAppVersion.text = "SafeAlert v${BuildConfig.VERSION_NAME}"
         binding.btnOpenSourceLicenses.setOnClickListener {
             startActivity(Intent(this, OpenSourceLicensesActivity::class.java))
         }
-        // [v1.1.26 D] 앱 버전 빠른 7회 터치 → 숨김 고급 옵션(Firebase·디버그·후진대비·초기화) 노출
+        // Tapping the app version 7 times quickly reveals the hidden advanced options (Firebase, debug, reverse prep, reset)
         binding.tvAppVersion.setOnClickListener {
             val now = System.currentTimeMillis()
             appInfoTapCount = if (now - lastAppInfoTapMs <= 2000L) appInfoTapCount + 1 else 1
@@ -412,13 +407,13 @@ class DevSettingsActivity : AppCompatActivity() {
                 }
             }
         }
-        // 비콘 관리는 메인 화면으로 이동됨
+        // Beacon management is on the main screen
     }
 
     private fun resetValues() {
         DevSettings.resetToDefault()
         loadValues()
-        updateSectionSummaries()   // (v1.1.63) 섹션 헤더 요약도 기본값으로 재표시
+        updateSectionSummaries()   // Also redraw the section header summaries with the defaults
         Toast.makeText(this, "기본값으로 초기화되었습니다", Toast.LENGTH_SHORT).show()
     }
 
@@ -432,7 +427,7 @@ class DevSettingsActivity : AppCompatActivity() {
         binding.seekSimRssi.alpha = if (enabled) 1f else 0.4f
     }
 
-    // [v1.1.7 #2] 후진 대비 스위치 OFF → 하위 슬라이더 4종 비활성·흐리게
+    // Reverse-prep switch OFF → disable and dim its 4 sub-sliders
     private fun updateReversePrepEnabled() {
         val enabled = binding.switchReversePrep.isChecked
         val a = if (enabled) 1f else 0.4f
@@ -443,19 +438,19 @@ class DevSettingsActivity : AppCompatActivity() {
         }
     }
 
-    // ── (v1.1.38 B·C) UWB 진단·강제 ─────────────────────────────────────
+    // ── UWB diagnostics / force ─────────────────────────────────────
     private val uwbDiagHandler = Handler(Looper.getMainLooper())
-    private var uwbSystemAvailable: Boolean? = null   // null=미확인, 시스템 UWB 토글 상태(비동기 조회)
+    private var uwbSystemAvailable: Boolean? = null   // System UWB toggle state (queried async); null = unknown
     private val uwbDiagPoller = object : Runnable {
         override fun run() {
             refreshUwbDiag()
-            refreshStateDiag()   // [Phase 4 T2] STATE-03 기기 상태 계기
-            // [v1.1.54→v1.1.63] 에코편차 집계 패널 폴링은 BLE 감지 설정으로 이관(같은 1.2s 주기).
+            refreshStateDiag()   // Device status gauge
+            // Echo-deviation stats panel polling is in the BLE detection settings (same 1.2s period).
             uwbDiagHandler.postDelayed(this, 1200L)
         }
     }
 
-    // ── [Phase 4 T2] STATE-03 기기 상태 계기 — 읽기 전용. 판정에 일절 관여하지 않는다.
+    // ── Device status gauge — read-only. Never takes part in judgment.
     private fun refreshStateDiag() {
         val reg = DeviceStateRegistry.live
         if (reg == null) {
@@ -470,7 +465,8 @@ class DevSettingsActivity : AppCompatActivity() {
         }
     }
 
-    // 진단 라인 갱신 — HW/권한은 동기 판정, 시스템 UWB 토글은 suspend 라 코루틴 비동기 조회 후 다음 폴에서 반영
+    // Refresh the diagnostic line — HW/permission are checked synchronously; the system UWB toggle is
+    // a suspend call, so it is queried async in a coroutine and shown on the next poll
     private fun refreshUwbDiag() {
         val hw = UwbRanger.isHardwareSupported(this)
         val perm = ContextCompat.checkSelfPermission(this, Manifest.permission.UWB_RANGING) ==
@@ -496,8 +492,8 @@ class DevSettingsActivity : AppCompatActivity() {
         val err    = UwbRanger.liveInitError
         val line1  = "HW ${mk(hw)}    권한 ${mk(perm)}    시스템 $sysMark"
         val line2  = "세션 ${if (active) "가동" else "정지"} · 역할 $role · 실측 ${sess}대"
-        // (quick-260927-bn9 결정 2) liveActive 는 isSupported 라 초기화 성공 뒤 재구성만 실패해도
-        // true 로 남는다 — 가동 중이라도 err 가 있으면 그 사유를 보여야 조용한 실패가 안 된다.
+        // liveActive mirrors isSupported, so it stays true when only reconfiguration fails after a successful init —
+        // show err even while active, otherwise the failure is silent.
         val hint = when {
             !hw          -> "→ 이 기기는 UWB 하드웨어가 없습니다(BLE 신호만 사용)."
             !perm        -> "→ UWB 권한 없음. BLE 설정 화면에서 권한을 허용하세요."
@@ -511,15 +507,15 @@ class DevSettingsActivity : AppCompatActivity() {
         return "$line1\n$line2\n$hint"
     }
 
-    // ── [v1.1.54→55→v1.1.63] 에코편차 집계(상호 RSSI) 진단(fmtDb·refreshEchoDiag)은 BLE 감지 설정으로 이관 ──
+    // ── Echo-deviation stats (mutual RSSI) diagnostics (fmtDb, refreshEchoDiag) are in the BLE detection settings ──
 
-    // (v1.1.63) [협력·교환] 협력 수용 완화 라벨 — BLE 감지 설정 원본과 동일 표기
+    // Cooperation acceptance slack label ("협력·교환" section) — same notation as in the BLE detection settings
     private fun updateCoopSlackLabel() {
         val v = binding.seekCoopSlack.progress
         binding.tvCoopSlack.text = if (v == 0) "0 dB (완화 없음)" else "+${v} dB"
     }
 
-    // ── (v1.1.63) 아코디언 — 6섹션 전부 기본 접힘(레이아웃 SA.SectionBody visibility=gone), 헤더 탭 토글 ──
+    // ── Accordion — all 6 sections collapsed by default (layout SA.SectionBody visibility=gone); header tap toggles ──
     private fun setupAccordion() {
         bindSection(binding.secTxrxHeader,    binding.secTxrxBody,    binding.secTxrxChevron)
         bindSection(binding.secSoundHeader,   binding.secSoundBody,   binding.secSoundChevron)
@@ -530,7 +526,7 @@ class DevSettingsActivity : AppCompatActivity() {
         bindSection(binding.secAppinfoHeader, binding.secAppinfoBody, binding.secAppinfoChevron)
     }
 
-    // 초기 셰브런 각도는 바디 가시성에 맞추고, 헤더 탭마다 바디 토글 + 셰브런 0(접힘)/180(펼침)
+    // Initial chevron angle follows body visibility; each header tap toggles the body + chevron 0 (collapsed)/180 (expanded)
     private fun bindSection(header: View, body: View, chevron: View) {
         chevron.rotation = if (body.visibility == View.VISIBLE) 180f else 0f
         header.setOnClickListener {
@@ -540,8 +536,8 @@ class DevSettingsActivity : AppCompatActivity() {
         }
     }
 
-    // (v1.1.63) 섹션 헤더 요약값 — 접힌 상태에서도 핵심값이 보이도록. 값 변경 리스너마다 호출.
-    //   Spinner 는 setSelection 직후 selectedItemPosition 이 늦게 반영될 수 있어 DevSettings 를 직독.
+    // Section header summaries — key values stay visible while collapsed. Called from every value-change listener.
+    //   Spinner's selectedItemPosition can lag right after setSelection, so read DevSettings directly.
     private fun updateSectionSummaries() {
         fun onOff(b: Boolean) = if (b) "ON" else "OFF"
         binding.secTxrxSummary.text =
@@ -556,53 +552,53 @@ class DevSettingsActivity : AppCompatActivity() {
         binding.secUwbadvSummary.text =
             "강제 ${onOff(binding.swUwbForce.isChecked)} · 승격 ${onOff(binding.swUwbPromote.isChecked)}/" +
             "${onOff(binding.swUwbVelPromote.isChecked)}/${onOff(binding.swUwbVelRelease.isChecked)}" +
-            // 켠 채로 잊으면 계속 올라가므로 접힌 요약에서도 보이게 한다.
+            // Shown in the collapsed summary too: if left on and forgotten, samples keep uploading.
             (if (binding.swUwbProbeUpload.isChecked) " · 표본업로드 ON" else "") +
-            // (v1.1.79) 반경은 접힌 상태에서도 확인 — 지게차쌍 경고/위험 · 그 외 경고/위험
+            // Radii visible while collapsed too — forklift pair warning/danger · others warning/danger
             " · 반경 ${binding.tvDevUwbFkWarn.text}/${binding.tvDevUwbFkDanger.text}" +
             "·${binding.tvDevUwbPairWarn.text}/${binding.tvDevUwbPairDanger.text}"
         binding.secAppinfoSummary.text = "v${BuildConfig.VERSION_NAME}"
     }
 
-    // 권한 부여·강제 토글 직후, 서비스에 UWB 세션 재평가를 명시 요청(동일값 쓰기는 변경 리스너 미발화)
+    // Right after granting permission or toggling force, explicitly ask the service to
+    // re-evaluate the UWB session (writing the same value doesn't fire the change listener)
     private fun nudgeUwbReapply() {
         try {
             startService(Intent(this, BleService::class.java).setAction(BleService.ACTION_REAPPLY_UWB))
-        } catch (e: Exception) { /* 서비스 미기동 등 — 다음 스캔 주기에 자연 반영 */ }
+        } catch (e: Exception) { /* Service not running etc. — picked up on the next scan cycle */ }
     }
 
     override fun onSupportNavigateUp(): Boolean { finish(); return true }
 
-    // (v1.1.38 C) 화면 표시 중에만 UWB 진단 폴링 — onResume 시작 / onPause 정지(배터리·리소스 절약)
+    // Poll UWB diagnostics only while the screen is shown — start in onResume / stop in onPause (saves battery/resources)
     override fun onResume() {
         super.onResume()
         uwbDiagHandler.removeCallbacks(uwbDiagPoller)
         uwbDiagHandler.post(uwbDiagPoller)
     }
 
-    // [v1.1.15] 포커스 아웃을 거치지 않고 화면을 떠나는 경우의 안전망 — 입력란 전체 확정
+    // Safety net for leaving the screen without a focus loss — commit all input fields
     override fun onPause() {
         super.onPause()
         editCommitters.forEach { it() }
-        uwbDiagHandler.removeCallbacks(uwbDiagPoller)   // (v1.1.38 C) 진단 폴링 중지
+        uwbDiagHandler.removeCallbacks(uwbDiagPoller)   // Stop diagnostic polling
     }
 
-    // Spinner 인덱스 헬퍼
+    // Spinner index helpers
     private val scanPeriodValues = longArrayOf(1000, 2000, 3000, 5000)
     private val advertiseValues  = intArrayOf(100, 200, 500, 1000)
     private val vibWarningValues = longArrayOf(300, 500, 1000)
     private val vibCountValues   = intArrayOf(1, 3, 5)
 
-    // [v1.1.7 #3] coerceAtLeast 버그 수정: indexOfFirst 가 유효한 낮은 인덱스(0·1)를 반환해도
-    //   기본 인덱스로 강제 승격돼, 빠른 스캔(1000ms·idx0)·짧은 진동 선택이 느린 값으로 되돌아가던
-    //   문제. '못 찾음(-1)'일 때만 기본 인덱스로 폴백하도록 교정.
+    // Fall back to the default index only when indexOfFirst finds nothing (-1). coerceAtLeast would wrongly promote
+    //   valid low indices (0, 1) to the default, reverting fast scan (1000ms, idx0) and short vibration choices to slower values.
     private fun scanPeriodIndex(v: Long)  = scanPeriodValues.indexOfFirst { it == v }.let { if (it < 0) 0 else it }
     private fun advertiseIndex(v: Int)    = advertiseValues.indexOfFirst { it == v }.let { if (it < 0) 1 else it }
     private fun vibWarningIndex(v: Long)  = vibWarningValues.indexOfFirst { it == v }.let { if (it < 0) 1 else it }
     private fun vibCountIndex(v: Int)     = vibCountValues.indexOfFirst { it == v }.let { if (it < 0) 1 else it }
 
-    // 판정 파라미터 소수 항목 — [v1.1.7 #4] 5단계→9단계 민감도 프리셋 (arrays.xml 라벨과 순서 일치).
-    //   중심 [4]=보통=기본값. 각 배열 index4 는 기존 5단계의 기본값([2])과 동일 → 회귀 없음.
+    // Decimal judgment parameters — 9-step sensitivity presets (order matches the arrays.xml labels).
+    //   Center index 4 = normal = default, except emaFallPresets (10 steps, default 0.12 at index 2).
     private val ttcPresets         = doubleArrayOf(5.0, 4.5, 4.0, 3.5, 3.0, 2.5, 2.0, 1.5, 1.0)
     private val approachVelPresets = doubleArrayOf(0.2, 0.25, 0.3, 0.4, 0.5, 0.7, 1.0, 1.25, 1.5)
     private val gateVelPresets     = doubleArrayOf(0.2, 0.25, 0.3, 0.4, 0.5, 0.7, 1.0, 1.25, 1.5)
@@ -610,21 +606,21 @@ class DevSettingsActivity : AppCompatActivity() {
     private val headOnPresets      = doubleArrayOf(0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8)
     private val sidePresets        = doubleArrayOf(0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5)
     private val emaRisePresets     = doubleArrayOf(0.6, 0.52, 0.45, 0.37, 0.3, 0.25, 0.2, 0.15, 0.1)
-    private val emaFallPresets     = doubleArrayOf(0.2, 0.15, 0.12, 0.1, 0.07, 0.05, 0.04, 0.03, 0.02, 0.01)   // (v1.1.56 U4a) 0.12 삽입(새 기본·index2), 10단계 — ema_fall_labels 와 1:1
+    private val emaFallPresets     = doubleArrayOf(0.2, 0.15, 0.12, 0.1, 0.07, 0.05, 0.04, 0.03, 0.02, 0.01)   // 0.12 at index2 (default); 10 steps, 1:1 with ema_fall_labels
     private val emaDBoostPresets   = doubleArrayOf(0.7, 0.62, 0.55, 0.47, 0.4, 0.32, 0.25, 0.17, 0.1)
 
-    // 저장값과 가장 가까운 프리셋 단계 선택 (프리셋 외 값이 저장돼 있어도 안전). 폴백=중심 index4.
+    // Pick the preset step closest to the stored value (safe even if a non-preset value is stored). Fallback = center index4.
     private fun presetIndex(presets: DoubleArray, v: Double) =
         presets.indices.minByOrNull { kotlin.math.abs(presets[it] - v) } ?: 4
 
-    /** (v1.1.77) 이관 항목 값 라벨 — 슬라이더 progress 는 절댓값, 저장은 음수 dBm */
+    /** Value labels for alarm volume and RSSI thresholds — slider progress is the absolute value; stored as negative dBm */
     private fun updateDevAlarmLabels() {
         binding.tvDevAlarmVolumeVal.text = "${DevSettings.alarmVolume}%"
         binding.tvDevWarnRssiVal.text    = "${DevSettings.rssiWarning} dBm"
         binding.tvDevDangRssiVal.text    = "${DevSettings.rssiDanger} dBm"
     }
 
-    // (v1.1.79) UWB 판정 반경 라벨 — progress/2 = 미터. 정수 값은 "15m", 반미터는 "7.5m".
+    // UWB judgment radius label — progress/2 = meters. Whole values show "15m", half meters "7.5m".
     private fun updateDevUwbRadiusLabels() {
         binding.tvDevUwbFkWarn.text     = fmtMeters(binding.seekDevUwbFkWarn.progress / 2f)
         binding.tvDevUwbFkDanger.text   = fmtMeters(binding.seekDevUwbFkDanger.progress / 2f)
@@ -641,7 +637,7 @@ class DevSettingsActivity : AppCompatActivity() {
         override fun onStopTrackingTouch(sb: android.widget.SeekBar) {}
     }
 
-    // [v1.1.15] 즉시 반영 바인딩 헬퍼 — 새 import 없이 정규화된 위젯 타입 사용
+    // Live-apply binding helpers — use fully qualified widget types (no new imports)
     private fun bindSpinner(sp: android.widget.Spinner, onSelect: (Int) -> Unit) {
         sp.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: android.view.View?, position: Int, id: Long) = onSelect(position)
@@ -649,8 +645,9 @@ class DevSettingsActivity : AppCompatActivity() {
         }
     }
 
-    // EditText 는 입력 도중 매 글자 반영 시 빈칸/부분입력 오염이 생기므로 포커스 아웃 시 확정.
-    //   파싱 실패(빈칸 등) → 기존값 유지 후 setter 가 clamp 한 실제값을 다시 표시. onPause 안전망 등록.
+    // EditText commits on focus loss: applying every keystroke would store blank/partial input.
+    //   Parse failure (blank etc.) keeps the old value, then shows the actual value
+    //   as clamped by the setter. Registers the onPause safety net.
     private fun bindLongField(et: android.widget.EditText, getter: () -> Long, setter: (Long) -> Unit) {
         val commit = { setter(et.text.toString().toLongOrNull() ?: getter()) }
         editCommitters += commit

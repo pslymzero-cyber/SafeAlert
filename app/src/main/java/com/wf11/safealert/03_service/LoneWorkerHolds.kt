@@ -1,20 +1,23 @@
 package com.wf11.safealert.service
 
 /**
- * 동료 사이렌이 이 기기에서 진동하는 동안의 무동작 셈 멈춤(C2, 순수, v1.1.99).
- * 시작·끝은 그것을 처음 본 tick 이다.
- * 상한(D1): 멈춘 시간이 stillMs 에 이르면 사이렌이 계속 울려도 상한 시각에 멈춤을 끝낸 것으로 기준을 옮기고
- * (멈춤 전 쌓인 시간 유지), 이 기기의 사이렌 진동이 한 번 꺼질 때까지 다시 멈추지 않는다. 다시 켜지면 새 멈춤이다.
+ * Pauses no-motion counting while a peer siren vibrates on this device (pure).
+ * Start and end are the first tick that observes them.
+ * Cap: once the pause reaches stillMs, the baseline is moved as if the pause ended at the cap time, even if the siren keeps
+ * sounding (time accrued before the pause is kept), and it does not pause again until this device's siren vibration turns
+ * off once. Turning on again starts a new pause.
  */
 class SirenPause {
-    /** 멈춤 시작 시각. 멈춤이 없으면 MIN_VALUE. */
+    /** Pause start time; MIN_VALUE when not paused. */
     private var at = Long.MIN_VALUE
-    /** 상한으로 멈춤을 끝냈고 진동이 아직 꺼지지 않았다. */
+    /** The cap ended the pause and the vibration has not turned off yet. */
     private var spent = false
 
     private val active: Boolean get() = at != Long.MIN_VALUE
 
-    /** 이 마감을 멈춤이 가린다 — 멈춤 시작 이하의 지난 마감은 가리지 않는다(S1, 데이터를 기다려 판정). */
+    /**
+     * The pause masks this deadline — a past deadline at or before the pause start is not masked (it is judged once its data arrives).
+     */
     fun covers(deadline: Long): Boolean = active && deadline > at
 
     fun reset() {
@@ -23,14 +26,17 @@ class SirenPause {
     }
 
     /**
-     * 멈춤을 지금(상한이 먼저면 상한 시각에) 끝냈다고 본 무동작 기준: 멈춤 전까지 쌓인 시간만 남긴다
-     * (멈춤 중 기준이 올랐으면 끝 시각부터). 멈춤이 가리지 않는 마감(멈춤 전에 지난 마감)이면 기준 그대로(S1).
+     * No-motion baseline as if the pause ended now (at the cap time if the cap comes first): keeps only the time accrued before
+     * the pause (from the end time if the baseline rose during the pause). A deadline the
+     * pause does not mask (passed before the pause) keeps the baseline.
      */
     fun base(stillBase: Long, nowMs: Long, stillMs: Long): Long =
         if (!covers(stillBase + stillMs)) stillBase
         else maxOf(stillBase, minOf(nowMs, at + stillMs) - maxOf(0L, at - stillBase))
 
-    /** 진동이 켜졌으면 멈춤을 시작하고, 꺼졌거나 상한에 이르렀으면 멈춤을 끝낸다. 새 무동작 기준을 돌려준다. */
+    /**
+     * Starts the pause when vibration turns on; ends it when vibration turns off or the cap is reached. Returns the new no-motion baseline.
+     */
     fun update(vibrating: Boolean, nowMs: Long, stillBase: Long, stillMs: Long): Long {
         if (!vibrating) spent = false
         if (vibrating && !active && !spent) {
@@ -46,29 +52,31 @@ class SirenPause {
 }
 
 /**
- * 서비스 재시작 뒤의 보류(순수, v1.1.99).
- * 전원 보류: 저장한 충전 값과 지금 전원이 다르면 재시작 ~ 재시작 + POWER_HOLD_MS 창 동안 확인 창을 새로 열지도,
- * 복원한 확인 창을 띄우지도 않는다(E9). 디바운스가 확정하면 그 확정 시각(첫 변화 + DEBOUNCE_MS)에 끝나고, 아니면
- * 창 끝에 끝난다 — 창 끝에 창 안에서 시작한 대기가 남아 있으면 그 대기가 확정되거나 버려질 때까지 한 번 늘린다
- * (늦어도 창 끝 + CONFIRM_MS 전, 창 끝 뒤 시작한 대기로는 늘리지 않음, L1). 재시작 변화는 보류 중에 확정된
- * 첫 변화 하나이고 그 뒤 변화는 창 안이라도 실제 변화다(L2).
- * 복원한 창은 종류만 들고 있다가, 보류 끝 시각까지의 센서 데이터가 들어온 뒤(최대 LATE_MS) 그 시각을 걸음 셈 기준으로
- * 연다(L3) — 들고 있는 창은 열린 창과 같은 규칙으로 버린다. 그동안 다른 마감도 그 창과 함께 판정한다.
- * 구역 보류: 복원한 안전구역 안 상태를 구역 보고 없이 유지하는 한도(C3). 보류 중에는 정착으로 올리지 않는다.
+ * Holds after a service restart (pure).
+ * Power hold: if the saved charging value differs from the current power, then from restart to restart + POWER_HOLD_MS no new
+ * check window opens and no restored check window is shown. If the debounce confirms, the hold ends at that confirm time
+ * (first change + DEBOUNCE_MS), otherwise at the window end — if a pending change that started inside the window remains at
+ * the window end, the hold is extended once until that change is confirmed or discarded (at the latest before window end +
+ * CONFIRM_MS; a pending change that started after the window end never extends it). The restart change is the single first
+ * change confirmed during the hold; later changes are real changes even inside the window.
+ * A restored window is held by kind only and opens with the hold end time as its step-count floor once sensor data up to
+ * that time has arrived (at most LATE_MS) — a held window is discarded by the same rules as an open one. Meanwhile other
+ * deadlines are judged together with that window.
+ * Zone hold: how long the restored inside-safe-zone state is kept without a zone report. No promotion to settled during the hold.
  */
 class RestartHold {
     companion object {
-        /** 재시작 전원 창 길이: 디바운스 확인 시각(CONFIRM_MS) + 여유 1초. */
+        /** Restart power window length: debounce confirm delay (CONFIRM_MS) + 1 s margin. */
         const val POWER_HOLD_MS = PowerDebounce.CONFIRM_MS + 1_000L
     }
 
-    /** 전원 보류 끝(연장·확정·버림으로 바뀜). 끝난 뒤에도 그 시각을 남긴다. */
+    /** Power hold end (moved by extension, confirmation or discard). The time is kept after the hold ends. */
     private var powerUntil = Long.MIN_VALUE
     private var zoneUntil = Long.MIN_VALUE
-    /** 재시작 전원 창 끝 — 연장 기준, 첫 확정에서 지운다. */
+    /** Restart power window end — reference for the extension; cleared on the first confirmation. */
     private var powerWindowEnd = Long.MIN_VALUE
 
-    /** 전원 보류 중 들고 있는 복원 확인 창 종류("still"·"fall"). 없으면 빈 문자열. */
+    /** Kind of the restored check window held during the power hold ("still" or "fall"); empty string if none. */
     var check = ""
         private set
 
@@ -91,18 +99,24 @@ class RestartHold {
     fun powerHeld(nowMs: Long): Boolean = nowMs < powerUntil
 
     /**
-     * 새 확인 창 게이트(한 곳): 전원 보류 중이거나 들고 있는 복원 창이 있으면 보류 끝 시각(보류 중이면 아직 안 온 시각,
-     * 끝났으면 그 창을 여는 마감), 아니면 null. 판정 시각은 JudgeOrder.due.
+     * Gate for new check windows (single place): while the power hold lasts or a restored window is held, the hold end time
+     * (a future time during the hold; once it ended, the deadline that opens that window), otherwise null. Judge timing: JudgeOrder.due.
      */
     fun gate(nowMs: Long): Long? = powerUntil.takeIf { powerHeld(nowMs) || check.isNotEmpty() }
 
-    /** 원시 값으로 디바운스 대기가 바뀌었다 — 보류 중일 때만 끝을 다시 정한다(창 안에서 시작한 대기면 그 확정 확인까지, 아니면 지금). */
+    /**
+     * A raw value changed the pending debounce — only during the hold, re-set the end (to that
+     * change's confirm check if it started inside the window, otherwise to now).
+     */
     fun powerWait(p: PowerDebounce, tMs: Long) {
         if (!powerHeld(tMs)) return
         powerUntil = maxOf(powerWindowEnd, p.confirmAt?.takeIf { p.pendingAt < powerWindowEnd } ?: tMs)
     }
 
-    /** 디바운스가 확정한 전원 변화(atMs = 첫 변화 시각) — 첫 확정이고 첫 변화가 창 안이면 재시작 변화로 true, 보류는 atMs + DEBOUNCE_MS 에 끝난다. */
+    /**
+     * Power change confirmed by the debounce (atMs = first change time) — true (restart change) if it is the first
+     * confirmation and the first change is inside the window; the hold ends at atMs + DEBOUNCE_MS.
+     */
     fun powerSettled(atMs: Long): Boolean {
         val restart = inWindow(atMs)
         powerWindowEnd = Long.MIN_VALUE
@@ -110,13 +124,13 @@ class RestartHold {
         return restart
     }
 
-    /** 재시작 창 안에서 시작한 변화 — 첫 확정 전까지(E9·L2). */
+    /** A change that started inside the restart window — until the first confirmation. */
     fun inWindow(atMs: Long): Boolean = atMs < powerWindowEnd
 
-    /** 들고 있던 확인 창 종류를 한 번 돌려주고 비운다. */
+    /** Returns the held check window kind once and clears it. */
     fun takeCheck(): String? = check.ifEmpty { null }?.also { check = "" }
 
-    /** 들고 있던 확인 창을 버린다(kind 가 있으면 그 종류만). */
+    /** Discards the held check window (only that kind if kind is given). */
     fun dropCheck(kind: String) {
         if (kind.isEmpty() || check == kind) check = ""
     }
@@ -131,7 +145,7 @@ class RestartHold {
         zoneUntil = Long.MIN_VALUE
     }
 
-    /** 구역 보류 한도가 지났으면 그 끝 시각을 한 번 돌려주고 지운다. */
+    /** If the zone hold limit has passed, returns its end time once and clears it. */
     fun zoneExpired(nowMs: Long): Long? =
         if (zoneHeld && nowMs >= zoneUntil) zoneUntil.also { zoneUntil = Long.MIN_VALUE } else null
 }

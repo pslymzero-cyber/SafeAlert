@@ -9,14 +9,16 @@ import androidx.core.app.NotificationCompat
 import com.wf11.safealert.ui.MainActivity
 
 /**
- * 감시 시작 실패 안내 알림 (v1.1.99). 상시 알림 채널(LOW)은 소리가 없어 소리 나는 안내 채널을 따로 쓴다.
- * 탭하면 메인 화면이 열린다 — 권한 부족이면 화면이 권한 경고를 띄우고, 아니면 화면 복귀가 다시 시작한다.
+ * Notification shown when monitoring fails to start. The ongoing notification
+ * channel (LOW) is silent, so a separate audible notice channel is used.
+ * Tapping opens the main screen — if permissions are missing, the screen shows the
+ * permission warning; otherwise returning to the screen restarts monitoring.
  */
 object ServiceStopNotice {
     const val NOTIF_ID = 1002
     const val CHANNEL_ID = "safealert_notice"
 
-    /** permission = 시작 권한이 없어 멈춘 경우(문구가 권한 설정 안내). */
+    /** permission = stopped because start permissions are missing (the text points to permission settings). */
     fun show(ctx: Context, permission: Boolean) {
         val nm = ctx.getSystemService(NotificationManager::class.java) ?: return
         runCatching {

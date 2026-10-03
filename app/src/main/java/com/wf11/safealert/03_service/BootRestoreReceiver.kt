@@ -11,31 +11,32 @@ import androidx.core.content.ContextCompat
 import kotlin.math.abs
 
 /**
- * 재부팅·앱 업데이트 뒤 서비스가 돌던 상태였으면 저장 상태 복원 경로로 다시 띄운다 (v1.1.99).
- * action 없는 시작은 BleService 의 복원 경로이며 monitor.start 가 저장된 내 구조 요청도 되살린다.
- * 아무것도 하지 않는 경우: 실행 상태(running_mode)가 없을 때, 마지막 시작 뒤 사용자가 앱을 강제로 멈췄을 때
- * (Android 11+ — 이때는 실행 상태도 지운다. 저장된 내 구조 요청이 있으면 예외로 복원),
- * 서비스 시작 권한(ServiceStartGate)이 빠졌을 때.
+ * After a reboot or app update, if the service was running, restarts it through the saved-state restore path.
+ * A start with no action is BleService's restore path, and monitor.start also revives my saved rescue request.
+ * Does nothing when: there is no running state (running_mode); the user force-stopped the app after the last start
+ * (Android 11+ — the running state is cleared too; restored anyway as an exception if I have a saved rescue request);
+ * or the service start permission (ServiceStartGate) is missing.
  */
 class BootRestoreReceiver : BroadcastReceiver() {
     companion object {
         private const val TAG = "BootRestore"
         private const val UPDATE_EXIT_SLACK_MS = 60_000L
 
-        /** 백그라운드 복원 시작 표시 — Android 11 위치 접근 판정용(BleService). */
+        /** Marks a background restore start — for the Android 11 location access check (BleService). */
         const val EXTRA_BOOT_RESTORE = "com.wf11.safealert.extra.BOOT_RESTORE"
 
         /**
-         * 서비스가 마지막으로 시작된 시각(벽시계 ms, safealert_prefs). 사용자 중지 판정 전용이며
-         * 화면 표시용 running_since 와 별개다. 이보다 오래된 종료 기록은 보지 않는다.
+         * When the service last started (wall-clock ms, safealert_prefs). Used only for the user-stop check,
+         * separate from running_since, which is for display. Exit records older than this are ignored.
          */
         const val K_STARTED_AT = "service_started_at"
 
         /**
-         * 마지막 시작(sinceMs) 뒤에 사용자가 요청한 종료가 있으면 true. exits = (reason, timestamp).
-         * 시작 시각을 모르면(sinceMs <= 0) 판정하지 않고 복원한다. Android 11~13 은 업데이트 종료도
-         * 사용자 요청으로 남을 수 있어 앱 갱신 시각(updatedAtMs) 앞뒤 60초 안 기록은 세지 않는다.
-         * 이 여유는 갱신이 마지막 시작보다 뒤일 때만 둔다(시작 뒤 갱신이 없었으면 모든 기록을 센다).
+         * True if there is a user-requested exit after the last start (sinceMs). exits = (reason, timestamp).
+         * If the start time is unknown (sinceMs <= 0), it does not check and restores. On Android 11~13 an update
+         * exit may also be recorded as user-requested, so records within 60s either side of the app update time
+         * (updatedAtMs) are not counted. That margin applies only when the update came after the last start
+         * (with no update after the start, every record counts).
          */
         fun userStopped(sdk: Int, exits: List<Pair<Int, Long>>, sinceMs: Long, updatedAtMs: Long): Boolean {
             if (sdk < Build.VERSION_CODES.R || sinceMs <= 0L) return false
@@ -47,8 +48,10 @@ class BootRestoreReceiver : BroadcastReceiver() {
         }
 
         /**
-         * 사용자 중지 판정 기준 시각 — 판정 전용 키가 없으면(옛 버전에서 시작) Android 14 이상에서만 표시용 시작 시각으로 대신한다.
-         * Android 11~13 은 0(판정하지 않고 복원) — 업데이트 종료가 사용자 요청으로 남을 수 있음, 따로 기록되는 REASON_PACKAGE_UPDATED 는 Android 14 부터.
+         * Reference time for the user-stop check — if the check-only key is missing (started by an older app version),
+         * falls back to the display start time on Android 14+ only.
+         * On Android 11~13 returns 0 (no check, restore) — an update exit may be recorded as user-requested, and the
+         * separate REASON_PACKAGE_UPDATED only exists from Android 14.
          */
         fun startedAt(newKey: Long, runningSince: Long, sdk: Int): Long = when {
             newKey > 0L -> newKey
@@ -56,7 +59,7 @@ class BootRestoreReceiver : BroadcastReceiver() {
             else -> 0L
         }
 
-        /** 업데이트 종료가 REASON_PACKAGE_UPDATED 로 따로 기록된다 — Android 14 부터. */
+        /** Update exits are recorded separately as REASON_PACKAGE_UPDATED — from Android 14. */
         private fun updateExitSeparate(sdk: Int) = sdk >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE
     }
 

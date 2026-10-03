@@ -17,8 +17,8 @@ import java.security.MessageDigest
 
 object UpdateManager {
 
-    // [v1.0.46 #6] 하드코딩 "1.0.0" → BuildConfig 단일 출처. 하드코딩 시절엔 설치본이 최신이어도
-    //   Firebase latest 가 1.0.0 보다 크기만 하면 '새 버전' 판정 → 업데이트 다이얼로그 무한 반복.
+    // Current version comes from BuildConfig (single source). A hardcoded version would make any Firebase latest
+    //   above it look 'new' even on an up-to-date install → the update dialog repeats forever.
     val CURRENT_VERSION: String = BuildConfig.VERSION_NAME
     private const val TAG = "UpdateManager"
 
@@ -27,13 +27,13 @@ object UpdateManager {
         val apkUrl: String,
         val changelog: String,
         val forceUpdate: Boolean,
-        val apkSha256: String       // (v1.1.87) CI 가 올린 APK SHA-256. 공란이면 설치 거부(fail-closed)
+        val apkSha256: String       // APK SHA-256 uploaded by CI; blank = install refused (fail-closed)
     )
 
     fun checkForUpdate(context: Context, onResult: (UpdateInfo?) -> Unit) {
-        // [v1.1.71] APK 는 전 사업장 공용 -> version 도 사업장 루트 밖 /version 단일 노드.
-        //   사업장별 루트에 두면 firebaseRoot 를 wf11 이외로 바꾼 기기가 CI 가 쓰는 자리를 못 읽어
-        //   자동 업데이트가 영구 정지한다. 알림/비콘공유/보정은 그대로 사업장별.
+        // The APK is shared by all sites, so version is a single /version node outside the site roots.
+        //   Under per-site roots, a device whose firebaseRoot isn't wf11 couldn't read where CI writes,
+        //   and auto-update would stop permanently. Alerts, beacon sharing and calibration stay per site.
         FirebaseDatabase.getInstance().reference
             .child("version")
             .get()
@@ -61,8 +61,8 @@ object UpdateManager {
     fun downloadAndInstall(context: Context, apkUrl: String, expectedSha256: String, onProgress: (Int) -> Unit = {}) {
         val fileName = "safealert-update.apk"
         val destFile = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), fileName)
-        // (v1.1.88) 이미 받아 둔 파일이 기대 해시와 같으면 재다운로드 없이 바로 설치 창을 띄운다.
-        //   설치 창을 닫았다가 다시 누른 경우가 여기에 해당. 불일치면 지우고 새로 받는다.
+        // If the already-downloaded file matches the expected hash, open the install prompt without re-downloading
+        //   (e.g. the prompt was closed and tapped again). On mismatch, delete it and download again.
         if (destFile.exists()) {
             val cached = runCatching { destFile.inputStream().use { sha256Hex(it) } }.getOrDefault("")
             if (hashMatches(expectedSha256, cached)) {
@@ -85,7 +85,7 @@ object UpdateManager {
         val downloadId = dm.enqueue(request)
         Log.d(TAG, "다운로드 시작 id=$downloadId url=$apkUrl")
 
-        // 다운로드 완료 수신
+        // Download-complete receiver
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(ctx: Context, intent: Intent) {
                 val id = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1)
@@ -97,7 +97,7 @@ object UpdateManager {
                 if (cursor.moveToFirst()) {
                     val status = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
                     if (status == DownloadManager.STATUS_SUCCESSFUL) {
-                        // (v1.1.87) 무결성 검증 — 불일치·기대값 공란이면 삭제하고 설치 거부
+                        // Integrity check — on mismatch or a blank expected value, delete and refuse install
                         val actual = runCatching { destFile.inputStream().use { sha256Hex(it) } }.getOrDefault("")
                         if (hashMatches(expectedSha256, actual)) {
                             Log.d(TAG, "다운로드 완료, 해시 일치, 설치 시작")
@@ -116,10 +116,11 @@ object UpdateManager {
                 cursor.close()
             }
         }
-        // [미착수-중간1] Activity Context 에 등록하면 Activity 가 먼저 죽을 때 해제 경로가 사라진다.
-        //   applicationContext 는 프로세스 수명이라 onReceive 자가 해제가 항상 도달한다.
-        // (v1.1.88) EXPORTED — 완료 방송은 DownloadProvider(system uid 아님)가 보내서 NOT_EXPORTED 면
-        //   Android 13+ 에서 막혀 설치 창이 안 뜰 수 있다. id 비교 + SHA-256 일치 후에만 설치하므로 안전.
+        // Registered on applicationContext: with an Activity context the unregister path is lost if the Activity
+        //   dies first; applicationContext lives as long as the process, so the onReceive self-unregister always runs.
+        // EXPORTED — the completion broadcast comes from DownloadProvider (not the system uid), so with NOT_EXPORTED
+        //   it can be blocked on Android 13+ and the install prompt may never appear. Safe: installs only after an
+        //   id match and a SHA-256 match.
         context.applicationContext.registerReceiver(
             receiver,
             IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE),
@@ -137,7 +138,7 @@ object UpdateManager {
         context.startActivity(intent)
     }
 
-    /** (v1.1.87) 스트리밍 SHA-256, 소문자 hex */
+    /** Streaming SHA-256, lowercase hex */
     fun sha256Hex(input: InputStream): String {
         val md = MessageDigest.getInstance("SHA-256")
         val buf = ByteArray(64 * 1024)
@@ -149,14 +150,14 @@ object UpdateManager {
         return md.digest().joinToString("") { "%02x".format(it) }
     }
 
-    /** (v1.1.87) 대소문자·앞뒤공백 무시. 어느 쪽이든 공란이면 false(fail-closed) */
+    /** Ignores case and surrounding whitespace. False if either side is blank (fail-closed) */
     fun hashMatches(expected: String, actual: String): Boolean {
         val e = expected.trim().lowercase()
         val a = actual.trim().lowercase()
         return e.isNotEmpty() && e == a
     }
 
-    // "1.2.3" 형식 비교 — latest > current 이면 true
+    // Compares "1.2.3"-style versions — true if latest > current
     private fun isNewer(latest: String, current: String): Boolean {
         val l = latest.split(".").mapNotNull  { it.toIntOrNull() }
         val c = current.split(".").mapNotNull { it.toIntOrNull() }

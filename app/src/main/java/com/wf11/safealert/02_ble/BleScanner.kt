@@ -17,54 +17,54 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
 
     companion object {
         private const val TAG = "BleScanner"
-        // 30분 쓰로틀 방지: 45초마다 스캔 껐다 켜기 (OS의 30분 연속 스캔 차단 정책 우회)
+        // Avoid the 30-minute throttle: turn the scan off and on every 45s (works around the OS policy that blocks
+        //   30 minutes of continuous scanning)
         private const val SCAN_RESTART_MS   = 45_000L
-        // [v1.0.28] 기기 소실 타임아웃 — 스캔 모드 연동(동적).
-        //  ACTIVE: 촘촘한 스캔 → 2초 미수신이면 소실 판정(빠른 반응).
-        //  REST(BALANCED):      OFF 듀티 구간이 길어 2초를 넘기는 정상 케이스가 있으므로
-        //                       6초로 연장 → 옆에 멀쩡히 있는 기기가 '감지 없음'으로
-        //                       오소실/깜빡임 되는 v1.0.27 휴식모드 회귀를 방지한다.
+        // Device-lost timeout, tied to the current radio duty (dynamic).
+        //  Continuous (LOW_LATENCY): dense scanning → lost after 2s without reception (fast reaction).
+        //  Duty-cycled (BALANCED/LOW_POWER): the scan-OFF window is long, so gaps over 2s are normal; extended
+        //    to 6s so a device sitting right next to us is not falsely lost or flickering as 'not detected'.
         private const val DEVICE_TIMEOUT_ACTIVE_MS = 2000L
         private const val DEVICE_TIMEOUT_REST_MS   = 6000L
-        // [v1.1.58 fix2] 비콘(BEA_) 전용 최소 타임아웃 — 300ms~1s 광고 비콘이 ACTIVE 2s 타임아웃에
-        //   소실↔재발견 플래핑하는 것 방지(maxOf 적용이라 REST 6s 는 단축되지 않음).
+        // Minimum timeout for beacons (BEA_) only: keeps beacons advertising every 300ms~1s from flapping between lost
+        //   and rediscovered under the ACTIVE 2s timeout (applied with maxOf, so the REST 6s is never shortened).
         private const val DEVICE_TIMEOUT_BEACON_MS = 3500L
 
-        // ── 동적 스캔 모드 정책 (v1.0.27 배터리 최적화) ────────────────────
-        // IMU 가 '정지 5초'를 확정하면 BleService 가 setEcoMode(true)를 호출해
-        // 휴식 모드로 전환하고, 이동 감지 즉시 setEcoMode(false) → 전투 모드 원복.
+        // ── Dynamic scan mode policy ────────────────────
+        // When the IMU confirms '5s stationary', BleService calls setEcoMode(true) to switch to rest mode, and as soon
+        // as movement is detected, setEcoMode(false) → back to active (combat) mode. Rest mode currently equals
+        // active mode for scanning (see restScanMode), so this only sets the eco flag.
         //
-        // 배칭 딜레이는 이와 직교 — 화면 꺼짐 시 CPU 웨이크업만 별도로 억제한다.
-        //   화면 켜짐/활성: 0ms   — 즉시 전달, 경보 지연 0
-        //   화면 꺼짐:     500ms  — BLE 칩이 CPU를 깨우지 않고 독립 스캔,
-        //                          CPU는 0.5초마다 1회만 기상 → 최대 0.5초 지연 보장
+        // The batching delay is orthogonal to this: it only suppresses CPU wake-ups while the screen is off.
+        //   Screen on/active: 0ms   - delivered immediately, zero alert delay
+        //   Screen off:       500ms - the BLE chip scans on its own without waking the CPU;
+        //                             the CPU wakes once per 0.5s → at most 0.5s delay guaranteed
         private const val BATCH_DELAY_ACTIVE_MS     = 0L
         private const val BATCH_DELAY_SCREEN_OFF_MS = 500L
 
-        // [v1.0.48 #5] 죽은 설정이던 '스캔 주기(scanPeriodMs)'를 실제 스캔 듀티에 매핑.
-        //   안드로이드 공개 스캔 API 는 임의 ms 주기를 받지 않고 3단 프리셋만 허용하므로,
-        //   설정값을 가장 가까운 프리셋으로 양자화한다(스피너: 1000/2000/3000/5000ms).
-        //     ≤1000ms → LOW_LATENCY (거의 연속 스캔 — 고감도·고소모)
-        //     ≤3000ms → BALANCED    (약 1.0s 스캔/4.1s 주기 — 기본 3000ms, v1.0.37 거동 보존)
-        //     초과    → LOW_POWER   (약 0.5s 스캔/5.1s 주기 — 절전)
-        //   (구) ACTIVE_SCAN_MODE/REST_SCAN_MODE 고정 상수(v1.0.37 둘 다 BALANCED) 폐지.
+        // Maps the 'scan period' setting (scanPeriodMs) to the actual scan duty.
+        //   Android's public scan API accepts no arbitrary ms period, only 3 presets, so the setting is quantized to the
+        //   nearest preset (spinner: 1000/2000/3000/5000ms).
+        //     ≤1000ms → LOW_LATENCY (near-continuous scanning: high sensitivity, high drain)
+        //     ≤3000ms → BALANCED    (about 1.0s scan / 4.1s period)
+        //     above   → LOW_POWER   (about 0.5s scan / 5.1s period: power saving)
         private fun mapScanMode(periodMs: Long): Int = when {
             periodMs <= 1000L -> ScanSettings.SCAN_MODE_LOW_LATENCY
             periodMs <= 3000L -> ScanSettings.SCAN_MODE_BALANCED
             else              -> ScanSettings.SCAN_MODE_LOW_POWER
         }
 
-        // [v1.0.29] 상대 모션 상태 ServiceData 디코드용 (송신측 addServiceData 와 동일 UUID)
+        // For decoding the peer's motion-state ServiceData (same UUID as the sender's addServiceData)
         private val SERVICE_DATA_UUID = ParcelUuid(UUID.fromString(BleConstants.SERVICE_UUID))
 
-        // [v1.1.74] 발견 스캔(비콘 관리 15초) 중에는 HW 필터를 풀어 미등록 UUID 도 잡히게 한다.
-        //   같은 BluetoothLeScanner 를 공유하는 스캔 클라이언트의 필터는 스택/컨트롤러 레벨에서
-        //   병합되므로, 등록 UUID 필터가 걸려 있으면 무필터 발견 스캔에도 미등록 광고가 도달하지
-        //   못한다(레지스트리에 없는 비콘은 영원히 발견 불가인 순환 구조).
+        // During a discovery scan (beacon management, 15s), lift the HW filter so unregistered UUIDs are caught too.
+        //   Filters of scan clients sharing one BluetoothLeScanner are merged at the stack/controller level, so while
+        //   the registered-UUID filter is active, unregistered advertisements never reach even an unfiltered discovery
+        //   scan (a circular trap: a beacon not in the registry could never be discovered).
         @Volatile private var discoveryMode = false
         @Volatile private var liveRestart: (() -> Unit)? = null
 
-        /** 발견 스캔(비콘 관리 15초) 중에는 HW 필터를 풀어 미등록 UUID 도 잡히게 한다. */
+        /** During a discovery scan (beacon management, 15s), lift the HW filter so unregistered UUIDs are caught too. */
         fun setDiscoveryMode(on: Boolean) {
             if (discoveryMode == on) return
             discoveryMode = on
@@ -78,67 +78,70 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
     private val detectedDevices = mutableMapOf<String, Long>()
     var onStatusUpdate: ((String) -> Unit)? = null
 
-    // [v1.1.47] UWB 실측 지속 여부 술어(BleService 가 배선) — BLE 신호 타임아웃(전투 2s/휴식 6s)
-    //   시점에 이 술어가 true(신선한 UWB 실측 보유)면 onDeviceLost 를 유예한다. BLE 광고가
-    //   순간 유실돼도 실측 중인 UWB 세션이 강제 철거(BleService→UwbRanger)되는 것을 방어.
-    //   매 스윕(1s) 재평가하므로 UWB 실측까지 끊기면 그때 정상 소실 처리된다.
+    // Predicate for whether UWB ranging is still live (wired by BleService). At the BLE signal timeout (active 2s /
+    //   rest 6s), if it is true (a fresh UWB measurement exists), onDeviceLost is deferred. This keeps a momentary
+    //   BLE advertising loss from tearing down a UWB session that is still ranging (BleService→UwbRanger).
+    //   Re-evaluated every sweep (1s), so once UWB ranging also stops, the device is lost normally.
     var uwbMeasuringCheck: ((String) -> Boolean)? = null
 
-    // [v1.1.53] 상호 RSSI 에코 매칭용 '내 해시' — BleService 가 자기 fullId 의 shortHash 를 배선.
-    //   상대 스캔응답 에코 테이블(0xE0C0)에서 이 해시와 일치하는 엔트리 = '상대가 나를 들은 RSSI'.
-    //   null(미배선)이면 에코 파싱을 건너뛴다(구버전 상대·부트스트랩과 동일 폴백).
+    // 'My hash' for matching the mutual RSSI echo; BleService wires in the shortHash of its own fullId.
+    //   The entry matching this hash in a peer's scan-response echo table (0xE0C0) = 'the RSSI at which the peer
+    //   heard me'. If null (not wired), echo parsing is skipped (same fallback as an old-version peer or bootstrap).
     var myEchoHash: Int? = null
 
     private var totalBleCount = 0
 
-    // 화면 상태 — false 시 500ms 하드웨어 배칭 (스캔 모드와 직교, CPU 웨이크업만 최소화)
+    // Screen state: when false, 500ms hardware batching (orthogonal to the scan mode; only minimizes CPU wake-ups)
     @Volatile var isScreenOn: Boolean = true
 
-    // [v1.1.23] 화면 꺼짐 중 위험 근접/경보 → 배칭 0ms 즉시 전달로 승격(안전 우선).
-    //   BleService 가 acquireDetectionWakeLock 과 동일 게이트(!isScreenOn && rssi>=WAKE)로 구동.
-    //   근접이 사라지면(평가 주기 anyNear=false) 절전 배칭(500ms)으로 자동 복귀.
+    // Danger proximity/alert while the screen is off → promote batching to 0ms immediate delivery (safety first).
+    //   BleService sets it on any reception at rssi>=WAKE (the detection wakelock pre-acquires 10dB earlier).
+    //   When nothing is near and no alert remains (evaluation cycle), it returns to power-saving batching (500ms)
+    //   automatically.
     @Volatile private var hazardNear: Boolean = false
 
-    // [v1.0.48 #5] 전투 모드 = 설정 scanPeriodMs 의 프리셋 매핑(라이브 — 매번 설정에서 읽음).
+    // Active mode = preset mapped from the scanPeriodMs setting (live: read from settings every time).
     private val activeScanMode: Int get() = mapScanMode(BleConstants.scanPeriodMs)
-    // [v1.1.27] 휴식 모드 = 전투와 동일(= 수신 스캔 eco 강등 폐지).
-    //   (구) 전투가 LOW_LATENCY 면 BALANCED(4.1s 주기·1s 듀티)로 한 단계 강하시켰다.
-    //   그러나 등속 주행은 선형가속도≈0 이라 ImuFusion.isStationary 가 '정지'로 오판 →
-    //   작업 중에도 휴식(eco) 진입 → 스캔이 BALANCED 로 떨어지면 새 기기 첫 발견·median
-    //   충전·2프레임 확증이 4초 듀티에 갇혀, 정면 6+6km/h(closing 3.33m/s)에서 첫 경고가
-    //   0.3m(코앞)까지 늦어졌다(시뮬 sa_scan_eco_sim.py: L0 0.30m→L2 10.04m, TTC 0.09s→3.01s).
-    //   '남이 다가오는 걸 듣는' 수신(RX)은 안전의 핵심 → eco 여부와 무관하게 항상 전투 유지.
-    //   절전은 광고(TX, evaluateAdvertiserPower)·배칭(화면 꺼짐)에서만 — 그쪽과 직교(불변).
-    //   사용자가 scanPeriodMs 를 명시적으로 2000/3000/5000 으로 올리면 그 절전 주기는 존중.
+    // Rest mode = same as active mode: receive scanning is never downgraded for eco.
+    //   Constant-speed driving has linear acceleration ≈ 0, so ImuFusion.isStationary can misjudge it as
+    //   'stationary' and enter rest (eco) mid-work. If scanning then dropped to BALANCED (4.1s period, 1s duty),
+    //   first discovery of a new device, median filling and 2-frame confirmation would be trapped in the 4s duty,
+    //   and head-on at 6+6km/h (closing 3.33m/s) the first warning would come only at 0.3m (right in front)
+    //   (simulation sa_scan_eco_sim.py: L0 0.30m→L2 10.04m, TTC 0.09s→3.01s).
+    //   Receiving (RX), 'hearing others approach', is the core of safety → always stay in active mode regardless of
+    //   eco. Power saving happens only in advertising (TX, evaluateAdvertiserPower) and batching (screen off),
+    //   orthogonal to this. If the user explicitly raises scanPeriodMs to 2000/3000/5000, that power-saving period
+    //   is respected.
     private val restScanMode: Int get() = activeScanMode
 
-    // [v1.0.48 #5] eco(휴식) 상태를 boolean 으로 별도 추적 — (구) '모드 값 비교' 방식은
-    //   ACTIVE==REST(BALANCED)라 항상 같은 쪽으로 고정되는 함정이 있었고, 모드가 설정에
-    //   따라 변하는 지금은 값 비교로 eco 여부를 복원할 수 없다.
+    // Track the eco (rest) state as a separate boolean: comparing mode values cannot recover it, because the modes
+    //   follow the settings and ACTIVE == REST would always resolve to the same side.
     @Volatile private var ecoMode = false
 
-    // [v1.0.27] 현재 스캔 모드 — 기본 전투(설정 매핑값). IMU 정지 5초 확정 시에만 휴식(eco).
+    // Current scan mode: active by default (mapped from settings). Rest (eco) only once the IMU confirms 5s
+    //   stationary.
     @Volatile private var currentScanMode: Int = mapScanMode(BleConstants.scanPeriodMs)
 
     private val bleScanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
-            // [v1.1.47] 스캔 콜백 스레드는 메인 루퍼 보장이 없다(스택·OEM 에 따라 바인더 스레드 유입).
-            //   detectedDevices 와 BleService 의 per-device 상태맵은 전부 메인 스레드 소유이므로,
-            //   메인이 아니면 즉시 메인 루퍼로 토스 후 반환(ConcurrentModificationException 방어).
-            //   스톡(메인 전달) 스택에선 조건 false = 지연 0 의 no-op. 배치 경로(onBatchScanResults)도
-            //   여기로 위임되므로 이 가드 하나로 전 수신 경로가 메인 단일화된다.
+            // The scan callback thread is not guaranteed to be the main looper (depending on stack/OEM, binder threads
+            //   deliver). detectedDevices and BleService's per-device state maps are all owned by the main thread, so when
+            //   not on main, post to the main looper immediately and return (guards against
+            //   ConcurrentModificationException). On stock stacks (delivered on main) the condition is false: a zero-delay
+            //   no-op. The batch path (onBatchScanResults) also delegates here, so this one guard puts every receive path on
+            //   the main thread.
             if (Looper.myLooper() != Looper.getMainLooper()) { handler.post { onScanResult(callbackType, result) }; return }
             val record = result.scanRecord ?: return
 
-            // SafeAlert 기기 감지
+            // SafeAlert device detection
             val deviceData = record.getManufacturerSpecificData(BleConstants.COMPANY_ID_DEVICE)
             val walkerData = record.getManufacturerSpecificData(BleConstants.COMPANY_ID_WALKER)
 
             if (deviceData != null || walkerData != null) {
                 totalBleCount++
                 BleService.bleScanCount = totalBleCount
-                // [v1.0.26 Req1] 주기적 'RX 스캔 중 · SafeAlert N개' 상태 송출 영구 삭제 —
-                // 이 로그가 하단 tv_ble_status(감지 기기 목록 영역)를 계속 점유하던 문제 제거.
+                // No periodic scan status ('RX scanning · N SafeAlert devices') here: it would keep occupying the bottom
+                // tv_ble_status (detected-device list area).
 
                 val (idBytes, prefix) = when {
                     deviceData != null -> deviceData to BleConstants.DEVICE_PREFIX
@@ -150,22 +153,22 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
                 val fullId     = prefix + deviceId
                 val rssi       = result.rssi
 
-                // [v1.1.7 #1 1바이트 페이로드] 상대 ServiceData 1바이트 → Category/State/Turn 해독.
-                //   기존 Speed 4비트(bits 3:0) 폐기 → Turn 2비트(bits 3:2)로 상대 회전 방향 수신.
-                //   미지원(비콘/구버전): 바이트 부재 → 0x00(정지)·직진(TURN_STRAIGHT).
+                // 1-byte payload: ServiceData byte 0 (Category/State/Turn/Risk) is passed on as remoteState; Turn (bits 3:2,
+                //   the peer's turn direction) is decoded here.
+                //   Unsupported (beacon/old version): byte absent → 0x00 (stopped) and straight (TURN_STRAIGHT).
                 val svcData       = record.getServiceData(SERVICE_DATA_UUID)
                 val payloadByte   = svcData?.getOrNull(0)?.toInt()?.and(0xFF)
-                val payloadPresent = payloadByte != null   // [v1.1.11 C2] 실제 1바이트 자기-신고 수신 여부(비콘/구버전=false)
+                val payloadPresent = payloadByte != null   // Whether a real 1-byte self-report was received (beacon/old version = false)
                 val remoteState   = payloadByte ?: BleConstants.MOTION_STATE_STATIONARY
                 val remoteTurn    = if (payloadByte != null) BleConstants.decodeTurn(payloadByte) else BleConstants.TURN_STRAIGHT
-                // (v1.1.62) ServiceData 2번째(확장) 바이트 — bit0=IN_ZONE(존 비콘 접촉 선언).
-                //   구버전 송신·비콘은 바이트 부재 → 0 → false(뒤호환).
+                // ServiceData 2nd (extension) byte: bit0=IN_ZONE (zone beacon contact declaration).
+                //   Old-version senders and beacons lack the byte → 0 → false (backward compatible).
                 val extByte    = svcData?.getOrNull(1)?.toInt()?.and(0xFF) ?: 0
                 val peerInZone = (extByte and BleConstants.EXT_FLAG_IN_ZONE) != 0
 
-                // [v1.1.53] 상호 RSSI 에코 파싱 — 상대 스캔응답 0xE0C0 테이블에서 '내 해시' 엔트리를
-                //   찾으면 그것이 '상대가 나를 들은 RSSI(rssi_me→peer)'. 양측이 sym 으로 대칭 판정한다.
-                //   내 해시 미배선·에코 부재·엔트리 불일치 → NO_ECHO_RSSI(폴백 = 기존 거동).
+                // Mutual RSSI echo parsing: the entry with 'my hash' in the peer's 0xE0C0 scan-response table is 'the RSSI at
+                //   which the peer heard me' (rssi_me→peer). Both sides judge symmetrically with sym.
+                //   My hash not wired, no echo, or no matching entry → NO_ECHO_RSSI (fallback = behavior without echo).
                 val echoData     = record.getManufacturerSpecificData(BleConstants.COMPANY_ID_RSSI_ECHO)
                 val myHash       = myEchoHash
                 val peerEchoRssi = if (myHash != null && echoData != null)
@@ -175,10 +178,11 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
                 BleService.safeAlertFound++
                 detectedDevices[fullId] = System.currentTimeMillis()
                 scanCallback?.onDeviceDetected(fullId, rssi, remoteState, remoteTurn, payloadPresent, peerEchoRssi, peerInZone)
-                scanCallback?.onPeerSos(fullId, BleConstants.decodeSos(extByte), SosAdvert.decodeEpisode(svcData), SosAdvert.decodeHint(svcData))   // (v1.1.99) 확장 바이트 bit1
+                scanCallback?.onPeerSos(fullId, BleConstants.decodeSos(extByte), SosAdvert.decodeEpisode(svcData), SosAdvert.decodeHint(svcData))   // Extension byte bit1
 
-                // UWB 주소 스캔 응답 파싱 (지원 기기 한정)
-                // (v1.1.30) DEVICE(컨트롤러)=4바이트(주소+채널+프리앰블), WALKER(컨트롤리)=2바이트 — 있는 만큼 전달
+                // Parse the UWB address from the scan response (supported devices only).
+                // DEVICE (controller) = 4 bytes (address + channel + preamble), WALKER (controlee) = 2 bytes; pass on
+                //   whatever is present
                 val uwbData = record.getManufacturerSpecificData(BleConstants.COMPANY_ID_UWB_EXT)
                 if (uwbData != null && uwbData.size >= 2) {
                     scanCallback?.onUwbAddressReceived(fullId, uwbData.copyOf(minOf(uwbData.size, 4)))
@@ -186,53 +190,53 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
                 return
             }
 
-            // 등록된 iBeacon UUID 감지
+            // Detect registered iBeacon UUIDs
             val iBeaconData = record.getManufacturerSpecificData(0x004C)
             if (iBeaconData != null) {
                 val uuid = BeaconRegistry.parseIBeaconUuid(iBeaconData)
                 if (uuid != null && BeaconRegistry.containsUuid(uuid)) {
-                    // (v1.1.62) 존 비콘(zoneMute)은 경보 대상이 아니라 안전구역 마커 —
-                    //   기기 목록·판정에 넣지 않고 존 신호 경로로만 전달한다(raw RSSI, 게인 미적용).
+                    // A zone beacon (zoneMute) is a safe-zone marker, not an alert target: it is not added to the device list or
+                    //   judgment and only goes down the zone signal path (raw RSSI, no gain applied).
                     val zp = BeaconRegistry.findZoneProfileByUuid(uuid)
                     if (zp != null) {
                         scanCallback?.onZoneBeaconSignal("ZONE_${uuid.take(8)}", result.rssi, zp.zoneEnterRssi)
                         return
                     }
-                    // [v1.0.25 Req3] 상태줄(tv_ble_status) 오염 방지 — 비콘 정보를 status로 보내지 않는다.
-                    val fullId = BleConstants.WALKER_PREFIX + "BEA_${uuid.replace("-", "")}"   // (v1.1.91) 키 전체(32hex) — 표시·로그만 8자로 자른다
+                    // Keep the status line (tv_ble_status) clean: do not send beacon info as status.
+                    val fullId = BleConstants.WALKER_PREFIX + "BEA_${uuid.replace("-", "")}"   // Full key (32 hex); only display and logs truncate it to 8 chars
                     val rssi   = result.rssi
                     detectedDevices[fullId] = System.currentTimeMillis()
-                    // [v1.0.29] 외부 비콘은 모션 ServiceData 없음 → 0x00(정지)으로 전달
+                    // External beacons have no motion ServiceData → passed as 0x00 (stopped)
                     scanCallback?.onDeviceDetected(fullId, rssi, BleConstants.MOTION_STATE_STATIONARY)
                     return
                 }
             }
 
-            // Service UUID 비콘 감지
-            // (v1.1.79) serviceUuids(AD 0x02/0x03/0x06/0x07) 와 serviceData(AD 0x16) 는 광고 패킷에서
-            //   서로 독립된 필드다. 16비트 SIG UUID 계열 비콘(0000FDA5-… 등)은 서비스데이터로만
-            //   광고해 serviceUuids 가 비어 있는 경우가 흔하다 — 그동안 이 분기에 영영 도달하지
-            //   못했고, 그래서 존 비콘으로 등록해도 onZoneBeaconSignal 이 한 번도 불리지 않았다.
+            // Service UUID beacon detection.
+            // Check both serviceUuids (AD 0x02/0x03/0x06/0x07) and serviceData (AD 0x16): they are independent fields in
+            //   the advertising packet. Beacons with 16-bit SIG UUIDs (0000FDA5-… etc.) often advertise only service data
+            //   and leave serviceUuids empty; checking serviceUuids alone would never reach this branch, so a beacon
+            //   registered as a zone beacon would never trigger onZoneBeaconSignal.
             ((record.serviceUuids ?: emptyList()) + (record.serviceData?.keys ?: emptySet())).forEach { parcelUuid ->
                 val uuidStr = parcelUuid.uuid.toString().uppercase()
                 if (BeaconRegistry.containsUuid(uuidStr)) {
-                    // (v1.1.62) 존 비콘 분기 — iBeacon 경로와 동일
+                    // Zone beacon branch, same as the iBeacon path
                     val zp = BeaconRegistry.findZoneProfileByUuid(uuidStr)
                     if (zp != null) {
                         scanCallback?.onZoneBeaconSignal("ZONE_${uuidStr.take(8)}", result.rssi, zp.zoneEnterRssi)
                         return
                     }
-                    val fullId = BleConstants.WALKER_PREFIX + "BEA_${uuidStr.replace("-", "")}"   // (v1.1.91) 키 전체(32hex) — 표시·로그만 8자로 자른다
+                    val fullId = BleConstants.WALKER_PREFIX + "BEA_${uuidStr.replace("-", "")}"   // Full key (32 hex); only display and logs truncate it to 8 chars
                     detectedDevices[fullId] = System.currentTimeMillis()
                     scanCallback?.onDeviceDetected(fullId, result.rssi, BleConstants.MOTION_STATE_STATIONARY)
                     return
                 }
             }
 
-            // MAC 기반 비콘
+            // MAC-based beacons
             val mac = result.device.address ?: return
             if (BeaconRegistry.containsMac(mac)) {
-                // (v1.1.62) 존 비콘 분기 — iBeacon 경로와 동일
+                // Zone beacon branch, same as the iBeacon path
                 val zp = BeaconRegistry.findZoneProfileByMac(mac)
                 if (zp != null) {
                     scanCallback?.onZoneBeaconSignal("ZONE_${mac.replace(":", "")}", result.rssi, zp.zoneEnterRssi)
@@ -268,27 +272,25 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
     private val timeoutChecker = object : Runnable {
         override fun run() {
             val now = System.currentTimeMillis()
-            // [v1.0.28] 듀티 스캔(BALANCED/LOW_POWER)은 스캔 OFF 구간이 길어 타임아웃을 늘려야
-            //           정상 기기의 오소실('감지 없음' 깜빡임)을 막는다.
-            // [v1.0.48 #5] 타임아웃 선택 기준을 'eco 여부'가 아닌 '현재 라디오 듀티'로 교정.
-            //   (구) currentScanMode == REST_SCAN_MODE 비교는 ACTIVE==REST 라 항상 6초로
-            //   고정되던 함정이었다. 연속 스캔(LOW_LATENCY)일 때만 2초 — 듀티 스캔에서 2초를
-            //   쓰면 스캔 OFF 구간(최대 ~4.6초) 동안 멀쩡한 기기가 오소실된다.
-            //   기본 설정(BALANCED)에선 6초 그대로 — 현행 거동 보존.
+            // Duty-cycled scans (BALANCED/LOW_POWER) have long scan-OFF windows, so the timeout must be longer to avoid
+            // falsely losing healthy devices ("감지 없음" flicker).
+            // The timeout follows the current radio duty, not the eco state. Only continuous scanning (LOW_LATENCY)
+            //   uses 2 s — 2 s on a duty scan would drop healthy devices during the scan-OFF window (up to ~4.6 s).
+            //   The default scanPeriodMs (1000ms → LOW_LATENCY) uses 2 s.
             val timeoutMs = if (currentScanMode == ScanSettings.SCAN_MODE_LOW_LATENCY)
                                 DEVICE_TIMEOUT_ACTIVE_MS else DEVICE_TIMEOUT_REST_MS
             detectedDevices.entries
                 .filter {
-                    // [v1.1.58 fix2] 비콘은 광고주기가 길어(300ms~1s) ACTIVE 2s 에서 순간 플래핑 — 최소 3.5s 보장
+                    // Beacons advertise slowly (300ms~1s) and briefly flap at the ACTIVE 2 s timeout — guarantee at least 3.5 s
                     val effTimeoutMs = if (it.key.contains("BEA_")) maxOf(timeoutMs, DEVICE_TIMEOUT_BEACON_MS) else timeoutMs
                     now - it.value > effTimeoutMs
                 }
                 .map { it.key }
                 .forEach { id ->
-                    // [v1.1.47] BLE 신호 타임아웃이라도 UWB 실측이 계속 흐르는 기기는 소실 유예 —
-                    //   광고 일시 유실만으로 onDeviceLost(→UWB 세션 강제 철거)를 쏘지 않는다.
-                    //   타임스탬프는 갱신하지 않아 'BLE 스테일' 사실은 보존되고, 매 스윕(1s)
-                    //   재평가로 UWB 실측까지 끊기면 그때 정상 소실 처리된다.
+                    // Even after a BLE timeout, defer loss for a device whose UWB ranging is still flowing —
+                    //   a brief advertising gap alone must not fire onDeviceLost (which tears down the UWB session).
+                    //   The timestamp is not refreshed, so the device stays BLE-stale; each sweep (1 s) re-evaluates it, and once
+                    //   UWB ranging also stops it is lost normally.
                     if (uwbMeasuringCheck?.invoke(id) == true) {
                         Log.d(TAG, "신호 소실 유예(UWB 실측 지속): $id")
                         return@forEach
@@ -302,9 +304,11 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
     }
 
     /**
-     * (v1.1.65) 감지 중인 전 기기를 즉시 소실 처리 — 세이프존 진입 등 '전면 억제' 전환 전용.
-     *   BleService.onDeviceLost 정상 경로를 그대로 태워 27종 상태맵·필터·UWB 세션을 한 번에 정리한다.
-     *   detectedDevices 도 비우므로 억제 해제 후 첫 광고부터 신규 기기처럼 깨끗하게 재개된다.
+     * Immediately marks every detected device as lost — on entering the safe zone (full suppression) and when
+     * beacon registrations change. Runs the normal BleService.onDeviceLost path, so per-device state
+     * (DeviceStateRegistry) and UWB sessions are cleaned up at once (filters follow onDeviceLost's warm-preserve
+     * rule). Also clears detectedDevices, so each device then resumes from its first advertisement, like a new
+     * device.
      */
     fun forceLoseAll() {
         val ids = detectedDevices.keys.toList()
@@ -313,14 +317,14 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
         if (ids.isNotEmpty()) Log.i(TAG, "강제 소실 처리: ${ids.size}대")
     }
 
-    // [v1.0.27 Req1] 하드웨어 스캔 필터 의무 적용 — emptyList() 금지.
-    // SERVICE_UUID(우리 비콘 규격) 필터를 블루투스 칩셋에 오프로딩 → 무관한 BLE 잡음은
-    // 메인 CPU 를 깨우지 않고 칩셋 단에서 즉시 폐기된다(화면 꺼짐·절전 모드 배터리 절감 핵심).
-    // ※ BleAdvertiser 가 동일 SERVICE_UUID 를 광고하므로 우리 기기는 이 필터를 정상 통과한다.
+    // Hardware scan filters are mandatory — never emptyList().
+    // The SERVICE_UUID (our beacon spec) filter is offloaded to the Bluetooth chipset, so unrelated BLE noise is
+    // dropped in the chipset without waking the main CPU (key battery saving with screen off / power saving).
+    // ※ BleAdvertiser advertises the same SERVICE_UUID, so our devices pass this filter.
     private fun buildFilters(): List<ScanFilter> {
-        // [v1.1.74] 위 'emptyList() 금지' 원칙의 한정 예외 — 사용자 개시·포그라운드·15초 발견 스캔 동안만.
-        // 스캔 자체는 계속 돌므로 경보 파이프라인은 살아 있고, 발견 스캔 종료 시
-        // setDiscoveryMode(false) → restartScan 으로 필터가 즉시 복원된다.
+        // Limited exception to the 'never emptyList()' rule above — only during a user-initiated, foreground,
+        // 15-second discovery scan. Scanning keeps running, so the alert pipeline stays alive; when the discovery
+        // scan ends, setDiscoveryMode(false) → restartScan restores the filters immediately.
         if (discoveryMode) return emptyList()
         val filters = mutableListOf<ScanFilter>()
         filters.add(ScanFilter.Builder()
@@ -331,12 +335,12 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
                 runCatching {
                     val pu = ParcelUuid(java.util.UUID.fromString(profile.uuid))
                     filters.add(ScanFilter.Builder().setServiceUuid(pu).build())
-                    // (v1.1.79) 서비스데이터(AD 0x16) 로만 광고하는 비콘 대응.
-                    //   위 setServiceUuid 필터는 AD 0x02/0x03/0x06/0x07(Service UUID List) 만 매칭한다.
-                    //   0000FDA5-… 같은 16비트 SIG UUID 계열 비콘은 서비스데이터로만 광고하는 경우가
-                    //   흔해, 등록해도 칩셋 단에서 폐기돼 콜백조차 오지 않았다
-                    //   (= 존 비콘으로 등록해도 onZoneBeaconSignal 이 한 번도 안 불린 원인).
-                    //   빈 배열 필수 — AOSP matchesPartialData 는 data==null 에서 NPE 를 낸다.
+                    // Supports beacons that advertise only service data (AD 0x16).
+                    //   The setServiceUuid filter above matches only AD 0x02/0x03/0x06/0x07 (Service UUID List). Beacons with
+                    //   16-bit SIG UUIDs such as 0000FDA5-… often advertise only service data, so without this filter they are
+                    //   dropped in the chipset and no callback ever arrives (even a registered zone beacon never reaches
+                    //   onZoneBeaconSignal).
+                    //   The empty array is required — AOSP matchesPartialData throws an NPE when data == null.
                     filters.add(ScanFilter.Builder().setServiceData(pu, byteArrayOf()).build())
                 }.onFailure { Log.w(TAG, "스캔 필터 생성 실패(SERVICE_UUID) ${profile.uuid}: ${it.message} — 이 기기는 칩셋 단에서 폐기되어 미감지") }
             }
@@ -344,18 +348,18 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
                 runCatching { filters.add(ScanFilter.Builder().setDeviceAddress(profile.uuid).build()) }
                     .onFailure { Log.w(TAG, "스캔 필터 생성 실패(MAC) ${profile.uuid}: ${it.message} — 이 기기는 칩셋 단에서 폐기되어 미감지") }
             }
-            // [v1.1.14] iBeacon 등록 비콘 — 제조사데이터(0x004C) 패턴 필터.
-            //   iBeacon 은 SERVICE_UUID·MAC 을 광고하지 않으므로 위 두 필터로는 칩셋 단에서
-            //   폐기된다(= 등록해도 신호를 못 잡던 원인, 화면 꺼짐·Doze 에서 특히 치명적).
-            //   [0x02,0x15, UUID 16바이트] 패턴 + 전체 마스크로 '등록 UUID 의 iBeacon 만'
-            //   통과시킨다(주변 타사 0x004C 광고는 칩셋이 폐기 → 잡음 유입 0).
+            // Registered iBeacons — manufacturer data (0x004C) pattern filter.
+            //   iBeacons advertise neither SERVICE_UUID nor MAC, so the two filters above would drop them in the chipset
+            //   (the signal would never be caught — especially critical with the screen off / Doze).
+            //   The [0x02,0x15, 16-byte UUID] pattern with a full mask passes only iBeacons with a registered UUID
+            //   (other vendors' 0x004C ads nearby are dropped by the chipset → zero noise).
             BeaconRegistry.getAll().filter { it.type == "IBEACON" }.forEach { profile ->
                 runCatching {
                     val u  = java.util.UUID.fromString(profile.uuid)
                     val bb = java.nio.ByteBuffer.allocate(16)
                     bb.putLong(u.mostSignificantBits); bb.putLong(u.leastSignificantBits)
-                    val pattern = byteArrayOf(0x02, 0x15) + bb.array()      // iBeacon 프리픽스 + UUID
-                    val mask    = ByteArray(pattern.size) { 0xFF.toByte() } // 전 바이트 정확 매칭
+                    val pattern = byteArrayOf(0x02, 0x15) + bb.array()      // iBeacon prefix + UUID
+                    val mask    = ByteArray(pattern.size) { 0xFF.toByte() } // Exact match on every byte
                     filters.add(ScanFilter.Builder()
                         .setManufacturerData(0x004C, pattern, mask)
                         .build())
@@ -365,9 +369,9 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
         return filters
     }
 
-    // ── 30분 쓰로틀 방지 재시작 (45초마다 스캔 껐다 켜기) ─────────────────
-    // 안드로이드는 한 앱이 30분 이상 연속 스캔하면 강제 차단(error code 6)한다.
-    // 45초마다 짧게 재시작하여 이 정책을 우회한다. ★ 반드시 그대로 유지할 것.
+    // ── Restart to avoid the 30-minute throttle (scan off/on every 45 s) ─────────────────
+    // Android force-blocks an app that scans continuously for 30+ minutes (error code 6).
+    // A short restart every 45 s sidesteps this policy. ★ Must be kept as is.
     private val antiThrottleRunnable = object : Runnable {
         override fun run() {
             if (!isScanning) return
@@ -383,25 +387,26 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
         startScanInternal()
         handler.post(timeoutChecker)
         handler.postDelayed(antiThrottleRunnable, SCAN_RESTART_MS)
-        // [v1.0.26 Req1] 'RX 스캔 시작' 상태 송출 제거 — tv_ble_status 는 감지 기기 목록 전용.
-        // 비콘 등록·삭제 즉시 반영. HW 필터는 startScan 시점 스냅샷이라 재시작해야 갱신되고,
-        // 삭제된 기기는 표본이 끊겨 상태전이 기반 정리가 돌지 않는다(TTL 스윕도 UWB 실측 중이면 유예).
+        // tv_ble_status is for the detected device list only, so no scan-start status is posted.
+        // Apply beacon registration/deletion immediately. HW filters are a snapshot taken at startScan, so they update
+        // only on restart, and a deleted device stops producing samples, so state-transition cleanup never runs
+        // (the TTL sweep is also deferred while UWB ranging continues).
         BeaconRegistry.onChanged = { handler.post { forceLoseAll(); restartScan() } }
         liveRestart = { handler.post { restartScan() } }
     }
 
     private fun startScanInternal() {
-        // [v1.0.27] 스캔 모드는 currentScanMode(동적). 기본 전투(activeScanMode),
-        // IMU 정지 5초 확정 시에만 휴식(restScanMode)으로 낮춘다. 이동 즉시 원복.
-        // 배칭 딜레이는 화면 상태로 별도 결정(스캔 모드와 직교).
-        // [v1.1.23] 화면 꺼짐이라도 위험 근접(hazardNear)이면 0ms 즉시 전달 — 안전 우선.
+        // Scan mode is currentScanMode: activeScanMode (mapped from scanPeriodMs). After 5 s of confirmed IMU
+        // stillness it switches to rest (restScanMode), which is the same mode, so receive scanning is never lowered.
+        // Batch delay is decided separately by screen state (orthogonal to scan mode).
+        // Even with the screen off, a near hazard (hazardNear) gets 0ms immediate delivery — safety first.
         val batchDelay = if (!isScreenOn && !hazardNear) BATCH_DELAY_SCREEN_OFF_MS else BATCH_DELAY_ACTIVE_MS
         val settings = ScanSettings.Builder()
             .setScanMode(currentScanMode)
             .setReportDelay(batchDelay)
-            // 단일 광고 패킷만으로도 즉시 보고 — 약한 신호 기기 조기 감지
+            // Report on a single advertisement packet — early detection of weak-signal devices
             .setMatchMode(ScanSettings.MATCH_MODE_AGGRESSIVE)
-            // 필터 당 최대 기기 수 — 다수 SafeAlert 기기 동시 추적
+            // Max devices per filter — track many SafeAlert devices at once
             .setNumOfMatches(ScanSettings.MATCH_NUM_MAX_ADVERTISEMENT)
             .setCallbackType(ScanSettings.CALLBACK_TYPE_ALL_MATCHES)
             .build()
@@ -416,41 +421,43 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
     }
 
     private fun restartScanInternal(immediate: Boolean = false) {
-        // [v1.1.47] 재시작 직전 배칭 큐 강제 배출 — stopScan 으로 유실될 대기 결과(화면 꺼짐
-        //   500ms 배칭 최대 0.5s 치)를 먼저 전달해 무손실 전환. 배칭 0ms 면 큐가 비어 no-op.
+        // Flush the batch queue right before restarting — deliver the pending results stopScan would drop (up to
+        //   0.5 s of screen-off 500ms batching) first, for a lossless switch.
+        //   With 0ms batching the queue is empty, so this is a no-op.
         runCatching { scanner.flushPendingScanResults(bleScanCallback) }
         try { scanner.stopScan(bleScanCallback) } catch (_: Exception) {}
         if (immediate) {
-            // [v1.1.47] 위험 근접 배칭 승격(setHazardNear) 전용 — 300ms 대기 없이 즉시 재시작해
-            //   화면 꺼짐+근접 상황의 스캔 공백을 제거한다. 유령 스캔 방지는 지연이 아니라
-            //   isScanning 가드가 담당하므로 즉시 경로에서도 동일하게 안전하다.
+            // Only for the hazard-near batching switch (setHazardNear) — restart immediately without the 300ms wait,
+            //   removing the scan gap when the screen is off and a hazard is near. Ghost scans are prevented by the
+            //   isScanning guard, not by the delay, so the immediate path is equally safe.
             if (isScanning) startScanInternal()
             return
         }
-        // [v1.0.46 #5] stopScanning() 직후 잔류 람다가 유령 스캔을 다시 켜는 것 방지
+        // Prevent a leftover lambda from restarting a ghost scan right after stopScanning()
         handler.postDelayed({ if (isScanning) startScanInternal() }, 300)
     }
 
-    // [v1.0.46 #9] 워치독(healthCheck) 전용 RX 재시작 — TX 광고는 건드리지 않아
-    // 상대 기기에서 내가 사라지는 가시성 갭이 생기지 않는다.
+    // RX-only restart for the watchdog (healthCheck) — TX advertising is untouched, so there is no
+    // visibility gap in which this device disappears from other devices.
     fun restartScan() {
         if (isScanning) restartScanInternal()
     }
 
-    // [v1.1.23] 화면 꺼짐 중 위험 근접/경보 여부 통지 — true면 배칭 0ms(즉시 전달),
-    //   false면 절전 배칭(500ms) 복귀. 화면이 켜져 있으면 어차피 0ms라 재시작하지 않는다.
-    //   값이 실제로 바뀔 때만 스캔을 재시작(매 패킷 폭주 방지). true=onDeviceDetected 즉시,
-    //   false=evaluateAdvertiserPower(2.5s) 집계 — 광고 슬립/웨이크와 동일 비대칭.
+    // Notifies whether a hazard/alert is near while the screen is off — true: 0ms batching (immediate delivery),
+    //   false: back to power-saving batching (500ms). With the screen on it is 0ms anyway, so no restart.
+    //   Restarts the scan only when the value actually changes (no restart storm per packet). true comes
+    //   immediately from onDeviceDetected, false from the evaluateAdvertiserPower (2.5s) aggregation — the same
+    //   asymmetry as advertising sleep/wake.
     fun setHazardNear(v: Boolean) {
         if (hazardNear == v) return
         hazardNear = v
         if (!isScreenOn && isScanning) {
             Log.d(TAG, "화면 꺼짐 위험근접=$v → 배칭 ${if (v) BATCH_DELAY_ACTIVE_MS else BATCH_DELAY_SCREEN_OFF_MS}ms 전환")
-            restartScanInternal(immediate = true)   // [v1.1.47] 근접 배칭 전환은 300ms 공백 없이 즉시
+            restartScanInternal(immediate = true)   // Hazard-near batching switch is immediate, without the 300ms gap
         }
     }
 
-    /** 화면 꺼짐 → 500ms 하드웨어 배칭 전환 (스캔 모드는 유지, CPU 웨이크업만 최소화) */
+    /** Screen off → switch to 500ms hardware batching (scan mode kept; only minimizes CPU wake-ups) */
     fun notifyScreenOff() {
         isScreenOn = false
         if (isScanning) {
@@ -459,7 +466,7 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
         }
     }
 
-    /** 화면 켜짐 → 0ms 즉시 전달 복귀 (현재 스캔 모드 유지) */
+    /** Screen on → back to 0ms immediate delivery (current scan mode kept) */
     fun notifyScreenOn() {
         isScreenOn = true
         if (isScanning) {
@@ -468,25 +475,27 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
         }
     }
 
-    // [v1.0.27] 동적 절전 스캔 모드 전환 (BleService 가 IMU 상태에 따라 호출).
-    //  eco=true  → 휴식 모드: restScanMode. 정지 5초 확정 시.
-    //  eco=false → 전투 모드: activeScanMode(설정 scanPeriodMs 매핑). 이동 즉시·경보 발생 시.
-    // [v1.1.27] restScanMode=activeScanMode 가 되어 '스캔 한정' eco 는 실질 no-op(안전 우선).
-    //   ecoMode 플래그·호출부는 보존 — 광고/배칭 절전과 향후 연동 여지를 남긴다.
-    // 모드가 실제로 바뀔 때만 재시작(idempotent) → 불필요한 스캔 리셋 없음.
+    // Dynamic power-saving scan mode switch (called by BleService according to IMU state).
+    //  eco=true  → rest mode: restScanMode. On 5 s of confirmed stillness.
+    //  eco=false → active mode: activeScanMode (mapped from scanPeriodMs). Immediately on movement or an alert.
+    // restScanMode equals activeScanMode, so scan-only eco is effectively a no-op (safety first).
+    //   The ecoMode flag and call sites are kept, leaving room to couple with advertising/batching power saving.
+    // Restarts only when the mode actually changes (idempotent) → no needless scan resets.
     fun setEcoMode(eco: Boolean) {
-        ecoMode = eco                                // [v1.0.48 #5] 모드 값과 분리해 eco 상태 기억
+        ecoMode = eco                                // Track eco state separately from the mode value
         applyScanMode()
     }
 
-    /** [v1.0.48 #5] 설정(scanPeriodMs) 라이브 반영 — BleService 의 prefs 리스너가 호출.
-     *  현재 eco 상태는 유지한 채 목표 모드만 재계산. 모드가 실제로 바뀔 때만 재시작하므로
-     *  무관한 설정 키 변경·resetToDefault(null key)에도 안전하다(no-op). */
+    /**
+     * Applies the scanPeriodMs setting live — called by the prefs listener in BleService.
+     * Recomputes only the target mode, keeping the current eco state. It restarts only when the mode actually
+     * changes, so unrelated setting keys and resetToDefault (null key) are safe no-ops.
+     */
     fun refreshScanMode() = applyScanMode()
 
     private fun applyScanMode() {
         val target = if (ecoMode) restScanMode else activeScanMode
-        if (currentScanMode == target) return        // 동일 모드 → no-op (안전·저비용)
+        if (currentScanMode == target) return        // Same mode → no-op (safe, cheap)
         currentScanMode = target
         Log.d(TAG, "스캔 모드 → ${scanModeName(target)} (${if (ecoMode) "휴식" else "전투"} · 주기설정 ${BleConstants.scanPeriodMs}ms)")
         if (isScanning) restartScanInternal()
@@ -508,6 +517,5 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
         scanCallback = null
         BeaconRegistry.onChanged = null
         liveRestart = null
-        // [v1.0.26 Req1] 'RX 스캔 중지' 상태 송출 제거.
     }
 }

@@ -17,14 +17,17 @@ import java.util.Locale
 import kotlin.math.sqrt
 
 /**
- * 단독 작업자 감시의 센서 접착부 (v1.1.99): 가속도·걸음 센서 등록, 센서 시각 변환, 가속도 신호 공백 검사, flush.
+ * Sensor glue for lone-worker monitoring: accelerometer / step sensor registration, sensor time conversion, accelerometer
+ * signal gap check, flush.
  *
- * 가속도 표본은 MotionAnalyzer 로 넘겨 MOVED 는 onMoved, 낙상은 충격 표본 시각으로 onAccident,
- * 닫힌 1초 창(걷는 모양 여부)은 onWindow 로 LoneWorkerLogic 에 전한다. 걸음(TYPE_STEP_DETECTOR)은 보정 시각과
- * 그 시각의 앱 진동 여부를 onStep 으로 전한다 — 걷는 모양 창에 든 걸음만 센다. 진동 구간 판정은 가속도·걸음 모두
- * elapsed 기준으로 바꾼 시각으로 한다. 걸음 센서는 API 29+ 에서 신체 활동 권한이 있어야 등록한다.
- * 자이로는 동료 사이렌이 이 기기에서 진동하는 동안만 측정 로그용으로 따로 등록한다(판정에 쓰지 않음, D3).
- * 모든 콜백은 handler(메인) 에서 돈다.
+ * Accelerometer samples go through MotionAnalyzer; MOVED is passed to LoneWorkerLogic via onMoved, a fall via onAccident with
+ * the impact sample time, and each closed 1 s window (walk-like or not) via onWindow. Steps (TYPE_STEP_DETECTOR) go to onStep
+ * with the corrected time and whether the app was vibrating then — only steps inside walk-like windows count. Vibration spans
+ * are judged on times converted to the elapsed base, for both accelerometer and steps. The step sensor is registered only
+ * with the physical activity permission on API 29+.
+ * The gyro is registered separately, for measurement logs only, while a peer siren vibrates on this device (not used for
+ * judgment).
+ * All callbacks run on handler (main).
  */
 class LoneWorkerSensors(
     private val ctx: Context,
@@ -35,11 +38,11 @@ class LoneWorkerSensors(
 
     companion object {
         private const val TAG = "LoneWorkerSensors"
-        /** 센서 시각이 지금보다 이만큼 넘게 벗어나면 도착 시각 기준으로 옮긴다. */
+        /** If the sensor time deviates from now by more than this, rebase it on the arrival time. */
         private const val SKEW_OK_MS = 60_000L
-        /** 끝나지 않은 flush 요청은 이만큼 지나면 다시 요청한다. */
+        /** An unfinished flush request is re-sent after this long. */
         private const val FLUSH_RETRY_MS = 2_000L
-        /** 센서 배치 최대 지연(us). */
+        /** Maximum sensor batch latency (us). */
         private const val MAX_BATCH_US = (LoneWorkerLogic.MAX_BATCH_MS * 1_000L).toInt()
     }
 
@@ -52,24 +55,24 @@ class LoneWorkerSensors(
     private var accelSkew = 0L
     private var stepSkew = 0L
     private var stepRegistered = false
-    /** 마지막으로 로그에 남긴 걸음 센서 등록 결과. 바뀔 때만 다시 남긴다. */
+    /** Last logged step sensor registration result; logged again only when it changes. */
     private var stepLogged: Boolean? = null
-    /** 끝나기를 기다리는 flush 요청 시각. 없으면 MIN_VALUE. */
+    /** Time of the flush request awaiting completion; MIN_VALUE if none. */
     private var flushAt = Long.MIN_VALUE
 
-    /** 가속도 센서 자체가 없음(등록 실패와 구분). */
+    /** No accelerometer at all (as opposed to a registration failure). */
     var noSensor = false
         private set
     var registered = false
         private set
-    /** 가속도 센서 최대 범위(m/s^2). 등록 전 0 — 세이프존 낙상 충격 기준 보정용 (D-02). */
+    /** Accelerometer maximum range (m/s^2); 0 before registration — used to correct the safe-zone fall impact threshold. */
     var rangeMs2 = 0f
         private set
     val stalled: Boolean get() = stall.stalled
-    /** 등록된 센서 가운데 비웨이크업이 있어 감시 중 CPU 를 깨워 둬야 한다. */
+    /** A registered sensor is non-wakeup, so the CPU must be kept awake while monitoring. */
     val needsWake: Boolean
         get() = sensorsNeedCpuWake(registered, accel?.isWakeUpSensor == true, stepRegistered, stepSensor?.isWakeUpSensor == true)
-    /** 걸음 센서는 있는데 신체 활동 권한이 없다. */
+    /** Step sensor present but physical activity permission missing. */
     var stepPermissionMissing = false
         private set
 
@@ -123,7 +126,9 @@ class LoneWorkerSensors(
         registered = false
     }
 
-    /** 걸음 센서 등록을 권한·기능 상태에 맞춘다(권한이 새로 생기면 등록, 사라지면 해제). */
+    /**
+     * Syncs step sensor registration with the permission and feature state (register when permission appears, unregister when it is gone).
+     */
     fun refreshSteps() {
         val m = manager()
         val s = stepSensor ?: m?.let {
@@ -159,10 +164,11 @@ class LoneWorkerSensors(
     }
 
     /**
-     * 동료 사이렌이 이 기기에서 진동하는 동안만 자이로 측정 로그를 1초마다 남긴다(D3). 판정에 쓰지 않고 표본 수·평균·최대
-     * 각속도뿐이다(개인정보·위치 없음). 등록 결과 한 줄은 사이렌 한 번에 한 번(GyroGate), 끌 때 남은 구간 한 줄.
-     * 자이로가 없으면 조용히 건너뛴다. 끄기는 사이렌 끝과 모니터 종료(LoneWorkerMonitor.stop)뿐 — 기능 끄기로 센서를 내려도
-     * 사이렌 진동 중 측정은 이어진다.
+     * Logs gyro measurements every second, only while a peer siren vibrates on this device. Not used for judgment: only sample
+     * count, mean and max angular velocity (no personal data or location). One registration-result line per siren (GyroGate),
+     * plus one line for the remaining bucket when turned off.
+     * Skipped silently without a gyro. Turned off only at siren end and monitor stop (LoneWorkerMonitor.stop) — even if feature
+     * off takes the sensors down, measurement continues while the siren vibrates.
      */
     fun gyroLog(siren: Boolean, vibrating: Boolean) {
         if (!gyroGate.update(siren, vibrating)) return
@@ -184,7 +190,7 @@ class LoneWorkerSensors(
         }
     }
 
-    /** 가속도 신호 공백 검사: 끊겼으면 같은 백오프로 다시 등록한다 (RR08). */
+    /** Accelerometer signal gap check: if lost, re-register with the same backoff. */
     fun checkStall(t: Long) {
         if (stall.check(t) == SensorStall.Action.REREGISTER) {
             Log.w(TAG, "가속도 센서 신호 없음 또는 미등록 — 다시 등록")
@@ -194,8 +200,8 @@ class LoneWorkerSensors(
     }
 
     /**
-     * 마감이 센서 데이터를 기다린다: 쌓인 이벤트를 지금 보내 달라고 요청한다. 끝나기를 기다리는 동안은
-     * 다시 요청하지 않고, FLUSH_RETRY_MS 가 지나면 다시 요청한다.
+     * A deadline is waiting for sensor data: ask for batched events to be delivered now. No new request while one is pending;
+     * request again once FLUSH_RETRY_MS has passed.
      */
     fun flush() {
         val m = sm ?: return
@@ -206,7 +212,7 @@ class LoneWorkerSensors(
         if (!runCatching { m.flush(this) }.getOrDefault(false)) flushAt = Long.MIN_VALUE
     }
 
-    /** flush 완료: 걸음 센서면 요청 시각까지의 걸음이 다 왔다. */
+    /** Flush complete: for the step sensor, all steps up to the request time have arrived. */
     override fun onFlushCompleted(sensor: Sensor) {
         if (sensor.type == Sensor.TYPE_STEP_DETECTOR && flushAt != Long.MIN_VALUE) {
             logic().stepsFlushed(flushAt)
@@ -215,7 +221,7 @@ class LoneWorkerSensors(
         onEvent(now())
     }
 
-    /** 센서 시각(ms)을 elapsed 기준으로 옮기는 보정값. 벗어난 동안에만 도착 시각에 맞춰 다시 잡는다. */
+    /** Offset shifting sensor time (ms) to the elapsed base. Re-anchored to the arrival time only while it deviates. */
     private fun skewFor(rawMs: Long, t: Long, cur: Long): Long =
         if (rawMs + cur in t - SKEW_OK_MS..t) cur else t - rawMs
 
@@ -227,7 +233,7 @@ class LoneWorkerSensors(
                 stall.onEvent(t)
                 accelSkew = skewFor(rawMs, t, accelSkew)
                 val v = event.values
-                // 이 앱의 진동 구간 표본은 활동 통계에서만 뺀다. 낙상 감지에는 그대로 넣는다 (v1.1.99, F07·RR02)
+                // Samples during this app's vibration are excluded from activity stats only; fall detection still gets them
                 when (analyzer.add(rawMs, v[0], v[1], v[2], masked = VibrationHelper.window.covers(rawMs + accelSkew))) {
                     MotionAnalyzer.Signal.MOVED -> logic().onMoved(rawMs + accelSkew)
                     MotionAnalyzer.Signal.FALL -> logic().onAccident(analyzer.eventMs + accelSkew, analyzer.fallShape)
@@ -247,7 +253,10 @@ class LoneWorkerSensors(
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
 }
 
-/** 자이로 각속도 크기를 1초 구간(센서 시각의 초)마다 표본 수·평균·최대로 모은다(순수, 측정 로그 전용, D3). */
+/**
+ * Aggregates gyro angular velocity magnitude per 1 s bucket (second of sensor
+ * time) into sample count, mean and max (pure, measurement log only).
+ */
 class GyroStats {
     private var sec = Long.MIN_VALUE
     private var n = 0
@@ -261,7 +270,9 @@ class GyroStats {
         max = 0.0
     }
 
-    /** 표본 하나(rad/s). 구간이 바뀌면 지난 구간 한 줄을 돌려준다 — 첫 표본·같은 구간은 null. */
+    /**
+     * One sample (rad/s). Returns the previous bucket's line when the bucket changes — null for the first sample or the same bucket.
+     */
     fun add(tMs: Long, x: Float, y: Float, z: Float): String? {
         val s = tMs / 1_000L
         var line: String? = null
@@ -276,7 +287,9 @@ class GyroStats {
         return line
     }
 
-    /** 표본이 있으면 지금 구간 한 줄을 돌려주고 비운다 — 구간이 바뀔 때와 측정을 끌 때. */
+    /**
+     * If there are samples, returns the current bucket's line and clears it — when the bucket changes and when measurement turns off.
+     */
     fun flush(): String? {
         val line = if (n > 0) String.format(Locale.US, "gyro 1s n=%d mean=%.3f max=%.3f rad/s", n, sum / n, max) else null
         reset()
@@ -285,18 +298,18 @@ class GyroStats {
 }
 
 /**
- * 자이로 측정 요청(순수, v1.1.99). 등록은 동료 사이렌이 이 기기에서 진동하는 동안만(D3), 등록 시도 결과 로그는 사이렌 한 번에
- * 한 번이고, 실패(자이로 없음 포함)면 그 사이렌 동안 다시 시도하지 않는다. 사이렌이 끝나면 초기화한다.
+ * Gyro measurement request (pure). Registers only while a peer siren vibrates on this device; the registration attempt is
+ * logged once per siren, and after a failure (including no gyro) it is not retried during that siren. Resets when the siren ends.
  */
 class GyroGate {
-    /** 이번 사이렌의 등록 결과. 아직 시도하지 않았으면 null. */
+    /** Registration result for this siren; null if not tried yet. */
     private var result: Boolean? = null
 
-    /** 측정 등록을 원하는 상태. */
+    /** Whether measurement registration is wanted. */
     var on = false
         private set
 
-    /** 사이렌·진동을 반영하고 on 이 바뀌었으면 true. */
+    /** Applies the siren / vibration state; true if on changed. */
     fun update(siren: Boolean, vibrating: Boolean): Boolean {
         if (!siren) result = null
         val want = siren && vibrating && result != false
@@ -305,7 +318,7 @@ class GyroGate {
         return true
     }
 
-    /** 등록 결과를 적고, 이번 사이렌의 첫 결과면 true(로그 한 줄). 실패면 끈다. */
+    /** Records the registration result; true if it is the first result for this siren (one log line). Turns off on failure. */
     fun registered(ok: Boolean): Boolean {
         val first = result == null
         result = ok

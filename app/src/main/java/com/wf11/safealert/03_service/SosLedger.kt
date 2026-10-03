@@ -1,14 +1,14 @@
 package com.wf11.safealert.service
 
-/** 문자열 키-값 저장소. put 은 모든 변경을 한 번에 적용하고 null 값은 지운다. */
+/** String key-value store. put applies all changes at once and removes null values. */
 interface SosKv {
     fun get(k: String): String?
     fun put(changes: Map<String, String?>)
 }
 
 /**
- * 서버 전송 통로. 구현은 콜백을 메인 스레드로 돌려준다.
- * uid() 가 null 이면 아직 로그인 전, sitePath() 가 null 이면 사업장 코드 없음.
+ * Server transport. Implementations deliver callbacks on the main thread.
+ * uid() null = not signed in yet; sitePath() null = no site code.
  */
 interface SosTransport {
     fun uid(): String?
@@ -20,19 +20,20 @@ interface SosTransport {
 }
 
 /**
- * 내 SOS 의 저장·전송 상태기계 (v1.1.99). 안드로이드 의존이 없는 순수 로직이며 모든 진입점은 메인 스레드다.
+ * Storage and send state machine for my own SOS. Pure logic with no Android dependency; every entry point is on the main thread.
  *
- * 활성 칸(a.*)과 해제 대기 목록(r.list)을 따로 둔다. [괜찮아요]를 누르면 활성 칸은 그 자리에서 비고
- * 해제는 대기 목록에서 확인될 때까지 재시도되므로, 오프라인에서 해제한 직후 새 SOS 가 나도 곧바로 기록되고
- * 옛 해제의 늦은 응답은 자기 항목만 지운다 (RR01).
+ * The active slot (a.*) and the pending-resolve list (r.list) are kept separately. Pressing "괜찮아요" empties the active slot
+ * on the spot, and the resolve is retried from the pending list until confirmed, so a new SOS raised right after an offline
+ * resolve is recorded immediately and a late response to the old resolve removes only its own entry.
  *
- * 쓰기가 실패하면 한 번 읽어 본다. 디스크에 남은 쓰기를 SDK 가 재시작 뒤 다시 보내면 서버에는 이미 기록이 있어
- * 같은 키로 다시 만드는 쓰기가 생성 전용 규칙에 막힌다. 내 uid 의 기록이 이미 있으면 전송된 것으로 본다 (RR11).
- * 그 밖의 실패는 10초부터 두 배씩(최대 5분) 늘려 다시 시도한다. 규칙이 허용하지 않는 필드는 절대 쓰지 않는다.
- * 실패한 해제도 기록이 살아 있으면 슬롯을 유지하고 계속 다시 보낸다 (RR15).
- * (v1.2.2) 서버 저장이 확인된 순간 onSaved 로 알린다 — 구조 요청 메일이 여기서 시작한다.
- * 해제 확인 때 구조 요청이 아직 확인되지 않았던 기록이면 구조 요청을 먼저 알린다. 스크립트가 늦은 구조 요청 메일을
- * '해제됨'으로 보낸다. 이미 확인된 기록은 해제만 알린다.
+ * When a write fails, read once. If the SDK resends a write left on disk after a restart, the
+ * record already exists on the server and re-creating it under the same key is blocked by the
+ * create-only rule. If a record with my uid already exists, it counts as sent.
+ * Other failures are retried with a backoff that doubles from 10 s (max 5 min). Fields the rules do not allow are never written.
+ * A failed resolve keeps its slot and keeps resending while the record is still alive.
+ * onSaved fires the moment the server save is confirmed — the SOS mail starts here.
+ * If a resolve is confirmed for a record whose SOS was not yet confirmed, the SOS is reported first; the
+ * script then sends the late SOS mail as "해제됨". Already-confirmed records report only the resolve.
  */
 class SosLedger(
     private val kv: SosKv,
@@ -49,7 +50,7 @@ class SosLedger(
     enum class Remote { ABSENT, MINE_ACTIVE, MINE_RESOLVED, OTHER, ERROR }
 
     companion object {
-        /** 저장 키. 접두어를 붙여 이전 개발 빌드가 남긴 다른 형의 키를 읽지 않게 한다. 존재 = 활성. */
+        /** Storage keys. Prefixed so differently typed keys left by earlier dev builds are never read. Present = active. */
         const val K_TRIGGER = "a.trigger"
         private const val K_BLE = "a.ble"
         private const val K_NAME = "a.name"
@@ -74,20 +75,21 @@ class SosLedger(
         private const val BACKOFF_BASE_MS = 10_000L
         private const val BACKOFF_MAX_MS = 300_000L
 
-        /** 실패 횟수(1부터)에 따른 재시도 대기: 10초, 20초, 40초 ... 최대 5분. */
+        /** Retry delay by failure count (from 1): 10 s, 20 s, 40 s ... up to 5 min. */
         fun backoffMs(failures: Int): Long {
             if (failures <= 1) return BACKOFF_BASE_MS
             return minOf(BACKOFF_MAX_MS, BACKOFF_BASE_MS shl minOf(failures - 1, 20))
         }
 
-        /** 다음 에피소드 번호: 1..255, 0 은 "없음"이라 쓰지 않고 255 다음은 1. */
+        /** Next episode number: 1..255; 0 means none and is never used, and 255 wraps to 1. */
         fun nextEpisode(prev: Int): Int = (prev.coerceAtLeast(0) % 255) + 1
     }
 
-    /** sent = 해제할 때 구조 요청이 서버에서 확인돼 있었는가(생성 확인이 늦게 오면 그때 세운다). */
+    /** sent = whether the SOS was confirmed on the server at resolve time (set later if the create confirmation arrives late). */
     private class Pending(val path: String, val key: String, val sent: Boolean)
 
-    // 진행 중·실패·다음 허용 시각은 메모리에만 둔다(재시작하면 바로 다시 시도). 생성과 해제는 따로 센다.
+    // In-flight state, failures and next-allowed time live in memory only (a restart
+    // retries immediately). Create and resolve are counted separately.
     private val createBusy = HashSet<String>()
     private val createFails = HashMap<String, Int>()
     private val createNext = HashMap<String, Long>()
@@ -100,7 +102,7 @@ class SosLedger(
     fun episode(): Int = kv.get(K_EP)?.toIntOrNull() ?: 0
     fun hint(): Int = kv.get(K_SID)?.toIntOrNull() ?: 0
 
-    /** SOS 진입. 이미 저장된 SOS(복원분)가 있으면 그대로 두어 두 번째 기록을 만들지 않는다. */
+    /** SOS entered. If a stored SOS (restored) already exists, keep it so no second record is created. */
     fun begin(rec: Record) {
         if (hasActive()) return
         val ep = nextEpisode(kv.get(K_EP_LAST)?.toIntOrNull() ?: 0)
@@ -125,7 +127,7 @@ class SosLedger(
         sendResolves()
     }
 
-    /** 서버 전송 상태 문구. 내 SOS 가 없으면 null. */
+    /** Server send status text. null when I have no SOS. */
     fun statusText(): String? {
         if (!hasActive()) return null
         if (kv.get(K_SENT) != null) return STATUS_SENT
@@ -134,7 +136,7 @@ class SosLedger(
         return STATUS_FAILED
     }
 
-    /** 해제([괜찮아요]에서만 호출). 활성 칸은 바로 비우고 해제는 대기 목록으로 옮긴다. */
+    /** Resolve (called only from "괜찮아요"). Empties the active slot at once and moves the resolve to the pending list. */
     fun resolve() {
         if (!hasActive()) return
         val key = kv.get(K_KEY)
@@ -152,10 +154,10 @@ class SosLedger(
         onChange()
     }
 
-    /** 해제가 서버에 닿지 못해 다시 보내는 중인 것이 있는가. */
+    /** Whether any resolve is being resent because it has not reached the server. */
     fun resolveFailing(): Boolean = pending().any { (resolveFails[it.key] ?: 0) > 0 }
 
-    // ── 생성 ──────────────────────────────────────────────────
+    // ── Create ──────────────────────────────────────────────────
 
     private fun trySend() {
         if (!hasActive() || kv.get(K_SENT) != null) return
@@ -179,7 +181,7 @@ class SosLedger(
                 onCreated(sentPath, sentKey)
                 onChange()
             } else {
-                // 서버에 이미 내 기록이 있으면(재시작 전 쓰기가 뒤늦게 반영) 다시 쓰지 않고 전송된 것으로 본다
+                // If my record already exists on the server (a pre-restart write landed late), don't write again; treat it as sent
                 transport.read(sentPath, sentKey) { r ->
                     createBusy.remove(sentKey)
                     if (r == Remote.MINE_ACTIVE || r == Remote.MINE_RESOLVED) {
@@ -198,14 +200,14 @@ class SosLedger(
     private fun onCreated(path: String, key: String) {
         createFails.remove(key)
         createNext.remove(key)
-        // 해제·교체로 활성 키가 바뀐 뒤에 늦게 온 응답은 활성 칸에 쓰지 않는다
+        // A late response that arrives after a resolve or replacement changed the active key is not written to the active slot
         val active = kv.get(K_KEY) == key && hasActive()
         val list = pending()
         val waiting = list.any { it.key == key && it.path == path && !it.sent }
-        // 해제 확인이 구조 요청까지 알리고 줄을 지운 뒤 늦게 온 확인이면 다시 알리지 않는다
+        // If this confirmation arrives after the resolve confirmation already reported the SOS and removed the row, don't report again
         if (!active && !waiting) return
-        // 늦게 온 확인이라도 서버에는 기록이 생겼으므로 알린다.
-        // 메일 대기열이 먼저 남아야 사이에 죽어도 재확인으로 다시 알린다
+        // Report even a late confirmation, since the record now exists on the server.
+        // The mail queue entry must be saved first so that, if the process dies in between, a re-check reports it again
         onSaved(SosMail.EVENT_SOS, path, key)
         if (active) kv.put(mapOf(K_SENT to "1"))
         if (waiting) {
@@ -220,7 +222,7 @@ class SosLedger(
         kv.get(K_SID)?.toIntOrNull() ?: 0, kv.get(K_EP)?.toIntOrNull() ?: 0
     )
 
-    // ── 해제 ──────────────────────────────────────────────────
+    // ── Resolve ─────────────────────────────────────────────────
 
     private fun sendResolves() {
         for (e in pending()) {
@@ -252,9 +254,10 @@ class SosLedger(
     }
 
     /**
-     * 해제가 서버에서 확인됨. 줄을 지금 다시 읽어, 구조 요청이 확인되지 않은 채 해제된 기록이면 구조 요청을 먼저
-     * 알린다(보낸 뒤 생성 확인이 와서 표시가 바뀌었을 수 있다). 메일 대기열이 먼저 남아야 사이에 죽어도 재확인으로
-     * 다시 알린다.
+     * The resolve is confirmed by the server. Re-read the row now; if the record
+     * was resolved before its SOS was confirmed, report the SOS first
+     * (the create confirmation may have arrived after sending and changed the flag). The mail queue entry must be saved first so that,
+     * if the process dies in between, a re-check reports it again.
      */
     private fun resolved(e: Pending) {
         val now = pending().firstOrNull { it.key == e.key && it.path == e.path }
@@ -270,8 +273,8 @@ class SosLedger(
         resolveNext.remove(e.key)
     }
 
-    // 목록 저장 형식: 줄마다 "경로 TAB 키", 구조 요청 확인 전에 해제한 것만 "TAB 0" 을 붙인다.
-    // 셋째 칸이 없는 줄(이전 형식 포함)은 확인된 것으로 읽는다. 깨진 줄은 건너뛴다.
+    // List storage format: one "path TAB key" per line; only entries resolved before the SOS was confirmed get "TAB 0" appended.
+    // Lines without a third field (including the older format) are read as confirmed. Broken lines are skipped.
     private fun pending(): List<Pending> {
         val raw = kv.get(K_PENDING) ?: return emptyList()
         val out = ArrayList<Pending>()

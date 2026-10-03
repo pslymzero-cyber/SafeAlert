@@ -11,56 +11,57 @@ import kotlin.math.abs
 import kotlin.math.sqrt
 
 /**
- * IMU 융합 — 선형 가속도 기반 이동 감지
+ * IMU fusion — motion detection from linear acceleration
  *
- * BLE RSSI는 몸체 가림(body-block)이나 반사로 갑자기 변할 수 있음.
- * 가속도계로 실제 이동 여부를 교차 검증해 TTC 오경보를 억제하고,
- * 칼만 Q를 적응적으로 조정해 정지 시 더 강한 평활화 / 빠른 이동 시 더 빠른 추적.
+ * BLE RSSI can jump suddenly from body-block or reflections.
+ * The accelerometer cross-checks real movement to suppress false TTC alarms,
+ * and Kalman Q adapts: stronger smoothing when stationary, faster tracking when moving fast.
  *
  * [motionScore]
- *   ~0.0  : 정지      (RSSI 변화 = 노이즈 or body-block)
- *   ~1.0  : 보통 걷기
- *   ~2.0+ : 빠른 이동 (RSSI 변화 = 실제 접근 가능성 높음)
+ *   ~0.0  : stationary   (RSSI change = noise or body-block)
+ *   ~1.0  : normal walking
+ *   ~2.0+ : fast motion  (RSSI change = likely a real approach)
  */
 object ImuFusion {
 
     private const val TAG = "ImuFusion"
 
-    // ~1초 창 @ 50Hz
+    // ~1 s window @ 50Hz
     private const val WINDOW_SIZE          = 50
-    private const val STATIONARY_THRESHOLD = 0.15f   // m/s² RMS 이하 → 정지 후보
-    private const val FAST_THRESHOLD       = 2.5f    // m/s² RMS 이상 → 빠른 이동
+    private const val STATIONARY_THRESHOLD = 0.15f   // m/s² RMS; at or below → stationary candidate
+    private const val FAST_THRESHOLD       = 2.5f    // m/s² RMS; at or above → fast motion
 
     /**
-     * 확정 정지 판정 창 (샘플 수).
-     * ~0.5초(25샘플 @ 50Hz) 이상 연속으로 STATIONARY_THRESHOLD 이하여야
-     * '확정 정지'로 선언 → 다중경로 페이딩 Ghost Alarm 원천 차단.
-     * 움직임 감지(mag >= STATIONARY_THRESHOLD) 시 즉시 0으로 리셋.
+     * Confirmed-stationary window (samples).
+     * Must stay at or below STATIONARY_THRESHOLD for ~0.5 s (25 samples @ 50Hz) in a row
+     * to be declared confirmed stationary → blocks multipath-fading ghost alarms at the source.
+     * Resets to 0 immediately on motion (mag >= STATIONARY_THRESHOLD).
      */
     private const val STATIONARY_CONFIRM_FRAMES = 25
 
-    // [v1.0.29 다이나믹 페이로드] 3-State 모션 감지 추가 레이어.
-    //   STATE_* 값은 BleConstants.MOTION_STATE_* 와 동일 — ServiceData 1Byte로 송신된다.
-    //   기존 정지판정(isStationary)·Q스케일(adaptiveQFactor)은 일절 불변, 위에 얹기만 한다.
+    // 3-state motion detection layer for the dynamic payload.
+    //   STATE_* values equal BleConstants.MOTION_STATE_* and are sent in the 1-byte ServiceData.
+    //   Sits on top of the stationary check (isStationary) and Q scale (adaptiveQFactor) without changing them.
     private const val STATE_STATIONARY = 0x00
     private const val STATE_NORMAL     = 0x01
     private const val STATE_SUDDEN     = 0x02
-    // 급정거: 선형가속도 크기(m/s²)가 이 값 초과 (빠른 이동 FAST_THRESHOLD=2.5 보다 큰 충격)
+    // Sudden stop: linear acceleration magnitude (m/s²) above this (harder than fast motion, FAST_THRESHOLD=2.5)
     private const val SUDDEN_ACCEL_THRESHOLD = 5.0f
-    // 급회전: 자이로 Z축 회전율(rad/s) 절댓값이 이 값 초과
+    // Sharp turn: absolute gyro Z-axis rate (rad/s) above this
     private const val SUDDEN_GYRO_THRESHOLD  = 1.5f
-    // 0x02 진입 후 이 시간 동안 0x02 유지 → 잦은 깜빡임 방지(Hysteresis 디바운스)
+    // Hold 0x02 for this long after entering it → prevents frequent flicker (hysteresis debounce)
     private const val SUDDEN_HOLD_MS         = 1500L
 
-    // [v1.0.36] 코너링(급회전) 판정 임계 — heading 변화율(deg/s) 절댓값 이 값 이상이면 코너링.
-    //   완만한 보행/주행 곡선(<~40°/s)은 평상, 급커브·제자리 회전(>~60°/s)만 코너링으로 잡는다.
+    // Cornering (sharp turn) threshold — cornering when |heading rate| (deg/s) is at or above this.
+    //   Gentle walking/driving curves (<~40°/s) are normal; only sharp curves and turning in place (>~60°/s) count.
     private const val CORNERING_RATE_THRESHOLD = 60f
-    // [v1.0.36] 코너링 회전율 EMA 평활 계수(노이즈 억제). 1에 가까울수록 즉응, 0이면 둔감.
+    // EMA smoothing factor for the cornering turn rate (noise suppression). Near 1 = responsive, 0 = insensitive.
     private const val TURN_RATE_EMA          = 0.4f
-    // [v1.1.7 #1] 회전 방향 송출 임계(deg/s) — heading 변화율 절댓값이 이 값 이상이면 좌/우 회전 판정.
-    //   코너링 임계(60°/s)보다 낮춰 완만한 차선변경·회전 진입도 조기 송출(상대 표시·경보 대비).
+    // Turn-direction broadcast threshold (deg/s) — left/right turn when |heading rate| is at or above this.
+    //   Lower than the cornering threshold (60°/s) so gentle lane changes and turn entries are broadcast early
+    //   (for peer display and alerts).
     private const val TURN_DETECT_THRESHOLD  = 20f
-    // [v1.1.7 #1] BleConstants TURN_* 로컬 미러 (ImuFusion 는 BleConstants 를 import 하지 않음).
+    // Local mirror of BleConstants TURN_* (ImuFusion does not import BleConstants).
     private const val TURN_STRAIGHT = 0b00
     private const val TURN_LEFT     = 0b01
     private const val TURN_RIGHT    = 0b10
@@ -68,28 +69,30 @@ object ImuFusion {
     private var sensorManager: SensorManager? = null
     @Volatile private var isRunning = false
 
-    // 연속 정지 프레임 카운터 (lock으로 보호)
+    // Consecutive stationary frame counter (guarded by lock)
     @Volatile private var stationaryFrameCount = 0
 
-    // [v1.0.27] 정지↔이동 상태 변화 통지 훅 — BleService 가 동적 스캔 모드 제어용으로 구독.
-    //   isStationary 판정식·임계값은 일절 불변. 상태가 '바뀌는 순간'만 콜백으로 알린다.
-    //   이동 감지 시 0프레임(진짜 0초) 지연으로 호출 → 즉시 LOW_LATENCY 복귀 보장.
+    // Stationary↔moving change hook — BleService subscribes.
+    //   The isStationary formula and thresholds are untouched; it fires only at the moment the state changes.
+    //   On motion it fires with zero-frame (truly 0 s) delay → BleService wakes advertising at once
+    //   (keepAdvertiseWhileMoving). Its scan eco toggle is a no-op: the rest scan mode equals the active one.
     @Volatile var onStationaryChanged: ((Boolean) -> Unit)? = null
     @Volatile private var lastNotifiedStationary = false
 
-    // [v1.0.29] 3-State 모션 상태 변화 통지 훅 — BleService 가 구독해
-    //   BleAdvertiser.updateState() 로 ServiceData 상태 코드를 갱신한다.
+    // 3-state motion change hook — BleService subscribes and updates the ServiceData state code
+    //   via BleAdvertiser.updateState().
     @Volatile var onMotionStateChanged: ((Int) -> Unit)? = null
     @Volatile private var lastNotifiedMotionState = STATE_STATIONARY
-    // 마지막 '급변(급정거/급회전)' 감지 시각(elapsedRealtime). HOLD 윈도 동안 0x02 유지.
+    // Time of the last sudden change (sudden stop/sharp turn), elapsedRealtime. 0x02 is held during the HOLD window.
     @Volatile private var lastSuddenMs = 0L
 
     private val accelBuffer = ArrayDeque<Float>()
     private val lock = Any()
 
-    // [v1.0.36] 게임 회전 벡터(자이로+가속도, 지자기 미사용 → 자기장 교란 면역) 기반 '코너링' 감지.
-    //   외부로 전송하지 않는다(내부 전용). 내 장비가 급격히 회전(코너링) 중인지 판정에만 쓴다.
-    //   heading(진행 방위, deg)의 시간변화율(deg/s)을 구해 turnRateDegPerSec 로 노출.
+    // Cornering detection from the game rotation vector (gyro + accelerometer, no magnetometer → immune to
+    //   magnetic interference). Not transmitted (internal only); used only to judge whether my equipment is
+    //   turning sharply. Exposes the rate of change (deg/s) of heading (travel direction, deg) as
+    //   turnRateDegPerSec.
     private val gameRotMatrix = FloatArray(9)
     private val gameOrient    = FloatArray(3)
     @Volatile private var lastHeadingDeg = Float.NaN
@@ -98,13 +101,14 @@ object ImuFusion {
         private set
     @Volatile var hasGameRotation: Boolean = false
         private set
-    /** 현재 '코너링(급회전)' 중인지 — |회전율| ≥ CORNERING_RATE_THRESHOLD. BleService Time-Gate 연장 트리거. */
+    /** Whether cornering now — |turn rate| ≥ CORNERING_RATE_THRESHOLD; triggers the BleService Time-Gate extension. */
     val isCornering: Boolean get() = hasGameRotation && abs(turnRateDegPerSec) >= CORNERING_RATE_THRESHOLD
 
     private val listener = object : SensorEventListener {
         override fun onSensorChanged(event: SensorEvent) {
-            // [v1.0.36] 게임 회전 벡터 → heading 변화율(코너링) 산출. 외부 전송 안 함(내부 전용).
-            //   지자기 미사용 센서라 자석 간섭에 면역. 알람 발령엔 안 쓰고 Time-Gate 연장 판단에만 사용.
+            // Game rotation vector → heading rate (cornering). Not transmitted (internal only).
+            //   No magnetometer, so immune to magnet interference.
+            //   Not used to raise alarms; only to decide the Time-Gate extension.
             if (event.sensor.type == Sensor.TYPE_GAME_ROTATION_VECTOR) {
                 SensorManager.getRotationMatrixFromVector(gameRotMatrix, event.values)
                 SensorManager.getOrientation(gameRotMatrix, gameOrient)
@@ -113,12 +117,12 @@ object ImuFusion {
                 if (!lastHeadingDeg.isNaN() && lastHeadingMs != 0L) {
                     val dtSec = (nowMs - lastHeadingMs) / 1000f
                     if (dtSec > 0.001f) {
-                        // heading 차를 -180..180 으로 wrap (360° 경계 점프 제거)
+                        // Wrap the heading difference to -180..180 (removes the 360° boundary jump)
                         var dHeading = headingDeg - lastHeadingDeg
                         while (dHeading > 180f)  dHeading -= 360f
                         while (dHeading < -180f) dHeading += 360f
                         val rate = dHeading / dtSec
-                        // EMA 평활 — 센서 노이즈로 인한 순간 스파이크 억제
+                        // EMA smoothing — suppresses momentary spikes from sensor noise
                         turnRateDegPerSec = TURN_RATE_EMA * rate + (1f - TURN_RATE_EMA) * turnRateDegPerSec
                     }
                 }
@@ -127,7 +131,7 @@ object ImuFusion {
                 return
             }
 
-            // [v1.0.29] 자이로: Z축 회전율 급증 → 급회전(0x02) 트리거
+            // Gyro: Z-axis rate spike → sharp turn (0x02) trigger
             if (event.sensor.type == Sensor.TYPE_GYROSCOPE) {
                 if (abs(event.values[2]) > SUDDEN_GYRO_THRESHOLD) {
                     lastSuddenMs = SystemClock.elapsedRealtime()
@@ -136,30 +140,30 @@ object ImuFusion {
                 return
             }
 
-            // ── 이하 선형 가속도 경로 (v1.0.27 로직 100% 보존) ──────────────
+            // ── Linear acceleration path below ──────────────
             val x = event.values[0]; val y = event.values[1]; val z = event.values[2]
             val mag = sqrt(x * x + y * y + z * z)
-            var transition: Boolean? = null   // [v1.0.27] null=변화없음 / true·false=새 상태
+            var transition: Boolean? = null   // null = no change / true·false = new state
             synchronized(lock) {
                 if (accelBuffer.size >= WINDOW_SIZE) accelBuffer.removeFirst()
                 accelBuffer.addLast(mag)
-                // 확정 정지 카운터: 임계 이하면 증가(상한 고정), 초과 시 즉시 리셋
+                // Confirmed-stationary counter: increments while at or below the threshold (capped), resets immediately above it
                 stationaryFrameCount = if (mag < STATIONARY_THRESHOLD) {
                     (stationaryFrameCount + 1).coerceAtMost(STATIONARY_CONFIRM_FRAMES)
                 } else {
-                    0   // 미세한 진동도 즉시 '이동 중'으로 전환
+                    0   // even slight vibration switches to moving immediately
                 }
-                // [v1.0.27] 상태 변화 감지(판정식 그대로 재사용) — 바뀐 순간만 기록
+                // Detect a state change (same formula reused) — record only at the moment it changes
                 val nowStationary = stationaryFrameCount >= STATIONARY_CONFIRM_FRAMES
                 if (nowStationary != lastNotifiedStationary) {
                     lastNotifiedStationary = nowStationary
                     transition = nowStationary
                 }
             }
-            // [v1.0.27] 콜백은 lock 밖에서 호출 — 구독자 코드가 lock 을 점유·지연시키지 않게
+            // Invoke callbacks outside the lock — so subscriber code can't hold or delay the lock
             transition?.let { onStationaryChanged?.invoke(it) }
 
-            // [v1.0.29] 가속도 급변(급정거) → 0x02 트리거 후 모션 상태 재평가
+            // Sudden acceleration change (sudden stop) → trigger 0x02, then re-evaluate the motion state
             if (mag > SUDDEN_ACCEL_THRESHOLD) {
                 lastSuddenMs = SystemClock.elapsedRealtime()
             }
@@ -168,7 +172,7 @@ object ImuFusion {
         override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) {}
     }
 
-    // [v1.0.29] 현재 모션 상태를 평가해 '바뀌는 순간'만 콜백으로 통지(가속도/자이로 공용).
+    // Evaluate the motion state and notify via callback only when it changes (shared by accelerometer and gyro).
     private fun evaluateMotionState() {
         val s = motionState
         if (s != lastNotifiedMotionState) {
@@ -185,7 +189,7 @@ object ImuFusion {
             return
         }
         sensorManager?.registerListener(listener, sensor, SensorManager.SENSOR_DELAY_GAME)
-        // [v1.0.29] 자이로스코프 추가 등록 — 급회전(0x02) 감지용. 없으면 가속도 급변만으로 판정.
+        // Also register the gyroscope for sharp-turn (0x02) detection; without it, only sudden acceleration counts.
         val gyro = sensorManager?.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
         if (gyro != null) {
             sensorManager?.registerListener(listener, gyro, SensorManager.SENSOR_DELAY_GAME)
@@ -193,11 +197,12 @@ object ImuFusion {
         } else {
             Log.w(TAG, "자이로 센서 없음 — 가속도 급변만으로 0x02 판정")
         }
-        // [v1.0.36] 게임 회전 벡터(GAME_ROTATION_VECTOR) 등록 — 코너링 감지용(내부 전용, 미전송).
-        //   지자기를 안 써 자기장 교란에 면역. 없으면 코너링 미감지(Time-Gate 평상값 — 안전).
-        //   [v1.0.37] 배터리 최적화: SENSOR_DELAY_GAME(~50Hz)→SENSOR_DELAY_NORMAL(~5Hz)로 하향.
-        //     CPU 깨우기 빈도를 ~1/10로 줄여 전력을 절감한다. 회전율은 실제 이벤트 간격(dt)으로
-        //     미분하므로 deg/s 값 자체는 유지되고, EMA 평활 반응만 다소 느려진다(코너링 판정 OK).
+        // Register the game rotation vector (GAME_ROTATION_VECTOR) — for cornering detection (internal only,
+        //   not transmitted). No magnetometer, so immune to magnetic interference. Without it, no cornering detection
+        //   (Time-Gate keeps its normal value — safe).
+        //   Battery: SENSOR_DELAY_NORMAL (~5Hz) instead of SENSOR_DELAY_GAME (~50Hz) cuts CPU wakeups to ~1/10.
+        //     The turn rate is differentiated over the real event interval (dt), so deg/s values hold; only the
+        //     EMA response gets somewhat slower (cornering detection still OK).
         val gameRot = sensorManager?.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR)
         if (gameRot != null) {
             sensorManager?.registerListener(listener, gameRot, SensorManager.SENSOR_DELAY_NORMAL)
@@ -216,12 +221,12 @@ object ImuFusion {
         synchronized(lock) {
             accelBuffer.clear()
             stationaryFrameCount = 0
-            lastNotifiedStationary = false   // [v1.0.27] 다음 init 시 첫 통지 정합성 보장
+            lastNotifiedStationary = false   // keeps the first notification after the next init consistent
         }
-        // [v1.0.29] 3-State 상태 리셋
+        // Reset the 3-state motion state
         lastSuddenMs = 0L
         lastNotifiedMotionState = STATE_STATIONARY
-        // [v1.0.36] 코너링(게임 회전 벡터) 상태 리셋
+        // Reset the cornering (game rotation vector) state
         hasGameRotation   = false
         turnRateDegPerSec = 0f
         lastHeadingDeg    = Float.NaN
@@ -231,8 +236,8 @@ object ImuFusion {
     }
 
     /**
-     * RMS 가속도 (m/s²).
-     * 센서 없음 / 버퍼 < 5샘플 → 중립값 1.0f 반환 (경보 억제 없음)
+     * RMS acceleration (m/s²).
+     * No sensor / buffer < 5 samples → returns the neutral 1.0f (no alert suppression)
      */
     val motionScore: Float
         get() {
@@ -243,22 +248,22 @@ object ImuFusion {
         }
 
     /**
-     * 확정 정지 여부.
-     * STATIONARY_CONFIRM_FRAMES(25샘플 ≈ 0.5초) 연속 임계 이하일 때만 true.
-     * 즉각 판단(motionScore < threshold) 대비 안정적: 순간 진동·충격에 흔들리지 않음.
-     * → TTC 계산 중단 + 칼만 Q 동결 판단에 사용
+     * Whether confirmed stationary.
+     * True only after STATIONARY_CONFIRM_FRAMES (25 samples ≈ 0.5 s) in a row at or below the threshold.
+     * More stable than an instant check (motionScore < threshold): not shaken by momentary vibration or shocks.
+     * → Used to stop TTC calculation and to freeze Kalman Q
      */
     val isStationary: Boolean get() = stationaryFrameCount >= STATIONARY_CONFIRM_FRAMES
 
     /**
-     * 칼만 프로세스 노이즈 Q 스케일팩터 (0.01 ~ 3.0):
-     * - 확정 정지  → Q×0.01: 칼만 거의 동결 (다중경로 페이딩 Ghost Alarm 차단)
-     * - 정지 전 단계 → Q×0.3: 강한 평활화 (body-block 억제)
-     * - 빠른 이동  → Q×3.0: 빠른 응답 (실제 접근 신속 추적)
+     * Kalman process-noise Q scale factor (0.01 ~ 3.0):
+     * - confirmed stationary → Q×0.01: Kalman nearly frozen (blocks multipath-fading ghost alarms)
+     * - pre-stationary       → Q×0.3: strong smoothing (suppresses body-block)
+     * - fast motion          → Q×3.0: fast response (tracks real approaches quickly)
      */
     val adaptiveQFactor: Double
         get() {
-            if (isStationary) return 0.01   // 확정 정지: 칼만 동결
+            if (isStationary) return 0.01   // confirmed stationary: freeze Kalman
             val s = motionScore
             return when {
                 s < STATIONARY_THRESHOLD -> 0.3
@@ -269,9 +274,9 @@ object ImuFusion {
         }
 
     /**
-     * v1.0.29 3-State 모션 상태 (0x00 정지 / 0x01 일반 이동 / 0x02 급정거·급회전).
-     * 급변 감지 후 SUDDEN_HOLD_MS 동안 0x02 유지(Hysteresis) → 잦은 깜빡임 방지.
-     * 그 외에는 기존 isStationary 판정을 그대로 따른다(정지=0x00, 이동=0x01).
+     * 3-state motion state (0x00 stationary / 0x01 normal motion / 0x02 sudden stop or sharp turn).
+     * After a sudden change, 0x02 is held for SUDDEN_HOLD_MS (hysteresis) → prevents frequent flicker.
+     * Otherwise follows the isStationary check (stationary = 0x00, moving = 0x01).
      */
     val motionState: Int
         get() {
@@ -280,11 +285,11 @@ object ImuFusion {
         }
 
     /**
-     * [v1.1.7 #1] 회전 방향(TURN_*) — GAME_ROTATION_VECTOR 방위각 미분(turnRateDegPerSec) 기반.
-     *   게임회전벡터 미지원(hasGameRotation=false)이면 직진으로 폴백(오검출 방지).
-     *   |회전율| ≥ TURN_DETECT_THRESHOLD 일 때만 좌/우 판정. 부호는 장착 방향 의존 → 현장 검증.
-     *   (시계방향/우회전을 양수로 가정; 반대면 아래 부호만 뒤집으면 됨)
-     *   BleAdvertiser.updateTurn() 로 송출 → 수신단이 상대 회전 진입 표시·경보에 활용.
+     * Turn direction (TURN_*) — based on the derivative of the GAME_ROTATION_VECTOR heading (turnRateDegPerSec).
+     *   Without game rotation vector support (hasGameRotation=false), falls back to straight (no false detection).
+     *   Left/right only when |turn rate| ≥ TURN_DETECT_THRESHOLD. The sign depends on mounting orientation
+     *   → verify in the field. (Assumes clockwise/right turn is positive; if reversed, just flip the sign below.)
+     *   Broadcast via BleAdvertiser.updateTurn() → receivers use it to show the peer entering a turn and for alerts.
      */
     val turnDirection: Int
         get() = when {

@@ -23,35 +23,36 @@ import com.wf11.safealert.service.BleService
 import kotlin.math.abs
 
 /**
- * (v1.1.70) 화면 경보 사이드바 — 화면 좌/우 가장자리에 밀착하는 엣지 패널이다.
+ * On-screen alert sidebar — an edge panel docked flush to the left/right screen edge.
  *
- * 창은 두 상태뿐이고, 보이는 자식이 곧 창의 폭이 된다.
- *   접힘 = overlay_handle 만  → 폭 20dp. 평상시 화면에 남는 유일한 요소.
- *   펼침 = overlay_panel 만   → 폭 236dp.
+ * The window has only two states, and the visible child sets the window width.
+ *   Collapsed = overlay_handle only → 20dp wide. The only element left on screen normally.
+ *   Expanded  = overlay_panel only  → 236dp wide.
  *
- * 상태 전이
- *   위험 1대 이상 → 자동 펼침(경보 목록). 경보 중에는 접히지 않는다 —
- *                   위험 목록을 실수로 감출 수 없어야 한다.
- *   위험 0대      → 자동 접힘. 손잡이를 탭하면 수동 펼침(공정 변경 진입)이 되고 [닫기] 로 되돌린다.
+ * State transitions
+ *   1+ hazard devices (WARNING or above) → auto-expand (alert list). Never collapses during an alert —
+ *                       the alert list must not be hideable by accident.
+ *   0 hazard devices  → auto-collapse. Tapping the handle expands it manually (process-change entry);
+ *                       "닫기" collapses it again.
  *
- * v1.1.69 까지는 가장자리에서 12dp 떨어진 236dp 카드가 접힌 뒤에도 그대로 남았다. 그것은
- * 사이드바가 아니라 플로팅 위젯이다. 이 판의 요점은 (a) 여백 0 밀착과 (b) 접을 때 폭 자체가
- * 20dp 로 줄어드는 것이다.
+ * Key points: (a) flush with zero margin, and (b) collapsing shrinks the window width itself to 20dp.
+ * A 236dp card left in place when collapsed would be a floating widget, not a sidebar.
  *
- * - 위험 대상을 전부 목록으로 표시한다. 행을 탭하면 ACTION_MUTE_DEVICE(그 기기만 30초 확인).
- * - 손잡이와 헤더가 드래그 지점이다. 목록이 터치를 먼저 가져가므로 루트에는 걸지 않는다.
- * - 경보 중 헤더를 화면 밖으로 끝까지 밀면 ACTION_MUTE_ALL(전체 확인). 사이드바는 걷지 않는다.
- * - 색·치수는 전부 res 토큰(sa_*)에서 읽는다. 코드에 리터럴 색을 두지 않는다.
+ * - Lists every hazard target (warning and danger). Tapping a row sends ACTION_MUTE_DEVICE (acknowledges only that device for 30 s).
+ * - The handle and header are the drag points. The list takes touches first, so nothing is attached to the root.
+ * - During an alert, pushing the header all the way off screen sends ACTION_MUTE_ALL (acknowledge all).
+ *   The sidebar is not removed.
+ * - All colors and dimensions come from res tokens (sa_*). No literal colors in code.
  */
 object OverlayManager {
 
     private const val TAG                 = "OverlayManager"
-    private const val DRAG_SLOP_PX        = 12f   // 이 이하 이동은 드래그가 아닌 '탭'으로 간주
-    private const val PANEL_WIDTH_DP      = 236   // overlay_panel  의 layout_width 와 반드시 일치
-    private const val HANDLE_WIDTH_DP     = 20    // overlay_handle 의 layout_width 와 반드시 일치
-    private const val HANDLE_HEIGHT_DP    = 96    // overlay_handle 의 layout_height 와 반드시 일치
-    private const val LIST_MAX_HEIGHT_DP  = 280   // 목록이 이보다 길면 사이드바 안에서 스크롤
-    private const val DISMISS_RATIO       = 0.45f // 폭의 이 비율만큼 화면 밖으로 밀면 '끝까지 드래그'
+    private const val DRAG_SLOP_PX        = 12f   // movement below this counts as a tap, not a drag
+    private const val PANEL_WIDTH_DP      = 236   // must match overlay_panel's layout_width
+    private const val HANDLE_WIDTH_DP     = 20    // must match overlay_handle's layout_width
+    private const val HANDLE_HEIGHT_DP    = 96    // must match overlay_handle's layout_height
+    private const val LIST_MAX_HEIGHT_DP  = 280   // a longer list scrolls inside the sidebar
+    private const val DISMISS_RATIO       = 0.45f // pushing this fraction of the width off screen = drag all the way
     private const val SNAP_DURATION_MS    = 160L
 
     private var windowManager: WindowManager? = null
@@ -74,20 +75,20 @@ object OverlayManager {
 
     private var currentDanger: Boolean? = null
 
-    /** 접힘 여부. null = 아직 한 번도 반영하지 않음(최초 갱신에서 강제 적용). */
+    /** Collapsed state. null = never applied yet (forced on the first update). */
     private var collapsed: Boolean? = null
 
-    /** 위험 0대인데 손잡이를 눌러 펼쳐 둔 상태. 경보가 뜨면 자동으로 풀린다. */
+    /** Expanded by tapping the handle while there are 0 danger devices. Cleared automatically when an alert fires. */
     private var manualExpand = false
 
-    /** true = 오른쪽 가장자리 도킹. 좌/우 어느 쪽이든 여백 없이 붙는다. */
+    /** true = docked to the right edge. Either side docks with no margin. */
     private var dockEnd = true
 
-    /** 마지막으로 반영한 내용. 손잡이 탭으로 펼칠 때 이 값으로 다시 그린다. */
+    /** Last applied content. Redrawn from this when a handle tap expands the panel. */
     private var lastHazards: List<HazardItem> = emptyList()
     private var lastRole: String = ""
 
-    // 드래그로 옮긴 세로 위치만 기억한다. 가로는 항상 도킹 계산 결과라 기억할 이유가 없다.
+    // Only the dragged vertical position is remembered; horizontal always comes from docking.
     private var savedY = Int.MIN_VALUE
 
     private var downX = 0
@@ -97,17 +98,19 @@ object OverlayManager {
     private var moved = false
 
     /**
-     * 화면 경보 이상 사유. null 이면 정상.
-     * 소리·진동만 남은 상태를 알림에 드러내기 위한 값이라 서비스 스레드에서도 읽는다.
+     * On-screen alert fault reason. null = normal.
+     * Read from the service thread too, since it surfaces in the notification that only sound and vibration remain.
      */
     @Volatile
     var overlayFaultReason: String? = null
         private set
 
-    /** 화면 경보 이상/복구 통지 콜백. 인자가 null 이면 복구. */
+    /** Callback for on-screen alert fault/recovery. A null argument means recovered. */
     var onOverlayFault: ((String?) -> Unit)? = null
 
-    /** 접힘/수동 펼침 상태에서 헤더를 탭했을 때 통지. 공정(역할) 변경 진입점이다. */
+    /**
+     * Called when the header or the "공정 변경" badge is tapped while expanded with no hazards; entry point for process (role) change.
+     */
     var onHeaderTap: (() -> Unit)? = null
 
     private fun setFault(reason: String?) {
@@ -116,12 +119,12 @@ object OverlayManager {
         runCatching { onOverlayFault?.invoke(reason) }
     }
 
-    /** 다른 앱 위에 표시 권한. 없으면 사이드바 자체를 띄울 수 없다. */
+    /** Permission to draw over other apps. Without it the sidebar cannot be shown at all. */
     fun canDrawOverlays(context: Context): Boolean = Settings.canDrawOverlays(context)
 
     /**
-     * 사이드바 한 행에 표시할 위험 기기.
-     * distText 가 비어 있으면 dBm 을 대신 보여준다(UWB 미측정 구간).
+     * A danger device shown in one sidebar row.
+     * dBm is shown instead when distText is empty (no UWB measurement).
      */
     data class HazardItem(
         val deviceId: String,
@@ -132,11 +135,11 @@ object OverlayManager {
     )
 
     /**
-     * 사이드바 상시 표시. 위험 대상이 0대여도 걷지 않고 손잡이만 남긴다.
-     *   - 접힘(평상시): 20dp 손잡이. 탭하면 펼쳐져 공정 변경으로 갈 수 있다.
-     *   - 펼침(경보 중): 위험 기기 목록. 경보가 뜨면 자동으로 펼쳐진다.
-     * 걷지 않는 이유 = 공정 변경 경로가 경보 유무와 무관하게 늘 살아 있어야 하기 때문이다.
-     * 이미 떠 있으면 removeView/addView 없이 내용만 갱신 → 깜빡임/위치 리셋 방지.
+     * Shows the sidebar permanently. Even with 0 hazard targets it stays, leaving only the handle.
+     *   - Collapsed (normal): 20dp handle. Tap to expand and reach process change.
+     *   - Expanded (alert): list of hazard devices (warning and danger). Expands automatically when an alert fires.
+     * Why it stays: the process-change path must always be available, alert or not.
+     * If already shown, only the content is updated, without removeView/addView → no flicker or position reset.
      */
     fun showSidebar(context: Context, hazards: List<HazardItem>, roleLabel: String = "") {
         if (!canDrawOverlays(context)) {
@@ -145,14 +148,14 @@ object OverlayManager {
             return
         }
         if (rootView == null) createSidebar(context)
-        if (rootView == null) return   // addView 실패 — 사유는 createSidebar 가 이미 setFault 로 기록
+        if (rootView == null) return   // addView failed — createSidebar already recorded why via setFault
         updateContent(context, hazards, roleLabel)
     }
 
     private fun updateContent(context: Context, hazards: List<HazardItem>, roleLabel: String) {
         lastHazards = hazards
         lastRole    = roleLabel
-        // 경보가 뜨면 수동 펼침 플래그는 의미를 잃는다. 여기서 풀어야 경보가 끝날 때 다시 접힌다.
+        // An alert makes the manual-expand flag moot; clear it here so the panel collapses again when the alert ends.
         if (hazards.isNotEmpty()) manualExpand = false
 
         val nowCollapsed = hazards.isEmpty() && !manualExpand
@@ -160,7 +163,7 @@ object OverlayManager {
             handleView?.visibility = if (nowCollapsed) View.VISIBLE else View.GONE
             panelView?.visibility  = if (nowCollapsed) View.GONE    else View.VISIBLE
             collapsed = nowCollapsed
-            // 보이는 자식이 바뀌면 창 폭도 바뀐다. 가장자리 밀착을 유지하려면 x 를 다시 잡아야 한다.
+            // Changing the visible child changes the window width; re-set x to stay flush with the edge.
             applyGeometry(context)
         }
 
@@ -169,7 +172,7 @@ object OverlayManager {
             return
         }
 
-        // 펼침이지만 위험 0대 = 손잡이를 눌러 연 공정 변경 화면. 목록·힌트는 감추고 진입 배지만 띄운다.
+        // Expanded with 0 hazards = process-change view opened via the handle; hide list/hint, show only the entry badge.
         val idle    = hazards.isEmpty()
         val bodyVis = if (idle) View.GONE else View.VISIBLE
         dividerView?.visibility  = bodyVis
@@ -181,7 +184,7 @@ object OverlayManager {
         if (idle) {
             titleView?.text = if (roleLabel.isNotEmpty()) roleLabel else "감시 중"
             adapter?.submit(hazards)
-            // 평상시에 헤더가 깜빡이면 그 자체가 오인 신호가 된다.
+            // A header blinking in normal times would itself be a misleading signal.
             stopPulse()
             return
         }
@@ -215,9 +218,9 @@ object OverlayManager {
 
         list.layoutManager = LinearLayoutManager(themed)
         list.adapter       = ad
-        list.itemAnimator  = null   // 경보 목록은 애니메이션 없이 즉시 교체 (지연 = 위험)
+        list.itemAnimator  = null   // alert list swaps instantly, no animation (delay = danger)
 
-        // 손잡이 탭 = 펼침. 헤더 탭(위험 0대) = 공정 변경. 둘 다 드래그로 좌/우·위아래 이동이 된다.
+        // Handle tap = expand. Header tap (0 hazards) = process change. Both can be dragged left/right and up/down.
         handle.setOnTouchListener(buildDragTouchListener { expandManually() })
         header.setOnTouchListener(buildDragTouchListener { requestRoleChange() })
         action.setOnClickListener   { requestRoleChange() }
@@ -227,20 +230,20 @@ object OverlayManager {
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,   // NOT_TOUCH_MODAL 을 함축 = 바깥 터치는 뒤 앱으로 통과
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,   // implies NOT_TOUCH_MODAL: outside touches pass to the app behind
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            // 최초 상태는 접힘 = 손잡이 폭. 가장자리에 여백 없이 붙인다.
+            // Initial state is collapsed = handle width, docked to the edge with no margin.
             x = dockX(context, dpToPx(context, HANDLE_WIDTH_DP))
             y = if (savedY != Int.MIN_VALUE) savedY else defaultY(context)
         }
 
         try {
             wm.addView(root, lp)
-            // (v1.1.64 패치3-7) 뷰 참조 대입은 addView 성공 이후에만 한다.
-            //   실패했는데 rootView 가 non-null 로 남으면 다음 호출이 '이미 떠 있음' 으로 새어
-            //   재부팅 전까지 화면 경보가 영구 소실된다.
+            // Assign view references only after addView succeeds.
+            //   If it failed but rootView stayed non-null, the next call would take the 'already shown' path
+            //   and the on-screen alert would be lost until reboot.
             windowManager = wm
             rootView      = root
             params        = lp
@@ -255,7 +258,7 @@ object OverlayManager {
             collapseView  = collapse
             adapter       = ad
             currentDanger = null
-            collapsed     = true      // 레이아웃 기본값(손잡이만 VISIBLE)과 일치시킨다
+            collapsed     = true      // match the layout default (only the handle VISIBLE)
             manualExpand  = false
             applyDockBackground()
             setFault(null)
@@ -281,7 +284,7 @@ object OverlayManager {
         }
     }
 
-    /** 손잡이 탭 = 수동 펼침. 위험이 없어도 공정 변경 진입점이 열린다. */
+    /** Handle tap = manual expand. Opens the process-change entry even with no danger. */
     private fun expandManually() {
         if (manualExpand) return
         manualExpand = true
@@ -289,7 +292,7 @@ object OverlayManager {
         updateContent(ctx, lastHazards, lastRole)
     }
 
-    /** [닫기] 탭 = 손잡이로 되돌린다. 경보 중에는 [닫기] 자체가 숨겨져 있다. */
+    /** "닫기" tap = back to the handle. During an alert "닫기" itself is hidden. */
     private fun collapseManually() {
         if (!manualExpand) return
         manualExpand = false
@@ -298,26 +301,27 @@ object OverlayManager {
     }
 
     /**
-     * 공정 변경 진입. 위험 대상이 있으면 무시한다 —
-     * 경보 중 오조작으로 위험 목록이 가려지는 일이 없어야 한다.
+     * Enters process change. Ignored while there are hazard targets (warning or danger) —
+     * an accidental tap during an alert must never hide the alert list.
      */
     private fun requestRoleChange() {
         if (lastHazards.isNotEmpty()) return
         runCatching { onHeaderTap?.invoke() }
     }
 
-    /** 도킹 x. 왼쪽이면 0, 오른쪽이면 화면폭 - 창폭. 여백은 두지 않는다 = 가장자리 밀착. */
+    /** Docked x: 0 on the left, screen width − window width on the right. No margin = flush with the edge. */
     private fun dockX(context: Context, widthPx: Int): Int =
         if (dockEnd) (context.resources.displayMetrics.widthPixels - widthPx).coerceAtLeast(0) else 0
 
-    /** 기본 세로 위치 = 손잡이가 화면 중앙에 오도록. */
+    /** Default vertical position = handle centered on screen. */
     private fun defaultY(context: Context): Int =
         ((context.resources.displayMetrics.heightPixels - dpToPx(context, HANDLE_HEIGHT_DP)) / 2)
             .coerceAtLeast(0)
 
     /**
-     * 접힘/펼침으로 창 폭이 바뀐 뒤 밀착 좌표를 다시 잡는다.
-     * 절대 좌표(Gravity.TOP or START) 방식이라 폭이 바뀌면 x 를 손대지 않는 한 가장자리에서 떨어진다.
+     * Re-snaps to the edge after collapse/expand changes the window width.
+     * With absolute coordinates (Gravity.TOP or START), a width change leaves the window
+     * off the edge unless x is updated.
      */
     private fun applyGeometry(context: Context) {
         val root = rootView ?: return
@@ -326,7 +330,7 @@ object OverlayManager {
         p.x = dockX(context, w)
         p.y = p.y.coerceAtLeast(0)
         try { windowManager?.updateViewLayout(root, p) } catch (_: Exception) {}
-        // 실제 높이는 측정 뒤에야 안다. 펼치며 커진 판이 화면 아래로 넘치면 끌어올린다.
+        // Real height is known only after measure; if the expanded panel overflows the screen bottom, pull it up.
         root.post {
             val pp   = params ?: return@post
             val maxY = (context.resources.displayMetrics.heightPixels - root.height).coerceAtLeast(0)
@@ -338,7 +342,7 @@ object OverlayManager {
         }
     }
 
-    /** 도킹 방향에 맞춰 바깥 모서리가 각진 배경으로 교체한다(안쪽만 둥근 판 = 엣지 패널). */
+    /** Swaps in a background whose outer corners are square for the docking side (rounded inside only = edge panel). */
     private fun applyDockBackground() {
         handleView?.let {
             setBackgroundKeepPadding(
@@ -356,7 +360,7 @@ object OverlayManager {
         }
     }
 
-    /** 배경 교체는 drawable 이 패딩을 갖고 있으면 뷰 패딩을 덮어쓴다. 원래 값을 되돌려 둔다. */
+    /** Swapping the background overwrites view padding if the drawable has padding; restore the original values. */
     private fun setBackgroundKeepPadding(v: View, resId: Int) {
         val l = v.paddingLeft
         val t = v.paddingTop
@@ -367,8 +371,8 @@ object OverlayManager {
     }
 
     /**
-     * 목록 높이 상한. RecyclerView 를 wrap_content 로 두면 기기가 늘어날수록 사이드바가
-     * 화면을 다 덮는다. 상한을 넘으면 그때부터 사이드바 안에서 스크롤시킨다.
+     * Cap on list height. With RecyclerView at wrap_content, more devices would make the sidebar
+     * cover the whole screen. Beyond the cap the list scrolls inside the sidebar.
      */
     private fun capListHeight(list: RecyclerView) {
         val maxPx = dpToPx(list.context, LIST_MAX_HEIGHT_DP)
@@ -388,9 +392,9 @@ object OverlayManager {
         (dp * context.resources.displayMetrics.density).toInt()
 
     /**
-     * 드래그 리스너(이동 · 좌/우 밀착 스냅 · 경보 중 끝까지 밀어 전체 확인).
-     * 목록이 터치를 먼저 소비하므로 루트가 아니라 손잡이와 헤더에만 건다.
-     * onTap = 이동 없이 뗐을 때의 동작(손잡이 = 펼침, 헤더 = 공정 변경).
+     * Drag listener (move · snap flush left/right · during an alert, push all the way to acknowledge all).
+     * The list consumes touches first, so it is attached only to the handle and header, not the root.
+     * onTap = action on release without moving (handle = expand, header = process change).
      */
     private fun buildDragTouchListener(onTap: () -> Unit): View.OnTouchListener =
         View.OnTouchListener { view, event ->
@@ -418,7 +422,7 @@ object OverlayManager {
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     if (moved) settleAfterDrag(view.context, root, p)
                     else {
-                        view.performClick()   // 접근성 대응
+                        view.performClick()   // accessibility
                         onTap()
                     }
                     true
@@ -428,9 +432,9 @@ object OverlayManager {
         }
 
     /**
-     * 드래그를 뗀 뒤 정리.
-     *   - 경보 중 화면 밖으로 끝까지 밀면 전체 확인(ACTION_MUTE_ALL). 사이드바는 걷지 않는다.
-     *   - 그 외에는 가까운 쪽 가장자리에 여백 없이 붙인다.
+     * Cleanup after the drag is released.
+     *   - During an alert, pushed all the way off screen → acknowledge all (ACTION_MUTE_ALL). The sidebar stays.
+     *   - Otherwise snaps flush to the nearer edge.
      */
     private fun settleAfterDrag(context: Context, root: View, p: WindowManager.LayoutParams) {
         val dm      = context.resources.displayMetrics
@@ -443,8 +447,8 @@ object OverlayManager {
         val slack   = (w * DISMISS_RATIO).toInt()
         val pushedOut = p.x < -slack || p.x + w > screenW + slack
 
-        // 접힘 상태의 손잡이는 폭이 20dp 라 임계가 9dp 밖에 안 된다. 스치기만 해도 전체 확인이
-        // 나가므로 경보가 떠 있는 펼침에서만 이 동작을 허용한다.
+        // The collapsed handle is only 20dp wide, so the threshold would be just 9dp. A mere brush would acknowledge
+        // all, so this action is allowed only when expanded with an alert showing.
         if (pushedOut && collapsed == false && lastHazards.isNotEmpty()) {
             dockEnd = p.x >= 0
             savedY  = p.y.coerceIn(0, maxY)
@@ -454,8 +458,8 @@ object OverlayManager {
                     action = BleService.ACTION_MUTE_ALL
                 })
             }.onFailure { Log.w(TAG, "전체 확인 전송 실패: ${it.message}") }
-            // 사이드바는 상시 노출이다. 걷지 않고 밀어낸 쪽 가장자리로 되돌린다
-            //   (경보 해제는 BleService 가 처리하고, 그 결과가 접힘 상태 갱신으로 돌아온다).
+            // The sidebar is always shown. Don't remove it; return it to the edge it was pushed toward
+            //   (BleService clears the alert, and the result comes back as a collapse-state update).
             applyDockBackground()
             p.x = dockX(context, w)
             p.y = savedY
@@ -470,7 +474,7 @@ object OverlayManager {
         animateSnapX(root, p, dockX(context, w))
     }
 
-    /** 가장자리 밀착 위치로 미끄러뜨린다. */
+    /** Slides to the flush edge position. */
     private fun animateSnapX(root: View, p: WindowManager.LayoutParams, targetX: Int) {
         snapAnimator?.cancel()
         if (p.x == targetX) {
@@ -487,7 +491,7 @@ object OverlayManager {
         }
     }
 
-    /** 헤더 점멸. 위험은 빠르고 깊게, 경고는 느리고 얕게 — 소리를 못 듣는 현장에서 등급을 구분한다. */
+    /** Header blink: danger fast and deep, warning slow and shallow — tells levels apart where sound can't be heard. */
     private fun startPulse(danger: Boolean) {
         pulseAnimator?.cancel()
         val header = headerView ?: return
@@ -501,7 +505,7 @@ object OverlayManager {
         }
     }
 
-    /** 경보가 끝났을 때 점멸을 멈추고 불투명도를 되돌린다. */
+    /** Stops blinking and restores opacity when the alert ends. */
     private fun stopPulse() {
         if (currentDanger == null && pulseAnimator == null) return
         pulseAnimator?.cancel()
@@ -511,9 +515,9 @@ object OverlayManager {
     }
 
     /**
-     * 사이드바를 화면에서 완전히 걷는다.
-     * 감시 종료(서비스 정지) 때만 호출한다.
-     *   위험 대상 0대는 '접힘' 이지 철거가 아니다 — 여기서 걷으면 공정 변경 진입점이 사라진다.
+     * Removes the sidebar from the screen completely.
+     * Call only when monitoring ends (service stop).
+     *   0 hazard targets means 'collapsed', not removal — removing it here would lose the process-change entry.
      */
     fun hideOverlay() {
         pulseAnimator?.cancel(); pulseAnimator = null
@@ -543,17 +547,17 @@ object OverlayManager {
         lastRole      = ""
     }
 
-    /** 위험 기기 목록 어댑터. 행 탭 = 그 기기만 30초 Acknowledge 무음. */
+    /** Danger device list adapter. Row tap = 30 s acknowledge mute for that device only. */
     private class HazardAdapter(private val ctx: Context) : RecyclerView.Adapter<HazardAdapter.VH>() {
 
         private val items = ArrayList<HazardItem>()
 
-        /** 목록을 갱신하고 '행 개수가 바뀌었는지'를 돌려준다(사이드바 높이 재계산 트리거). */
+        /** Updates the list and returns whether the row count changed (triggers sidebar height recalculation). */
         fun submit(list: List<HazardItem>): Boolean {
             val sizeChanged = items.size != list.size
             items.clear()
             items.addAll(list)
-            // 개수가 같으면 제자리 갱신 — 거리·dBm 만 매 프레임 바뀌므로 뷰홀더를 버릴 이유가 없다.
+            // Same count → update in place; only distance/dBm change each frame, so there's no reason to drop view holders.
             if (sizeChanged) notifyDataSetChanged() else notifyItemRangeChanged(0, items.size)
             return sizeChanged
         }
@@ -578,7 +582,7 @@ object OverlayManager {
             holder.name.setTextColor(lvColor)
             val meas = if (item.distText.isNotEmpty()) item.distText else "${item.rssi}dBm"
             holder.meas.text = "${meas} · 탭하면 30초 확인"
-            // shape_overlay_row 는 흰색 판이며, 여기서 위험/경고 틴트를 곱해 색을 결정한다.
+            // shape_overlay_row is a white plate; the danger/warning tint multiplied here sets its color.
             holder.itemView.backgroundTintList = ColorStateList.valueOf(
                 ContextCompat.getColor(ctx, if (item.danger) R.color.sa_tint_rose else R.color.sa_tint_amber)
             )

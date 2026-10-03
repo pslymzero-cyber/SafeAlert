@@ -13,48 +13,56 @@ import com.google.firebase.database.ValueEventListener
 import java.util.UUID
 
 /**
- * 단독 작업자 구조 요청(SOS)의 RTDB 전송부 (v1.1.99).
+ * RTDB transport for lone-worker SOS.
  *
- * 경로는 {firebaseRoot}/sos/{siteCode}/{pushKey}. 규칙(database.rules.json)이 작성자 uid 소유 기록만
- * 생성하고 작성자만 active→resolved 로 바꿀 수 있게 막는다. FCM·Functions 없이 RTDB 리스너로만 전달한다.
- * 프로퍼티 초기화에서 Firebase·안드로이드를 건드리지 않으므로 JVM 단위 테스트에서 불러올 수 있다.
+ * Path: {firebaseRoot}/sos/{siteCode}/{pushKey}. The rules (database.rules.json) allow creating only records owned by the writer's uid,
+ * and only the writer may change active→resolved. Delivery is through RTDB listeners only, without FCM or Functions.
+ * Property initialization touches neither Firebase nor Android, so JVM unit tests can load this.
  */
 object SosRemote {
     private const val TAG = "SosRemote"
 
-    /** 구조 요청 기록 한 건. bleId 는 광고 fullId 그대로라 BLE 수신 키와 병합된다. */
+    /** One SOS record. bleId is the advertised fullId as is, so it merges with the BLE receive key. */
     data class SosRecord(
         val key: String,
         val bleId: String,
         val name: String,
         val role: String,
         val trigger: String,      // "still" | "fall"
-        val beacon: String,       // 최근 최강 비콘 라벨(없으면 "")
+        val beacon: String,       // Label of the recent strongest beacon ("" if none)
         val beaconRssi: Int?,
         val createdAt: Long,
         val active: Boolean,
-        val uid: String,          // 작성자 uid(없으면 ""). 내 기록 걸러내기에 쓴다
-        val ep: Int = 0,          // SOS 회차 1..255(0 = 없음). BLE 광고 회차와 같은 값이다
-        val resolvedAt: Long = 0L // 해제 서버 시각(없으면 0)
+        val uid: String,          // Writer uid ("" if none); used to filter out my own records
+        val ep: Int = 0,          // SOS episode 1..255 (0 = none); same value as the BLE advertised episode
+        val resolvedAt: Long = 0L // Resolve server time (0 if none)
     )
 
     private const val SOS_STR_MAX = 64
     private const val SOS_ROLE_MAX = 32
 
-    /** 규칙(database.rules.json)의 beaconRssi 허용 범위와 같다. 벗어나면 기록 전체가 거부되므로 필드를 뺀다. */
+    /**
+     * Same as the beaconRssi range the rules (database.rules.json) allow. Out of
+     * range would reject the whole record, so the field is left out.
+     */
     const val BEACON_RSSI_MIN = -150
     const val BEACON_RSSI_MAX = 20
 
-    /** 서버 시각 오프셋을 읽은 순간의 (서버 시각, elapsedRealtime). listen() 이 계속 갱신하며 모르면 null 이다. */
+    /**
+     * (server time, elapsedRealtime) at the moment the server time offset was read. listen() keeps it updated; null if unknown.
+     */
     @Volatile private var serverAnchor: Pair<Long, Long>? = null
 
-    /** 지금 서버 시각 추정: 오프셋을 읽은 순간의 서버 시각 + 그 뒤 경과 시간(벽시계 변경과 무관). 모르면 null. */
+    /**
+     * Estimated current server time: server time when the offset was read + time
+     * elapsed since (unaffected by wall-clock changes). null if unknown.
+     */
     fun serverNowMs(): Long? = serverAnchor?.let { (s, e) -> s + (SystemClock.elapsedRealtime() - e) }
 
-    /** 수신 재생 창: 시작 전 30분 이내에 만들어진 기록까지 받는다 (R1). */
+    /** Receive replay window: records created up to 30 minutes before start are received. */
     const val REPLAY_WINDOW_MS = 30 * 60_000L
 
-    /** 스냅샷 값(Map) → SosRecord. 경계 입력이라 타입·길이가 어긋나면 null(무시). */
+    /** Snapshot value (Map) → SosRecord. Boundary input, so a wrong type or length gives null (ignored). */
     fun parseSosRecord(key: String, v: Any?): SosRecord? {
         val m = v as? Map<*, *> ?: return null
         val bleId = (m["bleId"] as? String)?.takeIf { it.isNotEmpty() && it.length <= SOS_STR_MAX } ?: return null
@@ -78,7 +86,7 @@ object SosRemote {
         )
     }
 
-    /** 기록 본문. beacon 은 비어 있지 않을 때만, beaconRssi 는 규칙 범위 안일 때만 넣는다. */
+    /** Record body. beacon is included only when non-empty, beaconRssi only when within the rule range. */
     fun recordPayload(
         bleId: String, name: String, role: String, trigger: String,
         beacon: String?, beaconRssi: Int?, uid: String, createdAt: Any, ep: Int = 0
@@ -97,15 +105,15 @@ object SosRemote {
         return data
     }
 
-    /** 수신 조회 시작점: 호출 시각(서버 시각 환산) 30분 전. */
+    /** Receive query start: 30 minutes before the call time (converted to server time). */
     fun replayStartAt(t0WallMs: Long, serverOffsetMs: Long): Long = t0WallMs + serverOffsetMs - REPLAY_WINDOW_MS
 
     fun nodePath(root: String, site: String): String = "$root/sos/$site"
 
-    /** 단독 작업자 살아 있음 세션 노드 경로 (v1.2.2). */
+    /** Path of the lone-worker liveness session node. */
     fun hbPath(root: String, site: String): String = "$root/hb/$site"
 
-    /** 세션 노드 일부 갱신(updateChildren). 실패 로그에는 경로·키·uid 를 남기지 않는다. */
+    /** Partial update of the session node (updateChildren). Failure logs never include the path, key or uid. */
     fun update(path: String, key: String, fields: Map<String, Any>, onDone: (Boolean) -> Unit) {
         FirebaseDatabase.getInstance().reference.child(path).child(key).updateChildren(fields)
             .addOnCompleteListener {
@@ -116,12 +124,15 @@ object SosRemote {
 
     fun currentUid(): String? = runCatching { FirebaseAuth.getInstance().currentUser?.uid }.getOrNull()
 
-    /** 지정 경로 아래 새 푸시 키를 로컬에서 만든다(서버 왕복 없음). */
+    /** Creates a new push key under the given path locally (no server round trip). */
     fun newKey(path: String): String =
         FirebaseDatabase.getInstance().reference.child(path).push().key
             ?: UUID.randomUUID().toString().replace("-", "").take(20)
 
-    /** 기록 생성. createdAt 은 서버 시각. 결과(성공 여부)는 onResult 로 알린다. 오프라인이면 응답이 올 때까지 미완료. */
+    /**
+     * Creates the record. createdAt is server time. The result (success or not) goes to
+     * onResult. While offline it stays pending until a response arrives.
+     */
     fun create(path: String, key: String, payload: Map<String, Any>, onResult: (Boolean) -> Unit) {
         FirebaseDatabase.getInstance().reference.child(path).child(key).setValue(payload)
             .addOnCompleteListener {
@@ -131,7 +142,10 @@ object SosRemote {
             }
     }
 
-    /** 구조 요청 해제 — status=resolved + resolvedAt(서버 시각). 저장해 둔 경로에 쓰며 현재 사업장 코드로 다시 만들지 않는다. */
+    /**
+     * Resolves the SOS — status=resolved + resolvedAt (server time). Writes to the
+     * saved path and never rebuilds it from the current site code.
+     */
     fun resolve(path: String, key: String, onDone: (Boolean) -> Unit) {
         FirebaseDatabase.getInstance().reference.child(path).child(key)
             .updateChildren(mapOf("status" to "resolved", "resolvedAt" to ServerValue.TIMESTAMP))
@@ -143,8 +157,9 @@ object SosRemote {
     }
 
     /**
-     * 기록 한 건 조회(서버 우선, 닿지 않을 때만 캐시). 쓰기가 실패한 뒤 서버에 이미 내 기록이 있는지 확인하는 데 쓴다.
-     * 성공이면 (true, 기록 또는 없음/해석 불가 시 null), 조회 실패면 (false, null).
+     * Reads one record (server first, cache only when the server is unreachable). Used after
+     * a failed write to check whether my record already exists on the server.
+     * On success (true, the record or null if absent/unparseable); on read failure (false, null).
      */
     fun read(path: String, key: String, onResult: (Boolean, SosRecord?) -> Unit) {
         FirebaseDatabase.getInstance().reference.child(path).child(key).get()
@@ -158,11 +173,11 @@ object SosRemote {
     }
 
     /**
-     * 구조 요청 실시간 수신 (R1). 이 함수를 부른 시각 t0 를 잡아 두고 서버 시각 오프셋을 처음 읽은 뒤
-     * (t0 + 오프셋 - 30분) 이후 생성분을 조회한다. 그래서 진행 중(active) 기록은 30분 이내면 재생되어 울리고,
-     * 그보다 오래된 기록은 조회되지 않으며, 해제된 기록은 알림 대상이 아니다.
-     * 삭제된 기록은 해제로 전달한다. 취소(onCancelled)되면 조회를 버리고 onCancel 을 한 번 부른다.
-     * 반환값은 해제 함수이며 오프셋 읽기가 끝나기 전에 불러도 안전하다.
+     * Real-time SOS reception. Captures the call time t0 and, after the server time offset is first read, queries records created after
+     * (t0 + offset - 30 min). So active records within 30 minutes are replayed and sound,
+     * older records are not queried, and resolved records do not notify.
+     * Deleted records are delivered as resolved. On cancel (onCancelled) the query is dropped and onCancel is called once.
+     * Returns a detach function that is safe to call even before the offset read finishes.
      */
     fun listen(path: String, onRecord: (SosRecord) -> Unit, onCancel: () -> Unit): () -> Unit {
         val t0 = System.currentTimeMillis()
@@ -189,7 +204,7 @@ object SosRemote {
             q.addChildEventListener(listener)
             attached = q to listener
         }
-        // 오프셋은 계속 구독해 서버 시각 기준점만 갱신한다. 조회는 첫 콜백에서 한 번만 붙인다.
+        // Keep subscribing to the offset, updating only the server-time reference. The query is attached once, on the first callback.
         var first = true
         val offsetRef = FirebaseDatabase.getInstance().getReference(".info/serverTimeOffset")
         val offsetListener = object : ValueEventListener {

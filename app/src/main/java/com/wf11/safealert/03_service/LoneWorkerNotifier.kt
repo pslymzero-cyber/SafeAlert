@@ -17,16 +17,16 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
-/** 동료 항목 시각 표시 형식(스레드 안전, 한 번만 만든다). */
+/** Time display format for peer entries (thread-safe, created once). */
 private val HHMM: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
 
-/** 동료 항목의 표시 이름: 이름이 없으면 장비 ID 에서 접두어를 뗀 값. */
+/** Display name of a peer entry: without a name, the equipment ID minus its prefix. */
 internal fun LoneWorkerPeers.Peer.displayName(): String =
     name.ifEmpty { bleId.removePrefix("SAFEALERT_DEVICE_").removePrefix("SAFEALERT_WALKER_") }
 
 /**
- * 구조 요청 역할 표시: 보행자, 이름이 장비 ID 면 장비 영문 이름(PitType.label), 아니면 지게차·EPJ·알 수 없음.
- * 메일(Code.gs roleName)과 같은 규칙 (D-04).
+ * Rescue-request role label: "보행자" for a walker; if the name is an equipment ID, the equipment's English name (PitType.label);
+ * otherwise "지게차", "EPJ" or "알 수 없음". Same rule as the mail (Code.gs roleName).
  */
 internal fun sosRoleLabel(role: String, name: String): String =
     if (role == "WALKER") "보행자"
@@ -36,7 +36,10 @@ internal fun sosRoleLabel(role: String, name: String): String =
         else -> "알 수 없음"
     }
 
-/** 동료 항목 한 줄: 이름 · 역할 · 시각 · 위치 · 상태. 역할이 비면(BLE 로만 본 동료, 서버 기록 전) 뺀다. */
+/**
+ * One peer entry line: name · role · time · location · status. Role is omitted
+ * when empty (peer seen only over BLE, before a server record).
+ */
 internal fun LoneWorkerPeers.Peer.line(nowMs: Long): String {
     val roleText = role.ifEmpty { null }?.let { sosRoleLabel(it, displayName()) }
     val wall = if (fromServer) createdAtMs else System.currentTimeMillis() - (nowMs - firstSeenMs)
@@ -47,11 +50,12 @@ internal fun LoneWorkerPeers.Peer.line(nowMs: Long): String {
 }
 
 /**
- * 단독 작업자 알림 (v1.1.99). 모니터에서 분리해 알림 규칙만 모은다. 메인 스레드에서만 부른다.
+ * Lone-worker notifications. Split out of the monitor to keep the notification rules together. Call on the main thread only.
  *
- * 큰 알림(확인 중·SOS·동료 구조 요청)은 새 경보가 생길 때마다 지웠다가 다시 올려 헤드업과 전체 화면 인텐트가
- * 다시 뜨게 하고(RR05), 사용자가 쓸어 내리면 deleteIntent 로 알려 다시 올린다(RR13).
- * SOS 알림의 [괜찮아요]는 서비스에서 바로 끝내지 않고 확인 화면을 연다(U1) — 해제는 화면의 확인 대화상자를 거친다.
+ * Major alerts (checking, SOS, peer rescue request) are cancelled and re-posted on every new alert so the heads-up and the
+ * full-screen intent show again; when the user swipes one away, deleteIntent reports it and it is re-posted.
+ * The SOS notification's "괜찮아요" does not end SOS in the service; it opens the check screen — clearing goes through the
+ * screen's confirmation dialog.
  */
 class LoneWorkerNotifier(
     private val ctx: Context,
@@ -63,17 +67,20 @@ class LoneWorkerNotifier(
         const val NOTIF_ID = 4242
         private const val RESOLVED_NOTIF_MS = 60_000L
 
-        /** 장비 거치 무동작 창을 닫는 방법 안내 — 화면 본문·뒤로가기 안내·알림이 함께 쓰는 유일한 문구(H3). */
+        /**
+         * How-to-close hint for the mounted no-motion window — the single text shared
+         * by the screen body, the back-button hint and the notification.
+         */
         const val TURN_CLOSE_HINT = "회전하거나 ${LoneWorkerLogic.STRONG_RUN_MS / 1000}초 넘게 흔들거나 [괜찮아요]를 누르면 닫혀요"
 
-        /** 알림의 [괜찮아요]가 화면을 열면서 넘기는 표시: 화면은 바로 확인 대화상자를 띄운다. */
+        /** Flag passed when the notification's "괜찮아요" opens the screen: the screen shows the confirmation dialog right away. */
         const val EXTRA_CONFIRM_OK = "lw_confirm_ok"
-        /** 알림의 [확인]이 넘기는 항목 id 목록: 이 항목만 묵음으로 만든다. */
+        /** Entry ids passed by the notification's "확인" action: only these entries are muted. */
         const val EXTRA_PEER_IDS = "lw_peer_ids"
-        /** EXTRA_PEER_IDS 와 같은 순서의 회차 ID 목록(bleId#ep). */
+        /** Episode IDs (bleId#ep) in the same order as EXTRA_PEER_IDS. */
         const val EXTRA_PEER_EPS = "lw_peer_eps"
 
-        /** [확인] 인텐트의 묵음 대상(항목 id -> 회차 ID). 두 목록 길이가 다르면 아무것도 묵음으로 만들지 않는다. */
+        /** Mute targets of the "확인" intent (entry id -> episode ID). If the two lists differ in length, nothing is muted. */
         fun peerTargets(intent: Intent?): Map<String, String> {
             val ids = intent?.getStringArrayListExtra(EXTRA_PEER_IDS).orEmpty()
             val eps = intent?.getStringArrayListExtra(EXTRA_PEER_EPS).orEmpty()
@@ -122,7 +129,7 @@ class LoneWorkerNotifier(
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-    /** 조용한 안내 알림을 누르면 메인 화면을 연다(확인 화면은 열 이유가 없다). */
+    /** Tapping the quiet notice notification opens the main screen (no reason to open the check screen). */
     private fun mainPi(): PendingIntent =
         PendingIntent.getActivity(
             ctx, REQ_MAIN,
@@ -131,8 +138,9 @@ class LoneWorkerNotifier(
         )
 
     /**
-     * 상태에 맞는 알림을 올리거나 지운다. 우선순위: SOS, 확인 중, 울리는 동료, 해제됨, 조용한 안내(notice).
-     * alertAgain 이 참이고 큰 알림이면 키가 같아도 지웠다가 다시 올린다. closesByTurn 이면 확인 중 안내가 걸음 대신 TURN_CLOSE_HINT 다(H3).
+     * Posts or cancels the notification matching the state. Priority: SOS, checking, ringing peer, resolved, quiet notice (notice).
+     * If alertAgain is true and it is a major alert, cancels and re-posts even with the same key.
+     * With closesByTurn, the checking hint is TURN_CLOSE_HINT instead of steps.
      */
     fun update(
         mode: LoneWorkerLogic.Mode,
@@ -180,28 +188,28 @@ class LoneWorkerNotifier(
             if (Build.VERSION.SDK_INT < 34 || nm.canUseFullScreenIntent()) b.setFullScreenIntent(open, true)
         } else {
             b.setSilent(true)
-            // 조용한 안내는 쓸어 내려도 다시 올린다: deleteIntent -> onNotificationDismissed -> forget -> render
+            // The quiet notice is re-posted even after a swipe: deleteIntent -> onNotificationDismissed -> forget -> render
             if (quiet == null) b.setTimeoutAfter(RESOLVED_NOTIF_MS) else b.setDeleteIntent(deletePi())
         }
         act?.let { b.addAction(0, it.first, it.second) }
-        // 같은 알림 위에 덮어쓰면 헤드업·전체 화면 인텐트가 다시 뜨지 않으므로 먼저 지운다
+        // Overwriting the same notification won't re-show heads-up / full-screen intent, so cancel it first
         if (again) runCatching { nm.cancel(NOTIF_ID) }
         runCatching { nm.notify(NOTIF_ID, b.build()) }
             .onFailure { Log.w(TAG, "알림 게시 실패: ${it.message}") }
     }
 
-    /** 알림을 지우고 기억도 지운다. */
+    /** Cancels the notification and forgets it. */
     fun cancel() {
         runCatching { (ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).cancel(NOTIF_ID) }
         lastKey = null
     }
 
-    /** 사용자가 알림을 쓸어 내린 뒤: 다음 update 가 같은 내용이라도 다시 올리도록 기억만 지운다. */
+    /** After the user swipes the notification away: only forgets it, so the next update re-posts even identical content. */
     fun forget() {
         lastKey = null
     }
 
-    /** 확인 화면을 직접 연다. 다른 앱 위에 표시 권한이 있을 때만 시도한다. */
+    /** Opens the check screen directly. Tried only with the display-over-other-apps permission. */
     fun openScreen() {
         if (!runCatching { Settings.canDrawOverlays(ctx) }.getOrDefault(false)) return
         runCatching { ctx.startActivity(activityIntent()) }

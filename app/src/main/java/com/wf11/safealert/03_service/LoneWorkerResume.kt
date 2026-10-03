@@ -6,20 +6,27 @@ import android.provider.Settings
 import kotlin.math.abs
 
 /**
- * 단독 작업자 감시의 재시작 이어가기 저장소 (v1.1.99).
+ * Restart-resume store for lone-worker monitoring.
  *
- * 저장 대상: 사고 의심(30초 셈 기준·끝), 열린 확인 창 종류, 충전 여부, 지님 확정, 무동작 기준 시각(사이렌 멈춤을 뺀 값),
- * 세이프존 상태(정착 여부·구역 진입 시각, 구역 밖이면 없음), 장비 거치 여부(v2 는 거치 아님으로 읽음). 대기 = 충전 안 함이고 지님 확정 아님.
- * 본인 SOS 는 저장하지 않는다(SosLedger 가 복원하고 그쪽이 이긴다).
- * 시각은 저장 시점 elapsedRealtime 그대로 두고 부팅 수·저장 elapsed·저장 벽시계를 함께 적는다. 같은 부팅이면
- * elapsed 값을 그대로 쓰고(벽시계 변경과 무관), 다른 부팅(또는 부팅 수를 모름)이면 벽시계 경과(음수는 0)만큼 옮긴다.
- * 재시작 때 확인 창은 다시 띄우고 응답 시간은 처음부터, 트리거 뒤 5분이 지난 사고 의심은 버린다(LoneWorkerLogic.startFrom).
- * 저장된 충전 여부와 지금 전원이 다르면 재시작 전원 보류다(RestartHold).
- * [중지]·사용자 중지 판정이면 clearOnUserStop 으로 지운다. 시스템 종료·재시작 대비로 감시 정지만으로는 지우지 않는다.
+ * Saved: accident suspicion (30 s count baseline and end), open check window kind, charging, carry confirmed, no-motion
+ * baseline time (excluding the siren pause), safe-zone state (settled flag and zone entry time; absent when outside), and the
+ * equipment mount flag (the v2 format reads as not mounted). Waiting = not charging and carry not confirmed.
+ * The own SOS is not saved (SosLedger restores it and takes precedence).
+ * Times are stored as elapsedRealtime at save time, along with the boot count, save elapsed and save wall clock. On the same
+ * boot the elapsed values are used as is (immune to wall-clock changes); on a different boot (or unknown boot count) they are
+ * shifted by the wall-clock time elapsed (negative counts as 0).
+ * On restart the check window is shown again with a fresh response time, and accident suspicion more than 5 min after its
+ * trigger is dropped (LoneWorkerLogic.startFrom).
+ * If the saved charging flag differs from the current power, a restart power hold applies (RestartHold).
+ * "중지" or a user-stop decision clears it via clearOnUserStop. Merely stopping monitoring does not clear it, so it survives a
+ * system kill or restart.
  */
 class LoneWorkerResume(private val ctx: Context) {
 
-    /** 시각은 전부 elapsedRealtime ms. check 는 열린 확인 창 종류("fall"·"still"), 없으면 빈 값. zoneSince 가 null 이면 구역 밖. */
+    /**
+     * All times are elapsedRealtime ms. check is the open check window kind ("fall" or
+     * "still"), empty if none. zoneSince null means outside the zone.
+     */
     data class State(
         val accidentHold: Long?,
         val accidentUntil: Long?,
@@ -29,7 +36,9 @@ class LoneWorkerResume(private val ctx: Context) {
         val stillBase: Long,
         val zoneSettled: Boolean,
         val zoneSince: Long?,
-        /** 장비 거치(장비 모드 + 충전 중 + 지님 아님) 중 저장 — 이때만 거치 셈 기준이 저장돼 믿을 수 있다. */
+        /**
+         * Saved during an equipment mount (equipment mode + charging + not carried) — only then is the mount count baseline saved and trustworthy.
+         */
         val mounted: Boolean = false
     )
 
@@ -38,9 +47,11 @@ class LoneWorkerResume(private val ctx: Context) {
         private const val PREFS = "safealert_prefs"
         private const val VERSION = "v3"
         private const val FIELDS = 13
-        /** v1.2.4 까지의 12칸 형식, 거치 칸이 없어 mounted = false 로 읽는다. */
+        /** Legacy 12-field format without the mount field; read as mounted = false. */
         private const val OLD_VERSION = "v2"
-        /** 무동작 기준 시각만 바뀐 경우는 이만큼 바뀌어야 다시 저장한다(움직이는 동안 초당 쓰기 방지). */
+        /**
+         * When only the no-motion baseline changed, save again only once it moved this much (avoids a write every second while moving).
+         */
         private const val STILL_SAVE_MS = 10_000L
         private val CHECKS = setOf("", "fall", "still")
 
@@ -52,7 +63,10 @@ class LoneWorkerResume(private val ctx: Context) {
                 b(s.zoneSettled), t(s.zoneSince), b(s.mounted)).joinToString("|")
         }
 
-        /** 형식·칸 수·숫자·종류 값이 어긋나면 null(이어가기 없이 새로 시작한다). boot 는 지금 부팅 수(모르면 -1). */
+        /**
+         * null if the format, field count, numbers or kind value don't match (start fresh
+         * without resuming). boot is the current boot count (-1 if unknown).
+         */
         fun decode(raw: String?, elapsedNow: Long, wallNow: Long, boot: Int): State? {
             if (raw == null) return null
             return runCatching {
@@ -72,13 +86,18 @@ class LoneWorkerResume(private val ctx: Context) {
             }.getOrNull()
         }
 
-        /** 저장할지: 처음이거나 기준 말고 다른 칸이 바뀌었거나, 지님·장비 거치 중, 정착 구역 밖에서 기준이 STILL_SAVE_MS 이상 바뀌었다. */
+        /**
+         * Whether to save: first save, a field other than the baseline changed, or the baseline moved by
+         * STILL_SAVE_MS or more while carried or equipment-mounted outside a settled zone.
+         */
         fun shouldSave(prev: State?, s: State): Boolean {
             if (prev == null || prev.copy(stillBase = s.stillBase) != s) return true
             return (s.carried || s.mounted) && !s.zoneSettled && abs(s.stillBase - prev.stillBase) >= STILL_SAVE_MS
         }
 
-        /** 사용자가 멈췄다: 실행 복원 키와 재시작 상태를 함께 지운다. 같은 editor 를 돌려준다(commit 은 호출한 쪽). */
+        /**
+         * The user stopped: clears the run-restore key together with the restart state. Returns the same editor (the caller commits).
+         */
         fun clearOnUserStop(editor: SharedPreferences.Editor): SharedPreferences.Editor =
             editor.remove("running_mode").remove("running_since").remove("running_category").remove(KEY)
     }
@@ -94,7 +113,7 @@ class LoneWorkerResume(private val ctx: Context) {
         return decode(raw, nowMs, System.currentTimeMillis(), boot)
     }
 
-    /** shouldSave 일 때만 저장한다. nowMs 는 s 의 시각과 같은 elapsedRealtime 기준. */
+    /** Saves only when shouldSave. nowMs uses the same elapsedRealtime base as the times in s. */
     fun save(s: State, nowMs: Long) {
         if (!shouldSave(last, s)) return
         last = s

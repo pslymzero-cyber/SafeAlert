@@ -10,13 +10,15 @@ import com.wf11.safealert.utils.BeaconRegistry
 import com.wf11.safealert.utils.DevSettings
 
 /**
- * 단독 작업자 사고·무동작 SOS 의 안드로이드 접착부 (v1.1.99).
+ * Android glue for the lone-worker accident / no-motion SOS.
  *
- * 판정은 LoneWorkerLogic/MotionAnalyzer(순수)가 하고, 여기서는 센서(LoneWorkerSensors)·전원·화면·소리·알림·서버·BLE 를 잇는다.
- * BleService 는 이 클래스의 진입점만 부른다. 충돌 판정 경로와 광고 첫 바이트는 건드리지 않는다.
+ * Judgment is done by LoneWorkerLogic / MotionAnalyzer (pure); this class wires up sensors (LoneWorkerSensors), power,
+ * screen, sound, notifications, server and BLE.
+ * BleService calls only this class's entry points. The collision judgment path and the first advertisement byte are untouched.
  *
- * 생성자는 참조만 저장한다(시스템 서비스 호출 없음). start() 전에는 모든 진입점이 즉시 반환한다.
- * 모든 진입점은 메인 스레드에서 불린다(스캔 콜백·서비스 명령·센서 메인 루퍼·서버 콜백은 main 으로 게시).
+ * The constructor only stores references (no system service calls). Before start(), every entry point returns immediately.
+ * All entry points are called on the main thread (scan callbacks, service commands, the sensor main looper and server
+ * callbacks are posted to main).
  */
 class LoneWorkerMonitor(
     private val ctx: Context,
@@ -24,19 +26,19 @@ class LoneWorkerMonitor(
     setAlarmVolume: (Int) -> Unit
 ) {
 
-    /** 확인 화면이 그리는 상태. mode 가 WATCHING 이고 동료 줄이 없으면 uiState() 가 null 을 준다. */
+    /** State drawn by the check screen. uiState() returns null when mode is WATCHING and there are no peer rows. */
     data class UiState(
         val mode: LoneWorkerLogic.Mode,
         val responseLeftSec: Int,
-        val peers: List<PeerRow>,  // 그린 동료 줄(그린 순서)
-        val serverStatus: String?, // 내 SOS 서버 전송 상태(SOS 가 아니면 null)
-        val alarmFault: String? = null, // 경보음 볼륨을 올리지 못했을 때의 안내(v1.1.99)
-        val trigger: String = "",       // 확인 창·SOS 이유("still" 무동작, "fall" 낙상)
-        val responseTotalSec: Int = 0,  // 이 확인 창의 전체 응답 시간(남은 시간 링의 기준)
-        val stillMin: Int = 0,          // 무동작 확인까지의 분(이유 칩 문구)
-        val responseLeftMs: Long = 0L,  // 남은 응답 시간(ms) — 화면이 초 경계에 맞춰 다시 그린다
-        val stepsAvailable: Boolean = true, // 걸음 센서로 셈(아니면 걷는 모양 이어짐으로 셈) — 걸음 안내 문구
-        val closesByTurn: Boolean = false   // 장비 거치 무동작 창 — 회전·3초 흔들기·[괜찮아요]로 닫힘(H3)
+        val peers: List<PeerRow>,  // Peer rows as drawn (in draw order)
+        val serverStatus: String?, // Own SOS server upload status (null when not in SOS)
+        val alarmFault: String? = null, // Notice shown when the alarm volume could not be raised
+        val trigger: String = "",       // Check window / SOS reason ("still" no-motion, "fall" fall)
+        val responseTotalSec: Int = 0,  // Full response time of this check window (remaining-time ring basis)
+        val stillMin: Int = 0,          // Minutes until the no-motion check (reason chip text)
+        val responseLeftMs: Long = 0L,  // Remaining response time (ms); the screen redraws on second boundaries
+        val stepsAvailable: Boolean = true, // Counted by step sensor (else by walk-like runs), for the step hint text
+        val closesByTurn: Boolean = false   // Mounted no-motion window: closes by turn, 3 s shake or "괜찮아요"
     ) {
         val peerActive: Boolean get() = peers.any { it.active }
     }
@@ -69,18 +71,21 @@ class LoneWorkerMonitor(
         { render() })
 
     private var started = false
-    /** 걸음 센서는 있는데 신체 활동 권한이 없다(메인 화면 경고용). */
+    /** Step sensor present but physical activity permission missing (for the main screen warning). */
     val stepPermissionMissing: Boolean get() = started && sensors.stepPermissionMissing
     private var name = ""
     private var roleName = ""
-    /** 장비 모드: BleConstants.categoryName 의 장비 선택 — 역할로만 정한다 (B1). */
+    /** Equipment mode: an equipment selection in BleConstants.categoryName — decided by role only. */
     private val equipment: Boolean get() = roleName == "FORKLIFT" || roleName == "EPJ"
     private var lastMode = LoneWorkerLogic.Mode.WATCHING
     private var lastAudible: Set<String> = emptySet()
     private val watchdog = LoneWorkerWatchdog(ctx, { onWatchdog() }, { onNotificationDismissed() })
     private val notifier = LoneWorkerNotifier(ctx) { watchdog.dismissPi() }
     private var lastTickAt = 0L
-    /** 스로틀 중에도 즉시 판정을 보는 시각 — 직전 tick 에서 지난 마감이 데이터를 기다렸으면 그 tick, 아니면 그때의 nextCheckAt (v1.1.99). */
+    /**
+     * Time from which an immediate judgment is checked even while throttled — the previous tick if a
+     * passed deadline was waiting for data then, otherwise that tick's nextCheckAt.
+     */
     private var dueFrom = Long.MAX_VALUE
     private val wake = LoneWorkerWakeLock(ctx)
     private var loopOn = false
@@ -88,16 +93,19 @@ class LoneWorkerMonitor(
     private val beaconNoteAt = HashMap<String, Long>()
 
     val sosActive: Boolean get() = started && logic.sosActive
-    // (v1.1.99) 광고에 실을 구조 요청 회차·비콘 짧은 ID — 구조 요청 중이 아니면 0
+    // Rescue-request episode and beacon short ID carried in the advertisement — 0 when not requesting rescue
     val sosEpisode: Int get() = if (sosActive) sync.episode() else 0
     val sosHint: Int get() = if (sosActive) sync.hint() else 0
-    private val sidLabels = HashMap<Int, String>()   // (v1.1.99) 짧은 ID → 비콘 라벨 캐시(찾은 것만 저장), stop 에서 비움
-    private val sidMissUntil = HashMap<Int, Long>()  // 라벨 없는 짧은 ID → 다시 찾을 수 있는 시각
+    private val sidLabels = HashMap<Int, String>()   // Short ID → beacon label cache (found labels only), cleared in stop
+    private val sidMissUntil = HashMap<Int, Long>()  // Unlabeled short ID → time it may be looked up again
     private val power = LoneWorkerPower(ctx) { onPowerRaw(it, false) }
     private val sensors = LoneWorkerSensors(ctx, handler, { logic }) { onSensorEvent(it) }
     private val resume = LoneWorkerResume(ctx)
     private var lastRest = LoneWorkerLogic.Rest.NONE
-    /** (v1.1.99) 메인 화면 안내 줄: 센서 없음이면 감시 불가, 아니면 무동작 확인을 쉬는 이유(거치·움직임 대기). */
+    /**
+     * Main screen notice line: monitoring unavailable without a sensor, otherwise why
+     * no-motion checking is paused (docked / waiting for movement).
+     */
     val banner: String? get() = when {
         !started -> null
         sensors.noSensor -> "사고·무동작 감시 불가 — 가속도 센서 없음 (동료 구조 요청 수신은 계속)"
@@ -108,28 +116,28 @@ class LoneWorkerMonitor(
 
     private fun now() = SystemClock.elapsedRealtime()
 
-    // ── 시작·종료 ──────────────────────────────────────────────
+    // ── Start / stop ───────────────────────────────────────────
 
     fun start(bleId: String, name: String, roleName: String, zoneInside: Boolean) {
         this.name = name
         this.roleName = roleName
         logic.myBleId = bleId
-        logic.setEquipment(equipment, now()) // 복원(startFrom)보다 먼저 넣어야 복원이 장비 거치를 안다(H2), 역할이 바뀌면 applyMode 가 새로 시작한다 (B1)
+        logic.setEquipment(equipment, now()) // Before startFrom so restore sees the mount; a role change restarts via applyMode
         if (started) return
         started = true
-        // 충전 중이면 거치로, 아니면 첫 뚜렷한 움직임 대기로 시작한다 (v1.1.99)
+        // Start docked if charging, otherwise waiting for the first clear movement
         val plugged = power.start()
         val t0 = now()
-        // 저장 상태로 이어간다 — 지금 전원과 다르면 재시작 전원 보류(RestartHold) (v1.1.99, B6)
-        // 진동기가 없으면 사이렌 진동도 그 동안의 무동작 셈 멈춤도 없다 (v1.1.99, D2)
+        // Resume from the saved state — restart power hold (RestartHold) if it differs from the current power
+        // Without a vibrator there is no siren vibration and no no-motion count pause during it
         logic.canVibrate = VibrationHelper.vibrator(ctx)?.hasVibrator() == true
         logic.startFrom(t0, zoneInside, plugged, resume.load(t0))
-        // 저장된 본인 SOS 가 있으면 첫 렌더 전에 되살린다 — 같은 서버 키로 사이렌·광고 bit1 이 다시 켜진다 (v1.1.99, R3)
+        // Revive a saved own SOS before the first render — the siren and advertisement bit1 come back on with the same server key
         sync.restoredTrigger()?.let { logic.restoreSos(it, now()) }
         notifier.createChannel()
-        notifier.cancel() // 이전 프로세스가 남긴 알림을 한 번 치운다 (v1.1.99)
+        notifier.cancel() // Clear notifications left by a previous process, once
         watchdog.start()
-        SirenGenerator.prewarm() // 사이렌·확인음 PCM 을 백그라운드에서 미리 만든다 (v1.1.99)
+        SirenGenerator.prewarm() // Pre-build siren and check-tone PCM in the background
         val l = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
             if (key == DevSettings.KEY_LW_ENABLED || key == DevSettings.KEY_LW_STILL_MIN ||
                 key == DevSettings.KEY_LW_RESPONSE_MIN || key == DevSettings.KEY_LW_ZONE_FALL_CM ||
@@ -140,17 +148,19 @@ class LoneWorkerMonitor(
         applySettings()
         handler.post(syncRunnable)
         current = this
-        tickNow() // 첫 판정 tick 으로 전원 확정 확인·보류 끝을 예약한다 (v1.1.99)
+        tickNow() // First judge tick schedules the power confirm check and hold end
     }
 
-    /** 10초마다: 동료 수신 재연결·내 SOS 전송 재시도·센서 공백 검사(등록 실패도 백오프로 재시도) (v1.1.99). */
+    /**
+     * Every 10 s: reconnect peer reception, retry own SOS upload, check sensor gaps (failed registration is also retried with backoff).
+     */
     private val syncRunnable = object : Runnable {
         override fun run() {
             if (!started) return
             sync.tick()
-            sync.heartbeat(DevSettings.lwEnabled, roleName) // (v1.2.2) 살아 있음 기록만 — 판정과 무관
-            onPowerRaw(power.plugged(), true) // 방송을 놓쳐도 스티키 배터리 상태로 보정(대기 중이면 버림, 같은 2초 디바운스)
-            sensors.refreshSteps() // 신체 활동 권한이 바뀌었으면 걸음 센서 등록을 맞춘다
+            sync.heartbeat(DevSettings.lwEnabled, roleName) // Liveness record only; unrelated to judgment
+            onPowerRaw(power.plugged(), true) // Sticky battery fixes missed broadcasts (dropped if pending, same 2 s debounce)
+            sensors.refreshSteps() // Sync step sensor registration if activity permission changed
             checkStall(now())
             handler.postDelayed(this, SYNC_TICK_MS)
         }
@@ -159,7 +169,7 @@ class LoneWorkerMonitor(
     fun stop() {
         if (!started) return
         started = false
-        sensors.gyroLog(false, false) // 자이로 측정은 사이렌 끝이나 여기서만 끈다 (v1.1.99)
+        sensors.gyroLog(false, false) // Gyro measurement is turned off only here or when the siren ends
         sensors.unregister()
         prefsListener?.let { DevSettings.unregisterOnChange(it) }
         prefsListener = null
@@ -176,8 +186,8 @@ class LoneWorkerMonitor(
         lastAudible = emptySet()
         sidLabels.clear()
         sidMissUntil.clear()
-        // 서버의 active 기록과 저장된 내 SOS 는 그대로 둔다 — 해제는 본인 [괜찮아요]뿐 (D-05, R3)
-        logic = LoneWorkerLogic("") // 재시작 때 지난 동료 항목이 되살아나지 않게 비운다
+        // Keep the server's active record and the saved own SOS — only the user's own "괜찮아요" clears it
+        logic = LoneWorkerLogic("") // Clear so stale peer entries don't revive on restart
         if (current === this) current = null
         uiListener?.invoke()
     }
@@ -187,7 +197,8 @@ class LoneWorkerMonitor(
         val t = now()
         logic.stillMs = DevSettings.lwStillMin * 60_000L
         logic.responseMs = DevSettings.lwResponseMin * 60_000L
-        // 센서가 아예 없으면 판정을 끈다. 등록만 실패한 경우는 판정을 유지한다: 확인은 그대로 열리고 신호 없음은 움직임 없음으로 센다 (v1.1.99)
+        // No sensor at all turns judgment off. If only registration failed, judging
+        // continues: checks still open and no signal counts as no movement
         if (DevSettings.lwEnabled) {
             if (!sensors.registered) sensors.resetStall(t)
             sensors.register()
@@ -196,7 +207,7 @@ class LoneWorkerMonitor(
             sensors.unregister()
             watchdog.disarm()
         }
-        // 세이프존 낙상 기준(개발자 설정). 충격은 기본 임계와 같은 센서 범위 보정(2 G 센서)을 거친다 (D-02, D-03)
+        // Safe-zone fall thresholds (developer setting). Impact gets the same sensor-range correction as the default threshold (2 G sensors)
         logic.zoneFall = MotionAnalyzer.ZoneFall(
             MotionAnalyzer.freeFallMsFor(DevSettings.lwZoneFallCm),
             MotionAnalyzer.impactGFor(sensors.rangeMs2, DevSettings.lwZoneFallG),
@@ -206,12 +217,14 @@ class LoneWorkerMonitor(
         render()
     }
 
-    // ── 센서 ──────────────────────────────────────────────────
+    // ── Sensors ───────────────────────────────────────────────
 
     /**
-     * 센서 콜백 뒤: 상태·쉼 이유가 바뀌었으면 바로, 아니면 1초에 한 번 tick·render 한다. 마감 시각이 지난 뒤(깊은 잠으로
-     * 예약이 늦어도) 그 마감을 센서 데이터가 덮으면 스로틀과 무관하게 이 자리에서 판정한다 — 같은 배치의 뒤 데이터보다 먼저(C5) (v1.1.99).
-     * 콜백마다 판정 순서 장치에 끝을 알린다 — 전원 대기로만 막힌 마감 뒤 입력은 판정 뒤로(N1).
+     * After a sensor callback: tick and render right away if the state or rest reason changed, otherwise once per second. Once a
+     * deadline has passed (even if deep sleep delayed the schedule) and sensor data covers it,
+     * judge right here regardless of throttling — before later data in the same batch.
+     * Each callback reports its end to the judge-order unit — input after a deadline
+     * blocked only by a pending power change goes after the judgment.
      */
     private fun onSensorEvent(t: Long) {
         if (!started) return
@@ -224,8 +237,8 @@ class LoneWorkerMonitor(
     }
 
     /**
-     * 판정 tick 한 곳. 지난 마감이 센서 데이터를 기다리면 flush 를 요청하고, 다음 마감(없으면 LATE_MS 백스톱)에
-     * tick 이 한 번 더 돌도록 예약한다 (v1.1.99).
+     * Single judge tick. If a passed deadline is waiting for sensor data, requests a flush, and schedules one more tick at the
+     * next deadline (or the LATE_MS backstop if none).
      */
     private fun tick(t: Long) {
         logic.tick(t)
@@ -237,7 +250,7 @@ class LoneWorkerMonitor(
         next?.let { handler.postDelayed(deadlineRunnable, (it - t).coerceAtLeast(0L)) }
     }
 
-    /** 예약한 마감·전원 확정 시각에 판정 tick 과 렌더를 한 번 (v1.1.99). */
+    /** One judge tick and render at a scheduled deadline or power confirm time. */
     private fun tickNow() {
         if (!started) return
         val t = now()
@@ -248,7 +261,10 @@ class LoneWorkerMonitor(
 
     private val deadlineRunnable = Runnable { tickNow() }
 
-    /** 전원 원시 값: 판정 로직 디바운스에 넣고, 적용했거나 대기가 바뀌었으면 판정·렌더 한 경로(tickNow) (v1.1.99). */
+    /**
+     * Raw power value: fed into the judge logic's debounce; if applied or the
+     * pending state changed, judge and render through one path (tickNow).
+     */
     private fun onPowerRaw(on: Boolean, sticky: Boolean) {
         if (!started) return
         val changed = logic.powerRaw(on, now(), sticky)
@@ -256,13 +272,13 @@ class LoneWorkerMonitor(
     }
 
     /**
-     * 센서 신호 공백 검사 (RR08). 끊긴 동안에도 움직임이 없는 것으로 보고 무동작 시간을 계속 센다.
-     * 다시 등록할 때는 무동작 시작 시각·확인 중 상태를 건드리지 않는다(열려 있는 확인을 취소하지 않기 위해).
-     * 약 1분 응답이 없으면(두 번째 재등록 검사) 움직임 대기를 끝낸다.
+     * Sensor signal gap check. While the signal is lost, it counts as no movement and no-motion time keeps accruing.
+     * Re-registration leaves the no-motion start time and the checking state alone (so an open check is not cancelled).
+     * After about 1 min without response (second re-registration check), the movement wait ends.
      */
     private fun checkStall(t: Long) {
         if (!started) return
-        // 등록에 실패해 센서가 없는 동안에도 같은 백오프로 다시 등록한다
+        // Keep re-registering with the same backoff while registration has failed and there is no sensor
         if (DevSettings.lwEnabled && !sensors.noSensor) sensors.checkStall(t)
         if (sensors.stalled) logic.sensorSilent(t)
         tick(t)
@@ -275,14 +291,14 @@ class LoneWorkerMonitor(
         if (DevSettings.lwEnabled && !sensors.noSensor) watchdog.arm()
     }
 
-    /** 알림을 쓸어 내렸다: 큰 알림이면 다시 올린다 (RR13). */
+    /** Notification swiped away: re-post it if it is a major alert. */
     private fun onNotificationDismissed() {
         if (!started) return
         notifier.forget()
         render()
     }
 
-    // ── BleService 진입점 ─────────────────────────────────────
+    // ── BleService entry points ───────────────────────────────
 
     fun onZoneChanged(inside: Boolean) {
         if (!started) return
@@ -292,7 +308,10 @@ class LoneWorkerMonitor(
         render()
     }
 
-    /** BleService 회전 폴링(1.5초, 직진 아닐 때만). 장비 모드에서만 넘긴다 — 보행 모드는 그대로 (B2·B5). */
+    /**
+     * BleService turn polling (TX polling, default 0.5 s; only when not going
+     * straight). Forwarded only in equipment mode — walker mode is unaffected.
+     */
     fun onTurn() {
         if (!started || !equipment) return
         val t = now()
@@ -301,7 +320,7 @@ class LoneWorkerMonitor(
         render()
     }
 
-    /** 스캔마다 불리므로 가볍게: 동료 항목이 바뀐 때만 다시 그린다. */
+    /** Called on every scan, so kept light: redraws only when peer entries change. */
     fun onPeerBle(bleId: String, sos: Boolean, episode: Int = 0, hint: Int = 0) {
         if (!started) return
         val before = peerSig()
@@ -311,7 +330,7 @@ class LoneWorkerMonitor(
         if (peerSig() != before) render()
     }
 
-    /** 찾은 라벨은 캐시하고, 못 찾은 짧은 ID 는 30초 동안 다시 찾지 않는다. */
+    /** Caches found labels; a short ID that was not found is not looked up again for 30 s. */
     private fun sidLabel(hint: Int, t: Long): String =
         sidLabels[hint] ?: if ((sidMissUntil[hint] ?: Long.MIN_VALUE) > t) "" else
             BeaconRegistry.labelForShortId(hint)?.takeIf { it.isNotEmpty() }?.also { sidLabels[hint] = it }
@@ -323,7 +342,7 @@ class LoneWorkerMonitor(
         val last = beaconNoteAt[deviceId]
         if (last != null && t - last < BEACON_NOTE_MS) return
         beaconNoteAt[deviceId] = t
-        // (v1.1.99) 등록 비콘만 짧은 ID 를 싣는다(미등록 0)
+        // Only registered beacons carry a short ID (unregistered = 0)
         val sid = if (BeaconRegistry.findProfileByFullId(deviceId) != null)
             com.wf11.safealert.ble.SosAdvert.beaconShortId(deviceId.substringAfter("BEA_")) else 0
         logic.noteBeacon(BeaconRegistry.labelForFullId(deviceId), rssi, t, sid)
@@ -341,7 +360,7 @@ class LoneWorkerMonitor(
         render()
     }
 
-    /** targets(항목 id -> 회차 ID) 의 항목만 묵음으로 만든다. */
+    /** Mutes only the entries in targets (entry id -> episode ID). */
     fun silencePeers(targets: Map<String, String>) {
         if (!started) return
         logic.silencePeers(now(), targets)
@@ -357,12 +376,12 @@ class LoneWorkerMonitor(
         return h
     }
 
-    // ── 화면 상태 ─────────────────────────────────────────────
+    // ── Screen state ──────────────────────────────────────────
 
     fun uiState(): UiState? {
         if (!started) return null
         val t = now()
-        val shown = logic.peers.filter { !it.silenced }  // 해제된 항목은 [닫기] 전까지 보인다
+        val shown = logic.peers.filter { !it.silenced }  // Resolved entries stay visible until "닫기"
         if (logic.mode == LoneWorkerLogic.Mode.WATCHING && shown.isEmpty()) return null
         val left = logic.responseLeftMs(t)
         return UiState(
@@ -380,11 +399,13 @@ class LoneWorkerMonitor(
         )
     }
 
-    // ── 렌더링: 상태 전환·소리·알림·화면 ────────────────────────
+    // ── Rendering: state changes, sound, notifications, screen ───
 
     private val keepText: String get() = logic.rest.keepText
 
-    /** 조용한 안내 알림. 우선순위: 센서 없음, 센서 등록 실패, 센서 신호 끊김, 해제 미전송, 걸음 권한 없음. */
+    /**
+     * Quiet notice notification. Priority: no sensor, sensor registration failed, sensor signal lost, clear not sent, no step permission.
+     */
     private fun notice(): Pair<String, String>? = when {
         DevSettings.lwEnabled && sensors.noSensor ->
             "무동작 감시 불가" to "이 기기에는 가속도 센서가 없어 사고·무동작 감시를 하지 않습니다. 동료 구조 요청 수신은 계속됩니다"
@@ -399,7 +420,7 @@ class LoneWorkerMonitor(
         else -> null
     }
 
-    /** SosLedger.begin/resolve 가 onChange 로 render 를 동기 호출하므로 다시 들어오면 한 번 더 돌 표시만 남긴다. */
+    /** SosLedger.begin/resolve call render synchronously via onChange, so a re-entrant call only flags one more pass. */
     private fun render() {
         if (!started) return
         if (rendering) {
@@ -441,7 +462,7 @@ class LoneWorkerMonitor(
         if (ids.any { it !in lastAudible }) showScreen = true
         lastAudible = ids
 
-        // 소리 우선순위: 본인 SOS > 확인 창(확인음, 진동 없음) > 동료 사이렌 (v1.1.99, F2)
+        // Sound priority: own SOS > check window (check tone, no vibration) > peer siren
         val vibrates = logic.alarmVibrates
         val p = LoneWorkerAlarm.Pattern.of(mode, audible.isNotEmpty())
         if (p != null) alarm.play(p, vibrates) else alarm.stop()
@@ -455,7 +476,7 @@ class LoneWorkerMonitor(
         uiListener?.invoke()
     }
 
-    // ── 5초 갱신·웨이크락 ─────────────────────────────────────
+    // ── 5 s refresh / wake lock ───────────────────────────────
 
     private fun needLoop() = logic.loopNeeded(sensors.needsWake)
 
@@ -477,8 +498,10 @@ class LoneWorkerMonitor(
     }
 
     private fun updateWakeLock(renew: Boolean) {
-        // 지난 마감이 판정을 기다리는 동안(센서 데이터·그 전에 시작한 전원 대기)도 잡아 LATE_MS 백스톱·전원 확정 확인을 보장한다
-        // 감시가 켜진 장비 거치 중(충전 중이라 배터리 부담 없음)에도 잡아 화면이 꺼져도 회전 폴링·ImuFusion 이 돈다(H6)
+        // Also hold the wake lock while a passed deadline awaits judgment (sensor data, or a power change
+        // pending since before it) to guarantee the LATE_MS backstop and power confirm check
+        // Also hold it during an equipment mount with monitoring on (charging, so no
+        // battery cost) so turn polling and ImuFusion run with the screen off
         val need = logic.wakeNeeded(sensors.needsWake, now())
         wake.hold(need, renew)
     }

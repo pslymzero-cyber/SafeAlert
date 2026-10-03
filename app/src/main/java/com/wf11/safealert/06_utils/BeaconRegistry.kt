@@ -9,15 +9,15 @@ import org.json.JSONObject
 
 object BeaconRegistry {
 
-    const val MAX_PROFILES = 200  // UUID 프로파일 최대 200개 (각 UUID당 비콘 수 무제한)
+    const val MAX_PROFILES = 200  // Max 200 UUID profiles (unlimited beacons per UUID)
     private const val PREF_NAME = "beacon_registry"
     private const val KEY_LIST  = "beacon_profiles"
 
     private lateinit var appCtx: Context
 
-    // (v1.1.77) 사업장별 등록 정보 분리 — 매 접근마다 현재 사업장 파일을 연다(getSharedPreferences 는
-    //   프로세스 내 캐시라 반복 호출이 저렴). getAll() 이 매번 디스크를 파싱하는 구조라 인메모리
-    //   잔여분이 없어, 사업장이 바뀌면 별도 리로드 없이 즉시 해당 사업장 목록으로 전환된다.
+    // Registrations are separated per site — every access opens the current site's file (getSharedPreferences
+    //   is an in-process cache, so repeated calls are cheap). getAll() parses from disk every time and nothing
+    //   lingers in memory, so a site change switches to that site's list immediately without a reload.
     private val prefs: SharedPreferences
         get() = appCtx.getSharedPreferences(DevSettings.sitePrefName(PREF_NAME), Context.MODE_PRIVATE)
 
@@ -26,11 +26,11 @@ object BeaconRegistry {
     }
 
     /**
-     * (v1.1.72) UUID 표기 정규화 — 레지스트리 안팎의 유일한 정규화 지점.
-     * 대시 없는 32자를 저장하면 BleScanner.buildFilters() 의 UUID.fromString 이 던지고
-     * 안쪽 runCatching 이 삼켜 해당 프로파일의 HW 필터가 조용히 누락됐다.
-     * 동시에 스캔 표본은 bytesToUuidString 이 만든 대시 36자라 문자열 비교가 영원히 어긋났다.
-     * MAC(콜론 포함) 과 형식 불명 문자열은 대문자·trim 만 하고 그대로 통과시킨다.
+     * UUID notation normalization — the only normalization point in and around the registry.
+     * Storing a 32-char UUID without dashes makes UUID.fromString in BleScanner.buildFilters() throw,
+     * and the inner runCatching swallows it, silently dropping that profile's HW filter.
+     * Scan samples are also the 36-char dashed form from bytesToUuidString, so string comparison would never match.
+     * MAC addresses (with colons) and unknown formats are only uppercased and trimmed, then passed through.
      */
     fun normUuid(raw: String): String {
         val s = raw.trim().uppercase()
@@ -41,9 +41,9 @@ object BeaconRegistry {
                "${hex.substring(16, 20)}-${hex.substring(20)}"
     }
 
-    // (quick-260927-bn9 결정 1) 항목 하나 손상으로 전체 목록(존 비콘 포함)이 비던 문제 — 배열 파싱만 실패 시 빈 목록,
-    // 항목 단위는 개별 복구. ponytail: 손상 항목이 남아 있으면 호출마다 Log.w 1줄 — 손상 자체가 드물어 수용,
-    // 로그가 잦아지면 prefs 재기록으로 정리하는 쪽을 검토한다.
+    // One corrupt entry must not empty the whole list (zone beacons included) — only an array parse failure yields an empty list;
+    // entries are recovered individually. ponytail: a corrupt entry left in place logs one Log.w per call — accepted since corruption is rare;
+    // if the logs get frequent, consider cleaning up by rewriting prefs.
     fun getAll(): List<BeaconProfile> {
         val json = prefs.getString(KEY_LIST, "[]") ?: "[]"
         val arr = runCatching { JSONArray(json) }.getOrNull() ?: return emptyList()
@@ -74,7 +74,7 @@ object BeaconRegistry {
     fun containsMac(mac: String): Boolean =
         getAll().any { it.type == "MAC" && it.uuid.equals(normUuid(mac), ignoreCase = true) }
 
-    // (v1.1.62) 존 비콘(zoneMute) 프로파일 조회 — 스캐너가 경보 대상에서 제외하고 존 신호로 돌리기 위함
+    // Zone beacon (zoneMute) profile lookup — lets the scanner exclude them from alert targets and route them as zone signals
     fun findZoneProfileByUuid(uuid: String): BeaconProfile? =
         getAll().firstOrNull { it.zoneMute && it.type != "MAC" && it.uuid.equals(normUuid(uuid), ignoreCase = true) }
 
@@ -105,9 +105,9 @@ object BeaconRegistry {
     fun count(): Int = getAll().size
 
     /**
-     * 레지스트리 변경 통지. add·remove·mergeProfiles 가 전부 save() 를 경유하므로 여기가 유일 지점.
-     * 저장 자체는 정상이었으나 소비자(HW 스캔필터·상태맵)가 변경을 통보받지 못해
-     * 삭제한 UUID 가 상태맵에 잔류하고 신규 UUID 는 칩셋 필터에서 누락됐다.
+     * Registry change notification. add, remove and mergeProfiles all go through save(), so this is the single point.
+     * Without it, saving still works but consumers (HW scan filter, state maps) are not told about changes:
+     * deleted UUIDs linger in state maps and new UUIDs are missing from the chipset filter.
      */
     var onChanged: (() -> Unit)? = null
 
@@ -116,9 +116,9 @@ object BeaconRegistry {
         onChanged?.invoke()
     }
 
-    // ── 기기 간 공유 (export / import) ──────────────────────────
+    // ── Device-to-device sharing (export / import) ──────────────────────────
 
-    /** 프로파일 목록을 공유용 JSON 배열 문자열로 직렬화 (저장 포맷과 동일) */
+    /** Serialize the profile list into a JSON array string for sharing (same as the storage format) */
     fun exportToJson(list: List<BeaconProfile>): String {
         val arr = JSONArray()
         list.forEach { p ->
@@ -137,10 +137,10 @@ object BeaconRegistry {
     }
 
     /**
-     * 공유받은 JSON 배열 문자열을 BeaconProfile 목록으로 파싱.
-     * (v1.1.97) 읽을 수 없는 항목(객체 아님·UUID 없음·알려진 필드의 타입 오류)이 하나라도 있거나
-     * JSON 자체가 깨지면 실패 — 세트 전체를 받지 않는다. 빈 배열은 빈 목록.
-     * (v1.1.98) 실패 사유에 몇 번째 항목의 어느 필드인지 담는다(보낸 기기에서 고칠 수 있게).
+     * Parse a received shared JSON array string into a BeaconProfile list.
+     * Fails if any entry is unreadable (not an object, no UUID, wrong type in a known field)
+     * or the JSON itself is broken — the whole set is rejected. An empty array gives an empty list.
+     * The failure reason names which entry and which field (so the sending device can fix it).
      */
     fun parseProfiles(json: String): Result<List<BeaconProfile>> {
         val arr = runCatching { JSONArray(json) }.getOrElse { return parseFail("JSON 형식이 깨졌습니다") }
@@ -167,18 +167,19 @@ object BeaconRegistry {
 
     private fun parseFail(reason: String) = Result.failure<List<BeaconProfile>>(IllegalArgumentException(reason))
 
-    // 값이 있으면 타입이 맞아야 한다 — opt*() 는 타입이 틀린 값을 조용히 기본값으로 바꾼다. 틀린 필드 이름, 없으면 null
+    // A present value must have the right type — opt*() silently replaces a
+    // wrong-typed value with the default. Returns the bad field name, or null
     private fun wrongTypeField(o: JSONObject): String? =
         listOf("uuid", "label", "type").firstOrNull { o.has(it) && o.opt(it) !is String }
             ?: listOf("addedAt", "rssiOffset", "zoneEnterRssi").firstOrNull { o.has(it) && o.opt(it) !is Number }
             ?: listOf("zoneMute", "visitorBeacon").firstOrNull { o.has(it) && o.opt(it) !is Boolean }
 
-    /** 공유 병합 결과 (추가·갱신·한도초과 건수) */
+    /** Share merge result (counts added, updated, over the limit) */
     data class MergeResult(val added: Int, val updated: Int, val skipped: Int)
 
     /**
-     * 받은 프로파일을 로컬에 병합. 같은 UUID 는 받은 값으로 갱신,
-     * 신규는 MAX_PROFILES 한도 내에서 추가, 로컬 고유 프로파일은 보존.
+     * Merge received profiles into the local ones. The same UUID is updated with the received values,
+     * new ones are added within the MAX_PROFILES limit, and local-only profiles are kept.
      */
     fun mergeProfiles(incoming: List<BeaconProfile>): MergeResult {
         val list = getAll().toMutableList()
@@ -199,8 +200,8 @@ object BeaconRegistry {
     }
 
     /**
-     * (v1.1.97) 받은 세트 검증 — 하나라도 어긋나면 세트 전체를 받지 않는다. 통과면 null, 아니면 안내 문구.
-     * 범위는 등록 화면의 입력 범위와 같다(감지 범위 보정 0~20, 존 진입 기준 −100~−30dBm).
+     * Validate a received set — if any entry fails, the whole set is rejected. null if valid, else a message.
+     * Ranges match the registration screen's input ranges (detection range offset 0~20, zone entry threshold −100~−30dBm).
      */
     fun validateShared(incoming: List<BeaconProfile>): String? {
         val seen = HashSet<String>()
@@ -213,13 +214,13 @@ object BeaconRegistry {
         return null
     }
 
-    /** (v1.1.97) 받기 전 변경 내역 건수 */
+    /** Change counts before receiving */
     data class ChangeSummary(
         val added: Int, val offsetChanged: Int, val zoneOn: Int, val zoneOff: Int,
         val zoneWidened: Int, val visitorChanged: Int
     )
 
-    /** (v1.1.97) 받으면 무엇이 바뀌는지 센다 — UUID 대조는 mergeProfiles 와 같다(로컬 대문자 = 받은 값 normUuid). */
+    /** Count what receiving would change — UUID matching is the same as mergeProfiles (local uppercase = received normUuid). */
     fun summarizeChanges(local: List<BeaconProfile>, incoming: List<BeaconProfile>): ChangeSummary {
         val byUuid = local.associateBy { it.uuid.uppercase() }
         var added = 0; var offset = 0; var zoneOn = 0; var zoneOff = 0; var widened = 0; var visitor = 0
@@ -234,23 +235,30 @@ object BeaconRegistry {
             when {
                 p.zoneMute && !old.zoneMute -> zoneOn++
                 !p.zoneMute && old.zoneMute -> zoneOff++
-                p.zoneMute && p.zoneEnterRssi < old.zoneEnterRssi -> widened++   // 더 약한 신호에서도 존 진입 = 반경 넓어짐
+                p.zoneMute && p.zoneEnterRssi < old.zoneEnterRssi -> widened++   // Zone entry at a weaker signal = wider radius
             }
             if (p.visitorBeacon != old.visitorBeacon) visitor++
         }
         return ChangeSummary(added, offset, zoneOn, zoneOff, widened, visitor)
     }
 
-    /** 이 fullId 가 비콘인지(BEA_ 마커 포함). 전역 비콘 수신 강도(게인)를 비콘에만 적용하기 위함. */
+    /**
+     * Whether this fullId is a beacon (contains the BEA_ marker). Used to apply the global beacon reception strength (gain) to beacons only.
+     */
     fun isBeaconFullId(fullId: String): Boolean = fullId.contains("BEA_")
 
-    /** BleService의 fullId (예: SAFEALERT_WALKER_BEA_AABBCCDDEEFF)에서 rssiOffset 조회 */
+    /** Look up rssiOffset from a BleService fullId (e.g. SAFEALERT_WALKER_BEA_AABBCCDDEEFF) */
     fun getRssiOffsetForFullId(fullId: String): Int = findProfileByFullId(fullId)?.rssiOffset ?: 0
 
-    /** (v1.1.91) fullId 의 비콘이 방문자용인지. 미등록·조회 실패(삭제 직후 등) 시 false — 장비 취급해 울린다(애매하면 감지) */
+    /**
+     * Whether the fullId's beacon is a visitor beacon. Unregistered or lookup failure (e.g. right
+     * after deletion) → false: treated as equipment and alerts (when in doubt, detect)
+     */
     fun isVisitorBeacon(fullId: String): Boolean = findProfileByFullId(fullId)?.visitorBeacon ?: false
 
-    /** (v1.1.91) fullId(BEA_ 마커) → 등록 프로파일 역조회. 키 전체 일치(MAC=12hex, UUID=32hex). 비콘 아님·미등록이면 null */
+    /**
+     * Reverse lookup fullId (BEA_ marker) → registered profile. Full key match (MAC=12hex, UUID=32hex). null if not a beacon or unregistered
+     */
     fun findProfileByFullId(fullId: String): BeaconProfile? {
         if (!fullId.contains("BEA_")) return null
         val key = fullId.substringAfter("BEA_")
@@ -263,8 +271,8 @@ object BeaconRegistry {
     }
 
     /**
-     * (v1.1.99) 구조 요청 광고의 비콘 짧은 ID 로 등록 비콘 라벨 역조회.
-     * 정확히 한 프로파일만 일치하고 라벨이 비어 있지 않을 때만 돌려준다(0·미일치·중복은 null).
+     * Reverse lookup of a registered beacon label from the short beacon ID in an SOS advertisement.
+     * Returned only when exactly one profile matches and its label is not empty (none, no match or duplicates → null).
      */
     fun labelForShortId(sid: Int): String? {
         if (sid == 0) return null
@@ -275,18 +283,18 @@ object BeaconRegistry {
         return hits.singleOrNull()?.label?.takeIf { it.isNotBlank() }
     }
 
-    /** (v1.1.91) 표시·로그용 — BEA_ 뒤 32hex UUID 키만 앞 8자로 줄인다(v1.1.90 표기). MAC 12hex·비콘 아님은 그대로 */
+    /** For display/logs — shortens only a 32hex UUID key after BEA_ to its first 8 chars. MAC 12hex and non-beacons stay as is */
     fun shortFullId(fullId: String): String {
         val key = fullId.substringAfter("BEA_", "")
         return if (key.length == 32) fullId.removeSuffix(key) + key.take(8) else fullId
     }
 
-    /** (v1.1.91) 화면 표시용 라벨 — 세 경로(MAC·iBeacon·Service UUID) 공통. 미등록이면 BEA_+짧은 키 */
+    /** Display label — shared by all three paths (MAC, iBeacon, Service UUID). Unregistered → BEA_ + short key */
     fun labelForFullId(fullId: String): String =
         findProfileByFullId(fullId)?.label ?: ("BEA_" + shortFullId(fullId).substringAfter("BEA_"))
 
-    // iBeacon manufacturer data에서 UUID 추출
-    // 형식: [0x02, 0x15, 16-byte UUID, 2-byte major, 2-byte minor, 1-byte power]
+    // Extract the UUID from iBeacon manufacturer data
+    // Format: [0x02, 0x15, 16-byte UUID, 2-byte major, 2-byte minor, 1-byte power]
     fun parseIBeaconUuid(data: ByteArray): String? {
         if (data.size < 18) return null
         if (data[0] != 0x02.toByte() || data[1] != 0x15.toByte()) return null
@@ -307,7 +315,7 @@ object BeaconRegistry {
         )
     }
 
-    // MAC 기반 구버전 호환 (삭제 예정)
+    // MAC-based legacy compatibility (to be removed)
     @Deprecated("UUID 방식으로 전환")
     fun contains(mac: String): Boolean = false
     @Deprecated("UUID 방식으로 전환")

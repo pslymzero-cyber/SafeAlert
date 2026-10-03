@@ -3,107 +3,112 @@ package com.wf11.safealert.ble
 import kotlin.math.roundToInt
 
 /**
- * RSSI 전처리 — 비대칭 비례제어(Asymmetric P-Control) EMA LPF (v1.0.32)
+ * RSSI pre-processing — asymmetric proportional-control (Asymmetric P-Control) EMA LPF.
  *
- * [설계 교체] v1.0.31 까지의 IQR → Max-Hold 통계 파이프라인을 폐기하고,
- * 지수이동평균(EMA) 기반 1차 비례제어 저역통과 필터로 단일화한다.
- *   공식:  S_t = S_{t-1} + α · (R_t − S_{t-1})   (현재추정 = 이전추정 + 비례상수 × 오차)
+ * A single first-order proportional-control low-pass filter based on an exponential moving average (EMA).
+ *   Formula:  S_t = S_{t-1} + α · (R_t − S_{t-1})   (current estimate = previous estimate + gain × error)
  *
- * [비대칭 P-Gain] RSSI는 음수다(0에 가까울수록 강·근접).
- *   ① R_t ≥ S_{t-1} (신호 강해짐 = 접근/위험 상황)       → α = ALPHA_RISE (0.3)  빠른 추종
- *   ② R_t <  S_{t-1} (신호 약해짐 = 철제랙 간섭 등 난수)  → α = ALPHA_FALL (0.12 · v1.1.56) 느린 추종(가짜 난수 무시)
- *      ※ [v1.0.33] fall α(구 0.05, v1.1.56 부터 0.12)는 실제 이탈(신호 감소)도 함께 둔화시켜 SAFE 전환을 지연시킬 수 있다
- *        (의도된 트레이드오프). 이 지연은 BleService 의 raw 기반 2차 방어선 avg1sec — ⒜ 2차 게이트
- *        SAFE 강등, ⒝ 피크 대비 페이드아웃, ⒞ 0x02 하이브리드 교차검증 — 가 상호 보완하여, 실제
- *        이탈 시 경보가 raw 경로로 신속히 해제·차단되도록 설계되어 있다.
+ * Asymmetric P-gain: RSSI is negative (closer to 0 = stronger = nearer).
+ *   ① R_t ≥ S_{t-1} (signal rising = approach/danger)           → α = ALPHA_RISE (0.3)  fast tracking
+ *   ② R_t <  S_{t-1} (signal falling = noise, e.g. steel racks) → α = ALPHA_FALL (0.12) slow (ignores noise)
+ *      ※ The fall α also slows real departures (signal decrease) and can delay the SAFE transition
+ *        (intended trade-off). The raw-based second line of defense in AlertStateMachine.processAlert (avg1sec,
+ *        medianValue) — ⒜ forced-SAFE distance guard, ⒝ fade-out vs peak, ⒞ reverse/loading hybrid
+ *        cross-check — compensates, so on a real
+ *        departure the alert is released/blocked quickly via the raw path.
  *
- * [미분(속도) 연동 D-Boost] 2D 칼만이 정제한 접근속도(prevVel, dBm/s)를 피드백 받아 α를 가변 조절.
- *   ※ 부호 규칙(KalmanFilter): vel>0 = RSSI 증가 = 접근(돌진).
- *      지침 원문의 'velocity < −2.0(거리 관념)'은 본 코드의 RSSI 공간과 부호가 반대이므로,
- *      의도(돌진 시 빗장 개방)를 살려 코드 부호 관례 prevVel > +VEL_DBOOST_DBM 로 정정 구현한다.
- *   prevVel > VEL_DBOOST_DBM(+2.0) (강한 돌진) → 신호가 일시적으로 감소(R<S)하더라도 난수 방어
- *      하한선 α=ALPHA_FALL 을 무시하고 α = ALPHA_DBOOST(0.4) 로 필터 빗장을 완전히 열어
- *      필터 지연을 최소화하고 생존 반응속도를 확보한다.
+ * Derivative (velocity)-linked D-Boost: the approach velocity refined by the 2D Kalman (prevVel, dBm/s) is
+ * fed back to vary α.
+ *   ※ Sign rule (KalmanFilter): vel>0 = RSSI rising = approaching (rush). In RSSI space the D-Boost
+ *      condition is prevVel > +VEL_DBOOST_DBM (a distance-space 'velocity < −2.0' has the opposite sign).
+ *   prevVel > VEL_DBOOST_DBM(+2.0) (strong rush) → even if the signal dips briefly (R<S), ignore the noise
+ *      defense floor α=ALPHA_FALL and open the filter latch fully with α = ALPHA_DBOOST(0.4), minimizing
+ *      filter lag to keep the survival reaction speed.
  *
- * 정제된 출력(smoothedRssi)만 2D 칼만 필터의 Measurement 로 주입된다(raw 직접 입력 금지).
+ * Only the refined output (smoothedRssi) is fed to the 2D Kalman filter as its measurement (never raw).
  *
- * [v1.0.45 재사용 파라미터화] 동일 비대칭 EMA 코어를 칼만 '후처리 P-EMA'로도 재사용한다.
- *   · 기본 생성자(인자 없음) = 전단(front) EMA: 상승0.3/하강0.12/D-Boost0.4, D-Boost ON (기존 동작 보존).
- *   · 후처리 P-EMA 재사용 시: RssiPreFilter(alphaRise=0.4, alphaFall=0.15, dBoostEnabled=false).
- *     칼만이 이미 속도(D)를 반영하므로 P-EMA 단계의 D-Boost 는 비활성화한다(거리 P항 전용 평활).
+ * Reuse with parameters: the same asymmetric EMA core is also reused as the Kalman post-processing P-EMA.
+ *   · Default constructor (no args) = front EMA: rise 0.3 / fall 0.12 / D-Boost 0.4, D-Boost ON.
+ *   · Post-processing P-EMA: RssiPreFilter(alphaRise=0.4, alphaFall=0.15, dBoostEnabled=false).
+ *     The Kalman already reflects velocity (D), so D-Boost is off in the P-EMA stage (distance P-term only).
  *
- * (v1.1.29) [워밍업 대칭화] 앱 재시작마다 같은 자리·같은 기기인데 정착 RSSI 가 다른 '세션 간
- *   편차'의 근본 교정. 원인: 첫 샘플을 그대로 앵커로 신뢰하는데, BLE 원시 RSSI 는 고정 거리라도
- *   3개 광고채널·다중경로로 ±8~12dB 퍼져 있어 앵커 자체가 세션마다 복불복이다. 앵커가 우연히
- *   '높게'(강하게) 잡히면 하강α(구 0.05)의 느린 추종 탓에 참값 복귀까지 약 11.7초(상승 0.3 은 2.7초,
- *   4.3배 비대칭 지속) — 이 잔상이 초반 수 초의 레벨 판정 품질을 세션마다 다르게 만든다.
- *   교정: 기기별 첫 warmupSymmetricPushes(기본 10, 3Hz 기준 약 3.3초) 푸시 동안만 하강 알파를
- *   상승 알파와 동일하게(대칭) 적용해 잘못 잡힌 앵커를 양방향 같은 속도로 신속 교정한다.
- *   상승·D-Boost 경로는 불변 → 접근(위험) 추종은 어떤 경우에도 기존보다 느려지지 않는다.
- *   워밍업 종료 후엔 기존 비대칭(난수 방어)으로 완전 복귀. 0=끄기(기존 동작과 동일).
+ * Warm-up symmetrization: fixes the between-session drift where the settled RSSI differs on every app
+ *   restart at the same spot with the same device. Cause: the first sample is trusted as the anchor, but raw
+ *   BLE RSSI spreads ±8~12dB even at a fixed distance because of the 3 advertising channels and multipath,
+ *   so the anchor itself is luck of the draw per session. If the anchor happens to read high (strong), the
+ *   slow fall α takes much longer than a rise would to return to the true value, and this residue makes the
+ *   level decisions of the first few seconds differ per session.
+ *   Fix: for each device, during the first warmupSymmetricPushes pushes (default 10, about 3.3 s at 3Hz) the
+ *   fall alpha equals the rise alpha (symmetric), so a bad anchor is corrected quickly at the same speed in
+ *   both directions. The rise and D-Boost paths are unchanged → approach (danger) tracking is never slower.
+ *   After warm-up it returns fully to the asymmetric behavior (noise defense). 0 = off.
  */
 class RssiPreFilter(
-    // 알파 3종은 var — 개발자 설정(DevSettings)에서 라이브 조절 가능(emaState 보존한 채 즉시 반영)
+    // The three alphas are var — tunable live from developer settings (DevSettings);
+    // applied immediately while keeping emaState.
     var alphaRise:     Double  = ALPHA_RISE,
     var alphaFall:     Double  = ALPHA_FALL,
     var alphaDBoost:   Double  = ALPHA_DBOOST,
-    // (v1.1.29) 워밍업 대칭 푸시 수 — var: DevSettings 에서 라이브 조절(0=끄기). 전단·후처리 공통.
+    // Warm-up symmetric push count — var: tunable live in DevSettings (0 = off).
+    // Shared by the front and post-processing filters.
     var warmupSymmetricPushes: Int = WARMUP_SYMMETRIC_PUSHES,
     private val dBoostEnabled: Boolean = true,
 ) {
 
     companion object {
-        // 비대칭 비례상수(α) — 전단 EMA 기본값
-        const val ALPHA_RISE     = 0.3    // 신호 강해짐(접근/위험): 빠른 추종
-        const val ALPHA_FALL     = 0.12   // (v1.1.56 U4a) 0.05→0.12: 이탈(해제) 추종 가속 — 플랩 억제(시뮬 검증)
-        const val ALPHA_DBOOST   = 0.4    // 강한 돌진(D-Boost): 빗장 완전 개방
-        // D-Boost 임계: 칼만 추정 접근속도(dBm/s). RSSI 공간이라 양수(+)=접근.
+        // Asymmetric proportional gains (α) — front EMA defaults
+        const val ALPHA_RISE     = 0.3    // Signal rising (approach/danger): fast tracking
+        const val ALPHA_FALL     = 0.12   // Faster departure (release) tracking — less flapping (simulation-verified)
+        const val ALPHA_DBOOST   = 0.4    // Strong rush (D-Boost): latch fully open
+        // D-Boost threshold: Kalman-estimated approach velocity (dBm/s). In RSSI space, positive (+) = approaching.
         const val VEL_DBOOST_DBM = 2.0
-        // (v1.1.29) 워밍업 대칭 푸시 수 기본값 — 3Hz 광고 기준 약 3.3초
+        // Default warm-up symmetric push count — about 3.3 s at 3Hz advertising
         const val WARMUP_SYMMETRIC_PUSHES = 10
-        // (v1.1.40) 섀도우 IMU 융합 이탈확증 프레임의 하강 알파 부스트 — DANGER 해제 가속(시뮬 S3 -42%)
+        // Fall-alpha boost for shadow-IMU-fusion departure-confirmed frames — faster DANGER release (-42% simulated)
         const val FALL_BOOST_ALPHA = 0.4
     }
 
-    // 기기별 EMA 상태 S_{t-1} (Double 정밀도 유지, 출력만 Int 양자화)
+    // Per-device EMA state S_{t-1} (kept in Double precision; only the output is quantized to Int)
     private val emaState = mutableMapOf<String, Double>()
-    // (v1.1.29) 기기별 누적 푸시 수 — 워밍업(하강 대칭화) 구간 판정용. 앵커(첫 샘플)=1.
+    // Per-device cumulative push count — detects the warm-up (symmetric fall) phase. Anchor (first sample) = 1.
     private val pushCount = mutableMapOf<String, Int>()
 
     /**
-     * 신규 RSSI 샘플을 비대칭 EMA로 정제해 반환.
+     * Refines a new RSSI sample with the asymmetric EMA and returns it.
      *
-     * @param deviceId 기기 식별자 (기기별 독립 상태)
-     * @param rssi     원시 RSSI (dBm, 음수)
-     * @param prevVel  직전 프레임 칼만 추정속도(dBm/s). +접근/−이탈. 첫 프레임 0.0.
-     * @param fallBoost (v1.1.40) 섀도우 IMU 융합의 이탈확증 프레임 — 하강(R<S) 알파만
-     *                  FALL_BOOST_ALPHA(0.4)로 부스트해 해제(이탈) 추종을 가속. 상승·D-Boost 불변.
-     * @return 2D 칼만 필터에 입력할 정제 RSSI(smoothedRssi)
+     * @param deviceId device identifier (independent state per device)
+     * @param rssi     raw RSSI (dBm, negative)
+     * @param prevVel  previous-frame Kalman velocity (dBm/s). + approaching / − leaving. 0.0 on the first frame.
+     * @param fallBoost departure-confirmed frame from shadow IMU fusion — boosts only the fall (R<S) alpha to
+     *                  FALL_BOOST_ALPHA (0.4) to speed release (departure) tracking. Rise and D-Boost unchanged.
+     * @return refined RSSI (smoothedRssi) to feed the 2D Kalman filter
      */
     fun push(deviceId: String, rssi: Int, prevVel: Double = 0.0, fallBoost: Boolean = false): Int {
-        // 첫 샘플: 상태 초기화(콜드스타트 지연 제거) — 원시값을 그대로 신뢰
+        // First sample: initialize the state (removes cold-start delay) — trust the raw value as is
         val prev = emaState[deviceId] ?: run {
             emaState[deviceId] = rssi.toDouble()
-            pushCount[deviceId] = 1   // (v1.1.29) 앵커 푸시=1. 재발견(clear 후) 시 워밍업 재시작.
+            pushCount[deviceId] = 1   // Anchor push = 1. Warm-up restarts on rediscovery (after clear).
             return rssi
         }
 
-        // (v1.1.29) 워밍업 카운트 — 앵커 이후 푸시부터 2,3,... 증가
+        // Warm-up count — pushes after the anchor count up 2, 3, ...
         val n = (pushCount[deviceId] ?: 1) + 1
         pushCount[deviceId] = n
-        // (v1.1.29) 워밍업 구간(n ≤ warmupSymmetricPushes)에는 하강도 상승 알파로 대칭 추종:
-        //   우연히 높게 잡힌 앵커를 신속 교정(11.7초 → 약 3.3초). 상승·D-Boost 분기는 불변.
+        // During warm-up (n ≤ warmupSymmetricPushes) the fall also tracks with the rise alpha (symmetric):
+        //   quickly corrects an anchor that happened to read high (in about 3.3 s).
+        //   Rise and D-Boost branches are unchanged.
         val fallEff = if (n <= warmupSymmetricPushes) alphaRise else alphaFall
 
         val r = rssi.toDouble()
         val alpha = when {
-            // D-Boost: 강한 돌진(접근속도 가파름) → 신호 일시감소(R<S)여도 빗장 개방
+            // D-Boost: strong rush (steep approach velocity) → open the latch even on a brief signal dip (R<S)
             dBoostEnabled && prevVel > VEL_DBOOST_DBM -> alphaDBoost
-            // 신호 강해짐(R ≥ S): 위험 방향 → 빠른 추종
+            // Signal rising (R ≥ S): danger direction → fast tracking
             r >= prev                                 -> alphaRise
-            // (v1.1.40) 섀도우 이탈확증(DANGER 해제 국면): 하강 프레임만 부스트(rise 가 선매치라 상승 불변)
+            // Shadow departure confirmed (DANGER release): boost fall frames only (rise is matched first, so unchanged)
             fallBoost                                 -> FALL_BOOST_ALPHA
-            // 신호 약해짐(R < S): 철제랙 간섭 등 난수 의심 → 매우 느린 추종(워밍업 중엔 대칭)
+            // Signal falling (R < S): suspected noise such as steel-rack interference →
+            //   very slow tracking (symmetric during warm-up)
             else                                      -> fallEff
         }
 

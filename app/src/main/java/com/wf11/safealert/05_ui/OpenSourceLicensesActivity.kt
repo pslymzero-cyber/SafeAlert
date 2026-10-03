@@ -7,16 +7,16 @@ import com.wf11.safealert.databinding.ActivityOpenSourceLicensesBinding
 import com.wf11.safealert.databinding.ItemOssEntryBinding
 
 /**
- * 오픈소스 라이선스 고지 화면
+ * Open-source license notice screen
  *
- * Apache License 2.0 등 고지 의무가 있는 라이브러리의
- * 명칭, 버전, 라이선스를 한 화면에 표시.
+ * Shows the name, version and license of libraries with notice obligations,
+ * such as Apache License 2.0, on one screen.
  */
 class OpenSourceLicensesActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityOpenSourceLicensesBinding
 
-    // (라이브러리명, 버전, 라이선스)
+    // (library name, version, license)
     private data class OssEntry(val name: String, val version: String, val license: String)
 
     private val JETPACK_ENTRIES = listOf(
@@ -51,7 +51,7 @@ class OpenSourceLicensesActivity : AppCompatActivity() {
 
         binding.tvOslVersion.text = "SafeAlert v${BuildConfig.VERSION_NAME}"
 
-        // Jetpack 항목
+        // Jetpack entries
         bindEntry(binding.ossCoreKtx,           JETPACK_ENTRIES[0])
         bindEntry(binding.ossAppcompat,         JETPACK_ENTRIES[1])
         bindEntry(binding.ossMaterial,          JETPACK_ENTRIES[2])

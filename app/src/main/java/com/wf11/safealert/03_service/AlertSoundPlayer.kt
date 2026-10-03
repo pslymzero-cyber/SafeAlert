@@ -16,22 +16,23 @@ object AlertSoundPlayer {
     private var repeatRunnable: Runnable? = null
     private var isPlaying = false
 
-    // (v1.1.96 코드검토) 경고음 1초 해제 타이머 — stopSound 가 지울 수 있게 필드로 둔다.
-    //   익명 postDelayed 는 못 지워, WARNING 뒤 1초 안에 DANGER 로 오르면 반복이 끊겼다.
+    // 1 s release timer for the warning tone — kept as a field so stopSound can cancel it.
+    //   An anonymous postDelayed cannot be cancelled, so escalating to DANGER within 1 s after WARNING
+    //   would cut off the repeating tone.
     private var warnHandler: Handler? = null
     private val warnReset = Runnable { isPlaying = false }
 
-    // (v1.1.64 패치3-6) ALARM 스트림 생성이 실패해 MUSIC 스트림으로 폴백한 상태인지.
-    //   BleService.forceAlarmVolume() 의 음량 하한 보정은 STREAM_ALARM 전용이라,
-    //   폴백 중에는 미디어 음량이 0 이어도 "재생은 성공"으로 보이는 무성 실패가 된다.
+    // Whether ALARM stream creation failed and playback fell back to the MUSIC stream.
+    //   The volume floor in BleService.forceAlarmVolume() applies only to STREAM_ALARM, so during the fallback
+    //   a media volume of 0 would be a silent failure that still looks like successful playback.
     @Volatile private var usingMusicFallback = false
 
-    // (v1.1.64 패치3-5) 소리를 아예 낼 수 없게 된 사유. 정상이면 null.
-    //   BleService 가 이 값을 상시 알림으로 승격해 사용자가 무음 상태를 인지하게 한다.
+    // Why sound cannot be played at all; null when healthy.
+    //   BleService raises this to the persistent notification so the user knows alerts are silent.
     @Volatile var soundFaultReason: String? = null
         private set
 
-    /** 경보음 이상/복구 통지 콜백. 인자가 null 이면 복구. */
+    /** Callback for alarm-sound failure/recovery. A null argument means recovered. */
     var onSoundFault: ((String?) -> Unit)? = null
 
     val isUsingMusicFallback: Boolean get() = usingMusicFallback
@@ -43,9 +44,9 @@ object AlertSoundPlayer {
     }
 
     /**
-     * ToneGenerator 확보. (v1.1.64 패치3-5) 어떤 경우에도 예외를 밖으로 던지지 않는다.
-     * 기존 구현은 runCatching{...}.recover{...} 형태라 recover 블록 안의 생성자가 던지면
-     * 그대로 호출부로 전파돼, 소리도 안 나고 경보 처리 경로까지 함께 죽었다.
+     * Obtains the ToneGenerator. Never throws, under any circumstances.
+     * With a runCatching{...}.recover{...} shape, a constructor throwing inside the recover block propagates to
+     * the caller, killing both the sound and the alert-processing path.
      */
     private fun getOrCreateTone(): ToneGenerator? {
         toneGenerator?.let { return it }
@@ -78,9 +79,9 @@ object AlertSoundPlayer {
     }
 
     /**
-     * (v1.1.64 패치3-6) MUSIC 스트림 폴백 중일 때 ALARM 과 동등한 음량 하한을 건다.
-     * DevSettings.alarmVolume 은 이미 50~100 으로 하한이 걸려 있으므로 그 비율을 그대로 쓴다.
-     * 사용자가 올려 둔 미디어 음량은 내리지 않는다(현재 값이 목표보다 낮을 때만 올림).
+     * While falling back to the MUSIC stream, applies the same volume floor as ALARM.
+     * DevSettings.alarmVolume is already floored to 50~100, so that ratio is used as is.
+     * Never lowers a media volume the user has raised (only raises it when the current value is below the target).
      */
     private fun enforceFallbackVolume(context: Context) {
         if (!usingMusicFallback) return
@@ -103,7 +104,7 @@ object AlertSoundPlayer {
             if (tg == null) { isPlaying = false; return }
             enforceFallbackVolume(context)
             tg.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 800)
-            // ToneGenerator 유지 (재사용) — stopSound에서만 해제
+            // Keep the ToneGenerator (reused) — released only in stopSound
             warnHandler = Handler(Looper.getMainLooper()).apply { postDelayed(warnReset, 1000) }
         } catch (e: Exception) {
             Log.e(TAG, "경고음 실패: ${e.message}")
@@ -117,8 +118,8 @@ object AlertSoundPlayer {
         stopSound()
         isPlaying = true
 
-        // (v1.1.64 패치3-5) 톤 확보가 try 밖에 있으면 여기서 던진 예외가 서비스까지 올라가
-        //   경보 처리 전체가 죽는다. 확보 실패는 조용히 넘기지 말고 사유를 남긴다.
+        // If obtaining the tone were outside the try, an exception thrown here would reach the service and kill
+        //   all alert processing. Do not swallow an acquisition failure silently; record the reason.
         val tg = try {
             getOrCreateTone()
         } catch (e: Exception) {
@@ -138,11 +139,11 @@ object AlertSoundPlayer {
             override fun run() {
                 if (!isPlaying) return
                 try {
-                    // 기존 ToneGenerator 재사용 (재생성 제거 → CPU/메모리 절약)
+                    // Reuse the existing ToneGenerator (no re-creation → saves CPU/memory)
                     tg.startTone(ToneGenerator.TONE_CDMA_EMERGENCY_RINGBACK, 400)
                 } catch (e: Exception) {
                     Log.e(TAG, "위험음 반복 실패: ${e.message}")
-                    toneGenerator = null  // 오류 시만 null 처리
+                    toneGenerator = null  // Null only on error
                     setFault("경보음 재생 실패")
                 }
                 if (isPlaying) repeatHandler?.postDelayed(this, 600)
@@ -160,7 +161,7 @@ object AlertSoundPlayer {
         warnHandler?.removeCallbacks(warnReset)
         warnHandler = null
         runCatching { toneGenerator?.release() }
-        toneGenerator = null  // 정지 시에만 해제
+        toneGenerator = null  // Release only on stop
         usingMusicFallback = false
         Log.d(TAG, "소리 중지")
     }

@@ -21,20 +21,21 @@ import com.wf11.safealert.service.CalibrationEngine
 import com.wf11.safealert.utils.DevSettings
 import com.wf11.safealert.utils.UwbRanger
 
-// [v1.1.8 ①②] 감지 방식(칼만/1초평균 고정값) 선택·모드 혼합(blend) 전면 제거 → 칼만 단일화.
-//   화면은 칼만 강도 프리셋 + 경고/위험 신호세기(dBm) 임계만 남긴다.
-// (v1.1.63) 설정 재편 — 아코디언 3섹션([경보 기본] 기본 펼침 · [비콘] · [UWB]).
-//   경보 볼륨(50~100%)은 개발자 설정 → 여기로 이동, 에코편차 자동보정(스위치 행 탭 = 하위 펼침 ·
-//   튜너 EditText 3종 · 기기별 진단 · 통계 초기화)도 개발자 설정 → 여기로 이관(단일 위치).
-//   협력 2종(상호 RSSI 교환 · 협력 수용 완화)과 UWB 승격·해제 3종은 개발자 설정으로 이동.
+// Detection is Kalman-only (no Kalman vs. fixed 1 s average selection, no mode blend). The screen keeps the Kalman
+//   strength preset and the warning/danger signal-strength (dBm) thresholds.
+// Accordion with 3 sections ("경보 기본" expanded by default · "비콘" · "UWB").
+//   Alert volume (50~100%) and echo-offset auto-calibration (tap the switch row = expand; 3 tuner EditTexts;
+//   per-device diagnostics; stats reset) are on this screen. The 2 cooperation settings (mutual RSSI exchange,
+//   cooperative acceptance relaxation) and the 3 UWB escalate/release settings are in developer settings.
 class BleSettingsActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityBleSettingsBinding
 
-    // (v1.1.63) 입력란(에코 튜너 EditText) 확정 콜백 — onPause 안전망에서 일괄 커밋(DevSettingsActivity 와 동일 패턴)
+    // Commit callbacks for input fields (echo tuner EditTexts) — committed in bulk
+    // by the onPause safety net (same pattern as DevSettingsActivity)
     private val editCommitters = mutableListOf<() -> Unit>()
 
-    // (v1.1.63) 에코편차 진단 패널 폴러 — 화면 표시 중에만 1.2s 주기(onResume 시작 / onPause 정지)
+    // Echo-offset diagnostic panel poller — every 1.2s only while the screen is shown (start onResume / stop onPause)
     private val echoDiagHandler = Handler(Looper.getMainLooper())
     private val echoDiagPoller = object : Runnable {
         override fun run() {
@@ -43,9 +44,9 @@ class BleSettingsActivity : AppCompatActivity() {
         }
     }
 
-    // (v1.1.38 A) UWB_RANGING 권한 요청 런처 — 부여 시 서비스에 세션 재평가 요청 + 시스템 토글 이어서 확인.
-    //   버그 원인: 이 권한이 역할선택(MainActivity)에서만 요청돼, 업그레이드·서비스 재시작 후 누락되면
-    //   UWB 세션이 안 열려 목록 거리가 dBm 으로 폴백. 여기서 명시적 진입점 제공.
+    // UWB_RANGING permission request launcher — when granted, asks the service to re-evaluate sessions, then checks the system toggle.
+    //   Otherwise the permission is requested only at role selection (MainActivity); if it goes missing after an upgrade or service
+    //   restart, no UWB session opens and list distances fall back to dBm. This is the explicit entry point.
     private val uwbPermLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             if (granted) {
@@ -62,33 +63,34 @@ class BleSettingsActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityBleSettingsBinding.inflate(layoutInflater)
         setContentView(binding.root)
-        // (v1.1.63) 헤더는 레이아웃의 SA.TopBar — NoActionBar 테마라 아래는 no-op(호환 유지). 뒤로가기 = 시스템 백.
+        // The header is SA.TopBar in the layout — with the NoActionBar theme the line
+        // below is a no-op (kept for compatibility). Back = system back.
         supportActionBar?.apply { title = "BLE 감지 설정"; setDisplayHomeAsUpEnabled(true) }
 
         loadValues()
         setupListeners()
         setupAccordion()
         updateSectionSummaries()
-        lockDevManaged()   // (v1.1.77) 리스너 배선 뒤에 잠근다 — 순서가 바뀌어도 결과는 같지만 의도를 남긴다
+        lockDevManaged()   // Lock after wiring listeners; order doesn't change the result, but shows intent
         listOf(binding.groupBeaconGain, binding.rowUwb).forEach { row ->
             row.setOnClickListener {
                 if (!pinUnlocked) showDevPinDialog { pinUnlocked = true; applyPinGate() }
             }
         }
-        applyPinGate()   // 리스너 뒤 — setOnClickListener 가 켠 clickable 을 잠금 상태에 맞춘다
+        applyPinGate()   // After listeners: match clickable (set by setOnClickListener) to the lock state
     }
 
-    // (v1.1.97) 비콘 수신 강도·UWB 사용은 기본 잠금 — 행이나 잠긴 컨트롤을 눌러 PIN 을 확인하면
-    //   이 화면이 열려 있는 동안만 풀린다(재생성·재진입 시 다시 잠금). 표시는 lockDevManaged 와 같다.
-    //   잠긴 슬라이더는 터치를 처리하지 않아 묶음(groupBeaconGain)이 받는다. 잠긴 스위치는
-    //   비활성이어도 clickable 이면 터치를 먹으므로 잠긴 동안 clickable 을 꺼 행(rowUwb)으로 넘긴다.
+    // Beacon gain and UWB use are locked by default — tapping the row or a locked control and passing the PIN unlocks
+    //   them only while this screen stays open (locked again on recreate/re-entry). Shown the same way as lockDevManaged.
+    //   A locked slider does not handle touches, so its group (groupBeaconGain) gets them. A locked switch still eats
+    //   touches if clickable even when disabled, so clickable is turned off while locked to pass touches to the row (rowUwb).
     private var pinUnlocked = false
 
     private fun applyPinGate() {
         binding.seekBeaconGain.isEnabled = pinUnlocked
-        binding.swUwb.isEnabled = pinUnlocked && UwbRanger.isHardwareSupported(this)   // 미지원 기기는 계속 비활성
+        binding.swUwb.isEnabled = pinUnlocked && UwbRanger.isHardwareSupported(this)   // Unsupported devices stay disabled
         binding.swUwb.isClickable = pinUnlocked
-        // (v1.1.98) 풀린 뒤에는 행이 누를 수 있는 항목으로 안내되지 않게(화면 읽기 기능)
+        // Once unlocked, the row is not announced as a tappable item (screen reader)
         binding.groupBeaconGain.isClickable = !pinUnlocked
         binding.rowUwb.isClickable = !pinUnlocked
         val a = if (pinUnlocked) 1f else 0.4f
@@ -97,7 +99,7 @@ class BleSettingsActivity : AppCompatActivity() {
     }
 
     private fun loadValues() {
-        // 칼만 필터 강도 프리셋
+        // Kalman filter strength preset
         binding.rgKalmanPreset.check(
             when (DevSettings.kalmanPreset) {
                 DevSettings.KALMAN_PRESET_FAST   -> binding.rbKfFast.id
@@ -106,24 +108,24 @@ class BleSettingsActivity : AppCompatActivity() {
             }
         )
 
-        loadDevManagedValues()   // (v1.1.77) 개발자 설정·메인 화면이 정하는 값 — 표시만, 저장은 사용자 조작일 때만
+        loadDevManagedValues()   // Owned by dev settings / main screen: shown only, saved only on user input
 
-        // 비콘 수신 강도(%) — 슬라이더 progress = percent/10 (0~30 → 0~300%)
+        // Beacon gain (%) — slider progress = percent/10 (0~30 → 0~300%)
         binding.seekBeaconGain.progress = (DevSettings.beaconGainPercent / 10).coerceIn(0, 30)
         updateBeaconGainLabel()
 
-        // [v1.1.25] EPJ↔EPJ 오프셋 — 슬라이더 progress = 오프셋+10 (-10~+15 dB → 0~25)
+        // EPJ↔EPJ offset — slider progress = offset+10 (-10~+15 dB → 0~25)
         binding.seekEpjBias.progress = (DevSettings.epjVsEpjBiasDb + 10).coerceIn(0, 25)
         updateEpjBiasLabel()
 
-        // (v1.1.30) UWB 정밀 거리 토글 — 미지원 기기는 스위치 비활성
+        // UWB precise distance toggle — switch disabled on unsupported devices
         binding.swUwb.isChecked = DevSettings.uwbEnabled
         if (!UwbRanger.isHardwareSupported(this)) {
             binding.swUwb.isEnabled = false
             binding.tvUwbHint.text = "이 기기는 UWB 하드웨어가 없어 BLE 신호로만 동작합니다"
         }
 
-        // (v1.1.31) 거리 표시 방식 — 0=dBm만 / 1=UWB만 m / 2=전부 m(비UWB는 역산 추정)
+        // Distance display mode — 0=dBm only / 1=m for UWB only / 2=m for all (non-UWB as back-calculated estimate)
         binding.rgDistMode.check(
             when (DevSettings.distanceDisplayMode) {
                 0    -> binding.rbDistDbm.id
@@ -132,7 +134,7 @@ class BleSettingsActivity : AppCompatActivity() {
             }
         )
 
-        // [v1.1.46] UWB 판정 반경(역할쌍 차등) — progress = 미터 × 2(0.5m 스텝)
+        // UWB judging radius (differs per role pair) — progress = meters × 2 (0.5m steps)
         binding.seekUwbFkWarn.progress     = (DevSettings.uwbForkliftWarnMeters   * 2).toInt().coerceIn(2, 80)
         binding.seekUwbFkDanger.progress   = (DevSettings.uwbForkliftDangerMeters * 2).toInt().coerceIn(1, 60)
         binding.seekUwbPairWarn.progress   = (DevSettings.uwbPairWarnMeters       * 2).toInt().coerceIn(2, 40)
@@ -147,47 +149,48 @@ class BleSettingsActivity : AppCompatActivity() {
             binding.seekUwbPairDanger.isEnabled = false
         }
 
-        // (v1.1.38 A) UWB 권한/시스템 진입점 초기 상태 반영
+        // Reflect the initial state of the UWB permission/system entry point
         refreshUwbPermState()
     }
 
     /**
-     * (v1.1.77) 개발자 설정에서 정하는 값 + 메인 화면의 사업장 코드를 화면에 반영.
-     * 대상 위젯은 전부 lockDevManaged() 로 잠겨 있어 되읽어 덮어써도 사용자 입력을 잃지 않는다.
-     * onResume 에서도 부르는 이유 — 개발자 설정·메인 화면에서 바꾼 값이 복귀 시 보여야 한다.
-     * 프로그램 setProgress/setText 는 저장·applySite 를 부르지 않는다(seek() 가 사용자 조작만
-     * 통과, 사업장 칸에는 저장 리스너가 없음). 사업장 코드 입력처는 메인 화면·개발자 설정
-     * (둘 다 applySite 까지 직접 처리). 헤더 요약은 onResume 이 따로 갱신한다.
+     * Shows the values set in developer settings plus the main screen's site code.
+     * All target widgets are locked by lockDevManaged(), so re-reading and overwriting them loses no user input.
+     * Also called from onResume — values changed in developer settings or the main screen must show on return.
+     * Programmatic setProgress/setText never triggers saving or applySite (seek() passes only user input; the site field
+     * has no save listener). The site code is entered in the main screen and developer settings (both handle applySite
+     * themselves). onResume refreshes the header summary separately.
      */
     private fun loadDevManagedValues() {
-        // RSSI 임계 (dBm) — 슬라이더 progress=절댓값(30~100), 저장은 음수 dBm
+        // RSSI thresholds (dBm) — slider progress = absolute value (30~100), stored as negative dBm
         binding.seekWarnDist.progress = (-DevSettings.rssiWarning).coerceIn(30, 100)
         binding.seekDangDist.progress = (-DevSettings.rssiDanger ).coerceIn(30, 100)
         updateDistLabels()
 
-        // (v1.1.63) 경보 볼륨 — 50~100% (DevSettings 도 50 하한 클램프)
+        // Alert volume — 50~100% (DevSettings also clamps to a floor of 50)
         val vol = DevSettings.alarmVolume.coerceIn(50, 100)
         binding.seekAlarmVolume.progress = vol
         binding.tvAlarmVolumeVal.text = "${vol}%"
 
-        // (v1.1.63) 에코편차 자동보정 — 스위치 + 튜너 3종 + 진단 패널(폴러가 갱신)
+        // Echo-offset auto-calibration — switch + 3 tuners + diagnostic panel (refreshed by the poller)
         binding.swEchoAutoCalib.isChecked = DevSettings.echoAutoCalibEnabled
         binding.etEchoMinTicks.setText(DevSettings.echoCalMinTicks.toString())
         binding.etEchoMaxIqr.setText(DevSettings.echoCalMaxIqrDb.toString())
         binding.etEchoClamp.setText(DevSettings.echoCalClampDb.toString())
         refreshEchoDiag()
 
-        // (v1.1.34→v1.1.77) 사업장 코드 = 전역 분리 키. 입력처는 메인 화면·개발자 설정, 여기는 표시만(저장 리스너 없음).
+        // Site code = global partition key. Entered in the main screen and developer settings; display only here (no save listener).
         binding.etUwbSite.setText(DevSettings.siteCode)
     }
 
     /**
-     * (v1.1.77→v1.1.79) 개발자 설정 전용 항목 잠금 — 값은 보여주되 이 화면에서는 못 바꾼다.
-     * UWB 섹션에서 남는 조작은 사용 여부 스위치(swUwb)와 권한 진입점(btnUwbPermission) 둘뿐이다.
-     * 권한 버튼은 옵션이 아니라 시스템 권한 진입점이라 잠그면 스위치 자체가 무의미해진다.
-     * 필터 강도(rgKalmanPreset)는 그대로 편집 가능. 비콘 게인·UWB 스위치는 applyPinGate(PIN 확인 후 해제).
-     * 에코 상세 펼침 행(rowEchoAutoCalib)은 잠그지 않는다 — 진단값을 봐야 하기 때문.
-     * RadioGroup 은 isEnabled 가 자식에 전파되지 않아 라디오 3개를 개별로 잠근다.
+     * Locks developer-settings-only items — values are shown but cannot be changed on this screen.
+     * The only controls left in the UWB section are the use switch (swUwb) and the permission entry point (btnUwbPermission).
+     * The permission button is a system permission entry point, not an option; locking it would make the switch itself pointless.
+     * The filter strength (rgKalmanPreset) stays editable. Beacon gain and the UWB
+     * switch go through applyPinGate (unlocked after the PIN check).
+     * The echo detail expand row (rowEchoAutoCalib) is not locked — the diagnostics must stay viewable.
+     * RadioGroup.isEnabled does not propagate to its children, so the 3 radios are locked individually.
      */
     private fun lockDevManaged() {
         listOf<View>(
@@ -201,9 +204,10 @@ class BleSettingsActivity : AppCompatActivity() {
     }
 
     private fun setupListeners() {
-        // [v1.1.15] 저장 버튼 제거 — 위젯을 만지는 즉시 DevSettings 에 기록(라이브 반영).
-        //   BleService 가 SharedPreferences 변경을 구독(registerOnChange→applyLiveSettings)하므로
-        //   라디오/슬라이더를 움직이는 즉시 필터 강도·감지 임계가 반영된다. 화면 종료는 기기 뒤로가기.
+        // No save button — touching an unlocked widget writes to DevSettings immediately (applied live).
+        //   BleService subscribes to SharedPreferences changes (registerOnChange→applyLiveSettings), so the filter strength
+        //   and the other unlocked controls apply at once. The alert thresholds shown here are locked (lockDevManaged) and
+        //   are edited in developer settings. Leave the screen with the device back button.
         binding.rgKalmanPreset.setOnCheckedChangeListener { _, checkedId ->
             DevSettings.kalmanPreset = when (checkedId) {
                 binding.rbKfFast.id   -> DevSettings.KALMAN_PRESET_FAST
@@ -211,10 +215,10 @@ class BleSettingsActivity : AppCompatActivity() {
                 else                  -> DevSettings.KALMAN_PRESET_SMOOTH
             }
         }
-        // 경고/위험 신호세기(dBm). 슬라이더 progress=절댓값(30~100), 저장은 음수 dBm.
-        //   위험은 경고보다 가까워야(절댓값이 더 작아야) → 역전되면 방금 움직인 슬라이더를
-        //   경계값으로 자가 보정(clamp). setProgress 재진입은 역전 조건이 깨져 즉시 수렴.
-        //   (양 끝단 30/100 에서는 같아질 수 있으나 경고·위험 임계가 겹치는 무해한 설정)
+        // Warning/danger signal strength (dBm). Slider progress = absolute value (30~100), stored as negative dBm.
+        //   Danger must be closer than warning (smaller absolute value) → if they cross, the slider just moved
+        //   self-corrects to the boundary (clamp). The setProgress re-entry no longer meets the crossing condition, so it settles at once.
+        //   (At the ends, 30/100, the two can become equal — a harmless setting where the warning and danger thresholds coincide.)
         binding.seekWarnDist.setOnSeekBarChangeListener(seek {
             val dangAbs = binding.seekDangDist.progress
             var warnAbs = binding.seekWarnDist.progress
@@ -238,7 +242,7 @@ class BleSettingsActivity : AppCompatActivity() {
             updateSectionSummaries()
         })
 
-        // (v1.1.63) 경보 볼륨 — 50~100% (레이아웃 min=50 + 코드 클램프 이중). 즉시 라이브 반영(BleService 구독)
+        // Alert volume — 50~100% (layout min=50 plus a code clamp). Applied live at once (BleService subscription)
         binding.seekAlarmVolume.setOnSeekBarChangeListener(seek {
             val v = binding.seekAlarmVolume.progress.coerceIn(50, 100)
             if (binding.seekAlarmVolume.progress != v) binding.seekAlarmVolume.progress = v
@@ -247,7 +251,7 @@ class BleSettingsActivity : AppCompatActivity() {
             updateSectionSummaries()
         })
 
-        // (v1.1.63) 에코편차 자동보정 — 스위치·튜너·초기화(개발자 설정에서 이관). 스위치 밖 행을 탭하면 하위 펼침/접힘.
+        // Echo-offset auto-calibration — switch, tuners, reset. Tapping the row outside the switch expands/collapses the sub-rows.
         binding.swEchoAutoCalib.setOnCheckedChangeListener { _, c ->
             DevSettings.echoAutoCalibEnabled = c
             refreshEchoDiag()
@@ -267,25 +271,25 @@ class BleSettingsActivity : AppCompatActivity() {
             binding.ivEchoChevron.rotation = if (open) 180f else 0f
         }
 
-        // 비콘 수신 강도(%) — progress×10 = percent 저장(라이브 반영)
+        // Beacon gain (%) — saves progress×10 = percent (applied live)
         binding.seekBeaconGain.setOnSeekBarChangeListener(seek {
             DevSettings.beaconGainPercent = binding.seekBeaconGain.progress * 10
             updateBeaconGainLabel()
             updateSectionSummaries()
         })
-        // [v1.1.25] EPJ↔EPJ 오프셋 — progress-10 = 오프셋(-10~+15 dB) 저장(라이브 반영)
+        // EPJ↔EPJ offset — saves progress-10 = offset (-10~+15 dB) (applied live)
         binding.seekEpjBias.setOnSeekBarChangeListener(seek {
             DevSettings.epjVsEpjBiasDb = binding.seekEpjBias.progress - 10
             updateEpjBiasLabel()
         })
 
-        // (v1.1.30) UWB 토글 — 즉시 라이브 반영(BleService 가 SharedPreferences 변경 구독)
+        // UWB toggle — applied live at once (BleService subscribes to SharedPreferences changes)
         binding.swUwb.setOnCheckedChangeListener { _, checked ->
             DevSettings.uwbEnabled = checked
             updateSectionSummaries()
         }
 
-        // (v1.1.31) 거리 표시 방식 — 즉시 라이브 반영(다음 목록 브로드캐스트부터 적용)
+        // Distance display mode — applied live at once (from the next list broadcast)
         binding.rgDistMode.setOnCheckedChangeListener { _, checkedId ->
             DevSettings.distanceDisplayMode = when (checkedId) {
                 binding.rbDistDbm.id  -> 0
@@ -294,9 +298,9 @@ class BleSettingsActivity : AppCompatActivity() {
             }
         }
 
-        // [v1.1.46] UWB 판정 반경 — progress/2 = 미터(0.5m 스텝) 저장(라이브 반영: judgeUwbOnly 가
-        //   매 판정마다 DevSettings 를 직독하므로 별도 서비스 통지 불필요). 경고<위험 역설정은
-        //   자동 보정하지 않는다 — 위험 분기가 먼저 평가돼 위험 반경이 우선(무해).
+        // UWB judging radius — saves progress/2 = meters (0.5m steps) (applied live: judgeUwbOnly reads DevSettings
+        //   directly on every judgment, so no service notification is needed). An inverted warning<danger setting is not
+        //   auto-corrected — the danger branch is evaluated first, so the danger radius wins (harmless).
         binding.seekUwbFkWarn.setOnSeekBarChangeListener(seek {
             DevSettings.uwbForkliftWarnMeters = binding.seekUwbFkWarn.progress / 2f
             updateUwbRadiusLabels()
@@ -318,8 +322,8 @@ class BleSettingsActivity : AppCompatActivity() {
             updateSectionSummaries()
         })
 
-        // (v1.1.38 A) UWB 권한 허용 / 시스템 UWB 설정 진입 — 순차 게이트
-        //   ① HW 없음 → 안내만 ② 권한 없음 → 권한 요청 ③ 권한 OK → 시스템 토글 확인·필요시 설정 딥링크
+        // Grant UWB permission / open system UWB settings — sequential gate
+        //   ① no HW → notice only ② no permission → request it ③ permission OK → check the system toggle, deep-link to settings if needed
         binding.btnUwbPermission.setOnClickListener {
             when {
                 !UwbRanger.isHardwareSupported(this) ->
@@ -333,7 +337,7 @@ class BleSettingsActivity : AppCompatActivity() {
         }
     }
 
-    // ── (v1.1.63) 아코디언 — 섹션 헤더 탭 = 바디 펼침/접힘 + 셰브런 회전. [경보 기본]만 레이아웃에서 기본 펼침 ──
+    // ── Accordion: header tap = expand/collapse body + rotate chevron. Only "경보 기본" starts expanded (layout) ──
     private fun setupAccordion() {
         bindSection(binding.secAlertHeader,  binding.secAlertBody,  binding.secAlertChevron)
         bindSection(binding.secBeaconHeader, binding.secBeaconBody, binding.secBeaconChevron)
@@ -349,7 +353,7 @@ class BleSettingsActivity : AppCompatActivity() {
         }
     }
 
-    // (v1.1.63) 섹션 헤더 요약값 — 접힌 상태에서도 핵심 설정이 보이도록 값 변경 리스너마다 갱신
+    // Section header summaries — refreshed by every value-change listener so key settings show even when collapsed
     private fun updateSectionSummaries() {
         val warnAbs = binding.seekWarnDist.progress
         val dangAbs = binding.seekDangDist.progress
@@ -368,7 +372,7 @@ class BleSettingsActivity : AppCompatActivity() {
         }
     }
 
-    // (v1.1.38 A) 권한/HW 상태를 버튼·안내에 반영
+    // Reflect permission/HW state in the button and notice
     private fun refreshUwbPermState() {
         if (!UwbRanger.isHardwareSupported(this)) {
             binding.btnUwbPermission.isEnabled = false
@@ -387,7 +391,7 @@ class BleSettingsActivity : AppCompatActivity() {
         }
     }
 
-    // (v1.1.38 A) 시스템 UWB 토글 상태를 비동기 확인. 꺼져 있고 openIfOff=true 면 시스템 설정으로 딥링크.
+    // Check the system UWB toggle asynchronously. If off and openIfOff=true, deep-link to system settings.
     private fun checkUwbSystemAndGuide(openIfOff: Boolean) {
         lifecycleScope.launch {
             val available = try {
@@ -403,29 +407,32 @@ class BleSettingsActivity : AppCompatActivity() {
         }
     }
 
-    // 시스템 UWB 설정으로 이동 시도(비공개 액션) → 실패 시 일반 설정 + 위치 안내 토스트
+    // Try opening system UWB settings (private action) → on failure, general settings + a toast saying where to find it
     private fun openUwbSystemSettings() {
         try {
             startActivity(Intent("android.settings.UWB_SETTINGS"))
             return
-        } catch (e: Exception) { /* 미지원 기기 — 일반 설정으로 폴백 */ }
-        try { startActivity(Intent(Settings.ACTION_SETTINGS)) } catch (e: Exception) { /* 무시 */ }
+        } catch (e: Exception) { /* Unsupported device — fall back to general settings */ }
+        try { startActivity(Intent(Settings.ACTION_SETTINGS)) } catch (e: Exception) { /* ignore */ }
         Toast.makeText(this, "설정 > 연결(또는 네트워크) > UWB(초광대역)를 켜주세요", Toast.LENGTH_LONG).show()
     }
 
-    // 권한 부여·강제 토글 직후 서비스에 UWB 세션 재평가 요청(동일값 SharedPreferences 쓰기는 리스너 미발화)
+    // Right after a permission grant or forced toggle, ask the service to re-evaluate UWB
+    // sessions (writing an identical SharedPreferences value fires no listener)
     private fun nudgeUwbReapply() {
         try {
             startService(Intent(this, BleService::class.java).setAction(BleService.ACTION_REAPPLY_UWB))
-        } catch (e: Exception) { /* 서비스 미기동 등 — 다음 스캔 주기에 자연 반영 */ }
+        } catch (e: Exception) { /* Service not running, etc. — picked up on the next scan cycle */ }
     }
 
-    // ── [v1.1.54→55] 에코편차 집계(상호 RSSI) 진단 — 분위수는 CalibrationEngine.echoQuantileDb(보간) 공용 ──
-    //    (v1.1.63) DevSettingsActivity 에서 이관(단일 위치). 폴러 echoDiagPoller 가 1.2s 마다 호출.
+    // ── Echo-offset aggregate (mutual RSSI) diagnostics ──
+    //    Quantiles use the shared CalibrationEngine.echoQuantileDb (interpolated). Called every 1.2s by the poller echoDiagPoller.
     private fun fmtDb(v: Double) = "${if (v >= 0) "+" else ""}${"%.1f".format(v)}dB"
 
-    // 저장분 위에 라이브를 덮어써 병합(라이브 항목 = 첫 틱에 저장분을 시드한 총 누적치) 후 기기별 두 줄 요약.
-    //   1줄=통계(중앙값·산포·에코%·n), 2줄=Level 2 보정 상태(후보/적용중/게이트 사유). 말미에 FB 프라이어 요약.
+    // Overlay live data on the saved data to merge (a live entry = the total accumulation
+    // seeded from saved data on the first tick), then a two-line summary per device.
+    //   Line 1 = stats (median, spread, echo %, n); line 2 = Level 2 calibration
+    //   state (candidate/applied/gate reason). FB prior summary at the end.
     private fun refreshEchoDiag() {
         val saved = CalibrationEngine.parseEchoBlob(
             getSharedPreferences(CalibrationEngine.ECHO_PREFS, MODE_PRIVATE).getString(CalibrationEngine.ECHO_KEY, "") ?: "")
@@ -457,7 +464,7 @@ class BleSettingsActivity : AppCompatActivity() {
                 sb.append("${id}  에코 없음(비콘·구버전) · 틱 ${s.totalTicks}")
             }
         }
-        // [v1.1.55] Firebase 모델쌍 프라이어 요약(내 모델 기준 fold 결과·서비스 기동 시 로드)
+        // Firebase model-pair prior summary (fold result relative to my model; loaded at service start)
         if (CalibrationEngine.echoFbPriorByModel.isNotEmpty()) {
             if (sb.isNotEmpty()) sb.append('\n')
             sb.append("FB프라이어: " + CalibrationEngine.echoFbPriorByModel.entries.joinToString(" · ") {
@@ -469,7 +476,7 @@ class BleSettingsActivity : AppCompatActivity() {
     }
 
     private fun updateDistLabels() {
-        // 슬라이더 progress=절댓값(30~100) → 표시는 음수 dBm
+        // Slider progress = absolute value (30~100) → displayed as negative dBm
         val warnAbs = binding.seekWarnDist.progress
         val dangAbs = binding.seekDangDist.progress
         binding.tvWarnDist.text = "-${warnAbs} dBm"
@@ -477,7 +484,7 @@ class BleSettingsActivity : AppCompatActivity() {
     }
 
     private fun updateBeaconGainLabel() {
-        // 슬라이더 progress(0~30)×10 = percent(0~300%), dBm = (percent-100)/5 (10%당 2dBm)
+        // Slider progress (0~30)×10 = percent (0~300%), dBm = (percent-100)/5 (2dBm per 10%)
         val pct = binding.seekBeaconGain.progress * 10
         val dbm = (pct - 100) / 5
         val sign = if (dbm > 0) "+" else ""
@@ -485,13 +492,14 @@ class BleSettingsActivity : AppCompatActivity() {
     }
 
     private fun updateEpjBiasLabel() {
-        // 슬라이더 progress(0~25) - 10 = 오프셋(-10~+15 dB). 음수=더 가까이서만 발령(거리 변별), 양수=더 멀리서 미리.
+        // Slider progress (0~25) - 10 = offset (-10~+15 dB). Negative = alert only when
+        // closer (distance discrimination), positive = alert earlier from farther.
         val v = binding.seekEpjBias.progress - 10
         val sign = if (v > 0) "+" else ""
         binding.tvEpjBias.text = "${sign}${v} dB"
     }
 
-    // [v1.1.46] UWB 판정 반경 라벨 — progress/2 = 미터. 정수 값은 "15m", 반미터는 "7.5m".
+    // UWB judging radius label — progress/2 = meters. Whole values show as "15m", half meters as "7.5m".
     private fun updateUwbRadiusLabels() {
         binding.tvUwbFkWarn.text     = fmtMeters(binding.seekUwbFkWarn.progress / 2f)
         binding.tvUwbFkDanger.text   = fmtMeters(binding.seekUwbFkDanger.progress / 2f)
@@ -503,13 +511,13 @@ class BleSettingsActivity : AppCompatActivity() {
         if (v == v.toInt().toFloat()) "${v.toInt()}m" else "%.1fm".format(v)
 
     private fun seek(onChange: () -> Unit) = object : android.widget.SeekBar.OnSeekBarChangeListener {
-        // 프로그램 setProgress(onResume 되읽기·역전 보정 재진입)는 저장하지 않는다 — 사용자 조작만 저장
+        // Programmatic setProgress (onResume re-read, crossing-correction re-entry) is not saved — only user input is saved
         override fun onProgressChanged(sb: android.widget.SeekBar, v: Int, fromUser: Boolean) { if (fromUser) onChange() }
         override fun onStartTrackingTouch(sb: android.widget.SeekBar) {}
         override fun onStopTrackingTouch(sb: android.widget.SeekBar) {}
     }
 
-    // (v1.1.63) 정수 입력란 — 포커스 아웃 시 확정(파싱 실패=현재값 복원). onPause 안전망 등록.
+    // Integer input field — committed on focus loss (parse failure = restore the current value). Registered with the onPause safety net.
     private fun bindIntField(et: android.widget.EditText, getter: () -> Int, setter: (Int) -> Unit) {
         val commit = { setter(et.text.toString().toIntOrNull() ?: getter()) }
         editCommitters += commit
@@ -518,16 +526,16 @@ class BleSettingsActivity : AppCompatActivity() {
 
     override fun onSupportNavigateUp(): Boolean { finish(); return true }
 
-    // (v1.1.63) 화면 표시 중에만 에코 진단 폴링 — onResume 시작 / onPause 정지(배터리·리소스 절약)
+    // Poll echo diagnostics only while the screen is shown — start onResume / stop onPause (saves battery and resources)
     override fun onResume() {
         super.onResume()
-        loadDevManagedValues()   // (v1.1.77) 개발자 설정·메인 화면에서 바꾼 값 재반영
-        updateSectionSummaries() // 가드로 되읽기가 onChange 를 안 타므로 헤더 요약을 여기서 갱신
+        loadDevManagedValues()   // Re-apply values changed in dev settings / main screen
+        updateSectionSummaries() // The guarded re-read skips onChange, so refresh header summaries here
         echoDiagHandler.removeCallbacks(echoDiagPoller)
         echoDiagHandler.post(echoDiagPoller)
     }
 
-    // 포커스 아웃을 거치지 않고 화면을 떠나는 경우의 안전망 — 입력란 전체 확정 + 폴링 중지
+    // Safety net for leaving the screen without a focus loss — commit all input fields + stop polling
     override fun onPause() {
         super.onPause()
         editCommitters.forEach { it() }

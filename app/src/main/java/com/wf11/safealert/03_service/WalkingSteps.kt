@@ -1,12 +1,14 @@
 package com.wf11.safealert.service
 
 /**
- * 걷는 모양 걸음 증거 층 (v1.1.99). 안드로이드 의존이 없는 순수 로직이다. 시각은 전부 elapsedRealtime 기준 ms 다.
+ * Walking-shape step evidence layer. Pure logic with no Android dependency. All times are ms on the elapsedRealtime clock.
  *
- * 걸음 센서가 낸 걸음은 그 걸음 시각을 덮는 닫힌 1초 가속도 창(끝-1000 <= t < 끝)이 걷는 모양일 때만 받아들인다.
- * 창이 닫히기 전에 온 걸음은 보류했다가 그 창이 닫힐 때 판정하고, 덮는 창 없이 더 뒤 창이 닫히면 버린다.
- * 앱 자신이 진동하는 동안의 걸음은 버린다. 이미 닫힌 끝 이하의 창은 무시한다.
- * closedTo(닫힌 창 끝)·stepSeenTo(걸음 전달 시각)는 마감 판정이 기다리는 센서 데이터 도착 범위다.
+ * A step from the step sensor is accepted only if the closed 1-second accelerometer
+ * window covering its time (end-1000 <= t < end) is walking-shaped.
+ * A step that arrives before its window closes is held and judged when that window
+ * closes; if a later window closes with no covering window, it is dropped.
+ * Steps while the app itself is vibrating are dropped. Windows ending at or before an already-closed end are ignored.
+ * closedTo (closed window end) and stepSeenTo (step delivery time) are the sensor-data arrival bounds that deadline judgments wait for.
  */
 class WalkingSteps {
 
@@ -34,7 +36,10 @@ class WalkingSteps {
         stepSeenTo = Long.MIN_VALUE
     }
 
-    /** 닫힌 1초 창. 이미 닫힌 끝 이하면 null. 아니면 이 창으로 판정이 끝나 받아들인 보류 걸음 시각들. */
+    /**
+     * A closed 1-second window. null if its end is at or before an already-closed end;
+     * otherwise the held step times accepted now that this window settles them.
+     */
     fun onWindow(endMs: Long, walking: Boolean): List<Long>? {
         if (endMs <= closedTo) return null
         closedTo = endMs
@@ -46,7 +51,7 @@ class WalkingSteps {
         return judged.filter { walking && it >= endMs - WINDOW_MS }.onEach { keep(it) }
     }
 
-    /** 걸음 1건. 곧바로 받아들이면 그 시각, 보류하거나 버리면 null. */
+    /** One step. Returns its time if accepted immediately, null if held or dropped. */
     fun onStep(tMs: Long, vibrating: Boolean): Long? {
         if (tMs > stepSeenTo) stepSeenTo = tMs
         if (vibrating) return null
@@ -61,28 +66,30 @@ class WalkingSteps {
         return tMs
     }
 
-    /** 걸음 센서 flush 완료: 요청 시각까지의 걸음은 다 왔다. */
+    /** Step sensor flush complete: every step up to the request time has arrived. */
     fun stepsFlushed(tMs: Long) {
         if (tMs > stepSeenTo) stepSeenTo = tMs
     }
 
-    /** 받아들인 걸음 중 from..to(양 끝 포함). */
+    /** Accepted steps within from..to (both ends inclusive). */
     fun stepsIn(from: Long, to: Long): Int = steps.count { it in from..to }
 
-    /** after 보다 뒤 걸음으로 t 까지 최근 windowMs 안 n 걸음(after 는 세지 않는 기준 시각). */
+    /**
+     * n steps within the last windowMs up to t, counting only steps after `after` (a reference time that is itself not counted).
+     */
     fun within(after: Long, t: Long, n: Int, windowMs: Long): Boolean =
         t > after && stepsIn(maxOf(after + 1, t - windowMs), t) >= n
 
-    /** after 뒤 걸음으로 within 이 처음 찬 걸음 시각. 없으면 null. */
+    /** Time of the first step at which within is satisfied using steps after `after`. null if none. */
     fun firstWithin(after: Long, n: Int, windowMs: Long): Long? = steps.firstOrNull { within(after, it, n, windowMs) }
 
-    /** 시작이 from 이상이고 끝이 to 이하인 걷는 모양 창 수. */
+    /** Number of walking-shaped windows whose start is >= from and whose end is <= to. */
     fun strongIn(from: Long, to: Long): Int =
         windows.count { it.walking && it.endMs - WINDOW_MS >= from && it.endMs <= to }
 
     /**
-     * 시작이 from 이상인 걷는 모양 창이 끊김 없이 이어져 ms 에 처음 이른 창 끝. 없으면 null.
-     * 실시간(이번 창에서 처음 성립)·해제 따라잡기·FALL 다시 셈이 같은 계산을 쓴다.
+     * End of the window at which an unbroken run of walking-shaped windows starting at or after from first reaches ms. null if none.
+     * Real-time (first met in this window), unplug catch-up and FALL recount all use the same calculation.
      */
     fun firstRunEnd(from: Long, ms: Long): Long? {
         var n = 0
@@ -102,8 +109,8 @@ class WalkingSteps {
 }
 
 /**
- * 감시 중 CPU 를 깨워 둬야 하나: 등록된 센서 가운데 비웨이크업이 하나라도 있으면 화면이 꺼진 동안
- * 이벤트가 FIFO 에 쌓이거나 버려지므로 PARTIAL_WAKE_LOCK 이 필요하다(웨이크업 센서만이면 불필요).
+ * Whether the CPU must be kept awake while monitoring: if any registered sensor is non-wake-up, its events pile up in the FIFO or are
+ * dropped while the screen is off, so PARTIAL_WAKE_LOCK is needed (not needed with wake-up sensors only).
  */
 fun sensorsNeedCpuWake(accelOn: Boolean, accelWake: Boolean, stepOn: Boolean, stepWake: Boolean): Boolean =
     (accelOn && !accelWake) || (stepOn && !stepWake)

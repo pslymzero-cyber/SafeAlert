@@ -1,6 +1,6 @@
 package com.wf11.safealert.service
 
-/** 최근 가장 강한 비콘 힌트(LoneWorkerLogic 이 위임한다). 안드로이드 의존 없음. */
+/** Most recent strongest beacon hint (LoneWorkerLogic delegates here). No Android dependency. */
 class BeaconHints {
 
     companion object {
@@ -27,7 +27,9 @@ class BeaconHints {
         return best?.let { it.label to it.rssi }
     }
 
-    /** 최근 60초 안 가장 강한 표본 중 짧은 ID(sid)가 0 이 아닌 것의 sid. 없으면 0. 광고 byte3-4 에 싣는다. */
+    /**
+     * sid of the strongest sample in the last 60s with a non-zero short ID (sid). 0 if none. Carried in advertising bytes 3-4.
+     */
     fun beaconSid(nowMs: Long): Int {
         var best: BeaconSample? = null
         for (s in beaconSamples) {
@@ -38,10 +40,10 @@ class BeaconHints {
     }
 }
 
-// ── LoneWorkerLogic 의 최근 가장 강한 비콘 힌트(BeaconHints) 위임 ──────────────────
-/** 비콘 표본 기록 — LoneWorkerLogic 의 위임, 500줄 제한으로 여기 둔다. */
+// ── Delegation of LoneWorkerLogic's most recent strongest beacon hint (BeaconHints) ──────────────────
+/** Records a beacon sample — delegated from LoneWorkerLogic, kept here because of the 500-line limit. */
 fun LoneWorkerLogic.noteBeacon(label: String, rssi: Int, nowMs: Long, sid: Int = 0) = beacons.noteBeacon(label, rssi, nowMs, sid)
-/** 최근 가장 강한 비콘 힌트 — LoneWorkerLogic 의 위임, 500줄 제한으로 여기 둔다. */
+/** Most recent strongest beacon hint — delegated from LoneWorkerLogic, kept here because of the 500-line limit. */
 fun LoneWorkerLogic.beaconHint(nowMs: Long): Pair<String, Int>? = beacons.beaconHint(nowMs)
-/** 최근 가장 강한 비콘의 sid — LoneWorkerLogic 의 위임, 500줄 제한으로 여기 둔다. */
+/** sid of the most recent strongest beacon — delegated from LoneWorkerLogic, kept here because of the 500-line limit. */
 fun LoneWorkerLogic.beaconSid(nowMs: Long): Int = beacons.beaconSid(nowMs)

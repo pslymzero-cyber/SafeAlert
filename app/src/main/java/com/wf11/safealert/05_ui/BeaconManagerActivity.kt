@@ -47,10 +47,10 @@ class BeaconManagerActivity : AppCompatActivity() {
     private var isScanning = false
     private val stopHandler = Handler(Looper.getMainLooper())
 
-    // 스캔으로 발견된 기기: key(mac or uuid) → 정보
+    // Devices found by scan: key (mac or uuid) → info
     data class FoundBeacon(
-        val mac: String,         // 기기 MAC 주소
-        val uuid: String,        // iBeacon/ServiceUUID (없으면 "")
+        val mac: String,         // Device MAC address
+        val uuid: String,        // iBeacon/ServiceUUID ("" if none)
         val type: String,        // "IBEACON", "SERVICE_UUID", "MAC_ONLY"
         val rssi: Int,
         val deviceName: String
@@ -80,7 +80,7 @@ class BeaconManagerActivity : AppCompatActivity() {
         refreshProfiles()
     }
 
-    // ── MAC 주소 직접 입력 ─────────────────────────────────────
+    // ── Manual MAC address entry ─────────────────────────────────────
     private fun showMacAddDialog(prefillMac: String = "") {
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -94,7 +94,7 @@ class BeaconManagerActivity : AppCompatActivity() {
         }
         layout.addView(etLabel)
         layout.addView(etMac)
-        // (v1.1.62) 항목5: 존 비콘(안전구역) 등록 옵션 — 접촉 기기는 IN_ZONE 송출+무음, 상대는 무해 판정
+        // Zone beacon (safe zone) registration option — a device in contact broadcasts IN_ZONE and goes silent; peers judge it harmless
         val cbZone = CheckBox(this).apply { text = "존 비콘(안전구역) — 존 안에서는 경보 송·수신 전면 중지" }
         val etZoneRssi = EditText(this).apply {
             hint = "존 반경 dBm · 작을수록 넓다 (-80 기본·방 전체 / -65 약 1~2m / -50 코앞)"
@@ -106,7 +106,7 @@ class BeaconManagerActivity : AppCompatActivity() {
         }
         layout.addView(cbZone)
         layout.addView(etZoneRssi)
-        // (v1.1.90) 방문자용 비콘 — 체크 시 보행자 모드 PDA 에는 경보 안 함(지게차·EPJ 만 수신)
+        // Visitor beacon — when checked, walker-mode PDAs get no alert (only forklifts and EPJs receive it)
         val cbVisitor = CheckBox(this).apply { text = "방문자용 (보행자 단말에는 경보 안 함)"; isChecked = true }
         layout.addView(cbVisitor)
 
@@ -123,9 +123,9 @@ class BeaconManagerActivity : AppCompatActivity() {
                     return@setPositiveButton
                 }
                 val zoneRssi = (etZoneRssi.text.toString().trim().toIntOrNull() ?: -80).coerceIn(-100, -30)
-                // SmartTag/하드웨어 비콘은 기본 +15dBm (약 3배 범위) 적용.
-                // (v1.1.76) 단 존 비콘은 예외 — 존 판정은 zoneEnterRssi 로만 하고 rssiOffset 을 보지 않는다.
-                //   +15 를 걸어봐야 판정에 영향이 없고, 화면에 '범위 +15dBm' 만 찍혀 오독을 만든다.
+                // SmartTag/hardware beacons get +15dBm by default (about 3x the range).
+                // Except zone beacons — zone judging uses only zoneEnterRssi and ignores rssiOffset.
+                //   Setting +15 would not affect judging and would only print "범위 +15dBm" on screen, inviting misreading.
                 val offset = if (cbZone.isChecked) 0 else 15
                 val ok = BeaconRegistry.add(BeaconProfile(mac, label, "MAC", rssiOffset = offset,
                     zoneMute = cbZone.isChecked, zoneEnterRssi = zoneRssi, visitorBeacon = cbVisitor.isChecked))
@@ -138,7 +138,7 @@ class BeaconManagerActivity : AppCompatActivity() {
             .show()
     }
 
-    // ── UUID 직접 입력 ──────────────────────────────────────────
+    // ── Manual UUID entry ──────────────────────────────────────────
     private fun showManualAddDialog(prefillUuid: String = "", prefillType: String = "IBEACON") {
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -150,10 +150,9 @@ class BeaconManagerActivity : AppCompatActivity() {
             setText(prefillUuid)
             textSize = 12f
         }
-        // [v1.1.14] 유형·감지범위를 모두 한 다이얼로그의 Spinner 로 통합.
-        //   구버전은 setSingleChoiceItems(유형)+setMultiChoiceItems(placeholder) 충돌로 유형 리스트가 깨지고,
-        //   '감지 범위…' NeutralButton 이 showManualAddDialog 를 재귀 호출 → 새 호출의 selectedRange 가 0 으로
-        //   리셋되어 범위 선택이 저장되지 않던 버그(= 감지범위 설정이 안 먹던 원인)를 제거한다.
+        // Type and detection range are both Spinners in a single dialog — combining setSingleChoiceItems (type) with
+        //   setMultiChoiceItems (placeholder) breaks the type list, and a NeutralButton that re-calls showManualAddDialog
+        //   resets selectedRange to 0 so the range choice is never saved.
         val typeOptions  = arrayOf("iBeacon (Proximity UUID)", "Service UUID (Eddystone 등)")
         val spType = Spinner(this).apply {
             adapter = ArrayAdapter(this@BeaconManagerActivity,
@@ -172,10 +171,10 @@ class BeaconManagerActivity : AppCompatActivity() {
                 android.R.layout.simple_spinner_item, rangeOptions).apply {
                 setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
             }
-            setSelection(1)   // (v1.1.17) 신규 등록 기본 = 넓게 +10dBm (비콘이 더 먼 거리에서 알림)
+            setSelection(1)   // New registrations default to wide +10dBm (beacon alerts from farther away)
         }
 
-        // (v1.1.62) 항목5: 존 비콘(안전구역) 등록 옵션 — 접촉 기기는 IN_ZONE 송출+무음, 상대는 무해 판정
+        // Zone beacon (safe zone) registration option — a device in contact broadcasts IN_ZONE and goes silent; peers judge it harmless
         val cbZone = CheckBox(this).apply { text = "존 비콘(안전구역) — 존 안에서는 경보 송·수신 전면 중지" }
         val etZoneRssi = EditText(this).apply {
             hint = "존 반경 dBm · 작을수록 넓다 (-80 기본·방 전체 / -65 약 1~2m / -50 코앞)"
@@ -194,7 +193,7 @@ class BeaconManagerActivity : AppCompatActivity() {
         layout.addView(spRange)
         layout.addView(cbZone)
         layout.addView(etZoneRssi)
-        // (v1.1.90) 방문자용 비콘 — 체크 시 보행자 모드 PDA 에는 경보 안 함(지게차·EPJ 만 수신)
+        // Visitor beacon — when checked, walker-mode PDAs get no alert (only forklifts and EPJs receive it)
         val cbVisitor = CheckBox(this).apply { text = "방문자용 (보행자 단말에는 경보 안 함)"; isChecked = true }
         layout.addView(cbVisitor)
 
@@ -210,7 +209,7 @@ class BeaconManagerActivity : AppCompatActivity() {
                     return@setPositiveButton
                 }
                 val type   = if (spType.selectedItemPosition == 0) "IBEACON" else "SERVICE_UUID"
-                // (v1.1.76) 존 비콘은 rssiOffset 을 쓰지 않는다 — MAC 등록 경로와 동일 규칙
+                // Zone beacons don't use rssiOffset — same rule as the MAC registration path
                 val offset = if (cbZone.isChecked) 0
                              else when (spRange.selectedItemPosition) { 1 -> 10; 2 -> 20; else -> 0 }
                 val zoneRssi = (etZoneRssi.text.toString().trim().toIntOrNull() ?: -80).coerceIn(-100, -30)
@@ -227,14 +226,14 @@ class BeaconManagerActivity : AppCompatActivity() {
             .show()
     }
 
-    // 공유 경로는 beacon_share/<사업장코드>/ — 코드 미설정이면 전송·받기·삭제 불가
+    // Share path is beacon_share/<siteCode>/ — no upload, download or delete without a site code
     private fun requireSiteCode(): Boolean {
         if (DevSettings.siteCode.isNotEmpty()) return true
         Toast.makeText(this, "사업장 코드가 설정되지 않았습니다 (개발자 설정)", Toast.LENGTH_LONG).show()
         return false
     }
 
-    // ── 기기 간 공유: 선택 후 업로드 ───────────────────────────
+    // ── Device-to-device sharing: select, then upload ───────────────────────────
     private fun showShareDialog() {
         if (!requireSiteCode()) return
         val profiles = BeaconRegistry.getAll()
@@ -290,7 +289,7 @@ class BeaconManagerActivity : AppCompatActivity() {
                 val json = BeaconRegistry.exportToJson(selected)
                 val sender = getSharedPreferences("safealert_prefs", MODE_PRIVATE)
                     .getString("device_id", "기기") ?: "기기"
-                // 전송(같은 이름 덮어쓰기 포함)은 설정 PIN 확인 후
+                // Upload (including overwriting the same name) only after the settings PIN check
                 showDevPinDialog {
                     Toast.makeText(this, "전송 중...", Toast.LENGTH_SHORT).show()
                     FirebaseManager.uploadBeaconSet(name, json, selected.size, sender) { ok ->
@@ -307,7 +306,7 @@ class BeaconManagerActivity : AppCompatActivity() {
             .show()
     }
 
-    // ── 받기: 세트 목록 → 미리보기 → 병합 ──────────────────────
+    // ── Receive: set list → preview → merge ──────────────────────
     private fun showReceiveDialog() {
         if (!requireSiteCode()) return
         Toast.makeText(this, "세트 목록 불러오는 중...", Toast.LENGTH_SHORT).show()
@@ -316,7 +315,8 @@ class BeaconManagerActivity : AppCompatActivity() {
         }
     }
 
-    // Firebase 비동기 콜백 — 화면이 이미 닫혔거나 재생성됐으면 다이얼로그를 띄우지 않는다(BadTokenException → 같은 프로세스 BleService 동반 사망 방지)
+    // Firebase async callback — don't show a dialog if the screen is already closed or
+    // recreated (a BadTokenException would also kill BleService in the same process)
     internal fun onBeaconSetsLoaded(sets: List<FirebaseManager.BeaconSetMeta>) {
         if (isFinishing || isDestroyed) return
         if (sets.isEmpty()) {
@@ -340,14 +340,15 @@ class BeaconManagerActivity : AppCompatActivity() {
         }
     }
 
-    // Firebase 비동기 콜백 — 화면이 이미 닫혔거나 재생성됐으면 다이얼로그를 띄우지 않는다(BadTokenException → 같은 프로세스 BleService 동반 사망 방지)
+    // Firebase async callback — don't show a dialog if the screen is already closed or
+    // recreated (a BadTokenException would also kill BleService in the same process)
     internal fun onBeaconSetDownloaded(set: FirebaseManager.BeaconSetMeta, json: String?) {
         if (isFinishing || isDestroyed) return
         if (json == null) {
             Toast.makeText(this, "세트를 불러오지 못했습니다", Toast.LENGTH_SHORT).show()
             return
         }
-        // (v1.1.97) 읽을 수 없는 항목이나 범위 밖 항목이 하나라도 있으면 세트 전체를 받지 않는다
+        // Reject the whole set if any entry is unreadable or out of range
         val incoming = BeaconRegistry.parseProfiles(json)
             .getOrElse { return showRejectedSet(set, it.message ?: "읽을 수 없는 항목이 있습니다") }
         if (incoming.isEmpty()) {
@@ -355,7 +356,7 @@ class BeaconManagerActivity : AppCompatActivity() {
             return
         }
         BeaconRegistry.validateShared(incoming)?.let { return showRejectedSet(set, it) }
-        // (v1.1.97) 받으면 바뀌는 내역 — 안전구역·방문자용처럼 경보에 영향을 주는 변경을 미리 보여 준다
+        // Changes that receiving would make — preview alert-affecting changes such as safe zone or visitor flags
         val c = BeaconRegistry.summarizeChanges(BeaconRegistry.getAll(), incoming)
         val msg = buildString {
             append("세트: ${set.name}\n보낸 기기: ${set.sender}\n비콘 ${incoming.size}개\n\n")
@@ -382,7 +383,7 @@ class BeaconManagerActivity : AppCompatActivity() {
             .show()
     }
 
-    /** (v1.1.97) 받지 않는 세트 안내 — 사유를 보여 주고, 클라우드에서 지울 수는 있게 한다. */
+    /** Notice for a rejected set — shows the reason and still allows deleting it from the cloud. */
     private fun showRejectedSet(set: FirebaseManager.BeaconSetMeta, reason: String) {
         AlertDialog.Builder(this)
             .setTitle("받을 수 없는 세트")
@@ -409,7 +410,7 @@ class BeaconManagerActivity : AppCompatActivity() {
             .show()
     }
 
-    // ── BLE 스캔으로 비콘 발견 ──────────────────────────────────
+    // ── Beacon discovery via BLE scan ──────────────────────────────────
     private fun startScan() {
         if (!hasPermissions()) { Toast.makeText(this, "BLE 권한이 필요합니다", Toast.LENGTH_SHORT).show(); return }
         val scanner = (getSystemService(BluetoothManager::class.java))
@@ -417,14 +418,14 @@ class BeaconManagerActivity : AppCompatActivity() {
             ?: run { Toast.makeText(this, "블루투스를 켜주세요", Toast.LENGTH_SHORT).show(); return }
 
         isScanning = true
-        // [v1.1.74] 발견 스캔 동안만 BleScanner 의 HW 필터를 해제 — 미등록 UUID 도 잡히게 한다.
+        // Lift BleScanner's HW filter only during the discovery scan, so unregistered UUIDs are caught too.
         com.wf11.safealert.ble.BleScanner.setDiscoveryMode(true)
         foundMap.clear()
         foundAdapter.update(emptyList())
         binding.layoutScanResult.visibility = View.VISIBLE
         binding.tvScanStatus.text = "스캔 중... (15초)"
         binding.btnScan.text = "⏹ 중지"
-        binding.layoutScanResult.visibility = View.VISIBLE  // 스캔 섹션 표시
+        binding.layoutScanResult.visibility = View.VISIBLE  // Show the scan section
 
         val settings = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build()
         scanner.startScan(null, settings, scanCallback)
@@ -433,7 +434,7 @@ class BeaconManagerActivity : AppCompatActivity() {
 
     private fun stopScan() {
         isScanning = false
-        // [v1.1.74] 15초 타이머·중지 버튼·onDestroy 가 모두 여기로 수렴 — 단일 복원 지점.
+        // The 15 s timer, the stop button and onDestroy all converge here — the single restore point.
         com.wf11.safealert.ble.BleScanner.setDiscoveryMode(false)
         stopHandler.removeCallbacksAndMessages(null)
         runCatching {
@@ -445,22 +446,22 @@ class BeaconManagerActivity : AppCompatActivity() {
     }
 
     /**
-     * (v1.1.82) 광고 패킷 하나에서 등록 후보 UUID 를 최대 1개만 고른다. 반환 = (UUID, type).
+     * Picks at most one candidate UUID for registration from one advertising packet. Returns (UUID, type).
      *
-     * 한 기기는 UUID 를 여러 개 광고한다. 폰이라면 OS 가 뿌리는 공용 서비스(Fast Pair 등)까지
-     * 섞여 있어, 전부 받아들이면 비콘 1대가 목록에서 여러 줄로 보인다. 그래서 하나만 고른다.
-     * 우선순위: iBeacon > 128비트 커스텀 > 그 외(16비트 SIG 할당).
-     * 16비트 SIG 형식도 버리지 않는 이유 — SafeAlert 자신의 SERVICE_UUID(0x1234) 가 그 형식이고,
-     * 실제 비콘 하드웨어도 16비트 커스텀 값을 쓰는 제품이 있다. 순위만 뒤로 민다.
+     * One device advertises several UUIDs. A phone also mixes in common services broadcast by the OS (Fast Pair etc.), so accepting
+     * all of them would show one beacon as several rows. Hence only one is picked.
+     * Priority: iBeacon > 128-bit custom > others (16-bit SIG-assigned).
+     * Why the 16-bit SIG format is not discarded — SafeAlert's own SERVICE_UUID (0x1234) uses that format, and some real beacon
+     * hardware uses 16-bit custom values. It is only ranked last.
      */
     private fun pickBeaconUuid(record: ScanRecord): Pair<String, String>? {
         // iBeacon (Apple CompanyID 0x004C)
         record.getManufacturerSpecificData(0x004C)?.let { data ->
             BeaconRegistry.parseIBeaconUuid(data)?.let { return it to "IBEACON" }
         }
-        // (v1.1.79) serviceUuids(AD 0x02/0x03/0x06/0x07) 와 serviceData(AD 0x16) 는 광고 패킷에서
-        //   서로 독립된 필드다. 서비스데이터로만 광고하는 비콘은 serviceUuids 가 비어 있어
-        //   UUID 등록 버튼이 안 떴다(= UUID 를 지우면 다시 등록할 수 없던 원인). 둘 다 본다.
+        // serviceUuids (AD 0x02/0x03/0x06/0x07) and serviceData (AD 0x16) are independent fields of an advertising packet.
+        //   A beacon that advertises only service data has empty serviceUuids, so checking only those would hide the UUID
+        //   register button (and a deleted UUID could never be registered again). Check both.
         val uuids = ((record.serviceUuids ?: emptyList()) + (record.serviceData?.keys ?: emptySet()))
             .map { it.uuid.toString().uppercase() }
             .filterNot { it.equals(com.wf11.safealert.ble.BleConstants.SERVICE_UUID, true) }
@@ -474,20 +475,19 @@ class BeaconManagerActivity : AppCompatActivity() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
             val record = result.scanRecord ?: return
             val mac    = result.device.address ?: return
-            // 1순위: 광고 패킷 내 이름, 2순위: 시스템 캐시 이름, 3순위: MAC 주소
+            // Priority 1: name in the advertising packet, 2: system cached name, 3: MAC address
             val name   = record.deviceName?.takeIf { it.isNotBlank() }
                 ?: result.device.name?.takeIf { it.isNotBlank() }
                 ?: mac
 
-            // (v1.1.82) 한 기기 = 한 행. foundMap 의 키를 MAC 으로 고정한다.
-            //   이전 키는 UUID 라, 한 기기가 광고하는 UUID 개수만큼 행이 생겼다. v1.1.79 에서
-            //   serviceData.keys 를 합산한 뒤로는 폰 OS 의 시스템 광고까지 전부 별도 행이 되어
-            //   같은 MAC 이 여러 줄로 보였고, 스캔이 길수록(ADV/SCAN_RSP 가 서로 다른 AD 필드를
-            //   실어 오므로) 계속 불어났다. MAC 은 기기당 하나뿐이라 그 누적이 원천 차단된다.
+            // One device = one row: foundMap is keyed by MAC.
+            //   Keying by UUID gives one row per advertised UUID; with serviceData.keys included, even the phone OS's system
+            //   advertisements become separate rows, the same MAC shows up on several lines, and the rows keep multiplying the longer
+            //   the scan runs (ADV and SCAN_RSP carry different AD fields). A device has only one MAC, so this cannot build up.
             val picked = pickBeaconUuid(record)
             val prev   = foundMap[mac]
-            // UUID 는 승격만 한다. UUID 를 싣지 않은 후속 패킷이 이미 잡아둔 UUID 를
-            // MAC_ONLY 로 되돌리면, 같은 기기가 등록 버튼 없는 행으로 바뀌어 버린다.
+            // The UUID is only ever upgraded. If a later packet without a UUID reverted an already captured UUID to
+            // MAC_ONLY, the same device would turn into a row without a register button.
             val uuid = picked?.first ?: prev?.uuid.orEmpty()
             val type = if (uuid.isBlank()) "MAC_ONLY" else (picked?.second ?: prev?.type ?: "MAC_ONLY")
             foundMap[mac] = FoundBeacon(mac, uuid, type, result.rssi, name)
@@ -503,7 +503,7 @@ class BeaconManagerActivity : AppCompatActivity() {
         val list = BeaconRegistry.getAll()
         profileAdapter.update(list)
         binding.tvCount.text = "${list.size} / ${BeaconRegistry.MAX_PROFILES}"
-        foundAdapter.notifyDataSetChanged()  // 등록됨 표시 갱신
+        foundAdapter.notifyDataSetChanged()  // Refresh the registered marker
     }
 
     private fun hasPermissions(): Boolean {
@@ -529,9 +529,9 @@ class BeaconManagerActivity : AppCompatActivity() {
         override fun onBindViewHolder(h: VH, i: Int) {
             val d = items[i]
             h.b.tvDeviceName.text = d.deviceName.ifBlank { "이름 없음" }
-            h.b.tvMacAddr.text    = d.mac  // MAC 주소 직접 표시
+            h.b.tvMacAddr.text    = d.mac  // Show the MAC address directly
 
-            // UUID 버튼 (iBeacon/ServiceUUID인 경우만 표시)
+            // UUID button (shown only for iBeacon/ServiceUUID)
             if (d.type != "MAC_ONLY" && d.uuid.isNotBlank()) {
                 h.b.tvUuid.text           = d.uuid
                 h.b.tvUuid.visibility     = android.view.View.VISIBLE
@@ -545,7 +545,7 @@ class BeaconManagerActivity : AppCompatActivity() {
                 h.b.btnAddUuid.visibility = android.view.View.GONE
             }
 
-            // MAC 버튼 항상 표시
+            // MAC button always shown
             val macReg = BeaconRegistry.containsMac(d.mac)
             h.b.btnAddMac.text      = if (macReg) "MAC 등록됨" else "MAC 등록"
             h.b.btnAddMac.isEnabled = !macReg
@@ -565,15 +565,15 @@ class BeaconManagerActivity : AppCompatActivity() {
             h.b.tvLabel.text = p.label
             h.b.tvUuid.text  = p.uuid
             val typeStr  = when (p.type) { "IBEACON" -> "iBeacon"; "MAC" -> "MAC 주소"; else -> "Service UUID" }
-            // (v1.1.76) 존 비콘에는 범위 표기를 붙이지 않는다 — 존 판정은 rssiOffset 을 보지 않으므로
-            //   '범위 +15dBm' 이 찍히면 존 반경이 그만큼 넓어진 것으로 오독된다.
+            // No range label on zone beacons — zone judging ignores rssiOffset, so showing
+            //   "범위 +15dBm" would be misread as the zone radius widening by that much.
             val rangeStr = when {
                 p.zoneMute         -> ""
                 p.rssiOffset >= 20 -> " · 범위 매우 넓음(+${p.rssiOffset}dBm)"
                 p.rssiOffset > 0   -> " · 범위 +${p.rssiOffset}dBm"
                 else               -> " · 기본 범위"
             }
-            // (v1.1.62) 존 비콘 마커 — 목록에서 안전구역 프로파일 식별
+            // Zone beacon marker — identifies safe-zone profiles in the list
             val zoneStr = if (p.zoneMute) " · 존 반경 ${zoneRangeLabel(p.zoneEnterRssi)}(${p.zoneEnterRssi}dBm)" else ""
             val visitorStr = if (p.visitorBeacon) " · 방문자용" else " · 장비용"
             h.b.tvType.text = "$typeStr$rangeStr$zoneStr$visitorStr"
@@ -588,10 +588,10 @@ class BeaconManagerActivity : AppCompatActivity() {
 }
 
 /**
- * (v1.1.65) 존 반경 체감 라벨 — dBm 은 '작을수록 넓다'.
- *   같은 줄에 붙는 rssiOffset 은 '클수록 넓다'라 규칙이 정반대다. 숫자만 노출하면
- *   -30dBm(가장 좁음)을 '가장 강한 설정'으로 오독해 존이 영영 성립하지 않는다(실제 신고 사례).
- *   존 설치처(흡연장·사무실·휴게실·화장실)는 방 전체를 덮어야 하므로 -80 전후가 표준.
+ * Felt zone-radius label — for dBm, 'lower = wider'.
+ *   The rssiOffset on the same row follows the opposite rule, 'higher = wider'. Showing only the number lets
+ *   -30dBm (the narrowest) be misread as 'the strongest setting', and the zone never forms (a real reported case).
+ *   Zone sites (smoking area, office, break room, restroom) must cover the whole room, so around -80 is standard.
  */
 internal fun zoneRangeLabel(dbm: Int): String = when {
     dbm <= -85 -> "매우 넓음(방 전체)"

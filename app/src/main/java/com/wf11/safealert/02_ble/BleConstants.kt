@@ -7,38 +7,39 @@ object BleConstants {
     const val DEVICE_PREFIX        = "SAFEALERT_DEVICE_"
     const val WALKER_PREFIX        = "SAFEALERT_WALKER_"
 
-    // Device/Walker 구분을 CompanyID로 처리 → 광고 패킷 크기 절약
-    const val COMPANY_ID_DEVICE   = 0x1234  // 장비 작업자
-    const val COMPANY_ID_WALKER   = 0x5678  // 보행자
-    // UWB 주소 교환용 (스캔 응답 전용 — 메인 광고 패킷과 분리)
-    // (v1.1.30) 형식: DEVICE(컨트롤러) 4바이트=[addr0][addr1][channel][preambleIndex]
-    //           / WALKER(컨트롤리) 2바이트=[addr0][addr1]
+    // Device vs. Walker is told apart by CompanyID, saving advertising packet space
+    const val COMPANY_ID_DEVICE   = 0x1234  // Equipment operator
+    const val COMPANY_ID_WALKER   = 0x5678  // Pedestrian
+    // For UWB address exchange (scan response only, separate from the main advertising packet)
+    // Format: DEVICE (controller) 4 bytes = [addr0][addr1][channel][preambleIndex]
+    //         / WALKER (controlee) 2 bytes = [addr0][addr1]
     const val COMPANY_ID_UWB_EXT  = 0x9ABC
-    // (v1.1.53) 상호 RSSI 교환용 — 스캔 응답에 UWB_EXT 와 나란히 탑재(메인 광고 패킷은 만석).
-    //   각 기기가 '내가 상대를 들은 RSSI' 를 상대별로 되돌려보내(에코) 양쪽이 동일한
-    //   sym=(rssi_A→B + rssi_B→A)/2 로 판정 → 폰별 TX/RX 비대칭(내 폰은 무음·상대는 경보) 구조 해소.
-    //   엔트리 = [hash_hi][hash_lo][rssi(signed)] 3바이트. hash = shortHash(상대 fullId) 2바이트.
+    // For mutual RSSI exchange: carried in the scan response next to UWB_EXT (the main advertising packet is full).
+    //   Each device echoes back, per peer, 'the RSSI I heard from you', so both sides judge with the same
+    //   sym=(rssi_A→B + rssi_B→A)/2, removing per-phone TX/RX asymmetry (my phone silent while the peer alarms).
+    //   Entry = [hash_hi][hash_lo][rssi(signed)], 3 bytes. hash = shortHash(peer fullId), 2 bytes.
     const val COMPANY_ID_RSSI_ECHO = 0xE0C0
-    const val ECHO_ENTRY_SIZE      = 3        // 엔트리당 바이트(2바이트 해시 + 1바이트 signed RSSI)
-    const val NO_ECHO_RSSI         = Int.MIN_VALUE   // 에코 부재 센티널(RSSI 는 음수 dBm 이라 MIN_VALUE 안전)
+    const val ECHO_ENTRY_SIZE      = 3        // Bytes per entry (2-byte hash + 1-byte signed RSSI)
+    const val NO_ECHO_RSSI         = Int.MIN_VALUE   // No-echo sentinel (RSSI is negative dBm, so MIN_VALUE is safe)
 
-    // (v1.1.62) ServiceData 2번째(확장) 바이트 bit0 — 존 비콘 접촉 선언.
-    //   상태 1바이트(2-2-2-2)는 만석이라 ServiceData 에 확장 바이트를 1개 증설한다.
-    //   구버전 수신은 byte[0]만 읽으므로 무해(뒤호환), 구버전 송신은 byte[1] 부재 → false 해석.
+    // ServiceData 2nd (extension) byte, bit0: zone beacon contact declaration.
+    //   The 1-byte state (2-2-2-2) is full, so ServiceData gets one extra extension byte.
+    //   Older receivers read only byte[0], so it is harmless (backward compatible);
+    //   older senders lack byte[1], which reads as false.
     const val EXT_FLAG_IN_ZONE     = 0x01
-    // (v1.1.99) 확장 바이트 bit1 — 단독 작업자 구조 요청. bit0 의미 불변, 구버전은 byte[0] 또는 bit0 만 읽으므로 무해
+    // Extension byte bit1: lone-worker rescue request. bit0 keeps its meaning; older versions read only byte[0] or
+    //   bit0, so it is harmless
     const val EXT_FLAG_SOS         = 0x02
 
-    // RSSI >= 임계값 → 경보 (가까울수록 RSSI가 0에 가까워짐)
-    // 경고: 더 멀리서(더 음수), 위험: 더 가까이서(덜 음수)
-    // [v1.0.48 #6] (구) txPower=-38/n=2.53 거리 환산 주석 폐기 — v1.0.39 에서 거리계산 파생을
-    //   걷어내고 v1.0.40 부터 dBm 슬라이더 직접 저장이라 환산식은 더 이상 사실이 아니었다.
-    //   임계 기본값의 단일 출처는 DevSettings.DEFAULT_RSSI_*_ABS(-78/-65)이며, 아래 상수는
-    //   DevSettings 초기화 전 runCatching 폴백 전용이라 같은 값으로 정렬한다(불일치 해소).
-    const val DEFAULT_RSSI_WARNING       = -78   // [v1.1.95] -75→-78
-    const val DEFAULT_RSSI_DANGER        = -65   // [v1.1.95] -55→-65
-    // [v1.1.7 #3] 3000ms→1000ms: BleScanner.mapScanMode 가 ≤1000ms 를 LOW_LATENCY(연속 스캔)로
-    //   매핑 → 감지 blind window 제거(알람 지연/누락 방지). DevSettings.scanPeriodMs 기본값과 일치.
+    // RSSI >= threshold → alert (the closer the device, the nearer RSSI gets to 0)
+    // Warning: from farther away (more negative); danger: closer (less negative).
+    // Thresholds are dBm values saved directly from the sliders; there is no distance conversion.
+    //   The single source of the default thresholds is DevSettings.DEFAULT_RSSI_*_ABS (-78/-65). The constants below
+    //   are only the runCatching fallback before DevSettings is initialized, so they are kept at the same values.
+    const val DEFAULT_RSSI_WARNING       = -78
+    const val DEFAULT_RSSI_DANGER        = -65
+    // 1000ms: BleScanner.mapScanMode maps ≤1000ms to LOW_LATENCY (continuous scanning), removing the detection
+    //   blind window (prevents late or missed alarms). Matches the DevSettings.scanPeriodMs default.
     const val DEFAULT_SCAN_PERIOD_MS     = 1000L
     const val DEFAULT_ADVERTISE_INTERVAL = 200
 
@@ -51,106 +52,107 @@ object BleConstants {
     const val LEVEL_WARNING = 1
     const val LEVEL_DANGER  = 2
 
-    // [v1.0.29 다이나믹 페이로드] IMU 모션 상태 코드 (송신단 내부 표현 전용)
-    //   ImuFusion.motionState 가 반환하는 값과 1:1 일치한다.
-    //   0x00 정지 / 0x01 일반 이동 / 0x02 급정거·급회전
-    //   ※ v1.0.34 부터 '전파(wire)' 에는 이 값을 그대로 싣지 않고
-    //     아래 encodePayload() 로 2bit STATE 필드(PSTATE_*)에 매핑해 1바이트로 패킹한다.
+    // IMU motion state codes (sender-internal representation only).
+    //   Match the values returned by ImuFusion.motionState 1:1.
+    //   0x00 stationary / 0x01 normal movement / 0x02 hard stop or sharp turn
+    //   ※ These values are not put on the wire as-is: encodePayload() below maps them to the 2-bit STATE field
+    //     (PSTATE_*) and packs everything into one byte.
     const val MOTION_STATE_STATIONARY = 0x00
     const val MOTION_STATE_NORMAL     = 0x01
     const val MOTION_STATE_SUDDEN     = 0x02
 
-    // [v1.0.42] 특수상태(후진 PSTATE_REVERSE / 하역 PSTATE_LOADING) 즉시 DANGER 격상 임계를
-    //   위험(rssiDanger, 기본 -65)으로 통일. 상대 STATE 가 후진·하역이고 정제 RSSI가 rssiDanger 이상
-    //   (가까움)이면 TTC·속도·방향 조건을 모두 무시하고 즉시 최고 DANGER로 격상한다.
-    //   사용처(BleService 특수경보 분기)에서 BleConstants.rssiDanger 를 직접 참조한다.
+    // Threshold for immediate DANGER escalation on special states (reverse PSTATE_REVERSE / loading PSTATE_LOADING)
+    //   = the danger threshold: the AlertStateMachine special-alert branch requires both pEma and the raw 1s
+    //   average to reach effDanger (rssiDanger, default -65, minus the total offset). A device already alerting
+    //   goes to DANGER at once; a first detection still needs the normal confirmation (waiver, 2-frame proximity
+    //   or a sustained Time-Gate approach).
 
     // ───────────────────────────────────────────────────────────────
-    // [v1.1.7 #1 다이나믹 페이로드 — 1Byte 비트패킹 프로토콜 (2-2-2-2 Split)]
-    //   ServiceData 1바이트를 4개 필드로 분할 패킹/언패킹한다.
-    //   [v1.1.7 #1] SPEED(4bit) 폐기 → TURN(회전, 2bit) 탑재. 하위 2bit는 예약.
+    // [Dynamic payload: 1-byte bit-packing protocol (2-2-2-2 split)]
+    //   Packs/unpacks ServiceData byte0 as 4 fields (byte1 = extension flags, see encodeExt).
     //
     //   Bit:  7  6 | 5  4 | 3  2 | 1  0
-    //         [ CAT ]|[STATE]|[TURN]|[RSV]
+    //         [ CAT ]|[STATE]|[TURN]|[RISK]
     //          2bit    2bit    2bit   2bit
     //
-    //   CAT  (Category, 송신자 역할 — bits 7:6):
-    //     00 보행자(WALKER) / 01 EPJ / 10 지게차·리치·오더피커(FORKLIFT) / 11 예약
-    //   STATE (송신자 동적 상태 — bits 5:4) [v1.0.42 의미 재정의]:
-    //     00 정지·일반(IDLE)      - 정지 또는 평상(특수경보 아님)
-    //     01 전진·주행(FORWARD)   - 평상 주행(특수경보 아님)
-    //     10 후진(REVERSE)        - 특수경보 트리거
-    //     11 하역·작업(LOADING)   - 특수경보 트리거 / 지게차는 '상부 고소 작업'
-    //   TURN (회전 방향 — bits 3:2) [v1.1.7 #1 신설, 기존 SPEED 4bit 대체]:
-    //     00 직진(STRAIGHT) / 01 좌회전(LEFT) / 10 우회전(RIGHT) / 11 예약
-    //          송신단(ImuFusion.turnDirection, GAME_ROTATION_VECTOR 방위각 미분 기반)이
-    //          실시간 송출 → 수신단이 상대의 회전 진입을 표시·경보에 활용한다.
-    //   RISK (bits 1:0) [v1.1.14 — 기존 RSV 예약 2비트 활용]:
-    //     00 안전(미감지) / 01 경고 감지 / 10 위험 감지 / 11 예약
-    //          송신단(BleService 가 자신의 alertState 최대 경보레벨)을 송출 →
-    //          수신단이 decodeRisk 로 풀어 '자신 RSSI 게이트와 결합'(절충)해 경보를 격상한다.
-    //          → 한쪽이 먼저 감지하면 양쪽이 함께 울리는 양방향 협력 알림(fail-safe).
+    //   CAT  (Category, sender role: bits 7:6):
+    //     00 walker (WALKER) / 01 EPJ / 10 forklift, reach truck, order picker (FORKLIFT) / 11 reserved
+    //   STATE (sender dynamic state: bits 5:4):
+    //     00 stopped/normal (IDLE)      - stopped or ordinary (not a special alert)
+    //     01 forward/driving (FORWARD)  - normal driving (not a special alert)
+    //     10 reverse (REVERSE)          - triggers a special alert
+    //     11 loading/working (LOADING)  - triggers a special alert / for forklifts, 'work at height'
+    //   TURN (turn direction: bits 3:2):
+    //     00 straight (STRAIGHT) / 01 left turn (LEFT) / 10 right turn (RIGHT) / 11 reserved
+    //          Sent in real time by the sender (ImuFusion.turnDirection, based on the GAME_ROTATION_VECTOR
+    //          azimuth derivative) → the receiver shows it in list/alert text only (not used for the level).
+    //   RISK (bits 1:0):
+    //     00 safe (nothing detected) / 01 warning detected / 10 danger detected / 11 reserved
+    //          The sender transmits its own highest alertState level (BleService) →
+    //          the receiver decodes it with decodeRisk and combines it with its own RSSI gate (a compromise)
+    //          to escalate its alert.
+    //          → If either side detects first, both sides alarm together: two-way cooperative alerting (fail-safe).
     //
-    //   ※ 호환성: 보행자 평상(CAT=00,STATE=00,TURN=00) = 0x00 →
-    //     페이로드를 싣지 않는 iBeacon/MAC 비콘의 기본 0x00 과 자연 일치(안전한 기본값).
+    //   ※ Compatibility: walker at rest with nothing detected (CAT=00,STATE=00,TURN=00,RISK=00) = 0x00 →
+    //     naturally matches the default 0x00 of iBeacon/MAC beacons that carry no payload (a safe default).
     // ───────────────────────────────────────────────────────────────
 
     // Category (bits 7:6)
-    const val CAT_WALKER   = 0b00   // 보행자
-    const val CAT_EPJ      = 0b01   // EPJ (전동 파레트 잭)
-    const val CAT_FORKLIFT = 0b10   // 지게차·리치·오더피커
-    const val CAT_RESERVED = 0b11   // 예약
+    const val CAT_WALKER   = 0b00   // Pedestrian
+    const val CAT_EPJ      = 0b01   // EPJ (electric pallet jack)
+    const val CAT_FORKLIFT = 0b10   // Forklift, reach truck, order picker
+    const val CAT_RESERVED = 0b11   // Reserved
 
-    // State (bits 5:4) — [v1.0.42] 의미 재정의: 차량 주행 모드 중심
-    const val PSTATE_IDLE    = 0b00   // 정지·일반 (정지 또는 평상)
-    const val PSTATE_FORWARD = 0b01   // 전진·주행 (평상 주행 — 특수경보 아님)
-    const val PSTATE_REVERSE = 0b10   // 후진 (특수경보 트리거)
-    const val PSTATE_LOADING = 0b11   // 하역·작업 (특수경보 / 지게차 상부 고소 작업)
+    // State (bits 5:4): vehicle driving mode
+    const val PSTATE_IDLE    = 0b00   // Stopped/normal (stopped or ordinary)
+    const val PSTATE_FORWARD = 0b01   // Forward/driving (normal driving, not a special alert)
+    const val PSTATE_REVERSE = 0b10   // Reverse (triggers a special alert)
+    const val PSTATE_LOADING = 0b11   // Loading/working (special alert / forklift work at height)
 
-    // Turn (bits 3:2) — [v1.1.7 #1] 회전 방향. 기존 SPEED 4bit 폐기 후 재배치.
-    const val TURN_STRAIGHT = 0b00   // 직진
-    const val TURN_LEFT     = 0b01   // 좌회전
-    const val TURN_RIGHT    = 0b10   // 우회전
-    const val TURN_RESERVED = 0b11   // 예약
+    // Turn (bits 3:2): turn direction.
+    const val TURN_STRAIGHT = 0b00   // Straight
+    const val TURN_LEFT     = 0b01   // Left turn
+    const val TURN_RIGHT    = 0b10   // Right turn
+    const val TURN_RESERVED = 0b11   // Reserved
 
-    // 비트 필드 마스크/시프트  (2-2-2-2: CAT 상위 → STATE → TURN → RISK 하위)
+    // Bit-field masks/shifts (2-2-2-2: CAT high → STATE → TURN → RISK low)
     private const val CAT_SHIFT   = 6
     private const val CAT_MASK    = 0b11
     private const val STATE_SHIFT = 4
     private const val STATE_MASK  = 0b11
     private const val TURN_SHIFT  = 2
     private const val TURN_MASK   = 0b11
-    // [v1.1.14] RISK(위험 감지 상태) — bits[1:0]. LEVEL_*(0~2) 를 그대로 2비트에 싣는다.
+    // RISK (detected danger state): bits[1:0]. Carries LEVEL_* (0~2) as-is in 2 bits.
     private const val RISK_SHIFT  = 0
     private const val RISK_MASK   = 0b11
 
     /**
-     * 4개 필드(Category 2bit + State 2bit + Turn 2bit + Risk 2bit)를 1바이트로 패킹한다. (2-2-2-2 Split)
-     * 레이아웃: bits[7:6]=CAT, bits[5:4]=STATE, bits[3:2]=TURN, bits[1:0]=RISK.
-     * @param category CAT_* (0~3) — 범위 밖 상위 비트는 마스킹돼 버려진다.
+     * Packs 4 fields (Category 2bit + State 2bit + Turn 2bit + Risk 2bit) into one byte (2-2-2-2 split).
+     * Layout: bits[7:6]=CAT, bits[5:4]=STATE, bits[3:2]=TURN, bits[1:0]=RISK.
+     * @param category CAT_* (0~3); out-of-range upper bits are masked off.
      * @param state    PSTATE_* (0~3)
-     * @param turn     TURN_* (0~3). [v1.1.7 #1] 송신단은 ImuFusion.turnDirection(방위각 미분)를 송출.
-     * @param risk     LEVEL_* (0~2). (v1.1.14) 송신자 위험 감지 상태(기본 SAFE). 수신단이 격상에 활용.
+     * @param turn     TURN_* (0~3). The sender transmits ImuFusion.turnDirection (azimuth derivative).
+     * @param risk     LEVEL_* (0~2). Sender's detected danger state (default SAFE); receivers use it to escalate.
      */
     fun encodePayload(category: Int, state: Int, turn: Int = TURN_STRAIGHT, risk: Int = LEVEL_SAFE): Byte {
         val c = (category and CAT_MASK) shl CAT_SHIFT
         val s = (state and STATE_MASK) shl STATE_SHIFT
         val t = (turn and TURN_MASK) shl TURN_SHIFT
-        val r = (risk and RISK_MASK) shl RISK_SHIFT      // [v1.1.14] 위험 감지 상태(RSV→RISK)
+        val r = (risk and RISK_MASK) shl RISK_SHIFT      // Detected danger state
         return (c or s or t or r).toByte()
     }
 
-    /** (v1.1.99) 확장 바이트 조립 — bit0=IN_ZONE, bit1=SOS. 첫 바이트(encodePayload)와 무관. */
+    /** Builds the extension byte: bit0=IN_ZONE, bit1=SOS. Independent of the first byte (encodePayload). */
     fun encodeExt(inZone: Boolean, sos: Boolean): Int =
         (if (inZone) EXT_FLAG_IN_ZONE else 0) or (if (sos) EXT_FLAG_SOS else 0)
 
-    /** (v1.1.99) 확장 바이트에서 SOS(bit1) 추출. 바이트 부재는 0 으로 넘어오므로 false. */
+    /** Extracts SOS (bit1) from the extension byte. A missing byte arrives as 0, so false. */
     fun decodeSos(ext: Int): Boolean = (ext and EXT_FLAG_SOS) != 0
 
-    /** 패킹된 1바이트에서 Category(bits 7:6) 추출. */
+    /** Extracts Category (bits 7:6) from the packed byte. */
     fun decodeCategory(payload: Int): Int = ((payload and 0xFF) shr CAT_SHIFT) and CAT_MASK
 
-    /** 역할 코드를 집계용 이름으로. 미상(널·범위 밖)은 UNKNOWN — 경보 기록의 역할 필드에 쓴다. */
+    /** Role code → name for aggregation; unknown (null/out of range) = UNKNOWN. Used for the alert record role field. */
     fun categoryName(cat: Int?): String = when (cat) {
         CAT_WALKER   -> "WALKER"
         CAT_EPJ      -> "EPJ"
@@ -158,17 +160,17 @@ object BleConstants {
         else         -> "UNKNOWN"
     }
 
-    /** 패킹된 1바이트에서 State(bits 5:4) 추출. */
+    /** Extracts State (bits 5:4) from the packed byte. */
     fun decodeState(payload: Int): Int = ((payload and 0xFF) shr STATE_SHIFT) and STATE_MASK
 
-    /** 패킹된 1바이트에서 Turn 코드(bits 3:2, TURN_*) 추출. [v1.1.7 #1] */
+    /** Extracts the Turn code (bits 3:2, TURN_*) from the packed byte. */
     fun decodeTurn(payload: Int): Int = ((payload and 0xFF) shr TURN_SHIFT) and TURN_MASK
 
-    /** 패킹된 1바이트에서 Risk(bits 1:0, LEVEL_*) 추출. (v1.1.14) 송신자 위험 감지 상태(0 SAFE/1 경고/2 위험). */
+    /** Extracts Risk (bits 1:0, LEVEL_*) from the packed byte: sender's detected danger (0 SAFE/1 warning/2 danger). */
     fun decodeRisk(payload: Int): Int = ((payload and 0xFF) shr RISK_SHIFT) and RISK_MASK
 
-    // ── [v1.0.42 Req2] 표시용 한글 라벨 (Local/Target 양쪽 UI 가 공유하는 단일 소스) ──
-    /** Category(CAT_*) -> 표시용 한글 라벨. */
+    // ── Korean display labels (single source shared by the Local and Target UIs) ──
+    /** Category (CAT_*) -> Korean display label. */
     fun categoryLabel(category: Int): String = when (category) {
         CAT_WALKER   -> "보행자"
         CAT_EPJ      -> "EPJ"
@@ -176,7 +178,7 @@ object BleConstants {
         else         -> "예비"
     }
 
-    /** State(PSTATE_*) -> 표시용 한글 라벨 (v1.0.42 의미 재정의: 정지·일반/전진·주행/후진/하역·작업). */
+    /** State (PSTATE_*) -> Korean display label ("정지·일반" / "전진·주행" / "후진" / "하역·작업"). */
     fun stateLabel(state: Int): String = when (state) {
         PSTATE_IDLE    -> "정지·일반"
         PSTATE_FORWARD -> "전진·주행"
@@ -185,7 +187,7 @@ object BleConstants {
         else           -> "정지·일반"
     }
 
-    /** Turn(TURN_*) -> 표시용 한글 라벨. [v1.1.7 #1] */
+    /** Turn (TURN_*) -> Korean display label. */
     fun turnLabel(turn: Int): String = when (turn) {
         TURN_LEFT     -> "좌회전"
         TURN_RIGHT    -> "우회전"
@@ -193,14 +195,14 @@ object BleConstants {
         else          -> "-"
     }
 
-    // ── (v1.1.53) 상호 RSSI 교환 — 에코 테이블 인코딩/디코딩 + 짧은 해시 ──────────────
+    // ── Mutual RSSI exchange: echo table encoding/decoding + short hash ──────────────
     /**
-     * 상대 fullId(prefix+wire id, deviceRssiMap 키와 동일)를 2바이트(0..65535) 해시로 축약.
-     *   FNV-1a 32비트 후 상·하위 XOR-fold → 16비트. 송신측은 상대 fullId 로, 수신측은
-     *   '자기 fullId' 로 같은 함수를 호출해 자기 에코 엔트리를 식별한다(양측 동일 문자열 → 동일 해시).
+     * Reduces a peer fullId (prefix + wire id, same as the deviceRssiMap key) to a 2-byte (0..65535) hash.
+     *   FNV-1a 32-bit, then XOR-fold the high and low halves → 16 bits. The sender calls it with the peer's fullId,
+     *   the receiver with its own fullId, to find its own echo entry (same string on both sides → same hash).
      */
     fun shortHash(id: String): Int {
-        var h = -0x7ee3623b               // 0x811C9DC5 FNV-1a offset basis(Int 비트패턴)
+        var h = -0x7ee3623b               // 0x811C9DC5 FNV-1a offset basis (Int bit pattern)
         for (b in id.toByteArray(Charsets.UTF_8)) {
             h = h xor (b.toInt() and 0xFF)
             h *= 0x01000193               // FNV prime
@@ -209,8 +211,8 @@ object BleConstants {
     }
 
     /**
-     * 에코 엔트리 리스트((hash, rssiDbm))를 바이트 배열로 인코딩. 최대 maxEntries 개.
-     *   각 엔트리 3바이트: [hash>>8][hash&0xFF][rssi.coerceIn(-128,127)].
+     * Encodes a list of echo entries ((hash, rssiDbm)) into a byte array, at most maxEntries entries.
+     *   Each entry is 3 bytes: [hash>>8][hash&0xFF][rssi.coerceIn(-128,127)].
      */
     fun encodeEchoTable(entries: List<Pair<Int, Int>>, maxEntries: Int): ByteArray {
         val n = minOf(entries.size, maxEntries)
@@ -225,8 +227,8 @@ object BleConstants {
     }
 
     /**
-     * 에코 바이트에서 myHash 와 일치하는 엔트리의 RSSI(dBm) 반환. 없으면 null.
-     *   수신측이 '자기 해시'로 자기 에코를 찾아 상대가 나를 들은 세기를 복원한다.
+     * Returns the RSSI (dBm) of the echo entry matching myHash, or null if none.
+     *   The receiver finds its own echo by its own hash, recovering how strongly the peer heard it.
      */
     fun findEchoRssi(echoData: ByteArray, myHash: Int): Int? {
         var i = 0
@@ -240,15 +242,15 @@ object BleConstants {
 }
 
 /**
- * [v1.0.42 Req2] 내 장비(Local) 송신 상태 — 내가 BLE 로 '송출'하는 역할/상태/속도.
- *   수신(Target)과 완전히 분리된 별도 모델이다. 상대 페이로드 디코드 결과(TargetState)가
- *   이 값을 절대 덮어쓰지 않도록 데이터 모델 자체를 분리한다(received hex → local UI 오염 차단).
+ * Own-device (Local) transmit state: the role/state/speed this device broadcasts over BLE.
+ *   A model fully separate from the receive side (Target): the data models are kept apart so a decoded peer
+ *   payload (TargetState) can never overwrite these values (stops received hex from polluting the local UI).
  */
 data class LocalState(
-    val category: Int  = BleConstants.CAT_WALKER,       // 내 역할 (CAT_*)
-    val state: Int     = BleConstants.PSTATE_IDLE,       // 내 동적 상태 (PSTATE_*)
-    val turnDir: Int   = BleConstants.TURN_STRAIGHT,     // 내 송출 회전 방향 (TURN_*)
-    val inZone: Boolean = false                          // 세이프존 진입 여부 (기본 false = 구포맷 하위호환)
+    val category: Int  = BleConstants.CAT_WALKER,       // My role (CAT_*)
+    val state: Int     = BleConstants.PSTATE_IDLE,       // My dynamic state (PSTATE_*)
+    val turnDir: Int   = BleConstants.TURN_STRAIGHT,     // My transmitted turn direction (TURN_*)
+    val inZone: Boolean = false                          // In a safe zone (default false: backward compatible with the old format)
 ) {
     val categoryLabel: String get() = BleConstants.categoryLabel(category)
     val stateLabel: String    get() = BleConstants.stateLabel(state)
@@ -256,17 +258,17 @@ data class LocalState(
 }
 
 /**
- * [v1.0.42 Req2] 수신 타겟(Target) 상태 — 상대 기기가 송출한 1바이트 페이로드 디코드 결과.
- *   deviceId 별 1개. 내 장비(Local) 표시에 절대 영향을 주지 않는다.
+ * Received target (Target) state: decoded 1-byte payload broadcast by a peer device.
+ *   One per deviceId. Never affects the own-device (Local) display.
  */
 data class TargetState(
     val deviceId: String,
     val displayName: String,
-    val category: Int,        // 상대 역할 (CAT_*)
-    val state: Int,           // 상대 동적 상태 (PSTATE_*)
-    val turnDir: Int,         // 상대 송출 회전 방향 (TURN_*)
-    val level: Int,           // 경보 레벨 (LEVEL_*)
-    val rssi: Int             // 최근 RSSI (dBm)
+    val category: Int,        // Peer role (CAT_*)
+    val state: Int,           // Peer dynamic state (PSTATE_*)
+    val turnDir: Int,         // Peer transmitted turn direction (TURN_*)
+    val level: Int,           // Alert level (LEVEL_*)
+    val rssi: Int             // Latest RSSI (dBm)
 ) {
     val categoryLabel: String get() = BleConstants.categoryLabel(category)
     val stateLabel: String    get() = BleConstants.stateLabel(state)

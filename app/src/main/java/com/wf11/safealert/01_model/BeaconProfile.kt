@@ -1,31 +1,31 @@
 package com.wf11.safealert.model
 
 /**
- * UUID 기반 비콘 프로파일
- * 같은 UUID를 가진 비콘은 전부 자동 감지됨
+ * UUID-based beacon profile.
+ * Every beacon sharing the same UUID is detected automatically.
  *
  * type:
- *   "IBEACON"      - Apple iBeacon 형식 (Proximity UUID)
- *   "SERVICE_UUID" - 커스텀 서비스 UUID 형식
+ *   "IBEACON"      - Apple iBeacon format (Proximity UUID)
+ *   "SERVICE_UUID" - custom service UUID format
  */
 data class BeaconProfile(
-    val uuid: String,               // 예: "550E8400-E29B-41D4-A716-446655440000"
-    val label: String,              // 예: "현장 작업자", "SmartTag-홍길동"
+    val uuid: String,               // e.g. "550E8400-E29B-41D4-A716-446655440000"
+    val label: String,              // e.g. "현장 작업자", "SmartTag-홍길동"
     val type: String = "IBEACON",
     val addedAt: Long = System.currentTimeMillis(),
-    // 감지 거리 보정 (dBm 오프셋)
-    // 0 = 전역 설정 사용
-    // +10 = 10dBm 더 약한 신호도 감지 = 약 2배 먼 거리 (SmartTag 권장: +15)
+    // Detection range correction (dBm offset)
+    // 0 = use the global setting
+    // +10 = also detect signals 10dBm weaker = roughly 2x the distance (SmartTag recommended: +15)
     val rssiOffset: Int = 0,
-    // (v1.1.62) 존 비콘 — true면 이 비콘은 경보 대상이 아니라 '안전구역' 마커.
-    //   zoneEnterRssi 이상으로 수신 중인 기기는 IN_ZONE 선언(자기 무음+피어 무해 판정).
-    // (v1.1.76) 기본 -80 — 존은 raw rssi, 경보는 EMA+오프셋으로 판정해 스케일이 다르다.
-    //   기본을 -65 로 두면 경보 임계(-78, MAC 비콘은 오프셋 적용으로 더 낮음)보다 좁아
-    //   '경보는 뜨는데 존은 성립 안 하는' 사각지대가 설계상 반드시 생긴다.
+    // Zone beacon: when true, this beacon is not an alert target but a 'safe zone' marker.
+    //   A device receiving it at zoneEnterRssi or stronger declares IN_ZONE (mutes itself; peers judge it harmless).
+    // Default -80: zones use raw RSSI while alerts use EMA + offset, so the scales differ.
+    //   A default of -65 would be narrower than the alert threshold (-78, lower still for MAC beacons with an
+    //   offset), which by design guarantees a blind spot where the alert fires but the zone never holds.
     val zoneMute: Boolean = false,
     val zoneEnterRssi: Int = -80,
-    // (신규) 방문자용 비콘 — true 면 이 UUID 프로파일은 보행자로 취급해
-    //   보행자 모드 PDA 에는 경보하지 않는다(지게차·EPJ 만 수신). 장비에 붙이는 비콘은 false.
-    //   기본 true — 기존 등록분은 전부 방문자용으로 해석된다.
+    // Visitor beacon: when true, this UUID profile is treated as a pedestrian,
+    //   so walker-mode PDAs are not alerted (only forklifts and EPJs receive it). Beacons attached to equipment use
+    //   false. Default true: all existing registered profiles are read as visitor beacons.
     val visitorBeacon: Boolean = true
 )

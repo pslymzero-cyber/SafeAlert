@@ -3,30 +3,31 @@ package com.wf11.safealert.model
 import com.wf11.safealert.ble.BleConstants
 
 /**
- * (v1.1.90 SA-1) PIT(Powered Industrial Truck) 장비 종류.
+ * PIT (Powered Industrial Truck) equipment type.
  *
- * 표시 이름 자유 입력을 대체한다. 사람 이름·닉네임이 BLE 송출과 Firebase 경보 로그로
- * 들어가던 경로를, 입력 수단 자체를 없애 구조적으로 막는다. 현장은 종류와 번호를
- * 고르기만 하고, 키보드를 쓰지 않는다.
+ * Replaces free-text display names. Removing the input method itself structurally prevents people's names and
+ * nicknames from reaching BLE advertisements and Firebase alert logs. On site, users only pick a type and a
+ * number; no keyboard is used.
  *
- * 송출 ID 는 `코드-번호` 두 토큰이다 — `CB-01`, `RT-07`, `HR-99`.
- *   · 5바이트 고정 → BLE 15바이트 예산 중 10바이트가 에코 데이터 쪽에 남는다
- *   · 센터명은 싣지 않는다. 물리적으로 같은 센터 안에서만 서로를 만나고,
- *     센터명은 12자까지 허용돼 함께 실으면 예산을 넘긴다.
- *     Firebase 로그에는 저장 시점에 센터명을 붙여 `WF11-CB-01` 로 남는다.
+ * The advertised ID is two tokens, `code-number`: `CB-01`, `RT-07`, `HR-99`.
+ *   · Fixed 5 bytes: well inside the 15-byte ID limit (12 bytes during a rescue request)
+ *   · The center name is not included. Devices only meet within the same physical center,
+ *     and center names may be up to 12 characters, so including one would exceed the budget.
+ *     Firebase logs prepend the center name at save time, e.g. `WF11-CB-01`.
  *
- * [category] 가 경보 반경을 정한다. 사용자가 역할을 따로 고르지 않고 **장비를 고르면
- * 역할이 따라온다** — 지게차를 고른 사람이 EPJ 반경으로 도는 불일치가 생길 수 없다.
+ * [category] sets the alert radius. Users do not pick a role separately: **choosing the equipment brings the
+ * role with it**, so someone who picked a forklift can never run with the EPJ radius.
  *
- * **Category 배정 기준은 장비 크기가 아니라 금속 캐빈 차폐와 주행 속도다.**
- * 판정이 RSSI 기반이라 이 둘이 신호 감쇠를 지배한다(`DevSettings.epjVsEpjBiasDb` 주석:
- * "EPJ 는 금속 캐빈이 없어 차폐가 약하고 3km/h 저속이라 5m 공존이 정상").
- * 캐빈이 있고 빠른 장비는 `CAT_FORKLIFT`(강차폐 보수 보정 +8), 캐빈이 없고 느린 장비는
- * `CAT_EPJ`(약차폐 -2, 3m 진입에만 발령) 다. 마스트 유무·적재 높이는 RSSI 에 영향이
- * 없으므로 배정 근거가 아니다 — 워키(보행 조작 스태커)가 `CAT_EPJ` 인 이유가 이것이다.
+ * **Category is assigned by metal cabin shielding and travel speed, not by equipment size.**
+ * Judgment is RSSI-based, and these two dominate signal attenuation (`DevSettings.epjVsEpjBiasDb` comment:
+ * "EPJs have no metal cabin, so shielding is weak, and at a low 3km/h, coexisting at 5m is normal").
+ * Fast equipment with a cabin is `CAT_FORKLIFT` (strong shielding, conservative correction +8); slow equipment
+ * without a cabin is `CAT_EPJ` (weak shielding -2, alerts only on entering 3m). Mast presence and load height
+ * do not affect RSSI, so they are not assignment criteria; that is why the walkie (walk-behind stacker) is
+ * `CAT_EPJ`.
  *
- * [code] 는 BLE 로 나가는 값이라 **변경 금지**다. 현장에 배포된 기기와 표기가 어긋난다.
- * 새 장비는 아래에 추가만 한다(순서 = 선택 팝업 노출 순서).
+ * [code] is sent over BLE, so **never change it**: it would no longer match devices deployed in the field.
+ * Only append new equipment below (order = order shown in the selection popup).
  */
 enum class PitType(val code: String, val label: String, val category: Int) {
     COUNTER_BALANCE("CB", "Counterbalance", BleConstants.CAT_FORKLIFT),
@@ -40,22 +41,22 @@ enum class PitType(val code: String, val label: String, val category: Int) {
 
     companion object {
         /**
-         * 장비 번호 범위 — 팝업 드롭다운이 그대로 쓴다.
-         * 상한 99 는 현장 확인을 거친 값이다: 한 센터에 같은 종류가 100대를 넘지 않는다.
-         * 2자리 고정이라 송출 ID 가 5바이트로 맞는다. 3자리로 늘리면 BLE 표기와
-         * 이미 배포된 기기의 파싱이 어긋나므로, 상한 변경은 전 기기 동시 배포가 전제다.
+         * Equipment number range, used as-is by the popup dropdown.
+         * The upper bound 99 was confirmed on site: a center never exceeds 100 units of the same type.
+         * Fixed at 2 digits so the advertised ID fits in 5 bytes. Going to 3 digits would break the BLE notation and the
+         * parsing on devices already deployed, so changing the bound requires a simultaneous rollout to every device.
          */
         const val NO_MIN = 1
         const val NO_MAX = 99
 
         fun fromCode(code: String): PitType? = PitType.values().firstOrNull { it.code == code }
 
-        /** `CB-01` — 번호는 항상 2자리. 자릿수가 흔들리면 화면에서 정렬이 깨진다. */
+        /** `CB-01`: the number is always 2 digits. A varying digit count breaks alignment on screen. */
         fun buildId(type: PitType, no: Int): String = "${type.code}-%02d".format(no)
 
         /**
-         * 송출 ID 를 (종류, 번호)로 되돌린다. 팝업을 다시 열 때 직전 선택을 복원하는 데 쓴다.
-         * 형식이 맞아도 등록되지 않은 코드면 null — 구버전이 남긴 값을 걸러낸다.
+         * Parses an advertised ID back into (type, number); used to restore the last selection when the popup reopens.
+         * Returns null for an unregistered code even if the format matches, filtering out values left by older versions.
          */
         fun parse(id: String): Pair<PitType, Int>? {
             val m = Regex("^([A-Z]{2})-([0-9]{2})$").find(id.trim().uppercase()) ?: return null

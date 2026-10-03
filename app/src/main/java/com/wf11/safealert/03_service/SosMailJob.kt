@@ -8,14 +8,15 @@ import android.content.ComponentName
 import android.content.Context
 
 /**
- * 구조 요청 메일 대기열을 감시 밖에서 비우는 예약 작업 (v1.2.2).
- * [중지]·재시작·재부팅으로 단독 작업자 감시가 멈춘 뒤에도, 대기 중인 메일 요청을 네트워크가 있을 때 보낸다.
- * 대기열이 차면 예약하고 비면 취소한다(SosMail.onQueue). 감시 tick 과 같은 대기열 인스턴스를 써서 두 번 보내지 않는다.
- * 실패는 삼킨다 — 메일은 보조 통로라 경보·판정은 이 작업을 기다리지 않는다.
+ * Scheduled job that drains the SOS mail queue outside monitoring.
+ * Even after lone-worker monitoring stops ("중지", restart, reboot), pending mail requests are sent when a network is available.
+ * Scheduled when the queue has items and cancelled when it is empty (SosMail.onQueue). Uses
+ * the same queue instance as the monitoring tick, so nothing is sent twice.
+ * Failures are swallowed — mail is a secondary channel, so alerts and judgments never wait on this job.
  */
 class SosMailJob : JobService() {
     companion object {
-        // 앱에서 쓰는 유일한 JobScheduler 작업
+        // The only JobScheduler job in the app
         private const val JOB_ID = 0x5A0501
 
         fun sync(ctx: Context, pending: Boolean) {
@@ -38,8 +39,8 @@ class SosMailJob : JobService() {
 
     override fun onStartJob(params: JobParameters): Boolean {
         if (!LoneWorkerSosSync.mailEnabled) return false
-        // 남은 항목이 있으면 시스템 재시도(10초씩 늘어남)에 맡긴다. 앱 안 재시도 대기(10초~5분)와 겹쳐 실제로 다시 보내는
-        // 간격은 10분 안팎까지 벌어질 수 있고 시스템이 더 미룰 수도 있다
+        // If items remain, leave it to the system retry (growing by 10 s each time). Together with the in-app retry wait (10 s to 5 min),
+        // the actual resend interval can stretch to around 10 minutes, and the system may defer it further
         LoneWorkerSosSync.mail(this).drain { left -> jobFinished(params, left) }
         return true
     }

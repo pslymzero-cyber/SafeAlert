@@ -12,9 +12,10 @@ import android.util.Log
 import com.wf11.safealert.utils.DevSettings
 
 /**
- * 충돌 경보 경로와 단독 작업자 알람이 STREAM_ALARM 볼륨을 함께 쓴다. 구조 요청 알람이 울리는 동안에는
- * 충돌 경로가 볼륨을 낮추지 않는다. 알람을 끝낼 때는 현재 볼륨이 우리가 올려 둔 값 그대로일 때만 원래 값으로
- * 되돌리되, 충돌 경로가 10초 안에 볼륨을 요청했으면 되돌리기를 미룬다(저장값은 정리될 때까지 남는다).
+ * The collision alert path and the lone-worker alarm share the STREAM_ALARM volume. While the rescue-request
+ * alarm sounds, the collision path does not lower the volume. When the alarm ends, the volume is restored to
+ * the original only if it is still the value we raised it to, but the restore is deferred if the collision
+ * path requested volume within 10s (the saved value stays until cleaned up).
  */
 object AlarmVolumeShare {
     const val COLLISION_HOLD_MS = 10_000L
@@ -26,7 +27,7 @@ object AlarmVolumeShare {
     @Volatile var collisionAtMs = -COLLISION_HOLD_MS
         private set
 
-    /** 충돌 경로의 볼륨 요청마다 부른다(실제로 바뀌었는지와 무관). */
+    /** Called on every collision-path volume request (whether or not it actually changed anything). */
     fun noteCollision(nowMs: Long) {
         collisionAtMs = nowMs
     }
@@ -35,8 +36,9 @@ object AlarmVolumeShare {
         if (sosSounding) maxOf(target, current) else target
 
     /**
-     * 되돌리기 판정. 현재 값을 모르거나 저장값이 없거나 누가 바꿨거나 이미 원래 값이면 DROP(저장값만 버림),
-     * 아직 우리 값인데 충돌 요청이 10초 안에 있었으면 WAIT, 아니면 RESTORE. final(감시 정지)이면 미루지 않는다.
+     * Restore decision. DROP (discard only the saved value) if the current value is unknown, nothing is saved,
+     * someone else changed it, or it is already the original; WAIT if it is still our value but a collision
+     * request came within 10s; otherwise RESTORE. Never defers when final (monitoring stopped).
      */
     fun restoreAction(
         cur: Int?, orig: Int, ours: Int, nowMs: Long, collisionAtMs: Long, final: Boolean = false
@@ -48,13 +50,15 @@ object AlarmVolumeShare {
 }
 
 /**
- * 단독 작업자 확인·구조 요청 전용 소리·진동 (v1.1.99).
+ * Sound and vibration dedicated to lone-worker check-ins and rescue requests.
  *
- * 진동은 동료 구조 요청 사이렌에서만 건다. 본인 확인 창·본인 SOS(요구조자 의심 기기)는 소리·화면만 쓴다.
+ * Vibration is used only for a coworker's rescue-request siren. My own check window and my own SOS
+ * (the device suspected to need rescue) use sound and screen only.
  *
- * 충돌 경보용 소리 재생기와 완전히 분리한다. 코드로 만든 PCM(SirenGenerator)을 정적 AudioTrack 으로
- * 반복 재생하고 USAGE_ALARM 스트림을 쓴다. 앱의 소리 끄기 설정·충돌 경보 음소거와 무관하게 울린다.
- * 볼륨 변경은 setAlarmVolume(BleService 의 보호 setter)로만 하므로 볼륨 버튼 음소거로 오인되지 않는다.
+ * Fully separate from the collision alert sound player. Loops code-generated PCM (SirenGenerator) on a
+ * static AudioTrack using the USAGE_ALARM stream. Sounds regardless of the app's sound-off setting or
+ * collision-alert mute. Volume is changed only through setAlarmVolume (BleService's protected setter),
+ * so it is not mistaken for a volume-button mute.
  */
 class LoneWorkerAlarm(
     private val ctx: Context,
@@ -65,8 +69,9 @@ class LoneWorkerAlarm(
 
         companion object {
             /**
-             * 소리 우선순위(F2, 순수): 본인 SOS → 사이렌, 확인 창 → 확인음, 지켜보는 중 동료 SOS 들림 → 사이렌, 아니면 없음.
-             * 진동은 지켜보는 중 동료 사이렌에서만(LoneWorkerLogic.alarmVibrates). Mode 가 늘면 여기서 컴파일 오류가 난다.
+             * Sound priority (pure): my SOS → siren, check window → check tone, coworker SOS heard while watching → siren,
+             * otherwise none. Vibration only for a coworker siren while watching (LoneWorkerLogic.alarmVibrates).
+             * Adding a Mode causes a compile error here.
              */
             fun of(mode: LoneWorkerLogic.Mode, peerAudible: Boolean): Pattern? = when (mode) {
                 LoneWorkerLogic.Mode.SOS -> SIREN
@@ -81,12 +86,12 @@ class LoneWorkerAlarm(
         private const val RETRY_MS = 5_000L
         private const val FALLBACK_TONE_MS = 6_000
         private const val PREFS = "lone_worker_alarm"
-        private const val K_ORIG = "orig"   // 사이렌 전 원래 볼륨 (프로세스가 죽어도 남는다)
-        private const val K_OURS = "ours"   // 이 앱이 올려 둔 볼륨
+        private const val K_ORIG = "orig"   // original volume before the siren (survives process death)
+        private const val K_OURS = "ours"   // the volume this app raised it to
         private const val FAULT_TEXT = "경보음 볼륨을 올리지 못했습니다 — 방해 금지·음량 제한을 확인하세요"
     }
 
-    /** 볼륨을 올리지 못했을 때 화면에 보일 안내. 문제가 없으면 null. */
+    /** Notice shown on screen when the volume could not be raised. null if there is no problem. */
     var volumeFault: String? = null
         private set
 
@@ -98,18 +103,18 @@ class LoneWorkerAlarm(
     private var fallbackFor: Pattern? = null
     private var failedAt = 0L
     private var vibrating = false
-    private var restoreWaiting = false   // 볼륨 되돌리기를 충돌 경보 때문에 미루는 중 (재생은 이미 멈춤)
+    private var restoreWaiting = false   // volume restore deferred because of a collision alert (playback already stopped)
 
     private val audio: AudioManager?
         get() = runCatching { ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager }.getOrNull()
 
-    /** vibrate 는 동료 구조 요청 사이렌일 때만 true(LoneWorkerLogic.alarmVibrates). */
+    /** vibrate is true only for a coworker rescue-request siren (LoneWorkerLogic.alarmVibrates). */
     fun play(p: Pattern, vibrate: Boolean = false) {
         setVibration(vibrate)
         if (playing == p) return
         AlarmVolumeShare.sosSounding = true
         val t0 = SystemClock.elapsedRealtime()
-        // 대체음이 나는 동안에는 5초에 한 번만 트랙을 다시 시도한다
+        // While the fallback tone plays, retry the track only once every 5s
         if (fallbackFor == p && t0 - failedAt < RETRY_MS) {
             applyVolume(p)
             return
@@ -128,7 +133,7 @@ class LoneWorkerAlarm(
         }
     }
 
-    /** 정적 트랙은 쓰기 전에는 초기화 상태가 아니다 — 만들고, 쓰고, 상태를 확인한 뒤 반복 지정·재생한다 (v1.1.99, F01). */
+    /** A static track is not initialized until written — create, write, check the state, then set looping and play. */
     private fun startTrack(p: Pattern): Boolean {
         val pcm = if (p == Pattern.SIREN) SirenGenerator.wailCycle() else SirenGenerator.checkBeepCycle()
         var t: AudioTrack? = null
@@ -185,7 +190,10 @@ class LoneWorkerAlarm(
         fallbackFor = null
     }
 
-    /** 5초마다: 다른 곳에서 취소된 진동을 다시 걸고(동료 사이렌일 때만), 충돌 경보가 낮춘 볼륨을 되돌린다. 트랙 실패 중이면 재시도한다. */
+    /**
+     * Every 5s: re-applies vibration cancelled elsewhere (coworker siren only) and restores
+     * volume lowered by a collision alert. Retries the track while it is failing.
+     */
     fun refresh() {
         val p = playing ?: fallbackFor ?: return
         if (vibrating) vibrate()
@@ -194,8 +202,8 @@ class LoneWorkerAlarm(
     }
 
     /**
-     * 재생을 멈추고 볼륨을 정리한다. 되돌리기를 미루는 동안에는 주기 호출(유휴 렌더)마다 다시 판정한다.
-     * final 은 감시 정지(뒤에 주기 호출이 없음): 미루지 않고 되돌린다.
+     * Stops playback and settles the volume. While a restore is deferred, it is re-decided on every periodic call (idle render).
+     * final = monitoring stopped (no periodic calls follow): restores without deferring.
      */
     fun stop(final: Boolean = false) {
         AlarmVolumeShare.sosSounding = false
@@ -212,7 +220,7 @@ class LoneWorkerAlarm(
         restoreWaiting = !settleVolume(final)
     }
 
-    /** 저장해 둔 원래 볼륨을 판정대로 처리한다. 미루면 false(저장값 유지), 되돌렸거나 버렸으면 true. */
+    /** Applies the decision to the saved original volume. false if deferred (saved value kept), true if restored or dropped. */
     private fun settleVolume(final: Boolean): Boolean {
         val p = prefs
         val cur = audio?.getStreamVolume(AudioManager.STREAM_ALARM)
@@ -238,7 +246,7 @@ class LoneWorkerAlarm(
         val max = am.getStreamMaxVolume(AudioManager.STREAM_ALARM)
         val cur = am.getStreamVolume(AudioManager.STREAM_ALARM)
         val pf = prefs
-        if (!pf.contains(K_ORIG)) pf.edit().putInt(K_ORIG, cur).apply()   // 재시작 중에도 진짜 원래 값을 유지
+        if (!pf.contains(K_ORIG)) pf.edit().putInt(K_ORIG, cur).apply()   // keep the true original value even across restarts
         val target = if (p == Pattern.SIREN) max else {
             val pref = Math.ceil(max * DevSettings.alarmVolume / 100.0).toInt().coerceIn(0, max)
             maxOf(cur, pref)
@@ -246,7 +254,7 @@ class LoneWorkerAlarm(
         var now = cur
         if (cur != target) {
             setAlarmVolume(target)
-            now = am.getStreamVolume(AudioManager.STREAM_ALARM)   // 읽어 보고 확인
+            now = am.getStreamVolume(AudioManager.STREAM_ALARM)   // read back to verify
             if (now != cur) pf.edit().putInt(K_OURS, now).apply()
         }
         val silent = runCatching {

@@ -17,9 +17,10 @@ import com.wf11.safealert.R
 import com.wf11.safealert.databinding.DialogPinBinding
 import com.wf11.safealert.utils.PinLockout
 
-// ── PIN 다이얼로그 ──────────────────────────────────────────
-//   설정 진입·비콘 공유 전송/삭제 공용. PIN 일치 시 닫고 onSuccess 실행.
-//   (v1.1.97) 연속 오류 잠금(PinLockout) — 잠금 중에는 입력 창 대신 남은 시간을 안내한다.
+// ── PIN dialog ──────────────────────────────────────────
+//   Shared by developer settings entry, beacon management entry, beacon share send/delete and the
+//   BLE settings beacon-gain/UWB unlock. On a PIN match, closes and runs onSuccess.
+//   Lockout after consecutive errors (PinLockout) — while locked, shows the remaining time instead of the input.
 fun Activity.showDevPinDialog(onSuccess: () -> Unit) {
     val lockout = PinLockout(PrefsPinStore(getSharedPreferences(PIN_LOCKOUT_PREFS, Context.MODE_PRIVATE)))
     val lockedMs = lockout.remainingLockMs(pinNow())
@@ -55,7 +56,7 @@ fun Activity.showDevPinDialog(onSuccess: () -> Unit) {
         updateDots()
         pb.tvError.visibility = View.INVISIBLE
         if (input.length == 3) {
-            // (v1.1.90) 설정 PIN — 값은 빌드 시 주입(BuildConfig + CI Secrets). 3자리 유지(장갑 입력)
+            // Settings PIN — injected at build time (BuildConfig + CI Secrets). Kept at 3 digits (gloved input)
             when (val r = lockout.submit(input.toString() == BuildConfig.DEV_PIN, pinNow())) {
                 PinLockout.Result.Ok -> {
                     dialog.dismiss()
@@ -92,10 +93,10 @@ fun Activity.showDevPinDialog(onSuccess: () -> Unit) {
     dialog.show()
 }
 
-// (v1.1.97) PIN 잠금 상태는 설정(dev_settings)과 분리된 파일에 둔다 — 설정 초기화와 무관하게 유지.
+// PIN lockout state lives in a file separate from settings (dev_settings) — kept regardless of a settings reset.
 private const val PIN_LOCKOUT_PREFS = "pin_lockout"
 
-//   한 번의 commit(동기)으로 쓴다 — 입력 직후 앱을 닫아도 횟수가 남고 필드끼리 어긋나지 않는다.
+// Written in one commit (synchronous) — the count survives closing the app right after input, and the fields never disagree.
 private class PrefsPinStore(private val p: SharedPreferences) : PinLockout.Store {
     override fun load() = PinLockout.State(
         fails = p.getInt("fails", 0),

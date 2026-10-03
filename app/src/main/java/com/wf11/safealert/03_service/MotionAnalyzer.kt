@@ -4,23 +4,27 @@ import kotlin.math.acos
 import kotlin.math.sqrt
 
 /**
- * 가속도 샘플(중력 포함, m/s^2)로 활동 초·걷는 모양 창·낙상을 판정한다 (v1.1.99).
+ * Judges active seconds, walk-like windows and falls from accelerometer samples (gravity included, m/s^2).
  *
- * 순수 JVM 로직. 활동 초: 1초 창의 |a| 표준편차가 ACTIVE_STD 이상이거나, 직전 창 평균 벡터와의
- * 각도 차가 ACTIVE_ANGLE_DEG 이상이면 활동. 최근 10개 창 중 3개 이상 활동이면 MOVED.
- * 샘플이 없는 창은 정지로 센다 (D-07). 샘플 공백은 MOVED 판정 전에 빈 창으로 밀어 넣는다 (v1.1.99).
- * 걷는 모양 창: |a| 표준편차가 걷기 수준(STRONG_STD) 이상. 각도는 보지 않는다 — 쓰러진 채 뒤척임·자세 변화는 제외.
+ * Pure JVM logic. Active second: a 1 s window is active if its |a| standard deviation is at least ACTIVE_STD or its mean
+ * vector differs in angle from the previous window's by at least ACTIVE_ANGLE_DEG. MOVED when 3 or more of the last 10
+ * windows are active. A window without samples counts as still. Sample gaps are pushed in as empty windows before the MOVED
+ * judgment.
+ * Walk-like window: |a| standard deviation at walking level (STRONG_STD) or above. Angle is ignored — rolling over and posture
+ * changes while lying down are excluded.
  *
- * 낙상(FALL)이 사고 감지의 유일한 신호다: 자유낙하(0.5 G 미만 60 ms 이상) 직후 1초 안의 충격(2.5 G 초과),
- * 충격 2~12초 뒤 구간에서 자세가 45도 이상 바뀌었고 활동 초가 3개 미만. 임계값은 문헌 범위의 보수값이라 현장 보정 대상이다.
- * 낙상 충격 임계값은 센서 측정 범위가 2.5 G 미만인 기기(2 G 센서)에서는 범위에 맞춰 낮춘다 (impactGFor).
- * eventMs 에 충격 표본의 센서 시각을 남긴다(판정 시각이 아니라 충격 시각).
- * fallShape 에 그 낙상의 모양(자유낙하 길이·충격 창 최대 G·자세 변화)을 남긴다 — 세이프존 안 판정용 (D-02).
+ * A fall (FALL) is the only accident-detection signal: an impact (over 2.5 G) within 1 s right after free fall (under 0.5 G
+ * for 60 ms or more), then, in the span 2–12 s after the impact, a posture change of 45 degrees or more and fewer than 3
+ * active seconds. Thresholds are conservative values within the literature range and need field calibration.
+ * On devices whose sensor range is below 2.5 G (2 G sensors), the fall impact threshold is lowered to fit the range (impactGFor).
+ * eventMs records the impact sample's sensor time (the impact time, not the judgment time).
+ * fallShape records the fall's shape (free-fall length, max G in the impact window, posture change) — for the in-safe-zone
+ * judgment.
  *
- * 이 앱 자신의 진동 구간 표본(masked)은 활동 통계에서만 뺀다. 낙상 판정은 모든 표본을 본다 —
- * 진동 모터 가속도는 충격 임계값보다 훨씬 작고, 알람 중 낙상을 놓치는 쪽이 더 나쁘다 (v1.1.99).
+ * Samples during this app's own vibration (masked) are excluded from activity stats only. Fall judgment sees every sample —
+ * vibration motor acceleration is far below the impact threshold, and missing a fall during an alarm is worse.
  *
- * 닫힌 1초 창마다 걷는 모양 여부를 onWindow 로 알린다.
+ * Reports whether each closed 1 s window is walk-like via onWindow.
  */
 class MotionAnalyzer(
     private val impactG: Double = IMPACT_G,
@@ -29,24 +33,25 @@ class MotionAnalyzer(
 
     enum class Signal { NONE, MOVED, FALL }
 
-    /** 닫힌 1초 창: endMs(센서 시각), 표본이 있고 걷기 수준으로 흔들렸는지(걷는 모양). */
+    /** A closed 1 s window: endMs (sensor time), and whether it had samples and shook at walking level (walk-like). */
     data class Window(val endMs: Long, val strong: Boolean)
 
     /**
-     * 낙상 모양: 충격 표본 직전 1초 안 0.5 G 아래 시간 합(ms, 중간에 튄 표본이 있어도 합친다, A2), 충격 창(자유낙하 끝 + 1초) 안의 최대 |a|(G),
-     * 자세 변화(도, 낙하 전 자세를 모르면 null).
+     * Fall shape: total time below 0.5 G within the 1 s before the impact sample (ms; summed even across
+     * spiking samples in between), max |a| (G) in the impact window (free-fall end + 1 s),
+     * posture change (degrees; null if the pre-fall posture is unknown).
      */
     data class FallShape(val freeFallMs: Long, val peakG: Double, val postureDeg: Double?) {
         companion object {
-            /** 어떤 기준도 넘는 모양 — 모양 없이 부르는 onAccident(trigMs) 의 기본값. */
+            /** A shape that exceeds every threshold — the default for onAccident(trigMs) called without a shape. */
             val ANY = FallShape(Long.MAX_VALUE, Double.MAX_VALUE, null)
         }
     }
 
     /**
-     * 세이프존 안 낙상 기준 (D-02): 자유낙하 길이·최대 충격·자세 변화를 모두 넘어야 넘어짐.
-     * impactG 는 이미 센서 범위 보정을 거친 값(impactGFor). 자세를 모르면 넘은 것으로 본다 (D-07).
-     * 기본값 247 ms(30 cm)·2.5 G·60도는 DevSettings 기본값과 같아야 한다 (D-03).
+     * In-safe-zone fall thresholds: it is a fall only when free-fall length, max impact and posture change all exceed them.
+     * impactG is already sensor-range corrected (impactGFor). Unknown posture counts as exceeded.
+     * Defaults 247 ms (30 cm), 2.5 G and 60 degrees must match the DevSettings defaults.
      */
     data class ZoneFall(val freeFallMs: Long = 247L, val impactG: Double = IMPACT_G, val postureDeg: Double = 60.0) {
         fun passes(s: FallShape): Boolean =
@@ -57,21 +62,22 @@ class MotionAnalyzer(
         const val G = 9.80665
         const val ACTIVE_STD = 0.3
         const val ACTIVE_ANGLE_DEG = 10.0
-        /** 걷기 수준 흔들림(m/s^2, |a| 표준편차). 현장 보정 대상. */
+        /** Walking-level shake (m/s^2, |a| standard deviation). Needs field calibration. */
         const val STRONG_STD = 1.5
         const val MOVE_WINDOWS = 10
         const val MOVE_MIN_ACTIVE = 3
         const val FREE_FALL_G = 0.5
         const val FREE_FALL_MIN_MS = 60L
-        /** 낙상 모양의 자유낙하 시간을 합하는 구간: 충격 표본 직전 1초 (A2). */
+        /** Span over which fall-shape free-fall time is summed: the 1 s before the impact sample. */
         const val FREE_FALL_SPAN_MS = 1000L
         const val IMPACT_G = 2.5
         /**
-         * 측정 범위를 G 로 나눈 값이 이보다 작으면 g 단위로 보고한 것으로 해석한다: g 단위로 흔히 보고되는 2·4·8·16 을
-         * 모두 g 로 읽는다(16 m/s^2 도 16g), 정상 ±2g 보고 19.61 m/s^2 는 그대로. 현장 보정 대상.
+         * If the measurement range divided by G is below this, the range is taken as reported in g: 2, 4, 8 and 16, commonly
+         * reported in g, are all read as g (16 m/s^2 too is read as 16g), while a normal
+         * ±2g report of 19.61 m/s^2 stays as is. Needs field calibration.
          */
         const val MIN_RANGE_G = 1.75
-        /** 움직임·걷는 모양 판정 창 길이(센서 시각 ms). */
+        /** Window length for movement / walk-like judgment (sensor-time ms). */
         const val WINDOW_MS = 1_000L
         const val IMPACT_WINDOW_MS = 1000L
         const val POST_START_MS = 2000L
@@ -80,10 +86,12 @@ class MotionAnalyzer(
         const val POST_MAX_ACTIVE = 3
 
         /**
-         * 낙상 충격 임계(G). 기본(base) = 센서 범위가 IMPACT_G 보다 작으면 범위의 90%, 아니면 IMPACT_G.
-         * 결과 = max(base, min(wantG, 범위의 90%)) — wantG 를 올려도 내려가지 않고(단조), base 아래로 가지 않으며, 범위의 90% 를 넘지 않는다(A4).
-         * 범위를 모르면(MIN_RANGE_G 미만, 범위가 숫자가 아니면(NaN) 모르는 것으로 본다) max(IMPACT_G, wantG). 범위를 G 로 나눈 값이 MIN_RANGE_G 보다 작으면 g 단위로 보고한 것으로 해석한다.
-         * wantG 기본값 IMPACT_G = 기본 낙상 임계. 세이프존 기준 G 도 같은 보정을 거친다 (D-02).
+         * Fall impact threshold (G). base = 90% of the sensor range if the range is below IMPACT_G, otherwise IMPACT_G.
+         * Result = max(base, min(wantG, 90% of range)) — raising wantG never lowers it
+         * (monotonic), it never drops below base, and it never exceeds 90% of the range.
+         * If the range is unknown (below MIN_RANGE_G; a NaN range counts as unknown), max(IMPACT_G, wantG). If
+         * the range divided by G is below MIN_RANGE_G, the range is taken as reported in g units.
+         * wantG defaults to IMPACT_G = the default fall threshold. The safe-zone G threshold goes through the same correction.
          */
         fun impactGFor(maxRangeMs2: Float, wantG: Double = IMPACT_G): Double {
             val rangeG = (maxRangeMs2 / G).let { if (it < MIN_RANGE_G) maxRangeMs2.toDouble() else it }
@@ -92,19 +100,19 @@ class MotionAnalyzer(
             return maxOf(base, minOf(wantG, 0.9 * rangeG))
         }
 
-        /** 떨어진 높이(cm)의 자유낙하 시간(ms) = round(1000 * sqrt(2h / g)). 30 cm = 247 ms. */
+        /** Free-fall time (ms) for a drop height (cm) = round(1000 * sqrt(2h / g)). 30 cm = 247 ms. */
         fun freeFallMsFor(cm: Int): Long = Math.round(1000 * sqrt(2 * cm / 100.0 / G))
     }
 
-    /** 마지막 FALL 신호의 충격 표본 센서 시각(ms). */
+    /** Sensor time (ms) of the impact sample of the last FALL signal. */
     var eventMs = 0L
         private set
 
-    /** 마지막 FALL 신호의 낙상 모양. FALL 전에는 ANY. */
+    /** Fall shape of the last FALL signal. ANY before the first FALL. */
     var fallShape = FallShape.ANY
         private set
 
-    // 1초 창 누적
+    // 1-second window accumulators
     private var curIdx = -1L
     private var n = 0
     private var sumM = 0.0
@@ -113,7 +121,7 @@ class MotionAnalyzer(
     private var sy = 0.0
     private var sz = 0.0
 
-    // 직전 닫힌 창
+    // Previous closed window
     private var lastClosedIdx = -1L
     private var hasPrev = false
     private var prevX = 0.0
@@ -121,7 +129,7 @@ class MotionAnalyzer(
     private var prevZ = 0.0
     private var activeMask = 0L
 
-    // 자유낙하 추적
+    // Free-fall tracking
     private var ffStart = -1L
     private var ffPreValid = false
     private var ffPreX = 0.0
@@ -132,10 +140,10 @@ class MotionAnalyzer(
     private var armedPreX = 0.0
     private var armedPreY = 0.0
     private var armedPreZ = 0.0
-    /** 0.5 G 아래 구간(시작, 끝) — 60 ms 미만 튐 포함, 직전 1초만 남긴다 (A2). */
+    /** Runs below 0.5 G (start, end), including blips under 60 ms; only the last 1 s is kept. */
     private val lowRuns = ArrayDeque<Pair<Long, Long>>()
 
-    // 충격 후보
+    // Impact candidate
     private var candidate = false
     private var impactT = 0L
     private var candPreValid = false
@@ -181,9 +189,11 @@ class MotionAnalyzer(
         return if (moved) Signal.MOVED else Signal.NONE
     }
 
-    /** 현재 창을 닫고 MOVED 조건 충족 여부를 돌려준다. nextIdx 는 새 샘플이 여는 창 번호. */
+    /**
+     * Closes the current window and returns whether the MOVED condition is met. nextIdx is the index of the window the new sample opens.
+     */
     private fun closeWindow(nextIdx: Long): Boolean {
-        // 표본이 하나도 쌓이지 않은 창(전부 자체 진동 구간)은 정지로 세고 직전 평균 벡터를 바꾸지 않는다
+        // A window with no samples (all inside own-vibration windows) counts as still and leaves the previous mean vector unchanged
         val cnt = n.toDouble()
         val has = n > 0
         val mx = if (has) sx / cnt else prevX
@@ -200,7 +210,7 @@ class MotionAnalyzer(
             activeMask = if (gap >= 64) 0L else activeMask shl gap.toInt()
         }
         if (active) activeMask = activeMask or 1L
-        // 닫힌 창과 새 창 사이의 빈 창은 정지로 밀어 넣은 뒤 판정한다 (D-07)
+        // Empty windows between the closed window and the new one are pushed in as still before judging
         val empty = nextIdx - curIdx - 1
         if (empty > 0) activeMask = if (empty >= 64) 0L else activeMask shl empty.toInt()
 
@@ -217,7 +227,7 @@ class MotionAnalyzer(
     }
 
     private fun detectFall(t: Long, x: Double, y: Double, z: Double, mag: Double): Boolean {
-        // 자유낙하 구간 추적
+        // Track free-fall runs
         if (mag < FREE_FALL_G * G) {
             if (ffStart < 0) {
                 ffStart = t
@@ -235,7 +245,7 @@ class MotionAnalyzer(
             ffStart = -1L
         }
 
-        // 자유낙하 직후 충격
+        // Impact right after free fall
         if (armedEnd >= 0) {
             if (t - armedEnd > IMPACT_WINDOW_MS) {
                 armedEnd = -1L
@@ -260,17 +270,17 @@ class MotionAnalyzer(
         }
         if (t < impactT + POST_END_MS) return false
 
-        // 판정 시점
+        // Decision point
         candidate = false
         if (postN == 0 || postActive >= POST_MAX_ACTIVE) return false
-        // 낙하 전 자세를 모르면(서비스 시작 직후) 자세 변화로 본다 — 놓치는 쪽이 더 나쁘다 (D-07)
+        // If the pre-fall posture is unknown (right after service start), treat it as a posture change — missing a fall is worse
         val deg = if (candPreValid) angleDeg(postX / postN, postY / postN, postZ / postN, candPreX, candPreY, candPreZ) else null
-        if (deg != null && !(deg >= POSTURE_DEG)) return false // 각도가 숫자가 아니면(NaN) 넘어짐 아님 (A3)
+        if (deg != null && !(deg >= POSTURE_DEG)) return false // A NaN angle is not a tip-over
         fallShape = FallShape(candFfMs, candPeakG, deg)
         return true
     }
 
-    /** 충격 표본 t 직전 FREE_FALL_SPAN_MS 안 0.5 G 아래 시간 합 (A2). */
+    /** Total time below 0.5 G within FREE_FALL_SPAN_MS before impact sample t. */
     private fun lowGMsBefore(t: Long): Long =
         lowRuns.sumOf { (a, b) -> maxOf(0L, minOf(b, t) - maxOf(a, t - FREE_FALL_SPAN_MS)) }
 }

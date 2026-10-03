@@ -17,16 +17,16 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
 /**
- * 단독 작업자 SOS 의 서버 쪽 일 전부 (v1.1.99): 내 SOS 영속 저장·전송·해제는 [SosLedger] 에 맡기고,
- * 여기서는 SharedPreferences·Firebase 를 그 인터페이스에 이어 붙이며 동료 수신 재연결을 맡는다.
+ * All server-side work for the lone-worker SOS: persisting, uploading and clearing my SOS is delegated to [SosLedger];
+ * this class wires SharedPreferences and Firebase into that interface and reconnects peer reception.
  *
- * 내 SOS 는 [괜찮아요]로만 끝나므로(R3) 서비스 종료·역할 전환·재시작·프로세스 사망 뒤에도 남아야 한다.
- * 해제는 저장해 둔 경로에 쓴다(현재 사업장 코드로 경로를 다시 만들지 않는다).
+ * My SOS ends only with "괜찮아요", so it must survive service stop, role switch, restart and process death.
+ * The clear is written to the saved path (the path is not rebuilt from the current site code).
  *
- * 생성자는 참조만 저장한다(SharedPreferences·원장은 첫 사용 때 만든다). 모든 진입점은 메인 스레드에서 불리고,
- * Firebase 콜백은 handler 로 메인에 다시 게시한 뒤 원장에 전달한다.
+ * The constructor only stores references (SharedPreferences and the ledger are created on first use). All entry points are
+ * called on the main thread; Firebase callbacks are re-posted to main via handler before reaching the ledger.
  *
- * (v1.2.2) 원장이 서버 저장을 확인하면 [SosMail] 대기열에 넣고, 백그라운드 스레드에서 메일 스크립트로 보낸다.
+ * Once the ledger confirms the server save, the SOS is queued in [SosMail] and sent to the mail script on a background thread.
  */
 class LoneWorkerSosSync(
     private val ctx: Context,
@@ -37,7 +37,9 @@ class LoneWorkerSosSync(
     companion object {
         private const val FILE = "lone_worker_sos"
 
-        /** 저장된(해제 전) 내 SOS 가 있는가. 서비스가 비어 있는 프로세스에서 시작될 때 복원 여부를 가리는 데 쓴다. */
+        /**
+         * Whether a saved (not yet cleared) own SOS exists. Used to decide on restore when the service starts in an empty process.
+         */
         fun hasStoredSos(ctx: Context): Boolean = runCatching {
             ctx.getSharedPreferences(FILE, Context.MODE_PRIVATE).getString(SosLedger.K_TRIGGER, null) != null
         }.getOrDefault(false)
@@ -45,11 +47,13 @@ class LoneWorkerSosSync(
         private const val TAG = "SosMail"
         private const val K_TO = "to"
 
-        /** 메일 스크립트 주소(빌드 때 주입). 웹 앱 배포 주소(…/macros/s/<id>/exec) 형식이 아니면 빈 값 = 메일 꺼짐. */
+        /**
+         * Mail script URL (injected at build time). Empty, meaning mail off, unless it is a web app deployment URL (…/macros/s/<id>/exec).
+         */
         val mailUrl: String = SosMail.scriptUrl(BuildConfig.SOS_MAIL_URL)
         val mailEnabled: Boolean get() = mailUrl.isNotEmpty()
 
-        // 사업장 코드별 파일(DevSettings.sitePrefName 과 같은 이름 규칙). 키가 없으면 기본 주소, 빈 값 = 보내지 않음.
+        // Per-site-code file (same naming rule as DevSettings.sitePrefName). Missing key = default URL, empty value = don't send.
         private fun mailPrefs(ctx: Context, sc: String): SharedPreferences =
             ctx.getSharedPreferences(if (sc.isEmpty()) "sos_mail" else "sos_mail_" + sc, Context.MODE_PRIVATE)
 
@@ -63,11 +67,14 @@ class LoneWorkerSosSync(
         private val mailExec: ExecutorService by lazy { Executors.newSingleThreadExecutor() }
         private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
 
-        /** 원장 파일 위의 저장소. 쓰기는 commit(동기) — 쓴 직후 죽어도 남는다. sync = false 면 apply(잃어도 되는 값). */
+        /**
+         * Store backed by the ledger file. Writes use commit (synchronous), so they survive dying
+         * right after the write. sync = false uses apply (values that may be lost).
+         */
         private fun kvOf(ctx: Context, sync: Boolean = true): SosKv = object : SosKv {
             private val prefs: SharedPreferences by lazy { ctx.getSharedPreferences(FILE, Context.MODE_PRIVATE) }
 
-            // 이전 개발 빌드가 다른 형으로 남긴 값은 읽지 않는다
+            // Ignore values an earlier dev build stored with a different type
             override fun get(k: String): String? = runCatching { prefs.getString(k, null) }.getOrNull()
             override fun put(changes: Map<String, String?>) {
                 val e = prefs.edit()
@@ -76,7 +83,7 @@ class LoneWorkerSosSync(
             }
         }
 
-        // 메일은 보조 통로: 실패는 null 로 삼키고, 결과는 메인에서 대기열에 돌려준다. 로그는 응답 코드만.
+        // Mail is a secondary channel: failures are swallowed as null and the result goes back to the queue on main. Log the response code only.
         private val postMail: (String, (String?) -> Unit) -> Unit = { form, done ->
             val url = mailUrl
             mailExec.execute {
@@ -89,14 +96,14 @@ class LoneWorkerSosSync(
         private var mailQueue: SosMail? = null
 
         /**
-         * 프로세스에 하나뿐인 메일 대기열. 메인 스레드에서만 부른다.
-         * 감시 tick 과 예약 작업(SosMailJob)이 같은 인스턴스를 써서 같은 항목을 두 번 보내지 않는다.
+         * The process-wide single mail queue. Call on the main thread only.
+         * The monitoring tick and the scheduled job (SosMailJob) share this instance, so the same item is never sent twice.
          */
         fun mail(ctx: Context): SosMail = mailQueue ?: ctx.applicationContext.let { app ->
             SosMail(kvOf(app), postMail, System::currentTimeMillis, { SosMailJob.sync(app, it) }) { sc -> mailTo(app, sc) }
         }.also { mailQueue = it }
 
-        /** POST 뒤 302 가 오면 Location(https 만)을 GET 으로 한 번 따라가 결과 본문을 받는다. 그 밖은 null. */
+        /** On a 302 after POST, follows Location (https only) once with GET to fetch the result body. Otherwise null. */
         private fun httpPost(url: String, form: String): String? {
             val c = URL(url).openConnection() as HttpURLConnection
             try {
@@ -143,7 +150,8 @@ class LoneWorkerSosSync(
 
         override fun newKey(path: String): String = SosRemote.newKey(path)
 
-        // 규칙(R2)이 허용하는 필드만 쓴다: 에피소드는 선택 필드 ep 로 싣고, 비콘 짧은 ID 는 서버 기록에 넣지 않는다
+        // Write only the fields the database rules allow: the episode goes in the
+        // optional field ep; the beacon short ID stays out of the server record
         override fun create(path: String, key: String, rec: SosLedger.Record, uid: String, done: (Boolean) -> Unit) {
             val payload = SosRemote.recordPayload(
                 rec.bleId, rec.name, rec.role, rec.trigger, rec.beacon, rec.beaconRssi, uid, ServerValue.TIMESTAMP, rec.ep
@@ -176,7 +184,7 @@ class LoneWorkerSosSync(
         }) { onChange() }
     }
 
-    // (v1.2.2) 감시 중 살아 있음 기록 — 기록만, 실패는 무시하고 경보·판정과 무관하다
+    // Liveness record while monitoring — record only; failures are ignored, unrelated to alerts and judgment
     private val hb by lazy {
         LoneWorkerHeartbeat(object : HbRemote {
             override fun uid(): String? = transport.uid()
@@ -193,45 +201,49 @@ class LoneWorkerSosSync(
         }, kvOf(ctx, sync = false), SystemClock::elapsedRealtime)
     }
 
-    /** 감시 tick(10초)마다 부른다. on = 단독 작업자 감시 기능이 켜져 있는가, role = 역할 분류(WALKER 등). */
+    /**
+     * Called every monitoring tick (10 s). on = whether lone-worker monitoring is enabled, role = role category (WALKER etc.).
+     */
     fun heartbeat(on: Boolean, role: String) = hb.tick(on, role)
 
-    /** 감시가 정상으로 멈출 때 세션 끝을 남긴다. */
+    /** Records the session end when monitoring stops normally. */
     fun endHeartbeat() = hb.end()
 
     private var remover: (() -> Unit)? = null
     private var listenPath = ""
     private var generation = 0
 
-    // ── 내 SOS 영속·전송 (원장에 위임) ─────────────────────────
+    // ── Own SOS persistence / upload (delegated to the ledger) ───
 
-    /** 시작 시 저장 상태를 읽는다. 해제되지 않은 SOS 가 있으면 그 트리거, 없으면 null. 대기 중인 해제는 다음 tick 이 보낸다. */
+    /**
+     * Reads the saved state at start. Returns the trigger of an uncleared SOS, or null. A pending clear is sent by the next tick.
+     */
     fun restoredTrigger(): String? = ledger.restoredTrigger()
 
-    /** SOS 진입. 이미 저장된 SOS(복원분)가 있으면 그대로 두어 두 번째 기록을 만들지 않는다. */
+    /** SOS entry. If an SOS is already saved (restored), it is kept as is so no second record is created. */
     fun begin(
         bleId: String, name: String, role: String, trigger: String,
         beacon: String?, beaconRssi: Int?, beaconSid: Int
     ) = ledger.begin(SosLedger.Record(bleId, name, role, trigger, beacon, beaconRssi, beaconSid))
 
-    /** 서버 전송 상태 문구. 내 SOS 가 없으면 null. */
+    /** Server upload status text; null without an own SOS. */
     fun statusText(): String? = ledger.statusText()
 
-    /** 해제([괜찮아요]에서만 호출). 활성 칸은 바로 비고 해제는 확인될 때까지 재시도된다. */
+    /** Clear (called only from "괜찮아요"). The active slot empties at once and the clear is retried until confirmed. */
     fun resolve() = ledger.resolve()
 
-    /** 해제가 서버에 닿지 못해 다시 보내는 중인가. */
+    /** Whether the clear has not reached the server yet and is being resent. */
     fun resolveFailing(): Boolean = ledger.resolveFailing()
 
-    /** 내 SOS 의 에피소드 번호(없으면 0)와 비콘 짧은 ID(없으면 0). BLE 광고 확장에 쓴다. */
+    /** Own SOS episode number (0 if none) and beacon short ID (0 if none). Used for the BLE advertisement extension. */
     fun episode(): Int = ledger.episode()
     fun hint(): Int = ledger.hint()
 
-    // ── 동료 수신 ─────────────────────────────────────────────
+    // ── Peer reception ────────────────────────────────────────
 
     /**
-     * 10초마다 부른다. 사업장 코드·루트가 바뀌었으면 새 노드로 다시 붙이고,
-     * 붙어 있지 않으면(취소되었거나 로그인 전) 붙인다. 전송·해제 재시도도 여기서 한다.
+     * Called every 10 s. Re-attaches to the new node if the site code or root changed,
+     * and attaches if not attached (cancelled, or not signed in yet). Upload and clear retries also run here.
      */
     fun tick() {
         attachIfNeeded()
@@ -254,12 +266,12 @@ class LoneWorkerSosSync(
             path,
             { rec ->
                 handler.post {
-                    // 내 기록(역할 전환 전 bleId 포함)은 건너뛴다
+                    // Skip my own records (including those under my bleId from before a role switch)
                     val mine = SosRemote.currentUid()
                     if (gen == generation && !(rec.uid.isNotEmpty() && rec.uid == mine)) onPeer(rec)
                 }
             },
-            // 취소돼도 서버 시각 리스너는 남아 있으므로 떼어 낸 뒤 비운다
+            // The server time listener survives a cancel, so detach it before clearing
             { handler.post { if (gen == generation) { remover?.invoke(); remover = null; listenPath = "" } } }
         )
     }
@@ -271,6 +283,6 @@ class LoneWorkerSosSync(
         listenPath = ""
     }
 
-    /** 수신만 끊는다. 저장된 내 SOS 와 대기 중인 해제는 남긴다(R3). */
+    /** Stops reception only. The saved own SOS and any pending clear are kept. */
     fun stopListening() = detach()
 }
