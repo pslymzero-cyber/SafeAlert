@@ -105,7 +105,7 @@
 - No explicit linting config file detected (no detekt.yml, .ktlint, or klint config)
 - Build should enforce Android Lint defaults via AGP 8.3.2
 - Manual code review expected given developer-driven quality gates in the codebase
-- Extensive inline comments (Korean) explaining design trade-offs and algorithm choices
+- Inline comments in concise English explaining design trade-offs and algorithm choices (converted from Korean on 2026-10-03; on-screen Korean strings stay quoted as they appear)
 - KDoc-style JavaDoc comments (`/** ... */`) for public API functions with clear intent
 - Example from `MedianFilter.kt`: Full explanation of filter design, window buffering strategy, and trade-offs in class-level KDoc
 
@@ -136,11 +136,12 @@
 
 - Algorithm design decisions and trade-offs (priority: explain WHY, not WHAT)
 - Non-obvious performance choices (e.g., "throttle UI renders to 500ms to reduce GPU load")
-- Workarounds and compatibility notes (e.g., "[v1.0.48 #5] Android OS scan API limitation...")
-- Cross-layer dependencies and invariants (e.g., "v1.1.55 needs echoDiffLive synced with SharedPreferences")
+- Workarounds and compatibility notes (e.g., "Android OS scan API limitation: ...")
+- Cross-layer dependencies and invariants (e.g., "echoDiffLive must stay in sync with SharedPreferences")
 - Complex state machines or conditional logic requiring context
+- Language: English. No version stamps (v1.x.y), dates, ticket/decision tags or change-history narrative in comments — that history lives in git and the project memory; state the current rule and why
 - Single-line: `// ` for short clarifications
-- Multi-line: `// [version tag] detailed explanation` for design notes
+- Multi-line: consecutive `// ` lines for design notes
 - Block separators: `// ── section name ───────` for visual grouping in large files
 - Public functions: Always include KDoc block with `@param` and `@return`
 - Example (MedianFilter.kt):
