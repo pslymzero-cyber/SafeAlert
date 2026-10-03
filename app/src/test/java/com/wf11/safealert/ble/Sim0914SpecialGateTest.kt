@@ -13,9 +13,8 @@ import org.robolectric.util.ReflectionHelpers
  * Simulation of the first-detection gate for special alerts (reverse/loading).
  * Measurements print as "[S0914-A1] <scenario> key=value"; assertions are collected and made at
  * the end of each test, so every measurement prints even when an assertion fails.
- * Symbols that may be missing (approachLastSeenMap etc.) are accessed only through runCatching reflection;
- * tree() reports "b2edcec" when approachLastSeenMap exists and "16ee857" otherwise, and the first-detection
- * checks in a_e2e_firstDetectionReverse and b_departingReverseNotPromoted assert only under "b2edcec".
+ * State is read through reflection that fails the test when a field is missing (no fallbacks), and a scenario whose
+ * premise does not hold fails instead of printing "unknown".
  * Expected behavior: on first detection the special alert fires only through a confirmation (waiver, a
  * 2-frame contact streak while not departing, or a sustained Time-Gate approach) and never while the peer
  * declares IN_ZONE; reverse never delays the TTC pre-alert, DANGER or the cooldown re-alarm compared with
@@ -38,11 +37,7 @@ class Sim0914SpecialGateTest {
     @Suppress("UNCHECKED_CAST")
     private fun <T> sf(s: BleService, name: String): T = ReflectionHelpers.getField<Any>(s, name) as T
     @Suppress("UNCHECKED_CAST")
-    private fun <T> af(s: BleService, name: String): T? =
-        runCatching { ReflectionHelpers.getField<Any>(asm(s), name) as T }.getOrNull()
-
-    private fun tree(s: BleService) =
-        if (runCatching { ReflectionHelpers.getField<Any>(asm(s), "approachLastSeenMap") }.getOrNull() != null) "b2edcec" else "16ee857"
+    private fun <T> af(s: BleService, name: String): T = ReflectionHelpers.getField<Any>(asm(s), name) as T
     private fun labels(s: BleService) = sf<MutableMap<String, String>>(s, "suddenLabelMap")
     private fun alertMap(s: BleService) = sf<MutableMap<String, Pair<Int, Long>>>(s, "alertState")
     private fun logCount(key: String) = ShadowLog.getLogs().count { it.msg?.contains(key) == true }
@@ -71,17 +66,17 @@ class Sim0914SpecialGateTest {
             sf<Map<String, Int>>(s, "dangerContactStreakMap")[id],
             sf<Map<String, Int>>(s, "warningContactStreakMap")[id],
             sf<Map<String, Any>>(s, "trackingStateMap")[id]?.toString(),
-            runCatching { sf<Map<String, KalmanFilter>>(s, "kalmanFilters")[id]?.estimatedVel }.getOrNull(),
+            sf<Map<String, KalmanFilter>>(s, "kalmanFilters")[id]?.estimatedVel,
             sf<Map<String, Long>>(s, "approachStreakStartMap")[id],
-            af<Map<String, Any>>(s, "fastApproachStreakMap")?.get(id),
+            af<Map<String, Any>>(s, "fastApproachStreakMap")[id],
         )
     }
 
     private fun runSeq(
-        state: Int, rssiAt: (Int) -> Int, frames: Int, waive: Boolean = false, peerInZone: Boolean = false,
+        state: Int, rssiAt: (Int) -> Int, frames: Int, peerInZone: Boolean = false,
         s: BleService = H.newService(), startF: Int = 0, startT: Long = t0,
     ): List<Fr> = (0 until frames).map { i ->
-        step(s, startF + i, startT + i * dt, rssiAt(i), state, peerInZone, waive)
+        step(s, startF + i, startT + i * dt, rssiAt(i), state, peerInZone)
     }
 
     private data class Sum(val alert: Fr?, val special: Fr?, val danger: Fr?, val bc: Fr?, val ttc: Fr?, val cpa: Fr)
@@ -118,18 +113,13 @@ class Sim0914SpecialGateTest {
     fun a_e2e_firstDetectionReverse() {
         val fails = mutableListOf<String>()
         for ((name, seq) in seqs) {
-            val cand = sum(runSeq(REV, seq, 150, waive = true))          // waiver on every frame = fires as soon as the candidate holds
             val trFire = runSeq(REV, seq, 150)
             val fire = sum(trFire)
-            val idle = sum(runSeq(IDLE, seq, 150))
             val sp = fire.special
-            val tree = tree(H.newService())
-            out("a-e2e tree=$tree seq=$name tCand=${cand.special?.t} tFire=${sp?.t} gateDelayMs=${if (sp != null && cand.special != null) sp.t - cand.special.t else "na"} " +
-                "route=${sp?.let { route(it) }} confirmToFireMs=0 revFirstAlert=${fire.alert?.t} revDanger=${fire.danger?.t} " +
-                "idleFirstAlert=${idle.alert?.t} idleDanger=${idle.danger?.t}")
-            trFire.filter { sp != null && it.f in (sp.f - 3)..sp.f }.forEach { out("a-e2e-trace tree=$tree seq=$name ${it.fmt()}") }
+            out("a-e2e seq=$name tFire=${sp?.t} route=${sp?.let { route(it) }} revFirstAlert=${fire.alert?.t} revDanger=${fire.danger?.t}")
+            trFire.filter { sp != null && it.f in (sp.f - 3)..sp.f }.forEach { out("a-e2e-trace seq=$name ${it.fmt()}") }
             if (sp == null) fails += "$name: 특수경보 미발령"
-            else if (tree == "b2edcec" && sp.before == null && route(sp).startsWith("none")) fails += "$name: 확인 근거 없이 첫 감지 특수경보 ${sp.fmt()}"
+            else if (sp.before == null && route(sp).startsWith("none")) fails += "$name: 확인 근거 없이 첫 감지 특수경보 ${sp.fmt()}"
         }
         assertTrue(fails.joinToString(" | "), fails.isEmpty())
     }
@@ -150,7 +140,7 @@ class Sim0914SpecialGateTest {
 
     private fun surgery(s: BleService, zeroStreaks: Boolean, clearApproach: Boolean) {
         alertMap(s).remove(id)
-        af<MutableMap<String, Any>>(s, "pendingDisplayMap")?.remove(id)
+        af<MutableMap<String, Any>>(s, "pendingDisplayMap").remove(id)
         labels(s).remove(id)
         if (zeroStreaks) {
             sf<MutableMap<String, Int>>(s, "dangerContactStreakMap")[id] = 0
@@ -158,8 +148,8 @@ class Sim0914SpecialGateTest {
         }
         if (clearApproach) {
             sf<MutableMap<String, Long>>(s, "approachStreakStartMap").remove(id)
-            af<MutableMap<String, Any>>(s, "fastApproachStreakMap")?.remove(id)
-            af<MutableMap<String, Any>>(s, "approachLastSeenMap")?.remove(id)
+            af<MutableMap<String, Any>>(s, "fastApproachStreakMap").remove(id)
+            af<MutableMap<String, Any>>(s, "approachLastSeenMap").remove(id)
         }
     }
 
@@ -176,10 +166,9 @@ class Sim0914SpecialGateTest {
         )
         for (c in cases) {
             val s = H.newService()
-            val tree = tree(s)
             val fr = c.run(s)
             val fired = fr.label && fr.after == DANGER
-            out("a-route tree=$tree case=${c.name} fired=$fired expectFire=${c.expectFire} confirmToFireMs=${if (fired) 0 else "na"} ${fr.fmt()}")
+            out("a-route case=${c.name} fired=$fired expectFire=${c.expectFire} confirmToFireMs=${if (fired) 0 else "na"} ${fr.fmt()}")
             if (fired != c.expectFire) fails += "${c.name}: fired=$fired expect=${c.expectFire} ${fr.fmt()}"
         }
         assertTrue(fails.joinToString(" | "), fails.isEmpty())
@@ -193,36 +182,34 @@ class Sim0914SpecialGateTest {
         // trackingStateMap==DEPARTING (previous frame's value — updateTrackingState runs later in the
         // frame)
         fun held(trkBefore: String?, fr: Fr) = trkBefore == "DEPARTING" || (fr.vel ?: 0.0) < -0.5
-        fun judge(tag: String, s: BleService, trkBefore: String?, fr: Fr) {
-            val h = held(trkBefore, fr)
-            val streakOk = (fr.ds ?: 0) >= 2 || (fr.ws ?: 0) >= 2
-            out("$tag tree=${tree(s)} departingHeld=$h streak2=$streakOk trkBefore=$trkBefore promoted=${fr.before == null && fr.label} ${fr.fmt()}")
-            if (!h) out("$tag 불명 — REV 프레임에서 departing 미성립(시나리오 전제 불성립)")
-            else if (!streakOk) out("$tag 불명 — streak<2 라 2프레임 경로 자체가 없음")
-            else if (tree(s) == "b2edcec" && fr.before == null && fr.label) fails += "$tag 이탈 중 후진이 첫 감지 특수경보로 승급 ${fr.fmt()}"
+        // premise: the REV frame meets an unregistered device, departing holds and the 2-frame streak exists
+        fun premise(trkBefore: String?, fr: Fr) =
+            held(trkBefore, fr) && ((fr.ds ?: 0) >= 2 || (fr.ws ?: 0) >= 2) && fr.before == null
+        fun judge(tag: String, trkBefore: String?, fr: Fr) {
+            val ok = premise(trkBefore, fr)
+            out("$tag premise=$ok trkBefore=$trkBefore promoted=${fr.before == null && fr.label} ${fr.fmt()}")
+            if (!ok) fails += "$tag 시나리오 전제 불성립(미등록·departing·streak≥2) ${fr.fmt()}"
+            else if (fr.label) fails += "$tag 이탈 중 후진이 첫 감지 특수경보로 승급 ${fr.fmt()}"
         }
         fun setDeparting(s: BleService, t: Long) {
             val cls = Class.forName("com.wf11.safealert.service.AlertStateMachine\$TrackingState")
             val dep = cls.enumConstants.first { (it as Enum<*>).name == "DEPARTING" }
-            af<MutableMap<String, Any>>(s, "trackingStateMap")!![id] = dep
-            af<MutableMap<String, Long>>(s, "departingStartMap")!![id] = t
+            af<MutableMap<String, Any>>(s, "trackingStateMap")[id] = dep
+            af<MutableMap<String, Long>>(s, "departingStartMap")[id] = t
         }
         // b1 surgery: 12@-45 IDLE (ds≥2 occurs naturally) → remove the alert record and approach-streak state, keep contact
-        // streaks + trackingState=DEPARTING → -45 REV. The control runs without DEPARTING (= a-route 2frame)
-        for (dep in listOf(true, false)) {
+        // streaks + trackingState=DEPARTING → -45 REV. Without DEPARTING the same frame fires (a_routes_isolated "2frame").
+        run {
             val s = H.newService()
             val t = prepStep(s)
             surgery(s, zeroStreaks = false, clearApproach = true)
-            if (dep) setDeparting(s, t - dt)
+            setDeparting(s, t - dt)
             val trkBefore = sf<Map<String, Any>>(s, "trackingStateMap")[id]?.toString()
-            val fr = step(s, 99, t, -45, REV)
-            if (dep) judge("b-surgeryDep", s, trkBefore, fr)
-            else out("b-surgeryCtrl tree=${tree(s)} promoted=${fr.before == null && fr.label} ${fr.fmt()}")
+            judge("b-surgeryDep", trkBefore, step(s, 99, t, -45, REV))
         }
-        // b2 natural: pass by in IDLE (rise -60→-40, hold 30 frames, fall 0.5dB/frame) → once a departure cleanup
-        // leaves it unregistered + DEPARTING (the receding departure-clear in AlertStateMachine.processAlert sets
-        // TrackingState.DEPARTING), send REV right away; if that never happens during the fall, the REV frames are
-        // only printed as unknown
+        // b2 natural (no surgery): pass by in IDLE (rise -60→-40, hold 30 frames, fall 0.5dB/frame). The alert is
+        // released on the fall and the state machine itself later reaches DEPARTING while the device is unregistered;
+        // on the first such frame send REV. Not reaching that state is a broken premise, not a pass.
         run {
             val s = H.newService()
             var t = t0; var f = 0
@@ -230,21 +217,27 @@ class Sim0914SpecialGateTest {
             for (i in 0..20) { last = step(s, f++, t, -60 + i, IDLE); t += dt }
             repeat(30) { last = step(s, f++, t, -40, IDLE); t += dt }
             var r = -40.0
-            var cleared = false
+            var released = false
+            var reached = false
             for (i in 0 until 60) {
                 r -= 0.5
                 val fr = step(s, f++, t, r.toInt(), IDLE); t += dt
                 if (i % 4 == 0) out("b-natural-trace ${fr.fmt()}")
                 last = fr
-                if (fr.before != null && fr.after == null && fr.trk == "DEPARTING") { cleared = true; break }
+                if (fr.before != null && fr.after == null) released = true
+                if (released && fr.after == null && fr.trk == "DEPARTING") { reached = true; break }
             }
-            out("b-natural cleared=$cleared at ${last?.fmt()}")
-            var trkBefore = last?.trk
-            val rr = maxOf(r.toInt(), -56)
-            for (k in 0 until 8) {
-                val fr = step(s, f++, t, rr, REV); t += dt
-                if (cleared) judge("b-natural[$k]", s, trkBefore, fr) else out("b-natural[$k] 불명(이탈정리 미발생) ${fr.fmt()}")
-                trkBefore = fr.trk
+            out("b-natural released=$released reached=$reached at ${last?.fmt()}")
+            if (!reached) fails += "b-natural 전제 불성립: 해제 뒤 미등록 DEPARTING 에 도달하지 못함 ${last?.fmt()}"
+            else {
+                var trkBefore = last?.trk
+                val rr = maxOf(r.toInt(), -56)
+                for (k in 0 until 8) {
+                    val fr = step(s, f++, t, rr, REV); t += dt
+                    if (k > 0 && !premise(trkBefore, fr)) break   // frame 0 must meet the premise; later ones only while it holds
+                    judge("b-natural[$k]", trkBefore, fr)
+                    trkBefore = fr.trk
+                }
             }
         }
         // b3 kinematic: after a long hold, fall 0.5dB/frame; on the first frame where departing holds
@@ -262,19 +255,12 @@ class Sim0914SpecialGateTest {
                 if (fr.trk == "DEPARTING" || (fr.vel ?: 0.0) < -0.5) { pre = fr; break }
             }
             out("b-kinematic pre=${pre?.fmt()}")
-            if (pre == null) out("b-kinematic 불명 — -56 까지 departing 미성립")
+            if (pre == null) fails += "b-kinematic 전제 불성립: -56 까지 departing 미성립"
             else {
                 surgery(s, zeroStreaks = false, clearApproach = false)
                 val fr = step(s, f, t, pre.rssi - 1, REV)
-                judge("b-kinematic", s, pre.trk, fr)
+                judge("b-kinematic", pre.trk, fr)
             }
-        }
-        // e2e (measure only): a reversing device moving away 1dB/frame from -40, starting cold
-        run {
-            val tr = runSeq(REV, { f -> -40 - f }, 25)
-            val sm = sum(tr)
-            out("b-e2e tree=${tree(H.newService())} firstSpecial=${sm.special?.fmt()} firstAlert=${sm.alert?.t}")
-            tr.take(10).forEach { out("b-e2e-trace ${it.fmt()}") }
         }
         assertTrue(fails.joinToString(" | "), fails.isEmpty())
     }
@@ -289,15 +275,15 @@ class Sim0914SpecialGateTest {
             val lvl0 = H.alertLevelOf(s, id)
             val tr = runSeq(REV, { -45 }, 10, peerInZone = true, s = s, startF = 12, startT = t)
             val hit = tr.firstOrNull { it.label || it.specialFire }
-            if (lvl0 == null) out("d-alerted WARN prep 후 경보 미등록 — 시나리오 무효")
-            out("d-alerted tree=${tree(s)} levelBeforeInZone=$lvl0 specialFrames=${tr.count { it.label || it.specialFire }} levels=${tr.map { it.after }} first=${hit?.fmt()}")
+            if (lvl0 == null) fails += "d-alerted 전제 불성립: prep 후 경보 미등록"
+            out("d-alerted levelBeforeInZone=$lvl0 specialFrames=${tr.count { it.label || it.specialFire }} levels=${tr.map { it.after }} first=${hit?.fmt()}")
             if (hit != null) fails += "경보 중 기기+IN_ZONE 에서 특수경보 ${hit.fmt()}"
         }
-        for ((nm, pz) in listOf("inZone" to true, "ctrl" to false)) {
-            val tr = runSeq(REV, { -45 }, 40, peerInZone = pz)
+        run {
+            val tr = runSeq(REV, { -45 }, 40, peerInZone = true)
             val hit = tr.firstOrNull { it.label || it.specialFire }
-            out("d-first tree=${tree(H.newService())} case=$nm specialFrames=${tr.count { it.label || it.specialFire }} firstSpecialT=${hit?.t} firstAlertT=${sum(tr).alert?.t}")
-            if (pz && hit != null) fails += "첫 감지+IN_ZONE 에서 특수경보 ${hit.fmt()}"
+            out("d-first specialFrames=${tr.count { it.label || it.specialFire }} firstSpecialT=${hit?.t} firstAlertT=${sum(tr).alert?.t}")
+            if (hit != null) fails += "첫 감지+IN_ZONE 에서 특수경보 ${hit.fmt()}"
         }
         assertTrue(fails.joinToString(" | "), fails.isEmpty())
     }
@@ -314,7 +300,7 @@ class Sim0914SpecialGateTest {
             for (st in listOf(REV, IDLE)) {
                 val sm = sum(runSeq(st, seq, 100))
                 r[st] = sm
-                out("e-ttc tree=${tree(H.newService())} seq=$nm st=$st tTtc=${sm.ttc?.t} tFirstAlert=${sm.alert?.t} tDanger=${sm.danger?.t} tSpecial=${sm.special?.t} ttcFrame=${sm.ttc?.fmt()}")
+                out("e-ttc seq=$nm st=$st tTtc=${sm.ttc?.t} tFirstAlert=${sm.alert?.t} tDanger=${sm.danger?.t} tSpecial=${sm.special?.t} ttcFrame=${sm.ttc?.fmt()}")
             }
             val rt = r[REV]!!; val it = r[IDLE]!!
             if (it.ttc != null && rt.ttc?.t != it.ttc.t && (rt.danger == null || rt.danger.t > it.ttc.t))
@@ -329,7 +315,7 @@ class Sim0914SpecialGateTest {
                 val tr = runSeq(st, { rssi }, 70)
                 bcs[st] = tr.filter { it.bc > 0 }.map { it.t }
                 val times = bcs[st]!!
-                out("e-cooldown tree=${tree(H.newService())} rssi=$rssi st=$st bcCount=${times.size} first=${times.firstOrNull()} " +
+                out("e-cooldown rssi=$rssi st=$st bcCount=${times.size} first=${times.firstOrNull()} " +
                     "gaps=${times.zipWithNext { a, b -> b - a }.distinct().take(8)} times=${times.take(12)}")
             }
             if (rssi == -78 && bcs[REV] != bcs[IDLE]) fails += "rssi=-78(특수 후보 아님) 후진/IDLE 경보 시각열 불일치 rev=${bcs[REV]} idle=${bcs[IDLE]}"
@@ -357,18 +343,13 @@ class Sim0914SpecialGateTest {
         profiles += "popIn" to { f: Int -> if (f < 10 || f >= 17) -90 else popIn[f - 10] }
 
         for ((nm, seq) in profiles) {
-            for (st in listOf(REV, IDLE)) {
-                val tr = runSeq(st, seq, 140)
-                val sm = sum(tr)
-                val tree = tree(H.newService())
-                out("f-cpa tree=$tree seq=$nm st=$st tCpa=${sm.cpa.t} alertRel=${rel(sm.alert, sm.cpa)} bcRel=${rel(sm.bc, sm.cpa)} " +
-                    "specialRel=${rel(sm.special, sm.cpa)} dangerRel=${rel(sm.danger, sm.cpa)} tAlert=${sm.alert?.t} tSpecial=${sm.special?.t} tDanger=${sm.danger?.t} " +
-                    "specialRoute=${sm.special?.let { route(it) }}")
-                if (st == REV) {
-                    tr.filter { it.f in (sm.cpa.f - 6)..(sm.cpa.f + 2) }.forEach { out("f-trace tree=$tree seq=$nm ${it.fmt()}") }
-                    if (sm.bc == null || sm.bc.t > sm.cpa.t) fails += "$nm: 후진 첫 발령(${sm.bc?.t})이 CPA(${sm.cpa.t}) 이후"
-                }
-            }
+            val tr = runSeq(REV, seq, 140)
+            val sm = sum(tr)
+            out("f-cpa seq=$nm tCpa=${sm.cpa.t} alertRel=${rel(sm.alert, sm.cpa)} bcRel=${rel(sm.bc, sm.cpa)} " +
+                "specialRel=${rel(sm.special, sm.cpa)} dangerRel=${rel(sm.danger, sm.cpa)} tAlert=${sm.alert?.t} tSpecial=${sm.special?.t} tDanger=${sm.danger?.t} " +
+                "specialRoute=${sm.special?.let { route(it) }}")
+            tr.filter { it.f in (sm.cpa.f - 6)..(sm.cpa.f + 2) }.forEach { out("f-trace seq=$nm ${it.fmt()}") }
+            if (sm.bc == null || sm.bc.t > sm.cpa.t) fails += "$nm: 후진 첫 발령(${sm.bc?.t})이 CPA(${sm.cpa.t}) 이후"
         }
         assertTrue(fails.joinToString(" | "), fails.isEmpty())
     }

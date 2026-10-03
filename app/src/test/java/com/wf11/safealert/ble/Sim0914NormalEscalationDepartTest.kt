@@ -2,21 +2,23 @@ package com.wf11.safealert.ble
 
 import com.wf11.safealert.service.BleService
 import com.wf11.safealert.support.BleServiceTestHarness
+import com.wf11.safealert.utils.DevSettings
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.util.ReflectionHelpers
+import kotlin.math.roundToInt
 
 /**
  * Simulation: escalation and departure of a normal device (no payload, no UWB).
  * Measurements print as `[S0914-A4] <scenario> key=value`; ms values are relative to T0.
  * Assertions cover only items whose intent is documented in commits, comments or existing
  * goldens (measurements still print when an assertion fails).
- * approachLastSeenMap may be absent, so it is probed only through runCatching reflection (graceField=false when missing).
  */
 @RunWith(RobolectricTestRunner::class)
 class Sim0914NormalEscalationDepartTest {
@@ -37,7 +39,6 @@ class Sim0914NormalEscalationDepartTest {
     ): Trace {
         if (startFrame == 0) BleServiceTestHarness.resetBetweenTests(service)
         val asm = ReflectionHelpers.getField<Any>(service, "asm")
-        val grace = runCatching { ReflectionHelpers.getField<Any>(asm, "approachLastSeenMap") != null }.getOrDefault(false)
         var prev: Int? = null
         var firstAlertMs: Long? = null; var firstAlertLevel: Int? = null
         var firstWarnMs: Long? = null; var firstDangerMs: Long? = null; var firstDangerRssi: Int? = null
@@ -53,11 +54,11 @@ class Sim0914NormalEscalationDepartTest {
             val r = rssiAt(f, releaseFrame)
             BleServiceTestHarness.callProcessAlert(service, ID, r, nowMs = now)
             val lvl = BleServiceTestHarness.alertLevelOf(service, ID)
-            val fast = runCatching { (ReflectionHelpers.getField<Map<String, Int>>(asm, "fastApproachStreakMap")[ID]) ?: 0 }.getOrDefault(0)
+            val fast = ReflectionHelpers.getField<Map<String, Int>>(asm, "fastApproachStreakMap")[ID] ?: 0
             if (fast > maxFast) maxFast = fast
             if (dbg != null && f in dbg) {
-                fun sf(n: String) = runCatching { (ReflectionHelpers.getField<Map<String, Any?>>(service, n)[ID]).toString() }.getOrDefault("?")
-                val kv = runCatching { (ReflectionHelpers.getField<Map<String, KalmanFilter>>(service, "kalmanFilters")[ID])?.estimatedVel?.let { "%.2f".format(it) } }.getOrNull()
+                fun sf(n: String) = ReflectionHelpers.getField<Map<String, Any?>>(service, n)[ID].toString()
+                val kv = ReflectionHelpers.getField<Map<String, KalmanFilter>>(service, "kalmanFilters")[ID]?.estimatedVel?.let { "%.2f".format(it) }
                 println("[S0914-A4] dbg $name f=$f t=$t r=$r lvl=$lvl kfVel=$kv fast=$fast dStreak=${sf("dangerContactStreakMap")} " +
                     "wStreak=${sf("warningContactStreakMap")} track=${sf("trackingStateMap")}")
             }
@@ -80,7 +81,7 @@ class Sim0914NormalEscalationDepartTest {
         }
         val out = Trace(firstAlertMs, firstAlertLevel, firstWarnMs, firstDangerMs, firstDangerRssi, d2w, releaseMs,
             releaseFrame, reAlertMs, releases, reAlerts, warnB, dangerB, maxFast, prev, tr.toString().trim())
-        println("[S0914-A4] $name graceField=$grace dtMs=$dtMs firstAlertMs=${out.firstAlertMs} firstAlertLevel=${out.firstAlertLevel} " +
+        println("[S0914-A4] $name dtMs=$dtMs firstAlertMs=${out.firstAlertMs} firstAlertLevel=${out.firstAlertLevel} " +
             "firstWarnMs=${out.firstWarnMs} firstDangerMs=${out.firstDangerMs} firstDangerRssi=${out.firstDangerRssi} " +
             "dangerToWarnMs=${out.dangerToWarnMs} releaseMs=${out.releaseMs} reAlertMs=${out.reAlertMs} releases=${out.releases} " +
             "reAlerts=${out.reAlerts} warnBcasts=$warnB dangerBcasts=$dangerB maxFastFrames=$maxFast finalLevel=${out.finalLevel} " +
@@ -95,13 +96,39 @@ class Sim0914NormalEscalationDepartTest {
         assertEquals("b2 첫 경보는 WARNING", BleConstants.LEVEL_WARNING, t.firstAlertLevel)
     }
 
-    // c. Fast approach, 4dB/frame — checks only that an alert fires and that fastApproachStreakMap reaches 2
-    // (kfVel>=2.0 on two Time-Gate evaluations in a row, the fastApproach condition in evalTimeGate); it does not
-    // show which path released the first alert (fastContact can release it too).
-    @Test fun c_fastApproach() {
-        val t = run("c_fast4dB", 30) { f, _ -> minOf(-95 + 4 * f, -45) }
-        assertNotNull("c 경보 없음", t.firstAlertMs)
-        assertTrue("c 빠른접근 프레임 ${t.maxFastFrames} < 2", t.maxFastFrames >= 2)
+    // c2. Fast-approach bypass alone (evalTimeGate: kfVel >= fastApproachBypassVelDbm on two evaluated frames releases a
+    //     held first detection). -80/-92 flicker for 16 frames (f=0..15; gate median -86, inside the filter-keep band),
+    //     then both edges climb 0.6 dB per frame. The median crosses the warning line only every other frame and each drop
+    //     resets the WARNING streak, so the 2-frame confirmation (fastContact) never completes; kfVel stays near 2.3~2.5
+    //     and there is no payload (no special alert). The TTC pre-alert is skipped on a normal fast run because avg1sec
+    //     (a wall-clock 1 s average, which in a fast loop is the running mean of all frames) stays below effWarning, not
+    //     because TTC exceeds 3 s. At the first alert the plain approach streak is still under the Time-Gate, so only the
+    //     bypass can have released it. Measured: alert at 4320 ms; without the bypass the alert comes at 4680 ms, released
+    //     by fastContact (warnStreak=2) together with the plain Time-Gate. On a slow run avg1sec covers fewer frames, the
+    //     low frames pass the gates too and the alert comes one frame earlier; the assertions check the release conditions,
+    //     not a frame number, and the scenario passes at every measured cadence.
+    @Test fun c2_fastApproachBypassOnly() {
+        val service = BleServiceTestHarness.newService()
+        BleServiceTestHarness.resetBetweenTests(service)
+        val asm = ReflectionHelpers.getField<Any>(service, "asm")
+        fun valueOf(owner: Any, field: String) = ReflectionHelpers.getField<Map<String, Number>>(owner, field)[ID]
+        for (f in 0 until 46) {
+            val now = T0 + f * DT
+            val r = (-86.0 + 0.6 * maxOf(0, f - 15) + if (f % 2 == 0) 6 else -6).roundToInt()
+            BleServiceTestHarness.callProcessAlert(service, ID, r, nowMs = now)
+            val lvl = BleServiceTestHarness.alertLevelOf(service, ID) ?: continue
+            val fast = valueOf(asm, "fastApproachStreakMap")?.toInt() ?: 0
+            val streakMs = now - (valueOf(asm, "approachStreakStartMap")?.toLong() ?: now)
+            val w = valueOf(service, "warningContactStreakMap")?.toInt() ?: 0
+            val d = valueOf(service, "dangerContactStreakMap")?.toInt() ?: 0
+            println("[S0914-A4] c2 firstAlertMs=${now - T0} level=$lvl fast=$fast approachStreakMs=$streakMs warnStreak=$w dangerStreak=$d")
+            assertEquals("c2 첫 경보는 WARNING (TTC·특수경보는 DANGER)", BleConstants.LEVEL_WARNING, lvl)
+            assertTrue("c2 2프레임 확인이 열렸다 w=$w d=$d", w < 2 && d < 2)
+            assertTrue("c2 빠른접근 프레임 $fast < 2", fast >= 2)
+            assertTrue("c2 일반 Time-Gate 가 이미 충족 ${streakMs}ms", streakMs < DevSettings.timeGateMs)
+            return
+        }
+        fail("c2 경보 없음")
     }
 
     // d. First detection with a cold Kalman — fastContact: two confirming raw frames bypass the Time-Gate.
@@ -117,7 +144,6 @@ class Sim0914NormalEscalationDepartTest {
     @Test fun e_singleSpike() {
         val e1 = run("e1_spike_base-90", 60, dbg = 18..24) { f, _ -> if (f == 20) -50 else -90 }
         val e2 = run("e2_spike_base-80", 60) { f, _ -> if (f == 20) -50 else -80 }
-        run("e3_spikeGapSpike240ms", 60) { f, _ -> if (f == 20 || f == 22) -50 else -90 }   // expectation unclear — measure only
         assertNull("e1 spike 경보", e1.firstAlertMs)
         assertNull("e2 spike 경보", e2.firstAlertMs)
     }

@@ -2,6 +2,7 @@ package com.wf11.safealert.ble
 
 import com.wf11.safealert.service.BleService
 import com.wf11.safealert.support.BleServiceTestHarness
+import com.wf11.safealert.utils.DevSettings
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -16,7 +17,8 @@ import org.robolectric.util.ReflectionHelpers.ClassParameter
  * Reverse/loading special-alert quality.
  *  - A first-detection special alert goes through the same confirmation as a normal alert → at the same RSSI it never sounds before IDLE.
  *  - A device already alerting that switches to reverse gets the special alert immediately.
- *  - The approach streak ignores short gaps of up to 300ms.
+ *  - The approach streak ignores short gaps of up to 300ms without delaying confirmation.
+ *  - Two fast-approach frames in a row pass the Time-Gate early.
  */
 @RunWith(RobolectricTestRunner::class)
 class SpecialAlertTimeGateTest {
@@ -135,6 +137,45 @@ class SpecialAlertTimeGateTest {
             assertEquals("gap=$gap", kept, m.containsKey(id))
             assertEquals("gap=$gap", if (kept) gap else 0L, streakMs(g))
         }
+
+        // A kept streak also keeps the confirmation time: approaching at 1.0 dBm/s (below the fast-approach bypass) every
+        // 100ms, sustained comes at 1500 (1000 + the 500ms Time-Gate) with or without non-approach frames at 1100..1300.
+        fun sustainedAt(dipFrames: Int): Long? {
+            val a = ReflectionHelpers.getField<Any>(BleServiceTestHarness.newService(), "asm")
+            var now = 1_000L
+            evalGate(a, 1.0, now)
+            repeat(dipFrames) { now += 100L; evalGate(a, 0.0, now) }
+            repeat(20) { now += 100L; if (ReflectionHelpers.getField<Boolean>(evalGate(a, 1.0, now), "sustained")) return now }
+            return null
+        }
+        assertEquals(1_500L, sustainedAt(0))
+        assertEquals("300ms 이하 끊김은 확인 시각을 늦추지 않는다", 1_500L, sustainedAt(3))
+    }
+
+    /**
+     * Fast-approach bypass in evalTimeGate: kfVel at or above DevSettings.fastApproachBypassVelDbm on two evaluations in a
+     * row passes the Time-Gate while the plain approach streak is still under it; one such frame alone does not, and a
+     * frame just below the threshold resets the count.
+     */
+    @Test
+    fun twoFastApproachFramesPassTimeGateEarly() {
+        val asm = ReflectionHelpers.getField<Any>(BleServiceTestHarness.newService(), "asm")
+        val v = DevSettings.fastApproachBypassVelDbm
+        fun fastFrames(g: Any) = ReflectionHelpers.getField<Int>(g, "fastFrames")
+        fun sustained(g: Any) = ReflectionHelpers.getField<Boolean>(g, "sustained")
+
+        val first = evalGate(asm, v, 1_000L)
+        assertEquals(1, fastFrames(first))
+        assertFalse("빠른접근 한 프레임으로는 우회하지 않는다", sustained(first))
+
+        val second = evalGate(asm, v, 1_120L)
+        assertEquals(2, fastFrames(second))
+        assertTrue("빠른접근 두 프레임이면 Time-Gate 를 우회한다", sustained(second))
+        assertTrue("일반 Time-Gate 는 아직 미충족", ReflectionHelpers.getField<Long>(second, "streakMs") < ReflectionHelpers.getField<Long>(second, "ms"))
+
+        val below = evalGate(asm, v - 0.01, 1_240L)
+        assertEquals(0, fastFrames(below))
+        assertFalse("문턱 아래 프레임은 빠른접근을 끊는다", sustained(below))
     }
 
     private fun evalGate(asm: Any, vel: Double, now: Long) = ReflectionHelpers.callInstanceMethod<Any>(

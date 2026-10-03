@@ -16,6 +16,7 @@ import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
+import org.robolectric.shadows.ShadowLog
 import org.robolectric.util.ReflectionHelpers
 
 /**
@@ -141,15 +142,19 @@ class AlertCascadeGoldenTest {
 
     /**
      * Sudden first-contact sub-scenario, the counterpart of the gentle 1dBm/frame escalation ramp
-     * (ESCALATION_RSSI): hold -95dBm for 5 frames, then step to -54dBm.
+     * (ESCALATION_RSSI): hold -86dBm for 5 frames, then step to -62dBm.
      *
-     * Despite the test name, this golden pins the sudden-contact timing, not the dangerStreak>=2 immediate
-     * escalation in AlertStateMachine.processAlert: that override never runs here. -95dBm is below the
-     * filter-keep band (effWarning - filterPreserveBandDb), so each far frame clears the median, pEma and
-     * Kalman state and the step starts cold: pEma restarts at -54, so stableLevel is already DANGER from
-     * frame=005, before the streak reaches 2. medianValue (unsmoothed median-of-3) gives dangerStreak=1 at
-     * frame=005 and 2 at frame=006, and DANGER registers at frame=006 through the 2-frame fast-contact
-     * confirmation. In this file only release_goldenTimeline pins the override (DANGER at escalation frame=032).
+     * Pins the dangerStreak>=2 immediate escalation in AlertStateMachine.processAlert. -86dBm is inside the
+     * filter-keep band (effWarning - filterPreserveBandDb = -88), so the far frames keep the median, pEma and
+     * Kalman state warm at -86 and pEma has to climb from there: at frame=007, when medianValue (unsmoothed
+     * median-of-3) brings dangerStreak to 2, pEma is still near -83.5 (measured), below even the warning
+     * threshold. DANGER registers at frame=007 only because the override lifts stableLevel; without it the same
+     * frame registers WARNING through warningStreak>=2 (the TTC pre-alert stays shut there: about 3.7s against the
+     * 3s threshold) and DANGER waits for the TTC pre-alert at frame=008. The -62dBm step keeps that TTC margin;
+     * a bigger step speeds kfVel up and lets the TTC pre-alert hide the override. The override's own log line
+     * (dangerStreak=2) is asserted before the golden, so a re-freeze cannot silently stop exercising it.
+     * release_goldenTimeline reaches the override too (DANGER at escalation frame=032), but only when its loop runs
+     * fast: avg1sec reads the wall clock, so a pause of about 1s can move that first DANGER.
      */
     @Test
     fun suddenContact_dangerOverride_bypassesPEmaLag() {
@@ -157,6 +162,8 @@ class AlertCascadeGoldenTest {
         BleServiceTestHarness.resetBetweenTests(service)
         val actual = runScenario(service, CONTACT_DEVICE_ID, CONTACT_RSSI, startFrame = 0)
         assertEquals("suddenContact 프레임 수 불일치", CONTACT_FRAMES, actual.first.size)
+        assertTrue("dangerStreak>=2 즉시 격상이 이 기기에 실제로 걸려야 한다",
+            ShadowLog.getLogs().any { it.msg?.contains("즉시 격상 DANGER: $CONTACT_DEVICE_ID (dangerStreak=2") == true })
         assertScenario("suddenContact", actual, CONTACT_GOLDEN, CONTACT_KFVEL)
     }
 }
@@ -483,9 +490,9 @@ private val ESCALATION_KFVEL: DoubleArray = doubleArrayOf(
 )
 
 /**
- * Sudden-contact sub-scenario input: 5 frames at -95dBm, then 5 frames at -54dBm (a 41dB step).
- * -95dBm is below the filter-keep band, so the far frames leave the median, pEma and Kalman state
- * cleared and the step starts from cold filters.
+ * Sudden-contact sub-scenario input: 5 frames at -86dBm, then 5 frames at -62dBm (a 24dB step).
+ * -86dBm is inside the filter-keep band, so the far frames keep the median, pEma and Kalman state and the
+ * step starts from warm filters sitting at -86.
  * Uses its own device ID and service instance, separate from CASCADE_DEVICE_ID, so no
  * escalation/release state leaks in.
  */
@@ -493,27 +500,31 @@ private const val CONTACT_DEVICE_ID = "AA:BB:CC:DD:EE:FC"
 private const val CONTACT_WARMUP_FRAMES = 5
 private const val CONTACT_STRONG_FRAMES = 5
 private const val CONTACT_FRAMES = CONTACT_WARMUP_FRAMES + CONTACT_STRONG_FRAMES
-private val CONTACT_RSSI = IntArray(CONTACT_FRAMES) { if (it < CONTACT_WARMUP_FRAMES) -95 else -54 }
+private val CONTACT_RSSI = IntArray(CONTACT_FRAMES) { if (it < CONTACT_WARMUP_FRAMES) -86 else -62 }
 
 // The two arrays below are captured from one real run: never compute them by hand; re-freeze only by
 // editing this file by hand.
-// At frame=005 the median holds only the new -54 sample (the far frames cleared it), so
-// dangerStreak=1; at frame=006 dangerStreak=2 meets the 2-frame fast-contact confirmation and DANGER
-// registers (entry=720). pEma also restarts at -54, so it does not lag here, and kfVel stays 0 (no
-// Kalman filter during the far frames, then a fresh one at -54).
+// At frame=005 the median still holds two -86 samples, so the streaks start at frame=006 (1) and reach 2
+// at frame=007, where DANGER registers (entry=840) through the immediate escalation and the 2-frame
+// fast-contact confirmation. That first-detection frame also evaluates the Time-Gate (kfVel above 2.0, so
+// fastStreak=1); later frames return before it. kfVel leaves 0 once the median steps up at frame=006.
 private val CONTACT_GOLDEN: Array<String> = arrayOf(
-    "frame=000 rssi= -95 level=null entry=null track=NONE        dangerStreak=0 warnStreak=0 fastStreak=0 bcast=0",
-    "frame=001 rssi= -95 level=null entry=null track=NONE        dangerStreak=0 warnStreak=0 fastStreak=0 bcast=0",
-    "frame=002 rssi= -95 level=null entry=null track=NONE        dangerStreak=0 warnStreak=0 fastStreak=0 bcast=0",
-    "frame=003 rssi= -95 level=null entry=null track=NONE        dangerStreak=0 warnStreak=0 fastStreak=0 bcast=0",
-    "frame=004 rssi= -95 level=null entry=null track=NONE        dangerStreak=0 warnStreak=0 fastStreak=0 bcast=0",
-    "frame=005 rssi= -54 level=null entry=null track=NONE        dangerStreak=1 warnStreak=1 fastStreak=0 bcast=0",
-    "frame=006 rssi= -54 level=2 entry=720 track=NONE        dangerStreak=2 warnStreak=2 fastStreak=0 bcast=1",
-    "frame=007 rssi= -54 level=2 entry=720 track=NONE        dangerStreak=3 warnStreak=3 fastStreak=0 bcast=1",
-    "frame=008 rssi= -54 level=2 entry=720 track=NONE        dangerStreak=4 warnStreak=4 fastStreak=0 bcast=1",
-    "frame=009 rssi= -54 level=2 entry=720 track=NONE        dangerStreak=5 warnStreak=5 fastStreak=0 bcast=1",
+    "frame=000 rssi= -86 level=null entry=null track=NONE        dangerStreak=0 warnStreak=0 fastStreak=0 bcast=0",
+    "frame=001 rssi= -86 level=null entry=null track=NONE        dangerStreak=0 warnStreak=0 fastStreak=0 bcast=0",
+    "frame=002 rssi= -86 level=null entry=null track=NONE        dangerStreak=0 warnStreak=0 fastStreak=0 bcast=0",
+    "frame=003 rssi= -86 level=null entry=null track=NONE        dangerStreak=0 warnStreak=0 fastStreak=0 bcast=0",
+    "frame=004 rssi= -86 level=null entry=null track=NONE        dangerStreak=0 warnStreak=0 fastStreak=0 bcast=0",
+    "frame=005 rssi= -62 level=null entry=null track=NONE        dangerStreak=0 warnStreak=0 fastStreak=0 bcast=0",
+    "frame=006 rssi= -62 level=null entry=null track=NONE        dangerStreak=1 warnStreak=1 fastStreak=0 bcast=0",
+    "frame=007 rssi= -62 level=2 entry=840 track=NONE        dangerStreak=2 warnStreak=2 fastStreak=1 bcast=1",
+    "frame=008 rssi= -62 level=2 entry=840 track=NONE        dangerStreak=3 warnStreak=3 fastStreak=1 bcast=1",
+    "frame=009 rssi= -62 level=2 entry=840 track=NONE        dangerStreak=4 warnStreak=4 fastStreak=1 bcast=1",
 )
 
 private val CONTACT_KFVEL: DoubleArray = doubleArrayOf(
-    0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+    0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+    1.814031575639786,
+    4.473953659225993,
+    7.610992256714553,
+    12.804873720349933,
 )

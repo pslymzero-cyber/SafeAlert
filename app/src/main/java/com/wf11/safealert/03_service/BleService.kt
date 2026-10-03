@@ -563,9 +563,8 @@ class BleService : LifecycleService() {
         bleAdvertiser?.updateRssiEcho(BleConstants.encodeEchoTable(entries, 8))
     }
 
-    override fun onCreate() {
-        super.onCreate()
-        // Register BleService-owned state with the removal registry — removal goes only through asm.registry.
+    /** Registers BleService-owned per-device state with the removal registry — removal goes only through asm.registry. */
+    private fun registerDeviceState() {
         asm.registry.addImmediate("oneSecBuffer", oneSecBuffer)
         asm.registry.addImmediate("wakeRssiMap", wakeRssiMap)
         asm.registry.addImmediate("dwellLevelMap", dwellLevelMap)
@@ -581,6 +580,11 @@ class BleService : LifecycleService() {
         asm.registry.addDeferred("rssiPreFilter", { id -> rssiPreFilter.clear(id) }, { rssiPreFilter.clearAll() })
         asm.registry.addDeferred("medianFilter",  { id -> medianFilter.clear(id) },  { medianFilter.clearAll() })
         asm.registry.addDeferred("pEmaFilter",    { id -> pEmaFilter.clear(id) },    { pEmaFilter.clearAll() })
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        registerDeviceState()
         // Expose to the developer-settings gauge — released in onDestroy.
         DeviceStateRegistry.live = asm.registry
         isRunning = true
@@ -915,38 +919,7 @@ class BleService : LifecycleService() {
                                 releaseDetectionWakeLock()   // release as soon as the chain ends (alertWakeLock takes over on alert)
                             }
                         }
-                        override fun onDeviceLost(deviceId: String) {
-                            Log.d(TAG, "신호 소실: $deviceId")
-                            // Filter defer-clear — if a last RSSI snapshot exists, keep the filters instead of clearing them now.
-                            //   Rediscovered within 30s inside a ±10dB band → processAlert restores the warm filters + waives the TimeGate once;
-                            //   a rediscovery that doesn't qualify (processAlert) or TTL expiry (healthCheck prune) commits the cold clear.
-                            // Read the snapshot before purge (deviceRssiMap is an immediate slot too).
-                            val lastRssi = deviceRssiMap[deviceId]
-                            if (lastRssi != null) {
-                                filterPreserveMap[deviceId] = AlertStateMachine.FilterPreserveState(lastRssi, android.os.SystemClock.elapsedRealtime())
-                            }
-                            uwbRanger?.onDeviceLost(deviceId)    // clean up UWB candidates/sessions — before map removal (original order kept)
-                            // Single path for removing device state. cold = no snapshot → cold-clear at once, (deferred) filters included.
-                            //   Covers: alertState, all ASM state maps, the 5 BleService maps (the 3 dwell maps = clearDwellMute),
-                            //   the 3 uwb maps, echoDiffLive (persisted, then cleared). Registration: see ASM init and onCreate.
-                            asm.registry.purge(deviceId, cold = lastRssi == null)
-                            sendAlertBroadcast(deviceId, BleConstants.LEVEL_SAFE)
-                            if (alertState.isEmpty()) {
-                                AlertSoundPlayer.stopSound()
-                                VibrationHelper.stopVibration(this@BleService)
-                                collapseOverlay()
-                                activeSoundLevel = BleConstants.LEVEL_SAFE
-                                // Inside a zone, the last device leaving would overwrite the safe-zone status with "경보 중지" — so branch.
-                                sendStatusBroadcast(if (myZoneInside) "세이프존 — 경보 억제 중" else "기기 이탈 → 경보 중지")
-                            } else {
-                                resyncSoundToRemaining()  // higher device left → lower the sound to the remaining max level
-                                updateFloatingOverlay()   // switch the floating overlay to another hazard
-                            }
-                            // alertState shrank on loss, so re-send the risk state (RISK) at once (SAFE if empty).
-                            bleAdvertiser?.updateRisk(getCurrentMaxLevel())
-                            // Re-send the list right after signal loss (an empty list is forced too → the empty state shows at once)
-                            broadcastDeviceList(force = true)
-                        }
+                        override fun onDeviceLost(deviceId: String) = handleDeviceLost(deviceId)
                         override fun onScanError(errorCode: Int) { Log.e(TAG, "스캔 오류: $errorCode") }
                         override fun onUwbAddressReceived(deviceId: String, uwbAddress: ByteArray) {
                             // Walker gate mirror — if a UWB session opened between walkers that judgment (onDeviceDetected) filtered out,
@@ -991,6 +964,40 @@ class BleService : LifecycleService() {
 
     private fun processAlert(deviceId: String, rssi: Int, remoteState: Int = 0x00, remoteTurn: Int = BleConstants.TURN_STRAIGHT, payloadPresent: Boolean = false, peerEchoRssi: Int = BleConstants.NO_ECHO_RSSI, nowMs: () -> Long = { System.currentTimeMillis() }) =
         asm.processAlert(deviceId, rssi, remoteState, remoteTurn, payloadPresent, peerEchoRssi, nowMs)
+
+    /** The scan callback's signal-lost handler (applyMode); a named method so tests can drive the real path. */
+    private fun handleDeviceLost(deviceId: String) {
+        Log.d(TAG, "신호 소실: $deviceId")
+        // Filter defer-clear — if a last RSSI snapshot exists, keep the filters instead of clearing them now.
+        //   Rediscovered within 30s inside a ±10dB band → processAlert restores the warm filters + waives the TimeGate once;
+        //   a rediscovery that doesn't qualify (processAlert) or TTL expiry (healthCheck prune) commits the cold clear.
+        // Read the snapshot before purge (deviceRssiMap is an immediate slot too).
+        val lastRssi = deviceRssiMap[deviceId]
+        if (lastRssi != null) {
+            filterPreserveMap[deviceId] = AlertStateMachine.FilterPreserveState(lastRssi, android.os.SystemClock.elapsedRealtime())
+        }
+        uwbRanger?.onDeviceLost(deviceId)    // clean up UWB candidates/sessions — before map removal (original order kept)
+        // Single path for removing device state. cold = no snapshot → cold-clear at once, (deferred) filters included.
+        //   Covers: alertState, all ASM state maps, the 5 BleService maps (the 3 dwell maps = clearDwellMute),
+        //   the 3 uwb maps, echoDiffLive (persisted, then cleared). Registration: see ASM init and registerDeviceState.
+        asm.registry.purge(deviceId, cold = lastRssi == null)
+        sendAlertBroadcast(deviceId, BleConstants.LEVEL_SAFE)
+        if (alertState.isEmpty()) {
+            AlertSoundPlayer.stopSound()
+            VibrationHelper.stopVibration(this@BleService)
+            collapseOverlay()
+            activeSoundLevel = BleConstants.LEVEL_SAFE
+            // Inside a zone, the last device leaving would overwrite the safe-zone status with "경보 중지" — so branch.
+            sendStatusBroadcast(if (myZoneInside) "세이프존 — 경보 억제 중" else "기기 이탈 → 경보 중지")
+        } else {
+            resyncSoundToRemaining()  // higher device left → lower the sound to the remaining max level
+            updateFloatingOverlay()   // switch the floating overlay to another hazard
+        }
+        // alertState shrank on loss, so re-send the risk state (RISK) at once (SAFE if empty).
+        bleAdvertiser?.updateRisk(getCurrentMaxLevel())
+        // Re-send the list right after signal loss (an empty list is forced too → the empty state shows at once)
+        broadcastDeviceList(force = true)
+    }
 
     // Body owned by UwbDistanceManager — only the signature is kept (UwbSessionGoldenTest calls this name directly via
     //   ReflectionHelpers.callInstanceMethod, and internal call sites stay as they are).

@@ -11,6 +11,7 @@ import kotlinx.coroutines.SupervisorJob
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -136,28 +137,40 @@ class UwbSessionGoldenTest {
         return BleServiceTestHarness.alertLevelOf(service, deviceId) ?: BleConstants.LEVEL_SAFE
     }
 
-    /** Pins here the 2 keys the harness leaves unset (BleServiceTestHarness.applyGoldenDevSettings does not touch them). */
-    private fun newUwbGoldenService(): BleService {
-        val service = BleServiceTestHarness.newService()
-        DevSettings.uwbExclusiveJudgeEnabled = true
-        DevSettings.walkerDetectsWalker = false
-        return service
-    }
-
-
     @Suppress("UNCHECKED_CAST")
     private fun uwbSafeStreakMapOf(service: BleService): MutableMap<String, Int> =
         ReflectionHelpers.getField(service, "uwbSafeStreakMap") as MutableMap<String, Int>
-
 
     @Suppress("UNCHECKED_CAST")
     private fun peerUwbSeenMapOf(service: BleService): MutableMap<String, Long> =
         ReflectionHelpers.getField(service, "peerUwbSeenMap") as MutableMap<String, Long>
 
+    private fun asmOf(service: BleService): AlertStateMachine = ReflectionHelpers.getField(service, "asm")
+
+    @Suppress("UNCHECKED_CAST")
+    private fun oneSecBufferOf(service: BleService): Map<String, *> =
+        ReflectionHelpers.getField<Any>(service, "oneSecBuffer") as Map<String, *>
+
+    /** BleService's median, front-end EMA and P-EMA filters, each with the private map that holds a device's state. */
+    private val filterStateMaps = mapOf("medianFilter" to "buffers", "rssiPreFilter" to "emaState", "pEmaFilter" to "emaState")
+
+    @Suppress("UNCHECKED_CAST")
+    private fun filterStateOf(service: BleService, filter: String): Map<String, *> =
+        ReflectionHelpers.getField<Any>(ReflectionHelpers.getField(service, filter), filterStateMaps.getValue(filter)) as Map<String, *>
+
+    /** Names of the filters that hold state for the device. */
+    private fun filtersHolding(service: BleService, id: String): Set<String> =
+        filterStateMaps.keys.filter { filterStateOf(service, it).containsKey(id) }.toSet()
+
+    /** Level of the last BROADCAST_ALERT sent for that device (null if none). */
+    private fun lastAlertLevelSentFor(id: String): Int? =
+        BleServiceTestHarness.alertBroadcasts().lastOrNull { it.getStringExtra(BleService.EXTRA_ID) == id }
+            ?.getIntExtra(BleService.EXTRA_ALERT_LEVEL, -1)
+
     // ── Behavior 2: uwbRanger == null → Case B(judgeMode false) ─────────────────────────
     @Test
     fun behavior2_nullRanger_fallsBackToCaseB() {
-        val service = newUwbGoldenService()
+        val service = BleServiceTestHarness.newService()
         injectRanger(service, null)
         assertFalse(judgeMode(service, DEVICE_ID, T0_MS))
     }
@@ -165,7 +178,7 @@ class UwbSessionGoldenTest {
     // ── Behavior 3+4: injected ranger + fresh sample → processAlert takes the Case A early branch ──
     @Test
     fun behavior3and4_freshSample_triggersCaseAEarlyReturnInProcessAlert() {
-        val service = newUwbGoldenService()
+        val service = BleServiceTestHarness.newService()
         val ranger = newRanger()
         injectRanger(service, ranger)
         val sampleAt = T0_MS + FRESH_OFFSET_MS
@@ -190,7 +203,7 @@ class UwbSessionGoldenTest {
     // no record-then-freeze needed).
     @Test
     fun behavior5_escalateImmediately_demoteAfterConfirmStreak() {
-        val service = newUwbGoldenService()
+        val service = BleServiceTestHarness.newService()
 
         val l1 = callJudgeUwbOnly(service, DEVICE_ID, 2.0f, T0_MS)
         assertEquals(BleConstants.LEVEL_DANGER, l1)
@@ -211,7 +224,7 @@ class UwbSessionGoldenTest {
     // it is not followed by reflection; this comment only pins down that the two values must be equal.
     @Test
     fun behavior6_freshnessBoundary_threePoints() {
-        val service = newUwbGoldenService()
+        val service = BleServiceTestHarness.newService()
         val ranger = newRanger()
         injectRanger(service, ranger)
         val sampleAt = T0_MS
@@ -225,7 +238,7 @@ class UwbSessionGoldenTest {
     // ── Behavior 7: no uwbSampleAtMsMap entry → Case B even with a uwbDistances entry ──────
     @Test
     fun behavior7_missingSampleTimestamp_fallsBackToCaseB() {
-        val service = newUwbGoldenService()
+        val service = BleServiceTestHarness.newService()
         val ranger = newRanger()
         injectRanger(service, ranger)
         ranger.uwbDistances[DEVICE_ID] = 4.0f  // uwbSampleAtMsMap is deliberately left empty.
@@ -238,7 +251,7 @@ class UwbSessionGoldenTest {
     //  alone after an end event removed the pair's entry — uwbJudgeModeExclusive checks containsKey before comparing times.)
     @Test
     fun behavior8_missingDistanceEntry_fallsBackToCaseBEvenWithFreshTimestamp() {
-        val service = newUwbGoldenService()
+        val service = BleServiceTestHarness.newService()
         val ranger = newRanger()
         injectRanger(service, ranger)
         injectUwbSample(service, ranger, DEVICE_ID, 4.0f, T0_MS)
@@ -252,7 +265,7 @@ class UwbSessionGoldenTest {
     //    alertLevelOf would stay null forever (contrast with behavior3and4). A stale sample escapes that forcing.
     @Test
     fun behavior9_staleSample_rssiPathDecidesLevel() {
-        val service = newUwbGoldenService()
+        val service = BleServiceTestHarness.newService()
         val ranger = newRanger()
         injectRanger(service, ranger)
         val staleSampleAt = T0_MS - STALE_OFFSET_MS
@@ -282,7 +295,7 @@ class UwbSessionGoldenTest {
         assertTrue(rssi > BleConstants.rssiWarning)
 
         fun replay(sampleAtMs: Long, exclusiveJudge: Boolean): List<Int?> {
-            val service = newUwbGoldenService()
+            val service = BleServiceTestHarness.newService()
             DevSettings.uwbExclusiveJudgeEnabled = exclusiveJudge
             val ranger = newRanger()
             injectRanger(service, ranger)
@@ -301,39 +314,80 @@ class UwbSessionGoldenTest {
         assertTrue("신선한 1.5m 표본은 DANGER 로 올려야 한다(대조군) $fresh", fresh.any { it == BleConstants.LEVEL_DANGER })
     }
 
-    // ── Behavior 12: device lost — replays the two steps of BleService's lost path (the scan callback's onDeviceLost:
-    //    uwbRanger.onDeviceLost, then asm.registry.purge) by calling ranger.onDeviceLost and asm.registry.purge(cold = true)
-    //    directly, in that order; the scan-callback handler itself is not invoked. Only that device's UWB state (measured
-    //    distance, sample time, 0x9ABC sighting, demotion streak) is cleared and the other device is untouched; once a fresh
-    //    sample arrives again, Case A returns at once in that same frame. If a UWB map were not registered with the registry,
-    //    purge would leave its key and it would show here.
+    // ── Behavior 12: device lost with no RSSI snapshot (cold) — calls BleService's real signal-lost handler
+    //    (handleDeviceLost, which the scan callback delegates to). It must call uwbRanger.onDeviceLost (the measured distance goes) and
+    //    asm.registry.purge(cold = true): that device's UWB state (sample time, 0x9ABC sighting, demotion streak), its 1 s
+    //    average buffer and, being cold, its Kalman, median, EMA and P-EMA state are cleared and SAFE is broadcast for it;
+    //    the other device is untouched. Once a fresh sample arrives again, Case A returns at once in that same frame.
     @Test
-    fun behavior12_deviceLost_registryPurgeClearsOnlyThatDevicesUwbState() {
-        val service = newUwbGoldenService()
+    fun behavior12_deviceLost_coldPurgeClearsOnlyThatDevicesState() {
+        val service = BleServiceTestHarness.newService()
         val ranger = newRanger()
         injectRanger(service, ranger)
+        val asm = asmOf(service)
         for (id in listOf(DEVICE_ID, OTHER_DEVICE_ID)) {
+            BleServiceTestHarness.callProcessAlert(service, id, rssi = -60, nowMs = T0_MS)   // fills the filters and the 1 s buffer
             injectUwbSample(service, ranger, id, 4.0f, T0_MS)
             peerUwbSeenMapOf(service)[id] = T0_MS
             uwbSafeStreakMapOf(service)[id] = 1
             assertTrue(judgeMode(service, id, T0_MS))
         }
+        asm.deviceRssiMap.remove(DEVICE_ID)   // no RSSI snapshot → the handler must purge cold
 
-        ranger.onDeviceLost(DEVICE_ID)
-        ReflectionHelpers.getField<AlertStateMachine>(service, "asm").registry.purge(DEVICE_ID, cold = true)
+        BleServiceTestHarness.deviceLost(service, DEVICE_ID)
 
         assertFalse(judgeMode(service, DEVICE_ID, T0_MS))
         assertFalse(uwbSampleAtMsMapOf(service).containsKey(DEVICE_ID))
         assertFalse(peerUwbSeenMapOf(service).containsKey(DEVICE_ID))
         assertFalse(uwbSafeStreakMapOf(service).containsKey(DEVICE_ID))
-        assertFalse(ranger.uwbDistances.containsKey(DEVICE_ID))
+        assertFalse("uwbRanger.onDeviceLost 가 실측 거리를 지워야 한다", ranger.uwbDistances.containsKey(DEVICE_ID))
+        assertFalse("스냅숏이 없으면 cold 정리 — 칼만도 지운다", asm.kalmanFilters.containsKey(DEVICE_ID))
+        assertEquals("스냅숏이 없으면 cold 정리 — 필터도 지운다", emptySet<String>(), filtersHolding(service, DEVICE_ID))
+        assertFalse("1초 평균 버퍼를 지운다", oneSecBufferOf(service).containsKey(DEVICE_ID))
+        assertFalse(asm.filterPreserveMap.containsKey(DEVICE_ID))
+        assertEquals(BleConstants.LEVEL_SAFE, lastAlertLevelSentFor(DEVICE_ID))
 
         assertTrue(judgeMode(service, OTHER_DEVICE_ID, T0_MS))
         assertEquals(4.0f, ranger.uwbDistances[OTHER_DEVICE_ID])
         assertEquals(T0_MS, uwbSampleAtMsMapOf(service)[OTHER_DEVICE_ID])
+        assertTrue(asm.kalmanFilters.containsKey(OTHER_DEVICE_ID))
+        assertEquals("다른 기기의 필터는 그대로", filterStateMaps.keys, filtersHolding(service, OTHER_DEVICE_ID))
+        assertTrue("다른 기기의 1초 평균 버퍼는 그대로", oneSecBufferOf(service).containsKey(OTHER_DEVICE_ID))
 
         val resumeAt = T0_MS + FRAME_DT_MS
         injectUwbSample(service, ranger, DEVICE_ID, 4.0f, resumeAt)
         assertTrue(judgeMode(service, DEVICE_ID, resumeAt))
+    }
+
+    // ── Behavior 13: device lost with an RSSI snapshot (warm), then rediscovered — the real handler keeps the last RSSI in
+    //    filterPreserveMap and purges with cold = false: the per-device judgment state and the 1 s average buffer go, the
+    //    Kalman, median, EMA and P-EMA state stays. The first processAlert frame of a rediscovery within 30 s and within
+    //    ±filterPreserveBandDb of that RSSI consumes the snapshot, carries on with the kept filters (same Kalman, median
+    //    window now holding the old sample and the new one) and grants the one-time Time-Gate waiver. That frame is still
+    //    in the median warm-up and returns before the first-detection gate, so the waiver is still pending afterwards.
+    @Test
+    fun behavior13_deviceLost_warmSnapshotKeepsFiltersForRediscovery() {
+        val service = BleServiceTestHarness.newService()
+        val asm = asmOf(service)
+        BleServiceTestHarness.callProcessAlert(service, DEVICE_ID, rssi = -50, nowMs = T0_MS)
+        val last = asm.deviceRssiMap[DEVICE_ID]
+        val kf = asm.kalmanFilters[DEVICE_ID]
+        assertTrue(last != null && kf != null)
+
+        BleServiceTestHarness.deviceLost(service, DEVICE_ID)
+
+        assertEquals("마지막 RSSI 를 보존 스냅숏으로 남긴다", last, asm.filterPreserveMap[DEVICE_ID]?.refRssi)
+        assertSame("스냅숏이 있으면 warm 정리 — 칼만은 남긴다", kf, asm.kalmanFilters[DEVICE_ID])
+        assertEquals("스냅숏이 있으면 warm 정리 — 필터도 남긴다", filterStateMaps.keys, filtersHolding(service, DEVICE_ID))
+        assertFalse("1초 평균 버퍼는 warm 이어도 지운다", oneSecBufferOf(service).containsKey(DEVICE_ID))
+        assertFalse(asm.deviceRssiMap.containsKey(DEVICE_ID))   // immediate group is purged either way
+        assertEquals(BleConstants.LEVEL_SAFE, lastAlertLevelSentFor(DEVICE_ID))
+
+        // Rediscovery 2 dB off the snapshot; the Robolectric clock has not moved, so it is well within 30 s.
+        BleServiceTestHarness.callProcessAlert(service, DEVICE_ID, rssi = last!! - 2, nowMs = T0_MS + FRAME_DT_MS)
+        assertFalse("재발견 첫 프레임이 스냅숏을 소비한다", asm.filterPreserveMap.containsKey(DEVICE_ID))
+        assertSame("warm 칼만을 그대로 이어 쓴다", kf, asm.kalmanFilters[DEVICE_ID])
+        assertEquals("중앙값 창이 소실 전 표본에 이어진다", 2, (filterStateOf(service, "medianFilter")[DEVICE_ID] as Collection<*>).size)
+        assertTrue("Time-Gate 1회 면제가 주어진다", DEVICE_ID in asm.timeGateWaiveSet)
     }
 }
