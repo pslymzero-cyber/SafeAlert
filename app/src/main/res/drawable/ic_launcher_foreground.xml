@@ -5,7 +5,7 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- 빛 광선 (8방향) -->
+    <!-- Light rays (8 directions) -->
     <path android:fillColor="#80FFFFFF"
         android:pathData="M54,18 L50,30 L58,30 Z"/>
     <path android:fillColor="#80FFFFFF"
@@ -23,31 +23,31 @@
     <path android:fillColor="#80FFFFFF"
         android:pathData="M32,22 L42,32 L36,38 Z"/>
 
-    <!-- 외부 링 (광채) -->
+    <!-- Outer ring (glow) -->
     <path android:fillColor="#40FFFFFF"
         android:pathData="M54,24 A30,30 0 1 1 53.99,24 Z"/>
 
-    <!-- 사이렌 몸체 베이스 -->
+    <!-- Siren body base -->
     <path android:fillColor="#B71C1C"
         android:pathData="M36,80 L72,80 Q76,80 76,76 L76,72 L32,72 L32,76 Q32,80 36,80 Z"/>
 
-    <!-- 사이렌 기둥 -->
+    <!-- Siren pillar -->
     <path android:fillColor="#D32F2F"
         android:pathData="M42,72 L66,72 L66,62 Q66,48 54,42 Q42,48 42,62 Z"/>
 
-    <!-- 돔 (메인 라이트) 외곽 -->
+    <!-- Dome (main light), outer -->
     <path android:fillColor="#FF1744"
         android:pathData="M54,38 A18,18 0 1 1 53.99,38 Z"/>
 
-    <!-- 돔 내부 밝은 빛 -->
+    <!-- Bright light inside the dome -->
     <path android:fillColor="#FF6D00"
         android:pathData="M54,42 A14,14 0 1 1 53.99,42 Z"/>
 
-    <!-- 중심 하이라이트 -->
+    <!-- Center highlight -->
     <path android:fillColor="#FFAB40"
         android:pathData="M54,46 A8,8 0 1 1 53.99,46 Z"/>
 
-    <!-- 반짝임 포인트 -->
+    <!-- Sparkle points -->
     <path android:fillColor="#FFFFFF"
         android:pathData="M50,44 A3,3 0 1 1 49.99,44 Z"
         android:fillAlpha="0.8"/>
@@ -55,7 +55,7 @@
         android:pathData="M57,50 A2,2 0 1 1 56.99,50 Z"
         android:fillAlpha="0.5"/>
 
-    <!-- 기둥 나사/디테일 -->
+    <!-- Pillar screws / details -->
     <path android:fillColor="#C62828"
         android:pathData="M48,65 L60,65 L60,63 L48,63 Z"/>
     <path android:fillColor="#C62828"

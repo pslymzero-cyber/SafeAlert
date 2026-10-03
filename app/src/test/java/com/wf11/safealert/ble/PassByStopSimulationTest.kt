@@ -11,10 +11,10 @@ import org.robolectric.util.ReflectionHelpers
 import java.io.File
 
 /**
- * [회귀] 정지·저속 이탈 시나리오 — 경보 해제 시점을 기준선에 고정한다.
- * 기준선은 v1.1.79 실측치다. 판정 타이밍이 달라지면 여기서 실패한다.
- * 출력: app/build/sim_passby_<name>.log (탭 구분 프레임 표 + SUMMARY 1줄),
- *       app/build/sim_passby_SUMMARY.txt (SUMMARY 1줄 append).
+ * [Regression] Stop and slow-departure scenarios — pins the alert release timing to a baseline.
+ * The baseline is recorded from actual runs; the test fails here if the decision timing changes.
+ * Output: app/build/sim_passby_<name>.log (tab-separated frame table + 1 SUMMARY line),
+ *         app/build/sim_passby_SUMMARY.txt (1 SUMMARY line appended).
  */
 @RunWith(RobolectricTestRunner::class)
 class PassByStopSimulationTest {
@@ -142,9 +142,9 @@ class PassByStopSimulationTest {
         File("build/sim_passby_$name.log").writeText(out.toString())
         File("build/sim_passby_SUMMARY.txt").appendText(summary + "\n")
 
-        // 회귀 기준선 — 값이 바뀌었다면 판정 타이밍이 달라졌다는 뜻이다.
-        // 의도한 변경이면 호출부 기대값을 갱신하고, 아니면 회귀다.
-        // 프레임별 전문은 app/build/sim_passby_${name}.log 에 남는다.
+        // Regression baseline — a changed value means the decision timing changed.
+        // If the change is intended, update the expected values at the call site; otherwise it is a regression.
+        // The full per-frame table is in app/build/sim_passby_${name}.log.
         assertEquals("${name} 해제 프레임", expectRelease, release)
         assertEquals("${name} 최종 레벨", expectFinalLevel, level)
         assertEquals("${name} 해제 후 재경보(플래핑)", 0, reAlerts)
@@ -178,20 +178,20 @@ private fun simKfVelOf(service: BleService): Double {
     return map[SIM_DEVICE_ID]?.estimatedVel ?: 0.0
 }
 
-/** 칼만 추정 RSSI(dBm). 필드 미도달·미등록 시 null -> 로그 "-". */
+/** Kalman-estimated RSSI (dBm). null if the field is unreachable or the device is not registered -> logged as "-". */
 @Suppress("UNCHECKED_CAST")
 private fun simKfRssiOf(service: BleService): Double? = try {
     (ReflectionHelpers.getField(service, "kalmanFilters") as Map<String, KalmanFilter>)[SIM_DEVICE_ID]?.estimatedRssi
 } catch (e: Exception) { null }
 
-/** 후처리 P-EMA 상태값: BleService.pEmaFilter(RssiPreFilter).emaState[deviceId]. 미도달 시 null -> "-". */
+/** Post-filter P-EMA state: BleService.pEmaFilter (RssiPreFilter).emaState[deviceId]. null if unreachable -> "-". */
 @Suppress("UNCHECKED_CAST")
 private fun simPEmaOf(service: BleService): Double? = try {
     val filter = ReflectionHelpers.getField<Any>(service, "pEmaFilter")
     (ReflectionHelpers.getField(filter, "emaState") as Map<String, Double>)[SIM_DEVICE_ID]
 } catch (e: Exception) { null }
 
-/** recedingStartMap 에 기기가 등록돼 있으면 true. 필드 미도달 시 null -> "-" / recedingFrames=-1. */
+/** true if the device is in recedingStartMap. null if the field is unreachable -> "-" / recedingFrames=-1. */
 private fun simRecedingOf(service: BleService): Boolean? = try {
     (ReflectionHelpers.getField(service, "recedingStartMap") as Map<String, *>).containsKey(SIM_DEVICE_ID)
 } catch (e: Exception) { null }

@@ -6,12 +6,13 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * DeviceStateRegistry 그룹 계약 테스트 (Phase 4, STATE-02).
+ * Group contract tests for DeviceStateRegistry.
  *
- * 세 그룹의 제거 시점이 다르다는 것이 이 클래스의 존재 이유다. 합쳐지면 판정이 바뀐다.
- *   - 웜 소실(cold=false) 이 deferred 를 지우면 필터 워밍 상태가 날아가 재발견 직후 오판정
- *   - 기기별 purge 가 teardown 을 지우면 2차 소실이 콜드로 떨어져 보존 스냅샷이 파괴된다
- * 안드로이드 의존이 전혀 없는 순수 JVM 테스트다.
+ * The three groups being cleared at different times is why this class exists. Merging them changes judging.
+ *   - if a warm loss (cold=false) cleared deferred, the filter warm-up state
+ *   would be lost and the device misjudged right after rediscovery
+ *   - if a per-device purge cleared teardown, a second loss would fall to cold and destroy the preserved snapshot
+ * A plain JVM test with no Android dependency at all.
  */
 class DeviceStateRegistryTest {
 
@@ -34,7 +35,7 @@ class DeviceStateRegistryTest {
         flags.add(id)
     }
 
-    /** 웜 소실 = immediate 만 제거. deferred(필터 워밍)·teardown(보존 스냅샷) 은 살아남는다. */
+    /** Warm loss = only immediate is cleared. deferred (filter warm-up) and teardown (preserved snapshot) survive. */
     @Test
     fun purgeWarm_keepsDeferredAndTeardown() {
         val reg = newRegistry()
@@ -48,7 +49,7 @@ class DeviceStateRegistryTest {
         assertEquals("기기별 purge 는 teardown 을 건드리지 않는다", 1, teardown["A"])
     }
 
-    /** 콜드 소실 = immediate + deferred 제거. teardown 은 clearAll 전용이라 남는다. */
+    /** Cold loss = immediate + deferred cleared. teardown is cleared only by clearAll, so it stays. */
     @Test
     fun purgeCold_alsoClearsDeferred_butNotTeardown() {
         val reg = newRegistry()
@@ -61,7 +62,7 @@ class DeviceStateRegistryTest {
         assertEquals("콜드여도 teardown 은 기기별 purge 대상이 아니다", 1, teardown["A"])
     }
 
-    /** TTL 만료 prune 경로 = deferred 만. */
+    /** TTL-expiry prune path = deferred only. */
     @Test
     fun purgeDeferred_touchesDeferredOnly() {
         val reg = newRegistry()
@@ -74,7 +75,7 @@ class DeviceStateRegistryTest {
         assertEquals("teardown 은 그대로", 1, teardown["A"])
     }
 
-    /** 서비스 정지 = 세 그룹 전부 비운다. 잔여 엔트리 0 (STATE-02). */
+    /** Service stop = all three groups emptied. Zero entries left. */
     @Test
     fun clearAll_leavesNothing() {
         val reg = newRegistry()
@@ -85,7 +86,7 @@ class DeviceStateRegistryTest {
         assertEquals("clearAll 후 잔여 엔트리는 0 이어야 한다", 0, reg.entryCount())
     }
 
-    /** 같은 이름을 두 번 등록하면 즉시 실패한다 — 슬롯 중복은 제거가 두 번 도는 조용한 버그다. */
+    /** Registering the same name twice fails at once — a duplicate slot is a silent bug where removal runs twice. */
     @Test(expected = IllegalArgumentException::class)
     fun duplicateSlotName_isRejected() {
         DeviceStateRegistry().apply {

@@ -16,7 +16,7 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
 /**
- * (quick-260927-bn9 결정 2·3) UWB 재구성 실패 사유 기록·해제, 상태 섹션 헤더 요약 채우기 회귀.
+ * Regression: UWB rebuild failure reasons are recorded and cleared, and the state section header summary is filled in.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])

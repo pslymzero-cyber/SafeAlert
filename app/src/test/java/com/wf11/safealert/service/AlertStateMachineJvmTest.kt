@@ -15,18 +15,18 @@ import org.junit.Test
 import java.lang.reflect.Modifier
 
 /**
- * AlertStateMachine 단독 JVM 테스트 (Phase 3 T3, REFACTOR-04).
+ * Standalone JVM test for AlertStateMachine.
  *
- * Robolectric 없이 순수 JVM 에서 판정부만 돌린다 - BleService 인스턴스를 만들지 않고
- * Effects 페이크만 주입해 UWB 전용 판정(judgeUwbOnly) 의 SAFE -> WARNING -> DANGER 를 확인한다.
- * 분해가 실제로 판정부를 서비스에서 떼어냈다는 증거이자, 이후 판정 회귀의 최소 안전망.
+ * Runs only the judging logic on the plain JVM without Robolectric - no BleService instance, only a
+ * fake Effects is injected to check SAFE -> WARNING -> DANGER in UWB-only judging (judgeUwbOnly).
+ * Proves the judging logic really runs apart from the service, and is a minimal safety net against judging regressions.
  */
 class AlertStateMachineJvmTest {
 
     /**
-     * DevSettings 는 object 싱글턴이고 prefs 가 lateinit 이라 init(Context) 없이는 접근 불가.
-     * 페이크 SharedPreferences 를 리플렉션으로 꽂아 모든 게터가 앱 기본값을 그대로 돌려주게 한다.
-     * (autoSaveAlerts 만 false 로 눌러 Firebase 경로를 차단 - 판정과 무관한 외부 I/O)
+     * DevSettings is an object singleton and prefs is lateinit, so it can't be read without init(Context).
+     * A fake SharedPreferences is plugged in by reflection so every getter returns the app default as is.
+     * (Only autoSaveAlerts is forced to false to block the Firebase path - external I/O unrelated to judging.)
      */
     private val fakePrefs = object : SharedPreferences {
         override fun getAll(): MutableMap<String, *> = mutableMapOf<String, Any>()
@@ -43,7 +43,7 @@ class AlertStateMachineJvmTest {
         override fun unregisterOnSharedPreferenceChangeListener(l: SharedPreferences.OnSharedPreferenceChangeListener?) {}
     }
 
-    /** 부작용 전부 no-op. 판정에 쓰이는 조회값만 실제 값을 돌려준다. */
+    /** All side effects are no-ops. Only the lookups judging uses return real values. */
     private class FakeEffects(
         override val myCategory: Int,
         override val myMode: String,
@@ -91,8 +91,8 @@ class AlertStateMachineJvmTest {
     }
 
     /**
-     * 지게차 쌍 기본 반경(경고 15m / 위험 8m) 에서 거리만 줄여가며 3단 승격을 확인한다.
-     * 격상은 표본 1개 즉시 반영이므로 각 호출 1회로 결정적이다.
+     * With the forklift-pair default radii (WARNING 15m / DANGER 8m), shrinks only the distance to check the 3-step escalation.
+     * Escalation applies on a single sample at once, so one call per step is deterministic.
      */
     @Test
     fun judgeUwbOnly_forkliftPair_safeToWarningToDanger() {
@@ -100,11 +100,11 @@ class AlertStateMachineJvmTest {
         val asm = AlertStateMachine(fx, UwbDistanceManager { null })
         val id = "SAFEALERT_DEVICE_TEST01"
 
-        // 20m - 경고 반경(15m) 밖 = SAFE, 상태 미등록
+        // 20m - outside the warning radius (15m) = SAFE, no state recorded
         asm.judgeUwbOnly(id, 20f, 1_000L)
         assertNull("경고 반경 밖은 상태가 잡히면 안 된다", asm.alertState[id])
 
-        // 12m - 경고 반경 안 / 위험 반경(8m) 밖 = WARNING
+        // 12m - inside the warning radius / outside the danger radius (8m) = WARNING
         asm.judgeUwbOnly(id, 12f, 2_000L)
         assertEquals(
             "경고 반경 진입은 WARNING",
@@ -112,7 +112,7 @@ class AlertStateMachineJvmTest {
             (asm.alertState[id]?.first ?: -1).toLong(),
         )
 
-        // 5m - 위험 반경 안 = DANGER (격상은 표본 1개 즉시)
+        // 5m - inside the danger radius = DANGER (escalation on a single sample)
         asm.judgeUwbOnly(id, 5f, 3_000L)
         assertEquals(
             "위험 반경 진입은 DANGER",
@@ -122,10 +122,10 @@ class AlertStateMachineJvmTest {
     }
 
     /**
-     * STATE-02 - 상태 제거 단일 경로. registry.purge 한 번이 그 기기의 모든 슬롯을 비운다.
-     * entryCount 는 등록된 슬롯만 세므로, 아예 등록되지 않은 맵은 purge 잔여 비교로는 보이지 않는다.
-     * 그래서 AlertStateMachine·UwbDistanceManager 의 Map/Set 필드를 리플렉션으로 모두 훑어 각각이
-     * 등록된 슬롯(sizeOf != null)인지도 확인한다 - 새 기기별 맵을 등록 없이 추가하면 여기서 실패한다.
+     * Single path for removing state: one registry.purge empties every slot of that device.
+     * entryCount counts only registered slots, so a map that was never registered is invisible to the purge residue comparison.
+     * So the test also scans every Map/Set field of AlertStateMachine and UwbDistanceManager by reflection and checks
+     * each is a registered slot (sizeOf != null) - adding a new per-device map without registering it fails here.
      */
     @Test
     fun registryPurge_leavesNoResidueForDevice() {
@@ -148,7 +148,7 @@ class AlertStateMachineJvmTest {
             asm.registry.entryCount().toLong(),
         )
 
-        // 기기 ID 로 키를 잡지 않는 맵 - 역할쌍 키(소수 고정)라 기기 소실 때 지울 대상이 아니다.
+        // Maps not keyed by device ID - keyed by role pair (a small fixed set), so not cleared when a device is lost.
         val notPerDevice = setOf("uwbProbeLastSaveMap")
         val unregistered = listOf(AlertStateMachine::class.java, UwbDistanceManager::class.java)
             .flatMap { it.declaredFields.toList() }

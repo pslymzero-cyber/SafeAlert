@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- (v1.1.66) 섹션 라벨 앞 사각 불릿 - 문자 기호 대체 -->
+<!-- Square bullet before section labels, used instead of a text symbol. -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="rectangle">
     <solid android:color="#FFFFFF" />

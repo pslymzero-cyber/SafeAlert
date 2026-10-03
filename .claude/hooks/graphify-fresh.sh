@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
-# graphify 조회 직전에 그래프를 갱신한다.
+# Refreshes the graph right before a graphify query.
 #
-# 왜: 세션이 파일을 한 번 고치면 그 아래 모든 심볼의 줄 번호가 밀린다.
-#     낡은 줄 번호는 정보가 없는 것보다 나쁘다 — 엉뚱한 구간을 읽고
-#     엉뚱한 곳을 고치게 된다. 실측으로 40줄 삽입 후 explain 이 L3 을
-#     계속 가리켰고, update 한 번에 L43 으로 맞았다.
+# Why: once a session edits a file, the line numbers of every symbol below the edit shift.
+#      A stale line number is worse than none — you read the wrong range
+#      and edit the wrong place. Measured: after inserting 40 lines, explain kept
+#      pointing at L3; a single update corrected it to L43.
 #
-# 비용: 변경 없으면 약 1.2초, 있으면 약 2.5초. 조회할 때만 낸다.
+# Cost: about 1.2 s with no changes, about 2.5 s with changes. Paid only when querying.
 
-# 전역 훅(~/.claude/hooks/)이 깔려 있으면 그쪽이 처리한다.
+# If the global hook (~/.claude/hooks/) is set up, it handles this instead.
 [ -f "$HOME/.claude/hooks/graphify-fresh.sh" ] && \
   grep -q graphify-fresh "$HOME/.claude/settings.json" 2>/dev/null && exit 0
 
 j=$(tr -d '\n')
 
-# 읽기 계열 조회에만 붙인다. update/extract/label 자신에게는 붙이지 않는다.
+# Runs only for read-type queries, never for update/extract/label themselves.
 case "$j" in
   *"graphify explain"*|*"graphify query"*|*"graphify path"*|\
   *"graphify affected"*|*"graphify god-nodes"*) ;;

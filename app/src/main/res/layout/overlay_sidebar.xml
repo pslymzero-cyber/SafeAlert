@@ -1,24 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  (v1.1.70) 화면 경보 사이드바 — 화면 가장자리에 밀착하는 엣지 패널이다.
-    · 루트는 서로 배타인 두 자식만 갖는다. 보이는 쪽이 곧 사이드바의 폭이 된다.
-        접힘(평상시) = overlay_handle 만        → 폭 20dp. 화면을 사실상 가리지 않는다.
-        펼침(경보·공정변경) = overlay_panel 만  → 폭 236dp.
-    · v1.1.69 까지는 접혀도 폭이 236dp 그대로여서, 가장자리에서 12dp 떨어진 큰 카드가
-      화면에 남았다 = 플로팅 위젯. 사이드바가 아니었다. 폭 자체를 접는 것이 이 판의 요점이다.
-    · 바깥쪽 모서리는 각지다(shape_overlay_panel_end/start). 둥글면 화면 끝과 틈이 벌어져
-      다시 '떠 있는 카드'로 보인다.
-    · 헤더 행(overlay_header)과 핸들이 드래그 손잡이다. 리스트가 터치를 먼저 가져가므로
-      루트가 아니라 이 둘에만 리스너를 건다.
-    · 색·치수는 전부 SA 토큰. 코드 리터럴 색을 남기지 않는다.
-    · Material 위젯 미사용 — Service 컨텍스트에서 인플레이트되므로 순수 위젯만 쓴다.
+  On-screen alert sidebar — an edge panel docked flush to the screen edge.
+    · The root has only two mutually exclusive children; the visible one sets the sidebar width.
+        Collapsed (normal)               = overlay_handle only → 20dp wide. Covers practically nothing.
+        Expanded (alert, process change) = overlay_panel only  → 236dp wide.
+    · The point is to shrink the width itself when collapsed: a 236dp card left on screen
+      would be a floating widget, not a sidebar.
+    · Outer corners are square (shape_overlay_panel_end/start). Rounded ones open a gap at the
+      screen edge and it looks like a 'floating card' again.
+    · The header row (overlay_header) and the handle are the drag grips. The list takes touches first,
+      so the listeners go on these two, not on the root.
+    · All colors are SA tokens; no literal colors in code. Spacing and text sizes use SA dimens.
+    · No Material widgets — this is inflated from a Service context, so only plain widgets are used.
 -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/overlay_root"
     android:layout_width="wrap_content"
     android:layout_height="wrap_content">
 
-    <!-- 접힘 상태. 평상시 화면에 남는 유일한 요소다. -->
+    <!-- Collapsed state. The only element that normally stays on screen. -->
     <FrameLayout
         android:id="@+id/overlay_handle"
         android:layout_width="20dp"
@@ -33,7 +33,7 @@
             android:background="@drawable/shape_overlay_grip" />
     </FrameLayout>
 
-    <!-- 펼침 상태. -->
+    <!-- Expanded state. -->
     <LinearLayout
         android:id="@+id/overlay_panel"
         android:layout_width="236dp"
@@ -73,7 +73,7 @@
                 android:ellipsize="end"
                 android:text="위험 감지" />
 
-            <!-- 위험 0대 펼침에서만 노출. 헤더 탭 = 공정 변경 진입 안내. -->
+            <!-- Shown only when expanded with zero hazards. Tells the user that tapping the header enters process change. -->
             <TextView
                 android:id="@+id/overlay_action"
                 android:layout_width="wrap_content"
@@ -115,7 +115,7 @@
             android:maxLines="2"
             android:text="행 탭 = 30초 확인 · 손잡이를 옆으로 끝까지 밀면 전체 확인" />
 
-        <!-- 위험 0대 펼침에서만 노출. 다시 접는 유일한 경로다(경보 중에는 접히지 않는다). -->
+        <!-- Shown only when expanded with zero hazards. The only way to collapse again (it never collapses during an alert). -->
         <TextView
             android:id="@+id/overlay_collapse"
             android:layout_width="match_parent"

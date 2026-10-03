@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""analyze_alerts.py 회귀 테스트. 표준 라이브러리 assert 전용 - pytest/unittest 금지.
+"""Regression tests for analyze_alerts.py. Plain stdlib asserts only — no pytest/unittest.
 
-python .github/scripts/test_analyze_alerts.py 로 직접 실행한다.
+Run directly with python .github/scripts/test_analyze_alerts.py.
 """
 import json, os, subprocess, sys, tempfile
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 ANALYZE_PY = os.path.join(SCRIPT_DIR, "analyze_alerts.py")
 sys.path.insert(0, SCRIPT_DIR)
-import analyze_alerts  # noqa: E402  (모듈에 __main__ 가드가 있어 import 는 안전)
+import analyze_alerts  # noqa: E402  (the module has a __main__ guard, so importing it is safe)
 
 
 def _rec(level, ts=1756739400000):

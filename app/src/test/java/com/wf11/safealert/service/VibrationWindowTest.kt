@@ -4,7 +4,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** VibrationWindow: own vibration segments used to mask activity statistics (v1.1.99). Pure JVM. */
+/** VibrationWindow: own vibration segments used to mask activity statistics. Pure JVM. */
 class VibrationWindowTest {
 
     @Test

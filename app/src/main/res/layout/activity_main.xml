@@ -1,12 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- [v1.0.50 #2] 다크 리워크 — 역할별 배경 사진 + 반투명 다크 카드 (기존 뷰 ID 전부 유지, 기능 불변) -->
+<!-- Dark layout — role-specific background photo + translucent dark cards -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@color/sa_bg">
 
-    <!-- 역할별 배경 사진 (실행 화면 전용 — showRunningUi 가 역할에 맞춰 표시/전환) -->
+    <!-- Background photo — the warehouse view (bg_main) on the selection screen; showRunningUi
+         (via applyRoleVisuals) switches it to the role's photo while running -->
     <ImageView
         android:id="@+id/iv_role_background"
         android:layout_width="match_parent"
@@ -15,7 +16,7 @@
         android:contentDescription="@null"
         android:visibility="gone" />
 
-    <!-- 사진 위 어두운 스크림 (가독성 확보) -->
+    <!-- Dark scrim over the photo (for readability) -->
     <View
         android:id="@+id/view_bg_scrim"
         android:layout_width="match_parent"
@@ -29,7 +30,7 @@
     android:orientation="vertical"
     android:fitsSystemWindows="true">
 
-    <!-- 상단 바 (액션바 없이 자체 구성) -->
+    <!-- Top bar (built in the layout; no action bar) -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="64dp"
@@ -58,7 +59,7 @@
         android:layout_height="@dimen/sa_stroke_hairline"
         android:background="@color/sa_divider" />
 
-    <!-- 스크롤 -->
+    <!-- Scroll -->
     <ScrollView
         android:layout_width="match_parent"
         android:layout_height="0dp"
@@ -74,7 +75,7 @@
             android:paddingTop="@dimen/sa_space_lg"
             android:paddingBottom="@dimen/sa_space_lg">
 
-            <!-- ── 실행 중 카드 (반투명 다크) ── -->
+            <!-- ── Running card (translucent dark) ── -->
             <androidx.cardview.widget.CardView
                 android:id="@+id/card_running"
                 android:layout_width="match_parent"
@@ -91,7 +92,7 @@
                     android:orientation="vertical"
                     android:padding="20dp">
 
-                    <!-- 상태 + 시작 시각 (한 줄) -->
+                    <!-- Status + start time (one line) -->
                     <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
@@ -112,7 +113,7 @@
                             android:textSize="@dimen/sa_type_hint" android:textColor="@color/sa_text_tertiary"/>
                     </LinearLayout>
 
-                    <!-- ══ 내 장비 (Local) 섹션 — 내가 송출하는 역할/상태/속도 (수신 데이터와 분리) ══ -->
+                    <!-- ══ "내 장비 (Local)" section — the role/state/speed this device advertises (kept apart from received data) ══ -->
                     <TextView
                         android:id="@+id/tv_local_header"
                         android:layout_width="match_parent"
@@ -122,7 +123,7 @@
                         android:textSize="@dimen/sa_type_caption" android:textStyle="bold"
                         android:textColor="@color/sa_accent_dim"/>
 
-                    <!-- 이름 / ID (별도 줄, 굵게) -->
+                    <!-- Name / ID (separate line, bold) -->
                     <TextView
                         android:id="@+id/tv_running_id"
                         android:layout_width="match_parent"
@@ -132,7 +133,7 @@
                         android:textStyle="bold"
                         android:textColor="@color/sa_text_primary"/>
 
-                    <!-- 역할 아이콘 + 모드 + TEST 버튼 (한 줄) -->
+                    <!-- Role icon + mode + TEST button (one line) -->
                     <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
@@ -148,7 +149,7 @@
                             android:src="@drawable/ic_walker"
                             android:contentDescription="@null"/>
 
-                        <!-- 모드 (내 역할) -->
+                        <!-- Mode (my role) -->
                         <TextView
                             android:id="@+id/tv_running_mode"
                             android:layout_width="0dp"
@@ -158,7 +159,7 @@
                             android:textStyle="bold"
                             android:textColor="@color/sa_text_primary"/>
 
-                        <!-- 테스트 경보 버튼 (우측 소형 — 종 아이콘 + TEST) -->
+                        <!-- Test alert button (small, on the right — bell icon + TEST) -->
                         <Button
                             android:id="@+id/btn_test_alert"
                             style="@style/Widget.MaterialComponents.Button.OutlinedButton"
@@ -181,7 +182,7 @@
                             app:cornerRadius="14dp"/>
                     </LinearLayout>
 
-                    <!-- [v1.0.42 Req2] 내 장비 상태/속도 — localSnapshot 에서만 갱신(수신 데이터 영향 X) -->
+                    <!-- My equipment state/speed — updated only from localSnapshot (received data has no effect) -->
                     <TextView
                         android:id="@+id/tv_local_state"
                         android:layout_width="match_parent"
@@ -194,7 +195,7 @@
                         android:textColor="@color/sa_accent_soft"
                         android:fontFamily="monospace"/>
 
-                    <!-- ══ 수신 타겟 (Target) 섹션 — 상대 기기 수신 데이터 전용 (내 장비와 분리) ══ -->
+                    <!-- ══ "수신 타겟 (Target)" section — received data from other devices only (kept apart from my equipment) ══ -->
                     <TextView
                         android:id="@+id/tv_target_header"
                         android:layout_width="match_parent"
@@ -204,7 +205,7 @@
                         android:textSize="@dimen/sa_type_caption" android:textStyle="bold"
                         android:textColor="@color/sa_danger"/>
 
-                    <!-- 감지 신호 목록 placeholder (목록이 비었을 때만 표시) -->
+                    <!-- Detected-signal list placeholder (shown only when the list is empty) -->
                     <TextView
                         android:id="@+id/tv_approaching"
                         android:layout_width="match_parent"
@@ -217,8 +218,8 @@
                         android:lineSpacingMultiplier="1.4"
                         android:fontFamily="monospace"/>
 
-                    <!-- 감지 기기 목록 / BLE 상태 (수신 타겟 상세 readout — detectedSnapshot 에서만 갱신)
-                         배경색은 코드가 경보 레벨별로 backgroundTint 갱신 (shape 둥근 모서리 유지) -->
+                    <!-- Detected-device list / BLE status (detailed readout of received targets — updated only from detectedSnapshot)
+                         The code sets the background per alert level via backgroundTint (keeps the shape's rounded corners) -->
                     <TextView
                         android:id="@+id/tv_ble_status"
                         android:layout_width="match_parent"
@@ -232,7 +233,7 @@
                         android:lineSpacingMultiplier="1.3"
                         android:fontFamily="monospace"/>
 
-                    <!-- 무음 인디케이터 -->
+                    <!-- Mute indicator -->
                     <TextView
                         android:id="@+id/tv_muted_indicator"
                         android:layout_width="match_parent"
@@ -251,7 +252,7 @@
                         android:foreground="?attr/selectableItemBackground"
                         android:visibility="gone"/>
 
-                    <!-- 충전 중 무동작 감시 쉼 안내 (PDA 거치대) -->
+                    <!-- Notice that the no-movement watch is paused while charging (PDA cradle) -->
                     <TextView
                         android:id="@+id/tv_lw_status"
                         android:layout_width="match_parent"
@@ -261,7 +262,7 @@
                         android:textColor="@color/sa_text_tertiary"
                         android:visibility="gone"/>
 
-                    <!-- [v1.1.60] 역할 전환 버튼 — 확인 다이얼로그 후 정지→반대 역할 재시작 -->
+                    <!-- Role switch button — after a confirmation dialog, stops and restarts in the opposite role -->
                     <Button
                         android:id="@+id/btn_switch_role"
                         android:layout_width="match_parent" android:layout_height="52dp"
@@ -273,7 +274,7 @@
                         style="@style/Widget.MaterialComponents.Button.UnelevatedButton"
                         app:cornerRadius="26dp"/>
 
-                    <!-- 중지 버튼 (밝은 회백 필 버튼) -->
+                    <!-- Stop button (light gray-white filled button) -->
                     <Button
                         android:id="@+id/btn_stop"
                         android:layout_width="match_parent" android:layout_height="52dp"
@@ -288,14 +289,14 @@
                 </LinearLayout>
             </androidx.cardview.widget.CardView>
 
-            <!-- ── 모드 선택 ── -->
+            <!-- ── Mode selection ── -->
             <LinearLayout
                 android:id="@+id/layout_select"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical">
 
-                <!-- 모드 선택 타이틀 + 설명 한 줄 -->
+                <!-- Mode selection title + one-line description -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
@@ -320,14 +321,14 @@
 
                 </LinearLayout>
 
-                <!-- 이름(선택) + 사업장 코드(필수) 나란히 -->
+                <!-- Name (optional) + site code (required), side by side -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="10dp"
                     android:orientation="horizontal">
 
-                    <!-- (v1.1.90 SA-1) 장비 선택 전용 — 타이핑하지 않는다. 탭하면 종류·번호 선택 팝업이 뜬다 -->
+                    <!-- Equipment selection only — no typing. Tapping opens the type/number picker popup -->
                     <com.google.android.material.textfield.TextInputLayout
                         android:id="@+id/til_display_name"
                         android:layout_width="0dp"
@@ -351,7 +352,7 @@
                             android:textColor="@color/sa_text_primary"/>
                     </com.google.android.material.textfield.TextInputLayout>
 
-                    <!-- (v1.1.77) 사업장 코드 — 대소문자 무관(대문자로 정규화). 알림·보정 데이터 분리 키 -->
+                    <!-- Site code — case-insensitive (normalized to uppercase). The key that keeps alert and calibration data separate -->
                     <com.google.android.material.textfield.TextInputLayout
                         android:layout_width="0dp"
                         android:layout_weight="1"
@@ -377,7 +378,7 @@
 
                 </LinearLayout>
 
-                <!-- [v1.0.34] 보행자 역할 카드 -->
+                <!-- Walker role card -->
                 <androidx.cardview.widget.CardView
                     android:id="@+id/card_role_walker"
                     android:layout_width="match_parent"
@@ -438,9 +439,9 @@
                     </LinearLayout>
                 </androidx.cardview.widget.CardView>
 
-                <!-- [v1.0.34] EPJ(전동 파레트 잭) 역할 카드
-                     [v1.1.60] 오더십 리뷰로 비하인드(gone) — 수신·판정·핸들러 코드는 전부 보존.
-                     부활 시 이 visibility 한 줄만 제거 -->
+                <!-- EPJ (electric pallet jack) role card.
+                     Hidden (gone). EPJ receive and judgment code is kept, but MainActivity sets no click listener on this card (EPJ is picked
+                     from the equipment list), so un-hiding it also needs a click handler. -->
                 <androidx.cardview.widget.CardView
                     android:id="@+id/card_role_epj"
                     android:visibility="gone"
@@ -502,7 +503,7 @@
                     </LinearLayout>
                 </androidx.cardview.widget.CardView>
 
-                <!-- [v1.0.34] 지게차 역할 카드 -->
+                <!-- Equipment operator role card ("장비 작업자": forklift, reach truck, EPJ, etc.; the chosen equipment sets the role) -->
                 <androidx.cardview.widget.CardView
                     android:id="@+id/card_role_forklift"
                     android:layout_width="match_parent"
@@ -563,7 +564,7 @@
                     </LinearLayout>
                 </androidx.cardview.widget.CardView>
 
-                <!-- 비콘 관리 카드 (보행자 아래) -->
+                <!-- Beacon management card (below the equipment card) -->
                 <androidx.cardview.widget.CardView
                     android:id="@+id/card_beacon"
                     android:layout_width="match_parent"
@@ -625,7 +626,7 @@
                     </LinearLayout>
                 </androidx.cardview.widget.CardView>
 
-                <!-- BLE 설정 카드 (비콘 아래) -->
+                <!-- BLE settings card (below the beacon card) -->
                 <androidx.cardview.widget.CardView
                     android:id="@+id/card_ble_settings"
                     android:layout_width="match_parent"
@@ -662,7 +663,7 @@
                     </LinearLayout>
                 </androidx.cardview.widget.CardView>
 
-                <!-- Settings 카드 (PIN 전용) -->
+                <!-- Settings card (PIN protected) -->
                 <androidx.cardview.widget.CardView
                     android:id="@+id/card_settings"
                     android:layout_width="match_parent"
@@ -726,7 +727,7 @@
 
             </LinearLayout>
 
-            <!-- 권한 경고 -->
+            <!-- Permission warning -->
             <LinearLayout
                 android:id="@+id/layout_permission_warning"
                 android:layout_width="match_parent"
@@ -764,7 +765,7 @@
         </LinearLayout>
     </ScrollView>
 
-    <!-- 하단 고정: 버전 + 크레딧 (코드에서 BuildConfig.VERSION_NAME으로 동적 설정) -->
+    <!-- Pinned to the bottom: version + credit (set at runtime from BuildConfig.VERSION_NAME) -->
     <TextView
         android:id="@+id/tv_version_footer"
         android:layout_width="match_parent"
@@ -780,8 +781,8 @@
 
 </LinearLayout>
 
-    <!-- [v1.1.1] 시작 스플래시 — 1.5초 표시 후 MainActivity 가 페이드아웃. clickable 로 하단 UI
-         터치 차단, 화면 재생성(회전 등) 시에는 onCreate 가 즉시 숨김 -->
+    <!-- Startup splash — shown for 1.5 s, then MainActivity fades it out. clickable blocks touches to the UI below;
+         on screen re-creation (rotation etc.) onCreate hides it immediately -->
     <ImageView
         android:id="@+id/iv_splash"
         android:layout_width="match_parent"

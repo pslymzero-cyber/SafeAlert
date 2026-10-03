@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  (v1.1.90 SA-1) 장비 선택 팝업 — 표시 이름 자유 입력을 대체한다.
-  종류와 번호를 고르기만 하고 키보드를 쓰지 않는다. 사람 이름이 들어올 입력 수단이
-  화면에 존재하지 않는 것이 이 변경의 핵심이다.
+  Equipment picker popup, used instead of free-text entry of the display name.
+  You only pick a type and a number; no keyboard. The point is that the screen offers no input
+  through which a person's name could be entered.
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
@@ -47,7 +47,7 @@
         android:popupBackground="@color/sa_surface"
         android:dropDownWidth="match_parent" />
 
-    <!-- 선택 결과 미리보기 — 상대 기기 화면에 뜨는 값과 경보 로그에 남는 값을 같이 보여준다 -->
+    <!-- Preview of the selection — shows both the value shown on other devices' screens and the value recorded in the alert log -->
     <TextView
         android:id="@+id/tv_pit_preview"
         android:layout_width="match_parent"

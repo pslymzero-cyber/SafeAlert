@@ -6,8 +6,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * v1.1.99 ext byte (ServiceData byte[1]) bit1 = SOS. Proves that old readers (bit0-only reader,
- * byte0-only reader) are unaffected by the new bit.
+ * ext byte (ServiceData byte[1]) bit1 = SOS. Proves that older readers (a bit0-only reader, a
+ * byte0-only reader) are unaffected by this bit.
  */
 class ExtFlagCodecTest {
 

@@ -16,13 +16,13 @@ import org.robolectric.RuntimeEnvironment
 import java.util.UUID
 
 /**
- * (v1.1.91) 비콘 fullId 에 전체 키를 싣고 역조회를 전체 일치로 바꾼 뒤의 판정·라벨 검증.
- * fullId 는 BleScanner 의 세 경로(iBeacon·Service UUID·MAC)와 같은 식으로 만든다.
+ * Checks beacon judgment and labels with fullId carrying the full key and reverse lookup by exact match.
+ * fullId is built the same way as BleScanner's three paths (iBeacon, Service UUID, MAC).
  */
 @RunWith(RobolectricTestRunner::class)
 class BeaconFullIdTest {
 
-    // 앞 8자(FDA50693)가 같은 UUID 두 개 — v1.1.90 startsWith 매칭에서 뒤바뀌던 조합
+    // Two UUIDs sharing the first 8 chars (FDA50693): a pair that prefix (startsWith) matching would mix up
     private val equipUuid   = "FDA50693-A4E2-4FB1-AFCF-C6EB07647825"
     private val visitorUuid = "FDA50693-0000-0000-0000-000000000001"
     private val mac         = "AA:BB:CC:DD:EE:FF"
@@ -35,18 +35,18 @@ class BeaconFullIdTest {
         BeaconRegistry.onChanged = null
         app.getSharedPreferences(DevSettings.sitePrefName("beacon_registry"), Context.MODE_PRIVATE)
             .edit().clear().commit()
-        // 방문자용을 먼저 넣어 firstOrNull 이 접두사 매칭이면 장비용 판정이 틀리게 한다
+        // Add the visitor beacon first, so that a prefix match in firstOrNull would get the equipment beacon wrong
         BeaconRegistry.add(BeaconProfile(uuid = visitorUuid, label = "방문자비콘", visitorBeacon = true, rssiOffset = 3))
         BeaconRegistry.add(BeaconProfile(uuid = equipUuid, label = "지게차비콘", visitorBeacon = false, rssiOffset = -7))
         BeaconRegistry.add(BeaconProfile(uuid = mac, label = "MAC비콘", type = "MAC", visitorBeacon = false, rssiOffset = 5))
     }
 
-    // BleScanner.kt:202 — iBeacon 은 bytesToUuidString 의 대시 36자 대문자
+    // BleScanner iBeacon path: the 36-char dashed uppercase form from bytesToUuidString
     private fun iBeaconFullId(uuid: String) = BleConstants.WALKER_PREFIX + "BEA_" + uuid.replace("-", "")
-    // BleScanner.kt:225 — Service UUID 는 parcelUuid.uuid.toString().uppercase()
+    // BleScanner Service UUID path: parcelUuid.uuid.toString().uppercase()
     private fun serviceFullId(uuid: String) =
         BleConstants.WALKER_PREFIX + "BEA_" + UUID.fromString(uuid).toString().uppercase().replace("-", "")
-    // BleScanner.kt:241 — MAC 은 콜론 제거 12hex
+    // BleScanner MAC path: colons removed, 12 hex
     private fun macFullId(m: String) = BleConstants.WALKER_PREFIX + "BEA_" + m.replace(":", "")
 
     @Test
@@ -91,7 +91,7 @@ class BeaconFullIdTest {
         assertEquals("BEA_FDA50693", BeaconRegistry.labelForFullId(unknown))
     }
 
-    // (quick-260927-bn9 결정 1) 항목 하나(label 누락)가 손상돼도 나머지 항목(존 비콘 포함)은 살아남는다
+    // One corrupt entry (missing label) does not take the others down (zone beacons included)
     @Test
     fun getAll_corruptedItemSkipped_othersSurvive() {
         val raw = """[{"uuid":"FDA50693-A4E2-4FB1-AFCF-C6EB07647825","label":"앞"},{"uuid":"11111111-1111-1111-1111-111111111111"},{"uuid":"AA:BB:CC:DD:EE:FF","label":"뒤","type":"MAC","zoneMute":true}]"""

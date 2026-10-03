@@ -15,9 +15,9 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.shadows.ShadowAlertDialog
 
 /**
- * Firebase 비동기 콜백(세트 목록·세트 다운로드)이 destroy/finish 된 BeaconManagerActivity 에
- * 도착하면 AlertDialog.show() 가 BadTokenException 을 던져 같은 프로세스의 BleService 까지
- * 죽는 결함의 회귀 테스트.
+ * Regression test for the defect where a Firebase async callback (set list, set download) arriving at a
+ * destroyed/finished BeaconManagerActivity made AlertDialog.show() throw BadTokenException, which also killed
+ * BleService in the same process.
  */
 @RunWith(RobolectricTestRunner::class)
 class BeaconManagerDialogLifecycleTest {

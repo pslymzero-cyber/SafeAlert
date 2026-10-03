@@ -13,10 +13,10 @@ import org.robolectric.util.ReflectionHelpers
 import org.robolectric.util.ReflectionHelpers.ClassParameter
 
 /**
- * (v1.1.94) 후진·하역 특수경보 품질.
- *  - 첫 감지 특수경보는 일반 경보와 같은 확인을 거친다 → 같은 RSSI 에서 IDLE 보다 먼저 울리지 않는다.
- *  - 이미 경보 중인 기기가 후진으로 바뀌면 즉시 특수경보.
- *  - 접근 streak 은 300ms 이내의 짧은 끊김을 무시한다.
+ * Reverse/loading special-alert quality.
+ *  - A first-detection special alert goes through the same confirmation as a normal alert → at the same RSSI it never sounds before IDLE.
+ *  - A device already alerting that switches to reverse gets the special alert immediately.
+ *  - The approach streak ignores short gaps of up to 300ms.
  */
 @RunWith(RobolectricTestRunner::class)
 class SpecialAlertTimeGateTest {
@@ -82,7 +82,7 @@ class SpecialAlertTimeGateTest {
             assertTrue("state=$state: 그 프레임에 경보 브로드캐스트", BleServiceTestHarness.alertBroadcasts().size > broadcasts)
         }
 
-        // WARNING 경보 중(-78)에 -45 로 들어오며 후진 전환: DANGER 가 IDLE 대조군보다 늦지 않다
+        // Alerting at WARNING (-78), then moving in to -45 while switching to reverse: DANGER comes no later than in the IDLE control
         fun dangerFrameAfterWarning(state: Int): Int? {
             val service = BleServiceTestHarness.newService()
             var clock = 1_000L
@@ -115,17 +115,17 @@ class SpecialAlertTimeGateTest {
         gate(50.0, 1_000L)
         assertEquals(1_000L, streaks[id])
 
-        val dip = gate(0.0, 1_120L)                       // 비접근 1프레임(120ms) — 유예
+        val dip = gate(0.0, 1_120L)                       // one non-approach frame (120ms) — within grace
         assertEquals("짧은 끊김은 streak 유지", 1_000L, streaks[id])
         assertEquals(120L, streakMs(dip))
 
         gate(50.0, 1_240L)
         assertEquals(240L, streakMs(gate(50.0, 1_240L)))
 
-        gate(0.0, 1_600L)                                 // 마지막 접근 1240 → 360ms > 300ms
+        gate(0.0, 1_600L)                                 // last approach 1240 → 360ms > 300ms
         assertFalse("유예 초과는 streak 리셋", streaks.containsKey(id))
 
-        // ms 경계: 마지막 접근 프레임에서 300ms 까지는 유예(<=), 301ms 는 리셋(streakMs 0)
+        // ms boundary: up to 300ms after the last approach frame is grace (<=); 301ms resets (streakMs 0)
         for ((gap, kept) in listOf(299L to true, 300L to true, 301L to false)) {
             val s = BleServiceTestHarness.newService()
             val a = ReflectionHelpers.getField<Any>(s, "asm")

@@ -20,67 +20,64 @@ import org.robolectric.util.ReflectionHelpers
 import org.robolectric.util.ReflectionHelpers.ClassParameter
 
 /**
- * 02-03 Task 1 — UwbRanger 주입 + Case A(UWB↔UWB 배타 판정) 조기 분기 종단 골든(tracer).
+ * End-to-end golden (tracer) for UwbRanger injection + the Case A (UWB↔UWB exclusive judging) early branch.
  *
- * 대상: BleService.uwbJudgeModeExclusive/freshUwbDistM/judgeUwbOnly(BleService.kt:2545-2727),
- * UwbRanger 생성자(06_utils/UwbRanger.kt:50-58). processAlert(BleService.kt:1406-2543) 는
- * private 이므로 BleServiceTestHarness 를 통해서만 구동한다(02-01/02-02 와 동일 규율).
+ * Targets: UwbDistanceManager.uwbJudgeModeExclusive/freshUwbDistM and AlertStateMachine.judgeUwbOnly (reached through
+ * BleService's private delegates), and the UwbRanger constructor (06_utils/UwbRanger.kt). BleService.processAlert is
+ * private, so it is driven only through BleServiceTestHarness.
  *
- * ── 두 시계 규율 ──────────────────────────────────────────────────────────
- * processAlert 의 nowMs 는 시임(BleServiceTestHarness.callProcessAlert 의 명시 인자)이지만,
- * freshUwbDistM(BleService.kt:2566-2570)은 System.currentTimeMillis() 를 직접 읽는다(시임 없음).
- * 두 시계의 '차이'만 문제되므로: T0_MS 는 테스트 시작 시각(임의 상수), 신선 표본은
- * T0_MS+FRESH_OFFSET_MS(미래 오프셋 — 느린 CI 런 대비 마진), 스테일 표본은 T0_MS-STALE_OFFSET_MS
- * (과거 오프셋)를 쓴다. 밀리초 경계(윈도우-1/윈도우/윈도우+1) 검사는 judgeMode()/callJudgeUwbOnly()
- * 로 두 시계를 모두 우회하고 now 를 직접 넘긴다(Task 2 담당).
+ * ── Two-clock rule ──────────────────────────────────────────────────────────
+ * processAlert's nowMs is a seam (an explicit argument of BleServiceTestHarness.callProcessAlert),
+ * but freshUwbDistM reads System.currentTimeMillis() directly (no seam).
+ * Only the difference between the two clocks matters, so: T0_MS is the test start time (arbitrary constant), fresh samples
+ * use T0_MS+FRESH_OFFSET_MS (future offset — margin for slow CI runs), stale samples use T0_MS-STALE_OFFSET_MS
+ * (past offset). Millisecond boundary checks (window-1/window/window+1) bypass both clocks through judgeMode()/callJudgeUwbOnly()
+ * and pass now directly.
  *
- * ── 역할쌍/기기ID 설계 결정 (최소 시임) ────────────────────────────────────
- * myMode(BleService.kt:212, default "")·myCategory(BleService.kt:214, default CAT_WALKER)는
- * onCreate() 가 실행되지 않으므로(Assumption A1) 리플렉션 없이도 이미 원하는 값이다. 테스트
- * 기기ID 는 BleConstants.DEVICE_PREFIX 를 써서 WALKER_PREFIX 게이트(judgeUwbOnly:2598)도 자연히
- * 우회한다. deviceCategoryMap/deviceStateMap 도 세팅하지 않아(둘 다 null) forkliftPair=false
- * (myCategory=CAT_WALKER, rCategory=null) → 일반 역할쌍 반경(5.0/3.0m, 골든 DevSettings)로
- * 라우팅되고, 특수경보 블록(2646행, rCategory!=null && rState!=null 요구)도 자동 스킵된다 —
- * Task 1 <action> 이 요구하는 시임(uwbRanger 주입 + uwbSampleAtMsMap 리플렉션) 이상은 불필요.
+ * ── Role pair / device ID design (minimal seams) ────────────────────────────
+ * BleService.myMode (default "") and myCategory (default CAT_WALKER) already hold the wanted values without reflection,
+ * because onCreate() never runs. Test device IDs use BleConstants.DEVICE_PREFIX, so they also bypass
+ * the WALKER_PREFIX gate in judgeUwbOnly. deviceCategoryMap/deviceStateMap are not set either (both null), so forkliftPair=false
+ * (myCategory=CAT_WALKER, rCategory=null) → routed to the regular role-pair radii (5.0/3.0m, golden DevSettings),
+ * and the special-alert block (needs rCategory!=null && rState!=null) is skipped automatically —
+ * no seams are needed beyond uwbRanger injection + uwbSampleAtMsMap reflection.
  *
- * ── 안전 불변식 ────────────────────────────────────────────────────────────
- * UwbRanger.initSession() 은 이 파일 어디서도 호출하지 않는다(실 UWB 하드웨어/권한 요구 —
- * CI 행 위험). newRanger() 는 생성자만 호출하고 candidates 맵이 항상 비어 있으므로
- * computeDesiredLocked()(UwbRanger.kt:320-321)가 즉시 Desired(Role.NONE)을 반환해
- * scope.launch 경로(scheduleRestartLocked)에 진입하지 않는다 — 코루틴 스코프는 주입되지만
- * 이 파일의 어떤 헬퍼도 실제로 코루틴을 기동시키지 않는다.
+ * ── Safety invariant ────────────────────────────────────────────────────────
+ * UwbRanger.initSession() is never called anywhere in this file (it needs real UWB hardware/permissions —
+ * risk of hanging CI). newRanger() only calls the constructor and the candidates map always stays empty, so
+ * computeDesiredLocked() returns Desired(Role.NONE) at once and the scope.launch path (scheduleRestartLocked)
+ * is never entered — a coroutine scope is injected, but no helper in this file actually starts a coroutine.
  *
- * 기록 시점: versionName=1.1.70 versionCode=126, commit=f9a6417, 2026-08-28.
- * 채택 값: T0_MS=2_000_000L(임의 기준시), FRESH_OFFSET_MS=+500L(느린 CI 마진),
- * FRAME_DT_MS=400L(캐스케이드 프레임 간격과 무관 — kinematics 미사용이라 임의값),
- * DEVICE_ID 접두사=BleConstants.DEVICE_PREFIX(WALKER_PREFIX 아님 — walker 게이트 자연 우회),
- * 역할쌍=일반쌍(지게차 아님, deviceCategoryMap 미설정) → warnM=5.0f/dangM=3.0f
- * (DevSettings.uwbPairWarnMeters/uwbPairDangerMeters, 골든 프로파일 고정값).
+ * Chosen values: T0_MS=2_000_000L (arbitrary base time), FRESH_OFFSET_MS=+500L (slow-CI margin),
+ * FRAME_DT_MS=400L (unrelated to the cascade frame interval — arbitrary, since kinematics are unused),
+ * DEVICE_ID prefix=BleConstants.DEVICE_PREFIX (not WALKER_PREFIX — bypasses the walker gate),
+ * role pair=regular pair (not a forklift, deviceCategoryMap unset) → warnM=5.0f/dangM=3.0f
+ * (DevSettings.uwbPairWarnMeters/uwbPairDangerMeters, fixed values in the golden profile).
  */
 @RunWith(RobolectricTestRunner::class)
 class UwbSessionGoldenTest {
 
     companion object {
         private const val T0_MS = 2_000_000L
-        private const val FRESH_OFFSET_MS = 500L    // 미래 오프셋 — 느린 CI 런 대비 마진(D-4C)
+        private const val FRESH_OFFSET_MS = 500L    // Future offset — margin for slow CI runs
         private const val FRAME_DT_MS = 400L
 
-        // production BleService.UWB_MEAS_FRESH_MS(BleService.kt:682, private val 1_000L)와
-        // 반드시 손수 동기화 — 생산 상수가 바뀌면 이 값도 함께 고칠 것.
+        // Must be kept in sync by hand with production UwbDistanceManager.UWB_MEAS_FRESH_MS (private val 1_000L) —
+        // if the production constant changes, change this value too.
         private const val FRESH_WINDOW_MS = 1_000L
 
-        // 과거 오프셋(Task 2) — 신선 창(FRESH_WINDOW_MS)을 확실히 벗어나는 스테일 표본 시각을 만든다.
+        // Past offset — gives a stale sample time safely outside the freshness window (FRESH_WINDOW_MS).
         private const val STALE_OFFSET_MS = FRESH_WINDOW_MS + 500L
 
         private const val DEVICE_ID = BleConstants.DEVICE_PREFIX + "UWBTEST01"
 
-        // Task 3 기기 소실 시나리오용 두 번째 기기 — 다른 기기 상태가 그대로인지 본다.
+        // Second device for the device-lost scenario — checks that the other device's state is untouched.
         private const val OTHER_DEVICE_ID = BleConstants.DEVICE_PREFIX + "UWBTEST02"
     }
 
-    // ── 헬퍼 ──────────────────────────────────────────────────────────────
+    // ── Helpers ──────────────────────────────────────────────────────────────
 
-    /** initSession() 은 절대 호출하지 않는다 — candidates 가 비어 있어 scope.launch 미기동(안전 불변식 상단 참고). */
+    /** initSession() is never called — candidates stays empty, so scope.launch never starts (see the safety invariant above). */
     private fun newRanger(): UwbRanger =
         UwbRanger(
             context = RuntimeEnvironment.getApplication(),
@@ -105,7 +102,10 @@ class UwbSessionGoldenTest {
     private fun warningContactStreakMapOf(service: BleService): MutableMap<String, Int> =
         ReflectionHelpers.getField(service, "warningContactStreakMap") as MutableMap<String, Int>
 
-    /** uwbDistances 는 UwbRanger 의 public 프로퍼티라 직접 대입, uwbSampleAtMsMap 은 private 필드라 리플렉션. */
+    /**
+     * uwbDistances is a public UwbRanger property, so it is assigned directly;
+     * uwbSampleAtMsMap is a private field, so it is set via reflection.
+     */
     private fun injectUwbSample(service: BleService, ranger: UwbRanger, id: String, distM: Float, sampleAtMs: Long) {
         ranger.uwbDistances[id] = distM
         uwbSampleAtMsMapOf(service)[id] = sampleAtMs
@@ -119,7 +119,10 @@ class UwbSessionGoldenTest {
             ClassParameter.from(Long::class.javaPrimitiveType, now)
         )
 
-    /** judgeUwbOnly 는 Unit 반환(BleService.kt:2595) — 호출 후 alertState 를 읽어 레벨을 판독한다(부재=SAFE, 원본 prevLevel 관례와 동일). */
+    /**
+     * judgeUwbOnly returns Unit — read alertState after the call to get the level
+     * (absent = SAFE, same as the production prevLevel convention).
+     */
     private fun callJudgeUwbOnly(service: BleService, deviceId: String, distM: Float, now: Long): Int {
         ReflectionHelpers.callInstanceMethod<Any?>(
             service,
@@ -131,7 +134,7 @@ class UwbSessionGoldenTest {
         return BleServiceTestHarness.alertLevelOf(service, deviceId) ?: BleConstants.LEVEL_SAFE
     }
 
-    /** 하네스 미설정 2키(BleServiceTestHarness.applyGoldenDevSettings 는 손대지 않음) 를 이 파일에서 명시 고정. */
+    /** Pins here the 2 keys the harness leaves unset (BleServiceTestHarness.applyGoldenDevSettings does not touch them). */
     private fun newUwbGoldenService(): BleService {
         val service = BleServiceTestHarness.newService()
         DevSettings.uwbExclusiveJudgeEnabled = true
@@ -139,13 +142,11 @@ class UwbSessionGoldenTest {
         return service
     }
 
-    // ── Task 2 헬퍼 ──────────────────────────────────────────────────────
 
     @Suppress("UNCHECKED_CAST")
     private fun uwbSafeStreakMapOf(service: BleService): MutableMap<String, Int> =
         ReflectionHelpers.getField(service, "uwbSafeStreakMap") as MutableMap<String, Int>
 
-    // ── Task 3 헬퍼 ──────────────────────────────────────────────────────
 
     @Suppress("UNCHECKED_CAST")
     private fun peerUwbSeenMapOf(service: BleService): MutableMap<String, Long> =
@@ -159,7 +160,7 @@ class UwbSessionGoldenTest {
         assertFalse(judgeMode(service, DEVICE_ID, T0_MS))
     }
 
-    // ── Behavior 3+4: ranger 주입 + 신선 표본 → processAlert 가 Case A 조기 분기(BleService.kt:1615-1619) ──
+    // ── Behavior 3+4: injected ranger + fresh sample → processAlert takes the Case A early branch ──
     @Test
     fun behavior3and4_freshSample_triggersCaseAEarlyReturnInProcessAlert() {
         val service = newUwbGoldenService()
@@ -170,21 +171,21 @@ class UwbSessionGoldenTest {
 
         assertTrue(judgeMode(service, DEVICE_ID, T0_MS))
 
-        // Case A 조기분기 확증: RSSI 경로 streak 카운터가 0 리셋되고(BleService.kt:1616-1617),
-        // processAlert 는 RSSI 기반 alertState 기록부(1626행 이후)에 도달하지 않는다 — RSSI 는
-        // 절대 개입하지 않는다(judgeUwbOnly 를 별도로 호출하지 않는 한 alertState 도 그대로 비어 있다).
+        // Confirms the Case A early branch: the RSSI-path streak counters are reset to 0, and processAlert
+        // never reaches the RSSI-based alertState writes — RSSI never takes part (alertState also stays
+        // empty unless judgeUwbOnly is called separately).
         BleServiceTestHarness.callProcessAlert(service, DEVICE_ID, rssi = -50, nowMs = T0_MS)
         assertEquals(0, dangerContactStreakMapOf(service)[DEVICE_ID] ?: -1)
         assertEquals(0, warningContactStreakMapOf(service)[DEVICE_ID] ?: -1)
         assertNull(BleServiceTestHarness.alertLevelOf(service, DEVICE_ID))
     }
 
-    // ── Behavior 5: judgeUwbOnly 4프레임 — 즉시 승격 후 3표본 확증 격하(BleService.kt:2611-2638) ──
-    // 2.0m(≤dangM 3.0) → DANGER 즉시 승격. 6.0m(>warnM+hyst 5.5) ×3 연속: streak 1·2 는 보류
-    // (DANGER 유지), streak 3 에서 확증 격하(SAFE). 골든 DevSettings 반경: uwbPairWarnMeters=5.0f,
-    // uwbPairDangerMeters=3.0f(BleServiceTestHarness.applyGoldenDevSettings), hyst=UWB_RELEASE_HYST_M=0.5f,
-    // demoteStreak=UWB_DEMOTE_STREAK=3(둘 다 BleService.kt private val — 순수 산술이라 손계산 가능,
-    // record-then-freeze 불요).
+    // ── Behavior 5: judgeUwbOnly over 4 frames — immediate escalation, then a demotion confirmed by 3 samples ──
+    // 2.0m (≤dangM 3.0) → DANGER at once. 6.0m (>warnM+hyst 5.5) ×3 in a row: streak 1 and 2 hold
+    // (DANGER kept), streak 3 confirms the demotion (SAFE). Golden DevSettings radii: uwbPairWarnMeters=5.0f,
+    // uwbPairDangerMeters=3.0f (BleServiceTestHarness.applyGoldenDevSettings), hyst=UWB_RELEASE_HYST_M=0.5f,
+    // demoteStreak=UWB_DEMOTE_STREAK=3 (both internal vals of AlertStateMachine — plain arithmetic, so computed by hand,
+    // no record-then-freeze needed).
     @Test
     fun behavior5_escalateImmediately_demoteAfterConfirmStreak() {
         val service = newUwbGoldenService()
@@ -202,9 +203,10 @@ class UwbSessionGoldenTest {
         assertEquals(BleConstants.LEVEL_SAFE, l4)
     }
 
-    // ── Task 2 / Behavior 1: 신선 창 경계 3점 — 창-1/창/창+1 (BleService.kt:2560, `<=` 포함 비교) ──
-    // FRESH_WINDOW_MS 는 프로덕션 UWB_MEAS_FRESH_MS(BleService.kt:682, 1_000L)와 반드시 손수 동기화한다 —
-    // 반사로 따라가지 않고 두 값이 같아야 한다는 사실만 주석으로 못박는다(action 지시).
+    // ── Behavior 6: freshness window boundary at 3 points — window-1/window/window+1
+    // (inclusive `<=` comparison in UwbDistanceManager.uwbJudgeModeExclusive) ──
+    // FRESH_WINDOW_MS must be kept in sync by hand with production UwbDistanceManager.UWB_MEAS_FRESH_MS (1_000L) —
+    // it is not followed by reflection; this comment only pins down that the two values must be equal.
     @Test
     fun behavior6_freshnessBoundary_threePoints() {
         val service = newUwbGoldenService()
@@ -218,34 +220,34 @@ class UwbSessionGoldenTest {
         assertFalse(judgeMode(service, DEVICE_ID, sampleAt + FRESH_WINDOW_MS + 1))
     }
 
-    // ── Task 2 / Behavior 2: uwbSampleAtMsMap 항목 없음 → uwbDistances 만 있어도 Case B ──────
+    // ── Behavior 7: no uwbSampleAtMsMap entry → Case B even with a uwbDistances entry ──────
     @Test
     fun behavior7_missingSampleTimestamp_fallsBackToCaseB() {
         val service = newUwbGoldenService()
         val ranger = newRanger()
         injectRanger(service, ranger)
-        ranger.uwbDistances[DEVICE_ID] = 4.0f  // uwbSampleAtMsMap 은 의도적으로 채우지 않는다.
+        ranger.uwbDistances[DEVICE_ID] = 4.0f  // uwbSampleAtMsMap is deliberately left empty.
 
         assertFalse(judgeMode(service, DEVICE_ID, T0_MS))
     }
 
-    // ── Task 2 / Behavior 3: uwbDistances 엔트리 제거 → 표본 시각이 신선해도 즉시 Case B ──────
-    // (BleService.kt:2545-2553 설계 사유: 종료 이벤트로 엔트리가 걷힌 페어의 스테일 timestamp 단독
-    //  잔존으로 인한 오판을 막는다 — uwbJudgeModeExclusive 는 containsKey 를 시각 비교보다 먼저 본다.)
+    // ── Behavior 8: uwbDistances entry removed → Case B at once, even with a fresh sample time ──────
+    // (Design reason in UwbDistanceManager.uwbJudgeModeExclusive: prevents misjudging on a stale timestamp left behind
+    //  alone after an end event removed the pair's entry — uwbJudgeModeExclusive checks containsKey before comparing times.)
     @Test
     fun behavior8_missingDistanceEntry_fallsBackToCaseBEvenWithFreshTimestamp() {
         val service = newUwbGoldenService()
         val ranger = newRanger()
         injectRanger(service, ranger)
         injectUwbSample(service, ranger, DEVICE_ID, 4.0f, T0_MS)
-        ranger.uwbDistances.remove(DEVICE_ID)  // uwbSampleAtMsMap 의 신선 timestamp 는 그대로 남긴다.
+        ranger.uwbDistances.remove(DEVICE_ID)  // the fresh timestamp in uwbSampleAtMsMap is kept.
 
         assertFalse(judgeMode(service, DEVICE_ID, T0_MS))
     }
 
-    // ── Task 2 / Behavior 4: 낡은 표본 → processAlert 가 Case A 조기분기를 타지 않고 RSSI 경로가
-    //    실제로 등급을 결정한다(D-4A(a)(b)). Case A 라면 두 streak 는 영원히 0 으로 강제되고
-    //    alertLevelOf 는 영원히 null 이다(behavior3and4 대조). 낡은 표본은 그 강제를 우회한다.
+    // ── Behavior 9: stale sample → processAlert does not take the Case A early branch, and the RSSI path
+    //    actually decides the level. Under Case A both streaks would be forced to 0 forever and
+    //    alertLevelOf would stay null forever (contrast with behavior3and4). A stale sample escapes that forcing.
     @Test
     fun behavior9_staleSample_rssiPathDecidesLevel() {
         val service = newUwbGoldenService()
@@ -254,9 +256,9 @@ class UwbSessionGoldenTest {
         val staleSampleAt = T0_MS - STALE_OFFSET_MS
         injectUwbSample(service, ranger, DEVICE_ID, 2.0f, staleSampleAt)
 
-        assertFalse(judgeMode(service, DEVICE_ID, T0_MS))  // Case A 미발동 확인 — 표본이 낡았다.
+        assertFalse(judgeMode(service, DEVICE_ID, T0_MS))  // Case A not triggered — the sample is stale.
 
-        // 강한 RSSI(danger 임계 -55 보다 강한 -50) 프레임을 재생 — RSSI 경로가 실제로 등급을 기록한다.
+        // Replay strong-RSSI frames (-50, stronger than the default danger threshold -65) — the RSSI path actually records a level.
         BleServiceTestHarness.callProcessAlert(service, DEVICE_ID, rssi = -50, nowMs = T0_MS)
         BleServiceTestHarness.callProcessAlert(service, DEVICE_ID, rssi = -50, nowMs = T0_MS + FRAME_DT_MS)
         BleServiceTestHarness.callProcessAlert(service, DEVICE_ID, rssi = -50, nowMs = T0_MS + FRAME_DT_MS * 2)
@@ -265,16 +267,16 @@ class UwbSessionGoldenTest {
         assertTrue(BleServiceTestHarness.alertLevelOf(service, DEVICE_ID) != null)
     }
 
-    // ── Task 2 / Behavior 5 (계획에서 가장 중요한 항목, v1.1.50 좀비 DANGER 차단): 위험 반경 안쪽 1.5m 가
-    //    uwbDistances 에 남아 있고 표본 시각만 낡은 상태에서, RSSI 를 약신호 조기 반환(경고 임계 미만) 위로,
-    //    위험 임계보다는 약하게 재생한다 — processAlert 가 UWB 승격 블록(uwbPrimaryAuthorityEnabled, 골든 true)
-    //    까지 실제로 도달하는 입력이다. 낡은 표본이면 어느 프레임도 DANGER 가 아니어야 하고, 같은 입력에
-    //    신선한 표본(대조군)이면 DANGER 에 도달해야 한다. freshUwbDistM 은 System.currentTimeMillis() 를
-    //    읽으므로(Robolectric 이 이 시계를 대체할 수 있다) 표본 시각은 어느 시계에서도 확실히 낡은/신선한
-    //    극값을 쓴다. 대조군은 Case A(UWB 배타 판정)가 프레임을 가져가지 않도록 킬스위치를 끈다.
+    // ── Behavior 10 (the most important case — blocking zombie DANGER): 1.5m, inside the danger radius, stays in
+    //    uwbDistances with only its sample time stale, and RSSI is replayed strong enough to pass the weak-signal early return
+    //    (taken below the warning threshold) but weaker than the danger threshold — an input that really reaches processAlert's
+    //    UWB escalation block (uwbPrimaryAuthorityEnabled, golden true). With the stale sample no frame may be DANGER; with the
+    //    same input and a fresh sample (control) it must reach DANGER. freshUwbDistM reads System.currentTimeMillis()
+    //    (Robolectric may replace this clock), so the sample times are extremes that are surely stale/fresh
+    //    under either clock. The control turns the kill switch off so Case A (UWB-exclusive judging) does not take the frames.
     @Test
     fun behavior10_staleNearDangerDistance_neverProducesZombieDanger() {
-        val rssi = BleConstants.rssiDanger - 5   // 위험 임계보다 5dB 약하고 경고 임계(-78)보다는 강하다
+        val rssi = BleConstants.rssiDanger - 5   // 5dB weaker than the danger threshold, stronger than the warning threshold (-78)
         assertTrue(rssi > BleConstants.rssiWarning)
 
         fun replay(sampleAtMs: Long, exclusiveJudge: Boolean): List<Int?> {
@@ -282,7 +284,7 @@ class UwbSessionGoldenTest {
             DevSettings.uwbExclusiveJudgeEnabled = exclusiveJudge
             val ranger = newRanger()
             injectRanger(service, ranger)
-            injectUwbSample(service, ranger, DEVICE_ID, 1.5f, sampleAtMs)   // 골든 위험 반경 3.0m 안쪽
+            injectUwbSample(service, ranger, DEVICE_ID, 1.5f, sampleAtMs)   // inside the golden 3.0m danger radius
             return (0 until 12).map { frame ->
                 BleServiceTestHarness.callProcessAlert(service, DEVICE_ID, rssi, nowMs = T0_MS + FRAME_DT_MS * frame)
                 BleServiceTestHarness.alertLevelOf(service, DEVICE_ID)
@@ -297,10 +299,10 @@ class UwbSessionGoldenTest {
         assertTrue("신선한 1.5m 표본은 DANGER 로 올려야 한다(대조군) $fresh", fresh.any { it == BleConstants.LEVEL_DANGER })
     }
 
-    // ── Task 3: 기기 소실 — BleService 의 실제 소실 경로(BleService.kt onDeviceLost: uwbRanger.onDeviceLost →
-    //    asm.registry.purge, 이 순서)를 그대로 호출한다. 그 기기의 UWB 상태(실측 거리·표본 시각·0x9ABC 관측·
-    //    격하 streak)만 사라지고 다른 기기는 그대로이며, 같은 프레임에 신선 표본을 다시 받으면 즉시 Case A 로
-    //    돌아온다. UWB 맵이 레지스트리에 등록되지 않았다면 purge 가 키를 남겨 여기서 드러난다.
+    // ── Behavior 12: device lost — calls BleService's real lost path (BleService.kt onDeviceLost: uwbRanger.onDeviceLost →
+    //    asm.registry.purge, in that order) as is. Only that device's UWB state (measured distance, sample time, 0x9ABC sighting,
+    //    demotion streak) is cleared and the other device is untouched; once a fresh sample arrives again, Case A returns
+    //    at once in that same frame. If a UWB map were not registered with the registry, purge would leave its key and it would show here.
     @Test
     fun behavior12_deviceLost_registryPurgeClearsOnlyThatDevicesUwbState() {
         val service = newUwbGoldenService()

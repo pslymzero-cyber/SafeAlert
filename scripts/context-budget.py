@@ -1,29 +1,29 @@
 #!/usr/bin/env python3
-"""컨텍스트 예산표 재계산 — .claude/CLAUDE.md 「전체 읽기 금지 파일」 표의 원본 수치.
+"""Recomputes the context budget table: the source numbers for the "files never to read whole" table
+(전체 읽기 금지 파일) in .claude/CLAUDE.md.
 
-손으로 세면 반드시 낡는다. 실측 사례: 표에 PROGRESS.md 가 14,051 토큰으로
-적혀 있었으나 실제는 32,894 였다(2.3배). 예산을 지키려고 표를 믿은 세션이
-한 파일로 예산 전체를 날린다 — 방어선이 낡으면 함정이 된다.
+Hand-maintained counts always go stale. A session that trusts a stale table to stay within budget
+can burn its whole budget on a single file, so a stale guard turns into a trap.
 
-이 스크립트는 읽기 전용이다. 수치를 표 형식으로 출력만 하고 파일은 쓰지 않는다.
-CLAUDE.md 반영은 GSD 가 한다(config.json 의 claude_md_path 가 그 파일의 주인).
+This script is read-only: it only prints the numbers as a table and writes no files.
+GSD updates CLAUDE.md (it owns that file through claude_md_path in config.json).
 
-사용:
-    python3 scripts/context-budget.py                # 기본 임계 10,000 토큰
-    python3 scripts/context-budget.py -t 5000        # 임계 변경
-    python3 scripts/context-budget.py --self-check   # 자체 검사
+Usage:
+    python3 scripts/context-budget.py                # default threshold 10,000 tokens
+    python3 scripts/context-budget.py -t 5000        # change the threshold
+    python3 scripts/context-budget.py --self-check   # self-check
 """
 import argparse
 import os
 import subprocess
 import sys
 
-# 토큰 추정 계수. 이 저장소의 AlertStateMachine.kt 로 보정했다:
-# 157,667 바이트 / 47,948 토큰(CLAUDE.md 실측치) = 3.29 바이트/토큰.
-# 한글 주석이 섞인 Kotlin·Markdown 기준이며 ±10% 오차를 전제로 쓴다.
+# Token estimate factor, calibrated on this repo's AlertStateMachine.kt:
+# 157,667 bytes / 47,948 tokens (measured value in CLAUDE.md) = 3.29 bytes/token.
+# Based on Kotlin and Markdown mixed with Korean comments; assume a ±10% error.
 BYTES_PER_TOKEN = 3.29
 
-# 토큰을 세는 의미가 없는 바이너리·생성물
+# Binaries and generated files, where counting tokens is meaningless
 SKIP_EXT = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".wav", ".mp3", ".ogg",
             ".jar", ".zip", ".apk", ".keystore", ".jks", ".p12", ".pptx",
             ".docx", ".pdf", ".ttf", ".otf", ".ico"}
@@ -49,7 +49,7 @@ def tracked_files():
 def report(threshold):
     rows = [(tokens(p), p) for p in tracked_files()]
 
-    # .planning/** 은 개별 행이 아니라 한 덩어리로 다룬다 — CLAUDE.md 표와 같은 취급
+    # .planning/** is counted as one lump, not as individual rows — same as the CLAUDE.md table
     planning = sum(t for t, p in rows if p.startswith(".planning/"))
     rows = [(t, p) for t, p in rows if not p.startswith(".planning/")]
     rows.sort(reverse=True)
@@ -74,7 +74,7 @@ def self_check():
     assert fs, "git 추적 파일이 하나도 안 잡힌다 — 저장소 루트에서 실행했나?"
     assert not any(os.path.splitext(p)[1].lower() in SKIP_EXT for p in fs), \
         "바이너리가 걸러지지 않았다"
-    # 보정 근거가 흔들리면 계수를 다시 잡아야 한다
+    # If the calibration basis drifts, the factor must be recalibrated
     ref = "app/src/main/java/com/wf11/safealert/03_service/AlertStateMachine.kt"
     if os.path.exists(ref):
         est = tokens(ref)

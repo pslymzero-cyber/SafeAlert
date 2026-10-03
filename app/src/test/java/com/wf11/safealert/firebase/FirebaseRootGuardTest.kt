@@ -10,7 +10,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 
 /**
- * (결정 A) firebaseRoot 금지 문자 가드 회귀 — setter 경로 + prefs 직접 기록(getter 경로) 양쪽 검증.
+ * Regression for the firebaseRoot forbidden-character guard — checks both the setter path and a direct prefs write (getter path).
  */
 @RunWith(RobolectricTestRunner::class)
 class FirebaseRootGuardTest {

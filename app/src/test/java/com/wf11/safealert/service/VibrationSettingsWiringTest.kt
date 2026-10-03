@@ -13,8 +13,8 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
 /**
- * 진동 설정 2개(경고 펄스 길이, 위험 반복 횟수)가 실제 파형에 연결됐는지 ShadowVibrator 로 확인.
- * 사용자 결정 2026-09-25·09-27. SDK 34 고정 이유: 로컬 캐시된 Robolectric SDK jar 가 API 34 하나뿐.
+ * Checks with ShadowVibrator that the 2 vibration settings (warning pulse length, danger repeat count) reach the actual waveform.
+ * SDK pinned to 34 because the only locally cached Robolectric SDK jar is API 34.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])

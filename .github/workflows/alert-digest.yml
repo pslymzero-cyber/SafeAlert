@@ -1,20 +1,20 @@
 name: Alert digest
 
-# 경보 이력을 주기적으로 집계해 저장소에 커밋한다.
-#   database.rules.json: 루트 ".read":false, {firebaseRoot}/alerts·uwb_probe 에는
-#   .read 규칙 자체가 없어 REST 로 읽을 길이 없다. echo_calib 은 "auth != null" 이지만
-#   CI 에는 사용자 토큰이 없다. FIREBASE_DB_SECRET 은 규칙을 우회하는 admin 자격이라
-#   여기서만 셋 다 읽는다 — release.yml 의 version PATCH 와 같은 자격이다.
+# Periodically aggregates alert history and commits it to the repo.
+#   database.rules.json: the root is ".read":false, and {firebaseRoot}/alerts and uwb_probe
+#   have no .read rule at all, so REST cannot read them. echo_calib is "auth != null", but
+#   CI has no user token. FIREBASE_DB_SECRET is an admin credential that bypasses the rules,
+#   so only here are all three read — the same credential as release.yml's version PATCH.
 #
-#   결과는 저장소 맨 위 ALERTS.md 한 장이다. GitHub 앱에서 저장소만 열면
-#   파일 목록 위쪽에 바로 보인다 — 경로를 타고 들어갈 필요가 없다.
-#   원본 JSON 은 커밋하지 않는다 — 이 저장소는 공개다.
-#   hb(단독 작업자 살아 있음 세션)도 .read 규칙이 없어 같은 관리 비밀값으로만 읽고,
-#   식별자 없이 센터별 숫자만 '연락 끊김 (기록만)' 표로 남긴다.
+#   The output is a single ALERTS.md at the repo root. Opening the repo in the GitHub app
+#   shows it near the top of the file list — no need to dig through folders.
+#   Raw JSON is never committed — this repo is public.
+#   hb (lone-worker alive sessions) has no .read rule either, so it is read only with the same admin secret,
+#   and only per-center counts, without identifiers, go into the '연락 끊김 (기록만)' table.
 
 on:
   schedule:
-    - cron: '0 21 * * 0'   # 매주 월요일 06:00 KST (일요일 21:00 UTC)
+    - cron: '0 21 * * 0'   # every Monday 06:00 KST (Sunday 21:00 UTC)
   workflow_dispatch:
     inputs:
       days:
@@ -32,9 +32,9 @@ concurrency:
 
 jobs:
   digest:
-    runs-on: ubuntu-24.04   # ubuntu-latest 는 2026-10-19 부터 Ubuntu 26 으로 바뀐다(릴리스 재현성 위해 고정)
+    runs-on: ubuntu-24.04   # ubuntu-latest becomes Ubuntu 26 on 2026-10-19; pinned for reproducible runs
     permissions:
-      contents: write   # ALERTS.md 커밋
+      contents: write   # to commit ALERTS.md
 
     steps:
       - name: Checkout
@@ -45,9 +45,9 @@ jobs:
         with:
           python-version: '3.11'
 
-      # 자격이 없으면 여기서 멈추되, 실패로 끝내지 않는다.
-      #   ALERTS.md 에 "무엇이 없어서 못 했는지" 를 적고 커밋한다 —
-      #   폰에서 그 파일만 열면 다음에 뭘 해야 하는지 바로 보인다.
+      # Without credentials, stop here but do not fail.
+      #   Write "what was missing" into ALERTS.md and commit it —
+      #   opening just that file on a phone shows what to do next.
       - name: 자격 확인
         id: creds
         env:
@@ -62,8 +62,8 @@ jobs:
             echo "missing=$MISS" >> "$GITHUB_OUTPUT"
           fi
 
-      # 사업장 노드를 훑는다. shallow 라 값은 안 받고 키만 받는다.
-      #   /version 은 사업장이 아니라 공용 업데이트 채널이므로 뺀다.
+      # List the site nodes. shallow fetches only the keys, not the values.
+      #   /version is the shared update channel, not a site, so it is skipped.
       - name: 사업장 목록
         id: sites
         if: steps.creds.outputs.missing == ''
@@ -93,7 +93,7 @@ jobs:
           SITES: ${{ steps.sites.outputs.list }}
         run: |
           set -euo pipefail
-          # SINCE 가 있으면 기간을 못박는다 - 재실행해도 발표 숫자가 움직이지 않는다.
+          # SINCE pins the start date (DAYS is ignored), so reruns do not slide the window; the end is still the latest data.
           FROM=${SINCE:-$(date -u -d "-${DAYS} days" +%Y%m%d)}
           NOW=$(TZ=Asia/Seoul date '+%Y-%m-%d %H:%M KST')
           {
@@ -136,16 +136,17 @@ jobs:
           fi
 
           for SITE in $SITES; do
-            # orderBy="$key" + startAt 으로 최근 구간만 받는다 (전체를 끌어오지 않는다)
-            # 한계: 숫자만인 사업장 코드는 정수 키로 정렬돼 FROM 보다 작으면 서버 startAt 에서 잘려 빠진다 - 문자 코드는 정수 키 뒤로 정렬돼 전 기간이 내려오고 --from 으로 자른다.
+            # Fetch only the recent range with orderBy="$key" + startAt (not the whole node).
+            # Limit: an all-digit site code sorts as an integer key and, if smaller than FROM, is cut off by the server-side startAt;
+            # a non-numeric code sorts after the integer keys, so its whole history comes down and --from trims it.
             if curl -fsS --get "${DB%/}/$SITE/alerts.json" \
                  --data-urlencode "auth=$KEY" \
                  --data-urlencode 'orderBy="$key"' \
                  --data-urlencode "startAt=\"$FROM\"" \
                  -o "alerts-$SITE.json"; then
 
-              # echo_calib = 기기별 마지막 생존 스탬프(1시간마다 덮어쓰기). 실동률의 분모다.
-              #   기기 수만큼의 작은 노드라 통째로 받는다. 없으면 그 섹션만 빠진다.
+              # echo_calib = each device's last sign-of-life stamp (overwritten hourly). It is the active-rate denominator.
+              #   One small node per device, so it is fetched whole. If it is missing, only that section is dropped.
               ECHO=""
               if curl -fsS --get "${DB%/}/$SITE/echo_calib.json" \
                    --data-urlencode "auth=$KEY" -o "echo-$SITE.json"; then
@@ -154,8 +155,8 @@ jobs:
                 echo "::notice::$SITE echo_calib 없음 — 단말 가동 섹션 생략"
               fi
 
-              # uwb_probe = UWB 실거리 × RSSI 원표본. 개발자 설정 스위치를 켠 세션에만 쌓인다.
-              #   alerts 와 같은 일자 키라 같은 방식으로 기간을 자른다.
+              # uwb_probe = raw UWB distance × RSSI samples, collected only in sessions with the developer settings switch on.
+              #   It is keyed by date like alerts, so the period is cut the same way.
               PROBE=""
               if curl -fsS --get "${DB%/}/$SITE/uwb_probe.json" \
                    --data-urlencode "auth=$KEY" \
@@ -171,7 +172,7 @@ jobs:
                 --label "${SITE^^}" --md ALERTS.md --append --no-ids \
                 --from "$FROM" $ECHO $PROBE
 
-              # hb = 단독 작업자 살아 있음 세션. 통째로 받아 시작 시각으로 기간을 자른다.
+              # hb = lone-worker alive sessions. Fetched whole; the period is cut by session start time.
               if curl -fsS --get "${DB%/}/$SITE/hb.json" \
                    --data-urlencode "auth=$KEY" -o "hb-$SITE.json"; then
                 python3 .github/scripts/hb_digest.py "hb-$SITE.json" --md ALERTS.md --from "$FROM"

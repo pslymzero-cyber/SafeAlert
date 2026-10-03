@@ -9,7 +9,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 
-/** (v1.1.98) 로그인 전 경보 기록 보류 큐. org.json·SharedPreferences 가 필요해 Robolectric. */
+/** Queue that holds alert records until sign-in. Needs org.json and SharedPreferences, hence Robolectric. */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class PendingAlertsTest {

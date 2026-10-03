@@ -12,21 +12,19 @@ import org.robolectric.util.ReflectionHelpers
 import org.robolectric.util.ReflectionHelpers.ClassParameter
 
 /**
- * 02-01 골든 캐스케이드 하네스 — Robolectric 위에서 BleService.processAlert() 를 리플렉션으로
- * 구동하기 위한 최소 배선(D-2B/D-2E). processAlert 가 private 이므로 여기서만 리플렉션을 쓰고
- * app/src/main 에는 테스트 전용 코드를 단 1줄도 두지 않는다(backstop truth #6).
+ * Golden cascade harness: the minimal wiring to drive BleService.processAlert() through reflection on Robolectric.
+ * processAlert is private, so reflection is used only here and app/src/main carries not a single line of test-only code.
  *
- * 시나리오 반복(다기기·다프레임 루프)은 여기 두지 않는다 — 02-02 의 몫. 이 파일은 "한 번의
- * processAlert 호출을 어떻게 구동/관측하는가"만 책임진다.
+ * Scenario repetition (multi-device, multi-frame loops) does not live here; that belongs to the golden tests using it.
+ * This file is only responsible for "how to drive and observe a single processAlert call".
  */
 object BleServiceTestHarness {
 
     /**
-     * onCreate() 를 실행하지 않는 서비스 인스턴스 생성(Assumption A1, get() 만 호출).
-     * DevSettings.prefs 는 lateinit 이라 init() 없이 아무 property 나 건드리면 즉시 예외 —
-     * processAlert 가 DevSettings 를 참조하므로 여기서 반드시 먼저 초기화한다.
-     * 이어서 applyGoldenDevSettings() 로 골든 프로파일을 못박아 모든 골든 테스트가 동일 구성을
-     * 상속한다(Task 3, D-2D).
+     * Creates a service instance without running onCreate() (only get() is called).
+     * DevSettings.prefs is lateinit, so touching any property before init() throws immediately;
+     * processAlert reads DevSettings, so it must be initialized here first.
+     * Then applyGoldenDevSettings() pins the golden profile so every golden test inherits the same configuration.
      */
     fun newService(): BleService {
         DevSettings.init(RuntimeEnvironment.getApplication())
@@ -35,19 +33,19 @@ object BleServiceTestHarness {
     }
 
     /**
-     * 02-01 골든 DevSettings 프로파일(Task 3, D-2D) — processAlert(BleService.kt:1406-2543)가
-     * 참조하는 DevSettings 심볼 32개 중 대입 가능한 30개 var 전부 + beaconGainPercent(간접) 를
-     * 알파벳순으로 명시 대입한다. 상수 참조가 아니라 리터럴 값으로 고정 — 출하 기본값이 나중에
-     * 바뀌어도 이 골든 프로파일은 그대로여서(D-2D "기본값 변경에 면역") 동작이 흔들리지 않는다.
-     * 제외 2개: KALMAN_PRESET_FAST(세팅 아닌 상수), beaconGainDbm(val — beaconGainPercent 로 간접
-     * 세팅). 부작용 4종(vibrationEnabled·soundEnabled·autoSaveAlerts·uwbProbeUploadEnabled)만
-     * false 로 못박아 진동/소리/Firebase 저장(경보·UWB 표본 양쪽)을 차단한다(오버레이는
-     * canDrawOverlays() 기본 false 로 이미 무해화). (v1.1.76) uwbProbeUploadEnabled 추가 —
-     * 켜지면 processAlert 가 FirebaseManager.saveUwbProbe 를 부른다.
+     * Golden DevSettings profile: explicitly assigns, in alphabetical order, all 30 assignable vars among the 32 DevSettings
+     * symbols that processAlert (implemented in AlertStateMachine) reads, plus beaconGainPercent (indirect). Values are
+     * pinned as literals, not constant references, so this golden profile stays the same and behavior does not drift
+     * even if the shipped defaults change later.
+     * Excluded (2): KALMAN_PRESET_FAST (a constant, not a setting) and beaconGainDbm (a val, set indirectly through
+     * beaconGainPercent). The four side-effect flags (vibrationEnabled, soundEnabled, autoSaveAlerts, uwbProbeUploadEnabled)
+     * are pinned to false to block vibration, sound and Firebase writes (both alerts and UWB samples); the overlay is
+     * already harmless because canDrawOverlays() defaults to false. When uwbProbeUploadEnabled is on, processAlert calls
+     * FirebaseManager.saveUwbProbe.
      */
     fun applyGoldenDevSettings() {
-        DevSettings.autoSaveAlerts = false                 // 부작용 무해화 — FirebaseManager.saveAlert 차단
-        DevSettings.beaconGainPercent = 100                // beaconGainDbm(val) 간접 세팅 — 출하 기본(0dB 가산)
+        DevSettings.autoSaveAlerts = false                 // side effect off — blocks FirebaseManager.saveAlert
+        DevSettings.beaconGainPercent = 100                // sets beaconGainDbm (val) indirectly — shipped default (+0 dB)
         DevSettings.coopSlackDb = 8
         DevSettings.debugMode = false
         DevSettings.echoAutoCalibEnabled = true
@@ -55,7 +53,7 @@ object BleServiceTestHarness {
         DevSettings.idleIdleSuppressEnabled = false
         DevSettings.idleIdleSuppressEpjPairsEnabled = true
         DevSettings.imuShadowFusionEnabled = true
-        DevSettings.kalmanPreset = DevSettings.KALMAN_PRESET_NORMAL  // 출하 기본과 동일(일반 창고 환경) 명시 고정
+        DevSettings.kalmanPreset = DevSettings.KALMAN_PRESET_NORMAL  // pinned explicitly, same as the shipped default (normal warehouse)
         DevSettings.logVerbose = false
         DevSettings.reciprocalMaxDisagreeDb = 25
         DevSettings.reciprocalRssiEnabled = true
@@ -65,29 +63,29 @@ object BleServiceTestHarness {
         DevSettings.reverseStableTolDb = 2
         DevSettings.reverseWindowMs = 1200L
         DevSettings.rssiWarning = -78
-        DevSettings.soundEnabled = false                   // 부작용 무해화 — 소리 재생 차단
+        DevSettings.soundEnabled = false                   // side effect off — blocks sound playback
         DevSettings.uwbApproachSpeedKmh = 6.0f
         DevSettings.uwbForkliftDangerMeters = 8.0f
         DevSettings.uwbForkliftWarnMeters = 15.0f
         DevSettings.uwbPairDangerMeters = 3.0f
         DevSettings.uwbPairWarnMeters = 5.0f
         DevSettings.uwbPrimaryAuthorityEnabled = true
-        DevSettings.uwbProbeUploadEnabled = false      // 부작용 무해화 — FirebaseManager.saveUwbProbe 차단
+        DevSettings.uwbProbeUploadEnabled = false      // side effect off — blocks FirebaseManager.saveUwbProbe
         DevSettings.uwbPromoteEnabled = false
         DevSettings.uwbVelPromoteEnabled = false
         DevSettings.uwbVelReleaseEnabled = false
-        DevSettings.vibrationEnabled = false                // 부작용 무해화 — 진동 차단
+        DevSettings.vibrationEnabled = false                // side effect off — blocks vibration
     }
 
     /**
-     * 02-02 시임(D-2E 발견) — KalmanFilter(app/.../02_ble/KalmanFilter.kt:29)는 생성 시
-     * nowMs 기본값(real System.currentTimeMillis())을 그대로 쓴다. BleService 의 두 생성 지점
-     * (getOrPut 콜드스타트 포함) 모두 nowMs 를 넘기지 않으므로, processAlert 자체에 주입하는
-     * 프레임 시각 seam 과 무관하게 실제 벽시계로 dt 를 계산해 kfVel 골든이 실행마다 흔들린다.
-     * production 코드는 그대로 두고, 테스트 하네스에서 매 콜 직후 "이번 콜에서 새로 생성된"
-     * KalmanFilter 인스턴스만 리플렉션으로 nowMs/lastTsMs 를 주입 시각에 정렬한다 — 최소한의
-     * 기계적 시임(STATE.md Blockers 경계) 이며 골든 자체가 나타내는 프레임 간격 산술과 정확히
-     * 일치시킬 뿐, 판정 로직/초기화 경로(injectWarmup 포함)는 손대지 않는다.
+     * KalmanFilter seam: KalmanFilter (app/.../02_ble/KalmanFilter.kt:29) uses its nowMs default (the real
+     * System.currentTimeMillis()) when created. Both creation sites in AlertStateMachine (including the getOrPut cold
+     * start) omit nowMs, so dt would come from the real wall clock regardless of the frame-time seam injected into
+     * processAlert itself, and the kfVel golden would vary from run to run.
+     * Production code is left as is: right after each call the harness uses reflection to align nowMs/lastTsMs of only
+     * the KalmanFilter instance "newly created by this call" with the injected time. It is a minimal mechanical seam that
+     * only matches the frame-interval arithmetic the golden itself encodes; it does not touch decision logic or
+     * initialization paths (including injectWarmup).
      */
     private var liveNowMs: Long = 0L
     private val liveNowMsFn: () -> Long = { liveNowMs }
@@ -97,10 +95,10 @@ object BleServiceTestHarness {
         ReflectionHelpers.getField(service, "kalmanFilters") as MutableMap<String, KalmanFilter>
 
     /**
-     * private fun processAlert(...) 리플렉션 호출 — production 시그니처 순서 그대로
+     * Calls private fun processAlert(...) by reflection, in the production signature's parameter order
      * (deviceId, rssi, remoteState, remoteTurn, payloadPresent, peerEchoRssi, nowMs).
-     * nowMs 는 (02-01 D-2C) seam — 골든 테스트는 프레임 간격을 고정값으로 주입해
-     * System.currentTimeMillis() 의존을 제거한다. 항상 명시 요구(기본값 없음).
+     * nowMs is the seam: golden tests inject fixed frame intervals to remove the dependency on
+     * System.currentTimeMillis(). It is always required (no default).
      */
     fun callProcessAlert(
         service: BleService,
@@ -136,7 +134,7 @@ object BleServiceTestHarness {
         }
     }
 
-    /** private val alertState = mutableMapOf<String, Pair<Int, Long>>() (BleService.kt:384) 판독. */
+    /** Reads BleService's private alertState, an alias of AlertStateMachine.alertState (MutableMap<String, Pair<Int, Long>>). */
     @Suppress("UNCHECKED_CAST")
     private fun alertStateFieldOf(service: BleService): MutableMap<String, Pair<Int, Long>> =
         ReflectionHelpers.getField(service, "alertState") as MutableMap<String, Pair<Int, Long>>
@@ -146,17 +144,17 @@ object BleServiceTestHarness {
     fun alertLevelOf(service: BleService, deviceId: String): Int? =
         alertStateFieldOf(service)[deviceId]?.first
 
-    /** alertState 등록시각(second) 판독 — Smoke 4: nowMs seam 주입값이 그대로 반영되는지 증명용. */
+    /** Reads the alertState entry time (second) — used to prove the injected nowMs seam value is recorded as is. */
     fun alertEntryMsOf(service: BleService, deviceId: String): Long? =
         alertStateFieldOf(service)[deviceId]?.second
 
-    /** shadowOf(Application).broadcastIntents 중 BROADCAST_ALERT 만 순서 보존 필터링. */
+    /** Filters shadowOf(Application).broadcastIntents down to BROADCAST_ALERT, keeping the order. */
     fun alertBroadcasts(): List<Intent> =
         shadowOf(RuntimeEnvironment.getApplication()).broadcastIntents.filter {
             it.action == BleService.BROADCAST_ALERT
         }
 
-    /** 테스트 간 격리용 리셋 — 브로드캐스트 기록 + alertState 를 비운다. */
+    /** Reset for isolation between tests — clears the broadcast log and alertState. */
     fun resetBetweenTests(service: BleService) {
         shadowOf(RuntimeEnvironment.getApplication()).clearBroadcastIntents()
         alertStateFieldOf(service).clear()

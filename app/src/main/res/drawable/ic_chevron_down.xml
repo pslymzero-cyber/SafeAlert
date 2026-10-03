@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- (v1.1.63) 설정 아코디언 섹션 헤더 셰브런 — 접힘=아래, 펼침=rotation 180(위) -->
+<!-- Chevron for settings accordion section headers — collapsed = down, expanded = rotation 180 (up) -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="22dp"
     android:height="22dp"

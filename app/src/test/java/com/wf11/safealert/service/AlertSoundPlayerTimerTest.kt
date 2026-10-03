@@ -11,8 +11,8 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import java.time.Duration
 
-// (v1.1.96 코드검토) WARNING 뒤 1초 안에 DANGER 로 오르면 경고음 해제 타이머가
-//   위험음 반복을 끊던 경쟁의 회귀 테스트.
+// Regression test for a race: escalating to DANGER within 1 s after WARNING must not let the warning tone's
+//   release timer cut off the repeating danger tone.
 @RunWith(RobolectricTestRunner::class)
 class AlertSoundPlayerTimerTest {
     @Before fun setUp() = AlertSoundPlayer.stopSound()

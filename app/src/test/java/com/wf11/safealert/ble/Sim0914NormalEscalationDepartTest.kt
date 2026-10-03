@@ -12,10 +12,11 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.util.ReflectionHelpers
 
 /**
- * [시뮬 2026-09-14 / 에이전트4] 일반 기기(payload 없음, UWB 없음) 승급·이탈 — b2edcec(v1.1.94) vs 16ee857 비교용.
- * 측정값은 `[S0914-A4] <시나리오> key=value` 로 출력한다. ms 는 T0 기준 상대값.
- * 단정은 커밋·주석·기존 골든에 적힌 의도가 있는 항목에만 둔다(기준선에서 실패해도 측정은 남는다).
- * 16ee857 호환: approachLastSeenMap 은 runCatching 리플렉션으로만 확인(graceField).
+ * Simulation: escalation and departure of a normal device (no payload, no UWB).
+ * Measurements print as `[S0914-A4] <scenario> key=value`; ms values are relative to T0.
+ * Assertions cover only items whose intent is documented in commits, comments or existing
+ * goldens (measurements still print when an assertion fails on the baseline).
+ * approachLastSeenMap is probed only through runCatching reflection (graceField), so the test also runs on 16ee857, which lacks it.
  */
 @RunWith(RobolectricTestRunner::class)
 class Sim0914NormalEscalationDepartTest {
@@ -29,7 +30,7 @@ class Sim0914NormalEscalationDepartTest {
         val finalLevel: Int?, val transitions: String,
     )
 
-    /** rssiAt(frame, releaseFrame) — 해제 프레임을 보고 다음 입력을 정하는 적응형 시나리오(k)용. */
+    /** rssiAt(frame, releaseFrame) — for adaptive scenarios (k) that pick the next input from the release frame. */
     private fun run(
         name: String, frames: Int, dtMs: Long = DT, service: BleService = BleServiceTestHarness.newService(),
         startFrame: Int = 0, dbg: IntRange? = null, rssiAt: (Int, Int?) -> Int,
@@ -87,21 +88,21 @@ class Sim0914NormalEscalationDepartTest {
         return out
     }
 
-    // b2. 120ms 저속 + 지터(비접근 프레임 섞임 → 유예 영향) — 기대: WARNING 이 DANGER 보다 먼저 뜬다(누락 없음).
+    // b2. 120ms slow approach + jitter (non-approach frames mixed in → grace applies) — expect: WARNING before DANGER (none missed).
     @Test fun b2_slowJitter120() {
         val t = run("b2_slowJitter120", 420) { f, _ -> minOf(-90 + f / 8, -40) + J6[f % 6] }
         assertNotNull("b2 WARNING 누락", t.firstWarnMs)
         assertEquals("b2 첫 경보는 WARNING", BleConstants.LEVEL_WARNING, t.firstAlertLevel)
     }
 
-    // c. 빠른 접근 4dB/프레임 — v1.1.21 kfVel>=2.0 2프레임 우회(:311).
+    // c. Fast approach, 4dB/frame — the kfVel>=2.0 two-frame Time-Gate bypass (fastApproach in evalTimeGate).
     @Test fun c_fastApproach() {
         val t = run("c_fast4dB", 30) { f, _ -> minOf(-95 + 4 * f, -45) }
         assertNotNull("c 경보 없음", t.firstAlertMs)
         assertTrue("c 빠른접근 프레임 ${t.maxFastFrames} < 2", t.maxFastFrames >= 2)
     }
 
-    // d. 칼만 콜드 첫 감지 — fastContact(v1.1.18/v1.1.22 C) raw 2프레임 확증이면 Time-Gate 우회.
+    // d. First detection with a cold Kalman — fastContact: two confirming raw frames bypass the Time-Gate.
     @Test fun d_coldFirstDetectionClose() {
         val d1 = run("d1_cold-50", 20) { _, _ -> -50 }
         val d2 = run("d2_cold-65", 20) { _, _ -> -65 }
@@ -109,19 +110,20 @@ class Sim0914NormalEscalationDepartTest {
         assertNotNull("d2 WARNING권 첫 감지 경보 없음", d2.firstAlertMs)
     }
 
-    // e. 1프레임 spike — AlertStateMachine Time-Gate KDoc "1프레임 spike 로 위험권에 잠깐 닿은 것만으론 경보하지 않는다".
+    // e. One-frame spike — AlertStateMachine Time-Gate comment: "A one-frame radio spike
+    // that briefly touches the danger zone triggers no sound/screen alert."
     @Test fun e_singleSpike() {
         val e1 = run("e1_spike_base-90", 60, dbg = 18..24) { f, _ -> if (f == 20) -50 else -90 }
         val e2 = run("e2_spike_base-80", 60) { f, _ -> if (f == 20) -50 else -80 }
-        run("e3_spikeGapSpike240ms", 60) { f, _ -> if (f == 20 || f == 22) -50 else -90 }   // 기대 불명 — 측정만
+        run("e3_spikeGapSpike240ms", 60) { f, _ -> if (f == 20 || f == 22) -50 else -90 }   // expectation unclear — measure only
         assertNull("e1 spike 경보", e1.firstAlertMs)
         assertNull("e2 spike 경보", e2.firstAlertMs)
     }
 
-    // g. TTC 조기경보(AlertStateMachine TTC 선발령 분기, `ttc <= TTC_THRESHOLD_SEC`) — 경고권에서 접근 중이고
-    //    TTC 가 임계 이하면 RSSI 가 위험 임계에 닿기 전에 DANGER 를 낸다. 실측(2026-10-02): g1 WARNING 1200ms →
-    //    DANGER 1920ms(rssi -66), g2 WARNING 3120ms → DANGER 5520ms(rssi -67), 위험 임계 -65. 1초 간격 g3(DANGER -62)은
-    //    조기 발령이 아니라 뺐다.
+    // g. TTC early alert (AlertStateMachine TTC pre-alert branch, `ttc <= TTC_THRESHOLD_SEC`) — while approaching inside the
+    //    warning zone with TTC at or below the threshold, DANGER fires before RSSI reaches the danger threshold. Measured:
+    //    g1 WARNING 1200ms → DANGER 1920ms (rssi -66), g2 WARNING 3120ms → DANGER 5520ms (rssi -67); danger threshold -65.
+    //    A 1 s-interval variant (g3, DANGER at -62) is not included because its DANGER is not early.
     @Test fun g_ttcEarlyDanger() {
         val g1 = run("g1_ttc_1.5dBps120", 50) { f, _ -> minOf(-90 + (f * 3) / 2, -45) }
         val g2 = run("g2_ttc_0.5dB120", 140) { f, _ -> minOf(-90 + f / 2, -45) }
@@ -134,14 +136,14 @@ class Sim0914NormalEscalationDepartTest {
         }
     }
 
-    // i. 경계 RSSI 흔들림 — v1.1.56 플래핑 억제, PassByStop reAlerts=0.
+    // i. RSSI wobble at the boundary — flapping suppression (as in PassByStop: reAlerts=0).
     @Test fun i_boundaryWobble() {
         val w = intArrayOf(-73, -78, -74, -77, -72, -79, -75, -76)
         val t = run("i_wobble-75_120", 270) { f, _ -> if (f <= 16) -90 + f else w[f % 8] }
         assertEquals("i WARNING↔해제 플래핑", 0, t.reAlerts)
     }
 
-    // j. 근접 정지 — PassByStop s1_hoverAboveWarn(release=-1, finalLevel=1).
+    // j. Stopping close by — as in PassByStop s1_hoverAboveWarn (release=-1, finalLevel=1).
     @Test fun j_stopClose() {
         val hover = intArrayOf(-71, -74, -73, -76, -72, -75, -73, -74)
         val j1 = run("j1_hover1000", 100, dtMs = 1000L) { i, _ ->
@@ -153,7 +155,8 @@ class Sim0914NormalEscalationDepartTest {
         assertNull("j2 정지 중 해제", j2.releaseMs)
     }
 
-    // k. 해제 직후 재접근 — 쿨다운(WARNING 3000/DANGER 2000, 이탈 ×2), DEPARTING 재진입 5000ms(:186), vel>1.5 속도 게이트.
+    // k. Re-approach right after release — cooldown (WARNING 3000/DANGER 2000, ×2 while departing),
+    // DEPARTING re-entry 5000ms (DEPARTING_REENTRY_COOLDOWN_MS), vel>1.5 velocity gate.
     @Test fun k_reApproachAfterRelease() {
         fun seq(step: Int): (Int, Int?) -> Int = { f, rel ->
             when {

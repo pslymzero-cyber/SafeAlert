@@ -12,35 +12,36 @@ import java.util.Random
 import kotlin.math.roundToInt
 
 /**
- * (v1.1.79 검증) 세이프존 상태 머신 시뮬레이션.
+ * Safe zone state machine simulation.
  *
- * 과거 시뮬은 Python 재구현 모델이었다 — 재구현이 실제 Kotlin 과 갈라지면 시뮬은 자기 모델만
- * 검증하고 앱 결함은 그대로 통과시킨다. 그래서 이 테스트는 3단으로 짠다.
- *   1) 실제 BleService.onZoneBeaconSignal / reevaluateZones 를 리플렉션으로 직접 구동한다.
- *   2) 미러가 실제 코드와 표본 단위로 완전 일치하는지 교차검증한다(불일치 = 즉시 실패).
- *   3) 소스의 상수·데드밴드 분기를 파일에서 읽어 assert — 본체가 바뀌면 미러가 낡았다고 여기서 터진다.
+ * A simulation built on a re-implemented model (such as a Python model) only verifies its own model once the
+ * re-implementation drifts from the real Kotlin, and lets app defects through. So this test has three layers.
+ *   1) Drives the real BleService.onZoneBeaconSignal / reevaluateZones directly via reflection.
+ *   2) Cross-checks that the mirror matches the real code exactly, sample by sample (mismatch = immediate failure).
+ *   3) Reads the constants and the dead-band branch from the source file and asserts them
+ *   — if the main code changes, this fails and flags the mirror as stale.
  *
- * 시간 제어: 진입 판정은 시간 무관(표본 카운트만)이고, 시간 의존은 reevaluateZones 뿐이다.
- * zoneLastSeenMap 을 리플렉션으로 과거로 밀면 실시간 대기 없이 GRACE·STALE 를 재현할 수 있다.
+ * Timing: the entry decision is time-independent (sample count only); only reevaluateZones depends on time.
+ * Pushing zoneLastSeenMap into the past via reflection reproduces GRACE and STALE without waiting in real time.
  */
 @RunWith(RobolectricTestRunner::class)
 class ZoneStateMachineSimTest {
 
     private companion object {
         const val KEY = "AA:BB:CC:DD:EE:FF"
-        const val ENTER = -80            // 존 비콘 기본 진입 임계(dBm)
-        const val MIN_SAMPLES = 1        // v1.1.82: 3 -> 1(신호 받는 동안 안전 모드)
+        const val ENTER = -80            // default zone-beacon entry threshold (dBm)
+        const val MIN_SAMPLES = 1        // one sample: safe mode holds while the signal is received
         const val HYST = 5
-        const val EXIT_SAMPLES = 3       // v1.1.83: 이탈 디바운스(단발 페이드로 억제가 끊기던 증상)
-        const val GRACE_MS = 10_000L     // v1.1.82: 3s -> 10s(느린 비콘 표본 사이 유지)
-        const val NEW_STALE_MS = 30_000L // v1.1.79 현재
+        const val EXIT_SAMPLES = 3       // exit debounce (a single fade must not break suppression)
+        const val GRACE_MS = 10_000L     // outlasts the gap between slow beacon samples
+        const val NEW_STALE_MS = 30_000L
         const val XCHECK_SEEDS = 10
         const val MC_SEEDS = 200
     }
 
     private val sideFx = ArrayList<Throwable>()
 
-    // ── 시나리오 정의 ────────────────────────────────────────────────────────
+    // ── Scenario definitions ─────────────────────────────────────────────────
     private data class Scn(
         val name: String, val mean: Double, val sigma: Double,
         val stepMs: Long, val n: Int, val gapEvery: Int = 0, val gapMs: Long = 0L
@@ -55,7 +56,9 @@ class ZoneStateMachineSimTest {
         Scn("F 스캔공백(-76, s5, 5표본마다 45s)", -76.0, 5.0, 1_000L, 40, gapEvery = 5, gapMs = 45_000L)
     )
 
-    /** (직전 표본 이후 경과ms, rssi) 프레임 열 — 순수함수라 실제/미러가 같은 입력을 본다. */
+    /**
+     * Frame sequence of (ms since the previous sample, rssi) — a pure function, so the real code and the mirror see the same input.
+     */
     private fun frames(s: Scn, seed: Long): List<Pair<Long, Int>> {
         val r = Random(seed)
         return (0 until s.n).map { i ->
@@ -66,7 +69,7 @@ class ZoneStateMachineSimTest {
 
     private data class Res(val enterAt: Int, val finalInside: Boolean, val trace: List<Pair<Int, Boolean>>)
 
-    // ── 1) 실제 BleService 구동 ──────────────────────────────────────────────
+    // ── 1) Drive the real BleService ─────────────────────────────────────────
     @Suppress("UNCHECKED_CAST")
     private fun zoneMap(svc: BleService, name: String): MutableMap<String, Any?> =
         ReflectionHelpers.getField<Any>(svc, name) as MutableMap<String, Any?>
@@ -80,7 +83,10 @@ class ZoneStateMachineSimTest {
         runCatching { ReflectionHelpers.setField(svc, "myZoneInside", false) }.onFailure { sideFx += it }
     }
 
-    /** 판정 맵 갱신은 함수 앞머리에서 끝난다 — 꼬리의 전파(오버레이/알림/광고) 예외는 수집만 하고 삼킨다. */
+    /**
+     * The decision maps are updated at the start of onZoneBeaconSignal; exceptions from the propagation
+     * at its tail (overlay/notification/advertising) are only collected and swallowed.
+     */
     private fun signal(svc: BleService, rssi: Int) {
         runCatching {
             ReflectionHelpers.callInstanceMethod<Any?>(
@@ -92,7 +98,7 @@ class ZoneStateMachineSimTest {
         }.onFailure { sideFx += it }
     }
 
-    /** lastSeen 을 dtMs 만큼 과거로 밀고 폴링 1회 — GRACE/STALE 는 멱등이라 구간당 1회로 등가. */
+    /** Push lastSeen dtMs into the past and poll once — GRACE/STALE are idempotent, so one poll per interval is equivalent. */
     private fun elapse(svc: BleService, dtMs: Long) {
         val ls = zoneMap(svc, "zoneLastSeenMap")
         if (ls.isEmpty()) return
@@ -116,7 +122,7 @@ class ZoneStateMachineSimTest {
         return Res(enterAt, insideOf(svc), trace)
     }
 
-    // ── 2) 미러 (실제 코드와 표본 단위로 교차검증) ───────────────────────────
+    // ── 2) Mirror (cross-checked per sample against the real code) ───────────
     private class Mirror(val staleMs: Long) {
         var sample = 0
         var inside: Boolean? = null
@@ -160,7 +166,7 @@ class ZoneStateMachineSimTest {
         return Res(enterAt, m.inside == true, trace)
     }
 
-    // ── 테스트 ───────────────────────────────────────────────────────────────
+    // ── Tests ────────────────────────────────────────────────────────────────
 
     @Test
     fun `01 교차검증 - 미러가 실제 BleService 와 표본단위로 일치한다`() {
@@ -186,13 +192,13 @@ class ZoneStateMachineSimTest {
 
     @Test
     fun `02 실제 코드 - 존 밖 신호로는 억제가 지속되지 않는다`() {
-        // v1.1.82 로 진입 표본이 1이 되면서 '절대 미진입'은 더 이상 성립하지 않는다 —
-        // -92 평균/s5 는 표본당 0.8% 로 임계(-80)를 스치고, 그 1표본은 진입을 만든다.
-        // v1.1.83 이탈 디바운스가 붙으면서 그 스파이크 억제는 즉시가 아니라 이탈선 아래
-        // EXIT_SAMPLES 표본을 받아야 풀린다. 그래서 안전 속성을 기계적으로 정확한 하나로 좁힌다:
-        //   억제가 유지되는 동안 이탈선(-85) 아래 표본이 EXIT_SAMPLES 개 연속될 수 없다.
-        // 데드밴드(-85..-80) 체류로 억제가 이어지는 것은 히스테리시스의 의도된 동작이므로
-        // 그쪽은 금지하지 않고 체류 비율 상한(스파이크 기여분)으로만 묶는다.
+        // With entry on a single sample (MIN_SAMPLES = 1), "never enters" no longer holds:
+        // mean -92 / s5 crosses the -80 threshold on about 0.8% of samples, and that one sample causes entry.
+        // With the exit debounce, suppression from such a spike is released not at once but only after
+        // EXIT_SAMPLES samples below the exit line. So the safety property is narrowed to one mechanically exact rule:
+        //   while suppression holds, there cannot be EXIT_SAMPLES consecutive samples below the exit line (-85).
+        // Suppression that continues while the signal dwells in the dead band (-85..-80) is intended hysteresis, so
+        // it is not forbidden; it is only bounded by a cap on the dwell ratio (the spike contribution).
         val svc = BleServiceTestHarness.newService()
         val out = scenarios.first { it.name.startsWith("D") }
         var inSamples = 0; var total = 0; var worstRun = 0; var spikes = 0
@@ -234,7 +240,8 @@ class ZoneStateMachineSimTest {
         has("""ZONE_EXIT_SAMPLES\s*=\s*${EXIT_SAMPLES}\b""", "ZONE_EXIT_SAMPLES=${EXIT_SAMPLES}")
         has("""ZONE_LOST_GRACE_MS\s*=\s*10_000L""", "ZONE_LOST_GRACE_MS=10_000L")
         has("""ZONE_SIGNAL_STALE_MS\s*=\s*30_000L""", "ZONE_SIGNAL_STALE_MS=30_000L")
-        // 데드밴드에서 표본 카운터를 리셋하면 경계 요동 구간에서 3표본이 영원히 모이지 않는다.
+        // Resetting the sample counter in the dead band would keep 3 samples (EXIT_SAMPLES)
+        // from ever accumulating while the signal fluctuates around the boundary.
         has("""else\s*->\s*Unit""", "데드밴드 분기가 else -> Unit 이어야 한다")
         assertTrue(
             "데드밴드에서 zoneSampleMap 리셋이 되살아났다",

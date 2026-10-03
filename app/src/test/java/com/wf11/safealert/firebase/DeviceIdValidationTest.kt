@@ -6,7 +6,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * FirebaseManager.isUsableAdvertisedId: an advertised id is usable when it is a PIT id (TYPE-NN, v1.1.90 SA-1)
+ * FirebaseManager.isUsableAdvertisedId: an advertised id is usable when it is a PIT id (TYPE-NN)
  * or an auto-issued SA-xxxxxxxx, after trim and uppercase (a stored value may arrive lowercase or padded).
  */
 class DeviceIdValidationTest {

@@ -5,7 +5,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** LoneWorkerHeartbeat: alive-session record while lone worker watch is on (v1.2.2). Record only, no mail. */
+/** LoneWorkerHeartbeat: alive-session record while the lone-worker watch is on. Record only, no mail. */
 class LoneWorkerHeartbeatTest {
 
     private class W(val path: String, val key: String, val fields: Map<String, Any>, val done: (Boolean) -> Unit)

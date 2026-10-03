@@ -7,32 +7,32 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * v1.1.85 (echo_calib 전역 경로 이동) · v1.1.86 (구·신 경로 중복 제거) 검증.
- * downloadEchoCalibAll 이 만들어낼 노드 리스트를 손으로 재현해
- * mergeEchoNodes → aggregateEchoPriors 로 흘린다(프로덕션과 같은 순서).
+ * Checks the global echo_calib path and de-duplication of old/new path nodes.
+ * Rebuilds by hand the node list downloadEchoCalibAll would produce and
+ * feeds it through mergeEchoNodes → aggregateEchoPriors (same order as production).
  */
 class EchoCalibGlobalPathSimTest {
 
-    private val MY = "SM-A536N"      // 내 모델
-    private val PEER = "SM-G991N"    // 상대 모델
+    private val MY = "SM-A536N"      // my model
+    private val PEER = "SM-G991N"    // peer model
     private val IQR_GATE = 6.0
-    private val CAP = 3000            // (v1.1.97) 표본 비중 상한 = echoCalMinTicks 기본값. 아래 S1~S4 의 n(100)은 상한 아래
+    private val CAP = 3000            // Per-sample weight cap = echoCalMinTicks default. n (100) in S1~S4 below is under the cap
 
     private fun node(id: String, model: String, vararg peers: Pair<String, EchoPeerStat>) =
         EchoCalibNode(id, model, peers.toMap())
 
     private fun stat(m: Double, n: Int, iqr: Double = 1.0) = EchoPeerStat(m, n, iqr)
 
-    /** S1. 전출 기기 — v1.1.84(사업장별 분리) 에서는 버려지고, v1.1.85(전역) 에서는 살아난다. */
+    /** S1. Device moved to another site — dropped under a per-site split, kept with the global pool. */
     @Test
     fun s1_전출기기_피어행이_전역풀에서_살아난다() {
         val myNode = node("A", MY, "B" to stat(3.0, 100))
 
-        // v1.1.84: 내 사업장 노드만 보인다 — B 는 옛 사업장에 남아 modelById[B] == null
+        // Per-site split: only my site's nodes are visible — B stays at its old site, so modelById[B] == null
         val v84 = FirebaseManager.aggregateEchoPriors(listOf(myNode), MY, IQR_GATE, CAP)
         assertEquals("v1.1.84 에서는 피어 모델 미상으로 통째 폐기", 0, v84.size)
 
-        // v1.1.85: 전역 풀이라 B 노드가 같이 보인다
+        // Global pool: B's node is visible too
         val v85 = FirebaseManager.aggregateEchoPriors(
             listOf(myNode, node("B", PEER)), MY, IQR_GATE, CAP)
         assertEquals(1, v85.size)
@@ -41,13 +41,14 @@ class EchoCalibGlobalPathSimTest {
     }
 
     /**
-     * S2b. 롤아웃 중 신구 혼재 — 같은 기기가 구 경로(폴백 파싱)와 신 경로 양쪽에 존재한다. 구 경로 노드는
-     *  업그레이드해도 삭제되지 않으므로, 하나로 접히지 않으면 표본이 두 번 세어지고 옛 측정값이 신규 값을 끌어당긴다.
+     * S2b. Old and new paths mixed during rollout — the same device exists on both the old path (fallback parsing) and the new path.
+     *  Old-path nodes are not deleted on upgrade, so unless they fold into one,
+     *  samples are counted twice and the old measurement drags the new value.
      */
     @Test
     fun s2b_구경로_스테일값이_현재값을_오염시키지_않는다() {
-        val 구경로_A = node("A", MY, "B" to stat(9.0, 100))   // 옛 측정 (오차 큰 시절)
-        val 신경로_A = node("A", MY, "B" to stat(3.0, 100))   // 현재 측정
+        val 구경로_A = node("A", MY, "B" to stat(9.0, 100))   // old measurement (from when the error was large)
+        val 신경로_A = node("A", MY, "B" to stat(3.0, 100))   // current measurement
         val B = node("B", PEER)
 
         val merged = FirebaseManager.mergeEchoNodes(listOf(구경로_A), listOf(신경로_A, B))
@@ -57,7 +58,7 @@ class EchoCalibGlobalPathSimTest {
         assertEquals("같은 기기 표본이 두 번 세어지면 안 된다", 100, r[PEER]!!.second)
     }
 
-    /** S2c. 구 경로에만 있는 기기(아직 업그레이드 안 한 단말)는 그대로 살아남는다. */
+    /** S2c. A device only on the old path (a handset not yet upgraded) survives as is. */
     @Test
     fun s2c_구경로_단독기기는_보존된다() {
         val 구경로_A = node("A", MY, "B" to stat(3.0, 100))
@@ -67,7 +68,9 @@ class EchoCalibGlobalPathSimTest {
         assertEquals(3.0, r[PEER]!!.first, 1e-9)
     }
 
-    /** S3. 반대칭 fold — 상대 노드가 나를 잰 표본은 부호가 뒤집혀 상쇄된다(회귀 확인). */
+    /**
+     * S3. Antisymmetric fold — samples the peer node took of me are sign-flipped, offsetting the antisymmetry (regression check).
+     */
     @Test
     fun s3_양방향_fold_상쇄() {
         val a = node("A", MY, "B" to stat(3.0, 100))
@@ -77,7 +80,7 @@ class EchoCalibGlobalPathSimTest {
         assertEquals(200, r[PEER]!!.second)
     }
 
-    /** S4. 산포 게이트 — iqr 초과 표본은 전역 이동 후에도 여전히 걸러진다. */
+    /** S4. Spread gate — samples over the iqr gate are still filtered out with the global path. */
     @Test
     fun s4_산포게이트_유지() {
         val a = node("A", MY, "B" to stat(3.0, 100, iqr = 99.0))
@@ -85,9 +88,11 @@ class EchoCalibGlobalPathSimTest {
         assertTrue("노이즈 표본은 제외", r.isEmpty())
     }
 
-    /** S5. (v1.1.97) n=500000 극단값 노드 1개 + 정상 노드 3개(n=상한).
-     *  n 가중 평균이면 (2×9000 + 40×500000)/509000 ≈ 39.3dB 로 극단값이 결과를 가져간다.
-     *  비중 상한 + 가중 중앙값이면 극단값 1개는 결과를 움직이지 못한다. */
+    /**
+     * S5. One extreme node with n=500000 + 3 normal nodes (n=cap).
+     *  With an n-weighted mean, (2×9000 + 40×500000)/509000 ≈ 39.3dB — the extreme value takes over the result.
+     *  With the weight cap + weighted median, one extreme value cannot move the result.
+     */
     @Test
     fun s5_극단값_노드_하나는_결과를_끌지_못한다() {
         val normal = (1..3).map { node("A$it", MY, "B" to stat(2.0, CAP)) }
@@ -98,7 +103,7 @@ class EchoCalibGlobalPathSimTest {
         assertEquals("Σn 은 같은 비중의 합(게이트 3000 통과)", 4 * CAP, n)
     }
 
-    /** S7. (v1.1.97) 비중이 같은 표본 2개면 두 값의 가운데 — 평균과 같다. */
+    /** S7. Two samples of equal weight give the midpoint of the two values — same as the mean. */
     @Test
     fun s7_표본_2개면_두_값의_가운데() {
         val r = FirebaseManager.aggregateEchoPriors(listOf(
@@ -108,7 +113,9 @@ class EchoCalibGlobalPathSimTest {
         assertEquals(3.0, r[PEER]!!.first, 1e-9)
     }
 
-    /** S6. (v1.1.97) 상한 = 게이트면 게이트 통과 여부는 그대로 — 큰 n 노드 1개도 Σn=상한으로 통과, 작은 n 은 그대로. */
+    /**
+     * S6. With cap = gate, passing the gate is unchanged — a single big-n node still passes with Σn=cap, and a small n stays as is.
+     */
     @Test
     fun s6_상한과_게이트가_같으면_통과_여부가_바뀌지_않는다() {
         val big = FirebaseManager.aggregateEchoPriors(

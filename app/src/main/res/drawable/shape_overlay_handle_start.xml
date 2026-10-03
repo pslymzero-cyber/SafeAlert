@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- (v1.1.70) 접힘 상태의 얇은 핸들 — 화면 왼쪽 가장자리에 붙는 경우. -->
+<!-- Thin handle for the collapsed state — when docked to the left screen edge. -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="rectangle">
     <solid android:color="@color/sa_overlay" />

@@ -8,7 +8,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * LoneWorkerLogic contract tests (v1.1.99). The clock is an injected elapsed ms; no Android dependency.
+ * LoneWorkerLogic contract tests. The clock is an injected elapsed ms; no Android dependency.
  */
 class LoneWorkerLogicTest {
 
@@ -290,7 +290,6 @@ class LoneWorkerLogicTest {
         assertNull(l.beaconHint(100_000))
     }
 
-    // v1.1.99 review fixes
 
     @Test fun new_server_key_is_a_new_audible_episode() {
         val l = carriedLogic()

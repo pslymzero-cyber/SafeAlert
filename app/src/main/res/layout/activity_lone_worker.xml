@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 단독 작업자 확인·구조 요청 화면. 위쪽(이유 칩·큰 제목·남은 시간 링·본문)은 스크롤되고, 버튼은 늘 화면 맨 아래에 있다(가로·작은 화면에서도 보이게).
-     바탕·글자·버튼 색은 화면이 상태마다 칠하고, 링은 확인 창(노랑)에서만 보여서 색을 여기 고정한다. -->
+<!-- Lone-worker check / SOS screen. The upper part (reason chip, big title, countdown ring, body) scrolls; the
+     buttons always sit at the very bottom (so they stay visible in landscape and on small screens).
+     The screen paints the background, text and button colors per state; the ring only
+     appears on the check screen (yellow), so its colors are fixed here. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:id="@+id/lw_root"

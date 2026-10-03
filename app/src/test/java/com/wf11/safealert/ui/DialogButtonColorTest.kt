@@ -12,8 +12,8 @@ import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 
 /**
- * (v1.1.93) 앱 테마의 AlertDialog 버튼 글자가 어두운 바탕에 묻히지 않는지 검증.
- * 업데이트 창·변경 사항·권한 안내·비콘 관리 창이 모두 이 경로(android.app.AlertDialog)를 쓴다.
+ * Checks that AlertDialog button text in the app theme does not get lost against the dark background.
+ * The update, changelog, permission guide and beacon manager dialogs all go through this path (android.app.AlertDialog).
  */
 @RunWith(RobolectricTestRunner::class)
 class DialogButtonColorTest {

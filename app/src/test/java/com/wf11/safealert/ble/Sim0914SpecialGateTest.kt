@@ -10,10 +10,12 @@ import org.robolectric.shadows.ShadowLog
 import org.robolectric.util.ReflectionHelpers
 
 /**
- * 2026-09-14 검증 에이전트1 — 특수경보(후진·하역) 첫 감지 게이트 시뮬레이션.
- * 측정은 "[S0914-A1] 시나리오 key=value" 로 출력, 단언은 테스트 끝에서 모아서 한다(기준 트리 16ee857 에서도 측정값이 나오도록).
- * 16ee857 에 없는 심볼(approachLastSeenMap 등)은 runCatching 리플렉션으로만 접근한다.
- * 기대 근거: b2edcec 커밋 메시지 + AlertStateMachine.kt 특수경보 블록 주석(v1.1.94), evalTimeGate 주석(v1.1.21), SpecialAlertTimeGateTest.
+ * Simulation of the first-detection gate for special alerts (reverse/loading).
+ * Measurements print as "[S0914-A1] <scenario> key=value"; assertions are collected and made at
+ * the end of each test (so measurements still print on the baseline tree 16ee857).
+ * Symbols missing in 16ee857 (approachLastSeenMap etc.) are accessed only through runCatching reflection.
+ * Expectations are based on: the b2edcec commit message, the special-alert block comment and
+ * the evalTimeGate comment in AlertStateMachine.kt, and SpecialAlertTimeGateTest.
  */
 @RunWith(RobolectricTestRunner::class)
 class Sim0914SpecialGateTest {
@@ -84,7 +86,10 @@ class Sim0914SpecialGateTest {
         tr.maxByOrNull { it.rssi }!!,
     )
 
-    /** 발령 프레임에서 어떤 확인 경로가 성립했는지 사후 추정(게이트 호출과 발령은 같은 processAlert 호출 — 확인→발령 지연은 구조상 0ms). */
+    /**
+     * Infers after the fact which confirmation path held on the firing frame (the gate call and the firing
+     * happen in the same processAlert call, so the confirm→fire delay is structurally 0ms).
+     */
     private fun route(fr: Fr): String = when {
         fr.before != null -> "already-alerted"
         (fr.ds ?: 0) >= 2 || (fr.ws ?: 0) >= 2 -> "2frame"
@@ -103,12 +108,12 @@ class Sim0914SpecialGateTest {
         "weakThenStep" to { f -> if (f < 10) -90 else -45 },
     )
 
-    // ─────────────────────────────── a. 첫 감지 후진 — e2e 5종 ───────────────────────────────
+    // ─────────────────────────────── a. Reverse on first detection — 5 e2e sequences ───────────────────────────────
     @Test
     fun a_e2e_firstDetectionReverse() {
         val fails = mutableListOf<String>()
         for ((name, seq) in seqs) {
-            val cand = sum(runSeq(REV, seq, 150, waive = true))          // 매 프레임 면제권 = 후보 성립 즉시 발령 시각
+            val cand = sum(runSeq(REV, seq, 150, waive = true))          // waiver on every frame = fires as soon as the candidate holds
             val trFire = runSeq(REV, seq, 150)
             val fire = sum(trFire)
             val idle = sum(runSeq(IDLE, seq, 150))
@@ -124,14 +129,14 @@ class Sim0914SpecialGateTest {
         assertTrue(fails.joinToString(" | "), fails.isEmpty())
     }
 
-    // ─────────────────────────── a. 경로별 분리(상태 수술) ───────────────────────────
+    // ─────────────────────────── a. Per-path isolation (state surgery) ───────────────────────────
     private fun prepStep(s: BleService): Long {
         var t = t0
         repeat(12) { step(s, it, t, -45, IDLE); t += dt }
         return t
     }
 
-    /** -62 → -50 완만 접근(1dB/5프레임 ≈ 1.67dBm/s, fastApproach 2.0 미만) */
+    /** -62 → -50 gentle approach (1dB per 5 frames ≈ 1.67dBm/s, below the fastApproach 2.0) */
     private fun prepRamp(s: BleService): Long {
         var t = t0
         for (f in 0 until 60) { step(s, f, t, -62 + f / 5, IDLE); t += dt }
@@ -175,11 +180,13 @@ class Sim0914SpecialGateTest {
         assertTrue(fails.joinToString(" | "), fails.isEmpty())
     }
 
-    // ─────────────────────────── b. 이탈 중 후진 프레임 ───────────────────────────
+    // ─────────────────────────── b. Reverse frames while departing ───────────────────────────
     @Test
     fun b_departingReverseNotPromoted() {
         val fails = mutableListOf<String>()
-        // departing 판정(AlertStateMachine.kt:1006) = kfVel < -0.5 || trackingStateMap==DEPARTING(직전 프레임 값 — 1036 에서 갱신)
+        // departing check (special-alert block in AlertStateMachine.kt) = kfVel < -0.5 ||
+        // trackingStateMap==DEPARTING (previous frame's value — updateTrackingState runs later in the
+        // frame)
         fun held(trkBefore: String?, fr: Fr) = trkBefore == "DEPARTING" || (fr.vel ?: 0.0) < -0.5
         fun judge(tag: String, s: BleService, trkBefore: String?, fr: Fr) {
             val h = held(trkBefore, fr)
@@ -195,7 +202,8 @@ class Sim0914SpecialGateTest {
             af<MutableMap<String, Any>>(s, "trackingStateMap")!![id] = dep
             af<MutableMap<String, Long>>(s, "departingStartMap")!![id] = t
         }
-        // b1 수술: 12@-45 IDLE(ds≥2 자연값) → 경보 기록만 제거 + trackingState=DEPARTING → -45 REV. ctrl 은 DEPARTING 없이(= a-route 2frame)
+        // b1 surgery: 12@-45 IDLE (ds≥2 occurs naturally) → remove the alert record and approach-streak state, keep contact
+        // streaks + trackingState=DEPARTING → -45 REV. The control runs without DEPARTING (= a-route 2frame)
         for (dep in listOf(true, false)) {
             val s = H.newService()
             val t = prepStep(s)
@@ -206,7 +214,8 @@ class Sim0914SpecialGateTest {
             if (dep) judge("b-surgeryDep", s, trkBefore, fr)
             else out("b-surgeryCtrl tree=${tree(s)} promoted=${fr.before == null && fr.label} ${fr.fmt()}")
         }
-        // b2 자연: IDLE 통과(-60→-40 상승, 30프레임 유지, 0.5dB/프레임 하강) → 이탈정리(1468-1495)로 미등록+DEPARTING 이 되면 곧바로 REV
+        // b2 natural: pass by in IDLE (rise -60→-40, hold 30 frames, fall 0.5dB/frame) → once departure cleanup (SAFE
+        // handling, AlertStateMachine.kt 1468-1495) leaves it unregistered + DEPARTING, send REV right away
         run {
             val s = H.newService()
             var t = t0; var f = 0
@@ -231,7 +240,8 @@ class Sim0914SpecialGateTest {
                 trkBefore = fr.trk
             }
         }
-        // b3 운동학: 긴 유지 후 0.5dB/프레임 하강, departing(vel<-0.5 또는 DEPARTING)이 선 첫 프레임에서 경보 기록만 제거 → 같은 RSSI-1 REV
+        // b3 kinematic: after a long hold, fall 0.5dB/frame; on the first frame where departing holds
+        // (vel<-0.5 or DEPARTING), remove only the alert record → REV at that RSSI-1
         run {
             val s = H.newService()
             var t = t0; var f = 0
@@ -252,7 +262,7 @@ class Sim0914SpecialGateTest {
                 judge("b-kinematic", s, pre.trk, fr)
             }
         }
-        // e2e(측정만): 콜드 스타트에서 -40 부터 1dB/프레임 멀어지는 후진 기기
+        // e2e (measure only): a reversing device moving away 1dB/frame from -40, starting cold
         run {
             val tr = runSeq(REV, { f -> -40 - f }, 25)
             val sm = sum(tr)
@@ -262,7 +272,7 @@ class Sim0914SpecialGateTest {
         assertTrue(fails.joinToString(" | "), fails.isEmpty())
     }
 
-    // ─────────────────────────── d. 상대 IN_ZONE 선언 ───────────────────────────
+    // ─────────────────────────── d. Peer declares IN_ZONE ───────────────────────────
     @Test
     fun d_peerInZoneBlocksSpecial() {
         val fails = mutableListOf<String>()
@@ -285,7 +295,7 @@ class Sim0914SpecialGateTest {
         assertTrue(fails.joinToString(" | "), fails.isEmpty())
     }
 
-    // ─────────────────────────── e. 회귀: TTC 선발령·쿨다운 재알람 ───────────────────────────
+    // ─────────────────────────── e. Regression: TTC pre-alert and cooldown re-alarm ───────────────────────────
     @Test
     fun e_ttcAndCooldownNotDelayed() {
         val fails = mutableListOf<String>()
@@ -305,7 +315,7 @@ class Sim0914SpecialGateTest {
             if (it.danger != null && (rt.danger == null || rt.danger.t > it.danger.t))
                 fails += "$nm: 후진 DANGER(${rt.danger?.t}) 가 IDLE(${it.danger.t}) 보다 늦음"
         }
-        // 쿨다운 재알람: 정지 거리 유지(8.4s) — 경보 브로드캐스트 시각열
+        // Cooldown re-alarm: hold a fixed distance (8.4s) — sequence of alert broadcast times
         for (rssi in listOf(-78, -45)) {
             val bcs = mutableMapOf<Int, List<Long>>()
             for (st in listOf(REV, IDLE)) {
@@ -325,7 +335,7 @@ class Sim0914SpecialGateTest {
         assertTrue(fails.joinToString(" | "), fails.isEmpty())
     }
 
-    // ─────────────────────────── f. 안전: 빠르게 접근하는 후진 지게차 첫 감지 vs CPA ───────────────────────────
+    // ─────────────────────────── f. Safety: first detection of a fast-approaching reversing forklift vs CPA ───────────────────────────
     @Test
     fun f_fastReverseAlertsBeforeCpa() {
         val fails = mutableListOf<String>()

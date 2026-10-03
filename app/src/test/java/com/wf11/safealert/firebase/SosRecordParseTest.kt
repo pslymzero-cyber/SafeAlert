@@ -7,7 +7,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** v1.1.99 SOS record parsing at the RTDB snapshot boundary (map input, no Firebase needed). */
+/** SOS record parsing at the RTDB snapshot boundary (map input, no Firebase needed). */
 class SosRecordParseTest {
 
     private fun valid(): MutableMap<String, Any?> = mutableMapOf(

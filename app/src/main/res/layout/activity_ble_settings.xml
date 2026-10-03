@@ -1,8 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- (v1.1.63) BLE 감지 설정 — 아코디언 3섹션([경보 기본] 기본 펼침 · [비콘]·[UWB] 접힘).
-     공통 스타일 SA.* (values/themes.xml). 섹션 헤더 탭=펼침/접힘 토글, 헤더 요약값은 BleSettingsActivity.updateSectionSummaries() 가 갱신.
-     이동: 경보 볼륨(개발자→여기, 50~100%) · 에코편차 자동보정 스위치+하위 항목(개발자→여기, 행 탭=하위 펼침) /
-           협력 2종(상호 RSSI·완화)·UWB 승격 3종 → 개발자 설정. EPJ↔EPJ 오프셋은 [v1.1.60] gone 그대로 보존. -->
+<!-- BLE detection settings — 3 accordion sections ([경보 기본] expanded by default; [비콘] and [UWB] collapsed).
+     Shared SA.* styles (values/themes.xml). Tapping a section header toggles it;
+     BleSettingsActivity.updateSectionSummaries() updates the header summaries.
+     The alert volume (50~100%) and the echo-deviation auto-calibration switch with its sub-items (tap
+     the row to expand them) are shown here read-only; developer settings edits them.
+     The two cooperation settings (mutual RSSI, relaxation) and the three UWB escalation
+     settings are in developer settings. The EPJ↔EPJ offset stays gone (code kept). -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
@@ -10,7 +13,7 @@
     android:orientation="vertical"
     android:background="@color/sa_bg">
 
-    <!-- 상단 헤더 바 -->
+    <!-- Top header bar -->
     <LinearLayout style="@style/SA.TopBar">
         <TextView
             style="@style/SA.TopBarTitle"
@@ -32,7 +35,7 @@
             android:orientation="vertical"
             android:padding="@dimen/sa_space_lg">
 
-            <!-- ═══════════ [경보 기본] — 기본 펼침 ═══════════ -->
+            <!-- ═══════════ [경보 기본] (alert basics) — expanded by default ═══════════ -->
             <androidx.cardview.widget.CardView style="@style/SA.Card">
                 <LinearLayout
                     android:layout_width="match_parent"
@@ -67,7 +70,7 @@
                         style="@style/SA.SectionBody"
                         android:visibility="visible">
 
-                        <!-- 칼만 필터 (신호세기 기반) -->
+                        <!-- Kalman filter (signal-strength based) -->
                         <TextView
                             style="@style/SA.Hint"
                             android:layout_marginTop="0dp"
@@ -99,7 +102,7 @@
                                 android:text="강한 평활" />
                         </RadioGroup>
 
-                        <!-- (v1.1.77) 아래 항목은 개발자 설정 전용 — 이 화면에서는 값만 보여준다 -->
+                        <!-- The items below are managed only in developer settings — this screen just shows their values -->
                         <TextView
                             style="@style/SA.Hint"
                             android:layout_marginTop="@dimen/sa_space_sm"
@@ -143,7 +146,7 @@
 
                         <View style="@style/SA.Divider" />
 
-                        <!-- 경보 볼륨 — (v1.1.63) 개발자 설정에서 이동 · 50% 미만 설정 불가 -->
+                        <!-- Alert volume — cannot be set below 50% -->
                         <LinearLayout style="@style/SA.Row">
                             <TextView
                                 style="@style/SA.RowLabel"
@@ -166,8 +169,8 @@
 
                         <View style="@style/SA.Divider" />
 
-                        <!-- 에코편차 자동보정 (Level 2) — (v1.1.63) 개발자 설정에서 이동 · 기본 켜짐.
-                             스위치 행만 표시, 행(스위치 밖)을 누르면 아래 통계·보정 항목이 펼쳐짐 -->
+                        <!-- Echo-deviation auto-calibration (Level 2) — on by default.
+                             Only the switch row is shown; tapping the row (outside the switch) expands the statistics and calibration items below -->
                         <LinearLayout
                             android:id="@+id/row_echo_auto_calib"
                             style="@style/SA.Row"
@@ -253,7 +256,7 @@
                 </LinearLayout>
             </androidx.cardview.widget.CardView>
 
-            <!-- ═══════════ [비콘] — 접힘 ═══════════ -->
+            <!-- ═══════════ [비콘] (beacons) — collapsed ═══════════ -->
             <androidx.cardview.widget.CardView style="@style/SA.Card">
                 <LinearLayout
                     android:layout_width="match_parent"
@@ -286,7 +289,7 @@
                         android:id="@+id/sec_beacon_body"
                         style="@style/SA.SectionBody">
 
-                        <!-- (v1.1.97) 행+슬라이더 묶음 — 잠긴 동안 어디를 눌러도 PIN 확인 -->
+                        <!-- Row + slider group — while locked, tapping anywhere asks for the PIN -->
                         <LinearLayout
                             android:id="@+id/group_beacon_gain"
                             android:layout_width="match_parent"
@@ -314,7 +317,7 @@
                             style="@style/SA.Hint"
                             android:text="등록된 모든 비콘의 감지 범위를 비율로 일괄 조절 · 100% = 기본 · 바꾸려면 눌러서 PIN 확인" />
 
-                        <!-- [v1.1.60] EPJ 비하인드 — 3요소 gone(핸들러·저장 로직 보존, 부활 시 visibility 만 제거) -->
+                        <!-- EPJ hidden — this block is gone (handlers and save logic kept; to bring it back, remove only the visibility) -->
                         <LinearLayout
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
@@ -350,7 +353,7 @@
                 </LinearLayout>
             </androidx.cardview.widget.CardView>
 
-            <!-- ═══════════ [UWB] — 접힘 ═══════════ -->
+            <!-- ═══════════ [UWB] — collapsed ═══════════ -->
             <androidx.cardview.widget.CardView style="@style/SA.Card">
                 <LinearLayout
                     android:layout_width="match_parent"

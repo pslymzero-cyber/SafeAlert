@@ -6,7 +6,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Test
 
-/** (v1.1.97) 받은 공유 비콘 세트 검증과 받기 전 변경 내역. */
+/** Validation of a received shared beacon set, and the change summary before accepting it. */
 class BeaconShareValidationTest {
 
     private val U1 = "E2C56DB5-DFFB-48D2-B060-D0F5A71096E0"
@@ -36,16 +36,16 @@ class BeaconShareValidationTest {
     @Test
     fun 받기_전_변경_내역을_센다() {
         val local = listOf(
-            p(U1),                                       // 일반
-            p(U2, zone = true, enter = -70),             // 존
+            p(U1),                                       // regular
+            p(U2, zone = true, enter = -70),             // zone
             p(MAC, zone = true, enter = -70, visitor = true)
         )
         val incoming = listOf(
-            p(U1, offset = 10, zone = true),             // 보정값 변경 + 안전구역 지정
-            p(U2, zone = false),                         // 안전구역 해제
-            p(MAC, zone = true, enter = -90),            // 반경 넓어짐 + 방문자용 해제
-            p("11:22:33:44:55:66", zone = true),         // 신규 + 안전구역 지정
-            p("11:22:33:44:55:77")                       // 신규
+            p(U1, offset = 10, zone = true),             // offset changed + safe zone on
+            p(U2, zone = false),                         // safe zone off
+            p(MAC, zone = true, enter = -90),            // radius widened + visitor flag off
+            p("11:22:33:44:55:66", zone = true),         // new + safe zone on
+            p("11:22:33:44:55:77")                       // new
         )
         val c = BeaconRegistry.summarizeChanges(local, incoming)
         assertEquals(BeaconRegistry.ChangeSummary(

@@ -129,7 +129,7 @@
 - `Log.e(TAG, "error reason: ${it.message}")` for error tracking
 - Logging includes: operation name, data IDs, RSSI values, timestamps where relevant
 - Example (FirebaseManager.kt): `Log.e(TAG, "경보 저장 실패: ${it.message}")` with context
-- Localized log messages in Korean (design intent comments and error messages)
+- Localized log messages in Korean (error messages); comments are English
 - English used for technical terms (UWB, RSSI, BLE, dBm)
 
 ## Comments
@@ -139,7 +139,7 @@
 - Workarounds and compatibility notes (e.g., "Android OS scan API limitation: ...")
 - Cross-layer dependencies and invariants (e.g., "echoDiffLive must stay in sync with SharedPreferences")
 - Complex state machines or conditional logic requiring context
-- Language: English. No version stamps (v1.x.y), dates, ticket/decision tags or change-history narrative in comments — that history lives in git and the project memory; state the current rule and why
+- Language: English in every tracked code file — app, tests, resource XML, scripts, workflows, build and ignore files. No version stamps (v1.x.y), dates, ticket/decision tags or change-history narrative in comments — that history lives in git and the project memory; state the current rule and why
 - Single-line: `// ` for short clarifications
 - Multi-line: consecutive `// ` lines for design notes
 - Block separators: `// ── section name ───────` for visual grouping in large files

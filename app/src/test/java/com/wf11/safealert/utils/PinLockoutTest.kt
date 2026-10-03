@@ -6,7 +6,7 @@ import com.wf11.safealert.utils.PinLockout.Result
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
-/** (v1.1.97) 설정 PIN 연속 오류 잠금 판정. */
+/** Lockout decision after consecutive wrong settings-PIN entries. */
 class PinLockoutTest {
 
     private class MemStore : PinLockout.Store {

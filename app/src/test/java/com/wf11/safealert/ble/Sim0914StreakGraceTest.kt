@@ -14,18 +14,19 @@ import org.robolectric.util.ReflectionHelpers
 import org.robolectric.util.ReflectionHelpers.ClassParameter
 
 /**
- * 2026-09-14 시뮬 검증 에이전트2 — (v1.1.94) 접근 streak 300ms 유예(APPROACH_STREAK_GRACE_MS)와
- * 해제·소실 후 재접근. 16ee857(유예 도입 전)에서도 컴파일되도록 신규 심볼은 리플렉션+runCatching,
- * 없으면 N/A 출력. 측정 출력 형식: "[S0914-A2] <시나리오> key=value".
- * 기대값 근거: 커밋 b2edcec 메시지, AlertStateMachine.kt:293(300ms 이내 유예)·:511(<=)·:1344-1347/:1493-1496
- * (해제 시 맵 정리), SpecialAlertTimeGateTest.shortNonApproachFrameKeepsApproachStreak.
+ * Simulation: the 300ms approach-streak grace (APPROACH_STREAK_GRACE_MS) and re-approach after release or loss.
+ * Newer symbols go through reflection + runCatching so the test still compiles on 16ee857 (which predates the grace);
+ * missing ones print N/A. Measurement output format: "[S0914-A2] <scenario> key=value".
+ * Expected values are based on: the b2edcec commit message; in AlertStateMachine.kt, APPROACH_STREAK_GRACE_MS (grace
+ * within 300ms), the `<=` check in evalTimeGate and the map cleanup on release;
+ * SpecialAlertTimeGateTest.shortNonApproachFrameKeepsApproachStreak.
  */
 @RunWith(RobolectricTestRunner::class)
 class Sim0914StreakGraceTest {
 
     private val id = "SA-SIM-A2"
     private val h = BleServiceTestHarness
-    private val vel = 1.0   // 0.5 이상(접근) 2.0 미만(fastApproach 제외)
+    private val vel = 1.0   // ≥0.5 (approaching), <2.0 (no fastApproach)
 
     private fun out(s: String, kv: String) = println("[S0914-A2] $s $kv")
     private fun na(v: Any?) = v?.toString() ?: "N/A"
@@ -40,7 +41,7 @@ class Sim0914StreakGraceTest {
 
     private data class G(val streakMs: Long, val sustained: Boolean)
 
-    /** evalTimeGate 직접 호출. 16ee857 에는 없음 → null. */
+    /** Calls evalTimeGate directly. Absent in 16ee857 → null. */
     private fun gate(asm: Any, v: Double, now: Long): G? = runCatching {
         val g = ReflectionHelpers.callInstanceMethod<Any>(
             asm, "evalTimeGate",
@@ -58,10 +59,10 @@ class Sim0914StreakGraceTest {
             .getOrElse { ReflectionHelpers.callInstanceMethod<Double>(kf, "getEstimatedVel") }
     }.getOrNull()
 
-    // ── a. 짧은 비접근 프레임 ─────────────────────────────────────────────
+    // ── a. Short non-approach frames ──────────────────────────────────────
     private data class Dip(val kept: Boolean, val sustainedAt: Long?, val resumeStreakMs: Long)
 
-    /** 접근 1프레임(t=1000) → 비접근 dips 프레임 → 접근 재개. 첫 sustained 시각. */
+    /** One approach frame (t=1000) → `dips` non-approach frames → approach resumes; records the first sustained time. */
     private fun dipRun(dips: Int, stepMs: Long): Dip? {
         val asm = asmOf(h.newService())
         var now = 1_000L
@@ -85,7 +86,7 @@ class Sim0914StreakGraceTest {
         val r100 = (0..4).associateWith { dipRun(it, 100L) }
         r120.forEach { (n, d) -> out("a.direct120", "dips=$n kept=${na(d?.kept)} resumeStreakMs=${na(d?.resumeStreakMs)} sustainedAt=${na(d?.sustainedAt)}") }
         r100.forEach { (n, d) -> out("b.frame100", "dips=$n gapMs=${n * 100} kept=${na(d?.kept)} sustainedAt=${na(d?.sustainedAt)}") }
-        if (r120[0] == null) return   // 16ee857: evalTimeGate 없음
+        if (r120[0] == null) return   // 16ee857: no evalTimeGate
         val base = r120[0]!!.sustainedAt
         assertTrue("1프레임(120ms) 비접근은 streak 유지", r120[1]!!.kept)
         assertTrue("2프레임(240ms) 비접근은 streak 유지", r120[2]!!.kept)
@@ -96,7 +97,7 @@ class Sim0914StreakGraceTest {
         assertEquals(r100[0]!!.sustainedAt, r100[3]!!.sustainedAt)
     }
 
-    // ── c/d. 해제 후 맵 정리와 재접근 ───────────────────────────────────
+    // ── c/d. Map cleanup after release, and re-approach ───────────────────
     private fun alertSteady(svc: BleService, startMs: Long, trace: StringBuilder? = null): Long? {
         var now = startMs
         repeat(120) { k ->
@@ -113,7 +114,9 @@ class Sim0914StreakGraceTest {
 
     private data class Rel(val releaseMs: Long?, val path: String, val startLeft: Boolean, val lastSeenLeft: Boolean?)
 
-    /** 경보 중 기기를 해제시킨다. 매 프레임 직전 '최근 접근' 흔적(start=now-2000, lastSeen=now-100)을 심는다. */
+    /**
+     * Releases a device that is alerting. Before every frame, plants a 'recent approach' trace (start=now-2000, lastSeen=now-100).
+     */
     private fun release(svc: BleService, mode: String, fromMs: Long): Rel {
         val asm = asmOf(svc)
         var now = fromMs
@@ -140,7 +143,7 @@ class Sim0914StreakGraceTest {
         out("d.fresh", "firstAlertMs=${na(freshAlert)} elapsedMs=${freshAlert?.minus(1_000L)}")
         val fails = mutableListOf<String>()
         for (mode in listOf("peerInZone", "drop", "ramp")) {
-            // c + d(직접 게이트)
+            // c + d (direct gate)
             val svc = h.newService(); val asm = asmOf(svc)
             val a = alertSteady(svc, 1_000L)
             if (a == null) { out("c.$mode", "alert=none"); fails += "$mode:noAlert"; continue }
@@ -156,7 +159,7 @@ class Sim0914StreakGraceTest {
             if (g1 != null && (g1.streakMs != 0L || g1.sustained || kept1)) fails += "$mode:staleGrace"
             if (g2 != null && (g2.streakMs != 0L || g2.sustained)) fails += "$mode:staleStart"
 
-            // d(processAlert 재접근 시각) — 같은 시퀀스를 새 서비스로 재현
+            // d (re-approach time via processAlert) — replays the same sequence on a new service
             val svc2 = h.newService(); val asm2 = asmOf(svc2)
             val a2 = alertSteady(svc2, 1_000L)!!
             val r2 = release(svc2, mode, a2 + 120L)
@@ -170,12 +173,12 @@ class Sim0914StreakGraceTest {
         assertTrue("해제 후 맵 정리·재접근 게이트: $fails", fails.isEmpty())
     }
 
-    // ── e. BLE 타임아웃(onDeviceLost → registry.purge) ─────────────────
+    // ── e. BLE timeout (onDeviceLost → registry.purge) ────────────────────
     private fun lost(svc: BleService, cold: Boolean, now: Long): String {
         val asm = asmOf(svc)
         starts(asm)[id] = now - 2_000L
         lastSeen(asm)?.set(id, now - 100L)
-        if (!cold) runCatching {   // BleService.onDeviceLost: lastRssi != null → filterPreserveMap 적재 후 purge(cold=false)
+        if (!cold) runCatching {   // BleService.onDeviceLost: lastRssi != null → store in filterPreserveMap, then purge(cold=false)
             val cls = Class.forName(asm.javaClass.name + "\$FilterPreserveState")
             val ctor = cls.getDeclaredConstructor(Int::class.javaPrimitiveType, Long::class.javaPrimitiveType).apply { isAccessible = true }
             fieldOrNull<MutableMap<String, Any>>(asm, "filterPreserveMap")!![id] = ctor.newInstance(-45, SystemClock.elapsedRealtime())

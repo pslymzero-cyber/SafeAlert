@@ -98,7 +98,7 @@ if ! command -v xargs >/dev/null 2>&1 ; then
     die "xargs is not available"
 fi
 
-# xargs 로 따옴표 포함 JVM 옵션을 올바르게 파싱 (Gradle 8.x 표준)
+# Parse JVM options that contain quotes correctly via xargs (Gradle 8.x standard)
 eval "set -- $(
     printf '%s\n' "$DEFAULT_JVM_OPTS $JAVA_OPTS $GRADLE_OPTS" |
     xargs -n1 |

@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- (v1.1.66) 기기 간 공유(내보내기) 아이콘 - 문자 화살표 대체 -->
+<!-- Device-to-device share (send) icon, used instead of a text arrow. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="22dp"
     android:height="22dp"

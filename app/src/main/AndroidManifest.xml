@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- BLE 권한 -->
+    <!-- BLE permissions -->
     <uses-permission android:name="android.permission.BLUETOOTH" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
@@ -9,51 +9,52 @@
     <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
-    <!-- 위치 권한 (BLE 스캔 필수) -->
+    <!-- Location permissions (required for BLE scanning) -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-    <!-- (v1.1.99) Android 10~11 재시작·부팅 뒤 스캔 유지용. Android 11 은 권한 요청 뒤 이어서 요청하고, 없으면 메인 화면에 경고한다 -->
+    <!-- Keeps scanning after a restart or boot on Android 10~11. On Android 11 it is requested
+         right after the other permissions; if missing, the main screen shows a warning -->
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION"
         android:maxSdkVersion="30" />
 
-    <!-- 서비스 권한 -->
+    <!-- Service permissions -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
-    <!-- (v1.1.99) Android 10~11 에서 위치 권한이 있으면 서비스 유형에 위치를 더한다 -->
+    <!-- On Android 10~11, location is added to the service type when fine location is granted -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
 
-    <!-- (v1.1.69) 상시 알림 표시 권한. targetSdk 33+ 에서 이 권한이 없으면
-         포그라운드 서비스 알림조차 상태바에 나타나지 않는다 = 상태바 미노출의 원인.
-         거부돼도 감시는 계속 돌아야 하므로 필수 판정(hasAllPermissions)에는 넣지 않는다. -->
+    <!-- Permission to show the ongoing notification. With targetSdk 33+, without it even the
+         foreground service notification does not appear in the status bar.
+         Monitoring must keep running if it is denied, so it is not part of the required check (hasAllPermissions). -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <!-- 진동 + 부팅 수신 -->
+    <!-- Vibration + boot receiver -->
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
-    <!-- 배터리 최적화 제외 요청 -->
+    <!-- Request exemption from battery optimization -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
-    <!-- 자동 업데이트 -->
+    <!-- Auto-update -->
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- (v1.2.2) 구조 요청 메일 예약 작업의 네트워크 조건 -->
+    <!-- Network condition for the scheduled SOS mail job -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
-    <!-- 백그라운드 유지 + 오디오 -->
+    <!-- Background keep-alive + audio -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 
-    <!-- 걸음 감지(TYPE_STEP_DETECTOR, API 29+) — 단독 작업자 사고·무동작 판정 -->
+    <!-- Step detection (TYPE_STEP_DETECTOR, API 29+) — for lone-worker accident and no-movement detection -->
     <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
 
-    <!-- 시스템 오버레이 (다른 앱 위에 경보 표시) -->
+    <!-- System overlay (shows alerts over other apps) -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
 
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="true" />
 
-    <!-- UWB 정밀 거리 측정 (지원 기기만, required=false → 미지원 기기도 설치 가능) -->
+    <!-- UWB precise ranging (supported devices only; required=false → installs on unsupported devices too) -->
     <uses-permission android:name="android.permission.UWB_RANGING" />
     <uses-feature android:name="android.hardware.uwb" android:required="false" />
 
@@ -81,7 +82,7 @@
         <activity android:name=".ui.OpenSourceLicensesActivity" android:exported="false" />
         <activity android:name=".ui.LoneWorkerActivity" android:exported="false" android:launchMode="singleTop" android:excludeFromRecents="true" android:showWhenLocked="true" android:turnScreenOn="true" />
 
-        <!-- APK 설치용 FileProvider -->
+        <!-- FileProvider for installing APKs -->
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.provider"
@@ -97,7 +98,7 @@
             android:foregroundServiceType="connectedDevice|location"
             android:exported="false" />
 
-        <!-- (v1.1.99) 재부팅·앱 업데이트 뒤 서비스가 돌던 상태면 저장 상태 복원 경로로 다시 띄운다 -->
+        <!-- After a reboot or app update, if the service was running, restart it through the saved-state restore path -->
         <receiver
             android:name=".service.BootRestoreReceiver"
             android:exported="false">
@@ -107,7 +108,7 @@
             </intent-filter>
         </receiver>
 
-        <!-- (v1.2.2) 감시가 멈춘 뒤에도 대기 중인 구조 요청 메일 요청을 네트워크가 있을 때 보낸다 -->
+        <!-- Sends pending SOS mail requests once a network is available, even after monitoring has stopped -->
         <service
             android:name=".service.SosMailJob"
             android:permission="android.permission.BIND_JOB_SERVICE"

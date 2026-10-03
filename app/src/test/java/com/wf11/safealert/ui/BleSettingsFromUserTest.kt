@@ -15,8 +15,8 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
 /**
- * (결정 B) BLE 설정 화면 되읽기 저장 차단 회귀 — 프로그램 갱신(onResume 되읽기)은 표시만,
- * 사용자 조작만 DevSettings 에 저장돼야 한다.
+ * Regression: the BLE settings screen must not save on re-read. Programmatic updates (the onResume re-read) only
+ * refresh the display; only user input is saved to DevSettings.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -64,11 +64,11 @@ class BleSettingsFromUserTest {
         val activity = controller.get()
         val seek = activity.findViewById<SeekBar>(R.id.seek_beacon_gain)
 
-        seek.progress = 20 // 프로그램 갱신
+        seek.progress = 20 // programmatic update
 
         assertEquals("프로그램 progress 변경은 저장되면 안 된다", 100, DevSettings.beaconGainPercent)
 
-        shadowOf(seek).onSeekBarChangeListener.onProgressChanged(seek, 20, true) // 사용자 조작
+        shadowOf(seek).onSeekBarChangeListener.onProgressChanged(seek, 20, true) // user input
 
         assertEquals("사용자 조작은 저장돼야 한다", 200, DevSettings.beaconGainPercent)
     }

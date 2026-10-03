@@ -17,7 +17,7 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import org.robolectric.shadows.ShadowDialog
 
-/** (v1.1.97) BLE 설정 화면을 열면 비콘 수신 강도·UWB 사용이 잠겨 있다(PIN 확인 전). */
+/** When the BLE settings screen opens, beacon reception strength and UWB use are locked (until the PIN is confirmed). */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class BleSettingsPinGateTest {
@@ -36,7 +36,7 @@ class BleSettingsPinGateTest {
             assertEquals(0.4f, v.alpha, 0.001f)
         }
         assertFalse("잠긴 스위치는 터치를 행으로 넘긴다", activity.findViewById<View>(R.id.sw_uwb).isClickable)
-        // (v1.1.98) 잠긴 컨트롤이 터치를 먹지 않아야 부모(묶음·행)가 받아 PIN 창을 띄운다
+        // A locked control must not consume touches, so its parent (group/row) gets them and opens the PIN dialog
         val down = MotionEvent.obtain(0L, 0L, MotionEvent.ACTION_DOWN, 1f, 1f, 0)
         for (id in listOf(R.id.seek_beacon_gain, R.id.sw_uwb)) {
             assertFalse("잠긴 컨트롤은 터치를 부모로 넘긴다", activity.findViewById<View>(id).onTouchEvent(down))
@@ -54,7 +54,7 @@ class BleSettingsPinGateTest {
         }
     }
 
-    /** (v1.1.98) PIN 을 맞히면 풀리고, 풀린 뒤 행은 누를 수 있는 항목으로 안내되지 않는다. */
+    /** The correct PIN unlocks them, and once unlocked the rows are no longer presented as clickable. */
     @Test
     fun `PIN 을 맞히면 풀리고 행은 더 이상 클릭 대상이 아니다`() {
         val activity = Robolectric.buildActivity(BleSettingsActivity::class.java).setup().get()

@@ -13,11 +13,11 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 
 /**
- * 2026-09-27 사용자 결정 — 에코 보정은 기기·기종 속성(같은 순간 같은 경로의 양방향 차라
- * 경로손실이 상쇄되고 기기·기종 속성만 남는다)이라 사업장 무관 전역 파일 하나에 쌓인다.
- * 사업장 전환이 통계를 가르거나 라이브 맵을 비우지 않으며, 기동 시 현재 사업장 에코
- * 파일을 1회 전역 파일로 인계한다(사업장 값 우선, fb_* 캐시·스탬프 동반 복사, 인계 후
- * 사업장 파일 비움, 재호출 멱등).
+ * Echo calibration is a device/model property (a two-way difference over the same path at the same moment, so
+ * path loss cancels out and only the device/model property remains), so it accumulates in one global file regardless of site.
+ * Switching sites neither splits the statistics nor clears the live map; at startup the current site's echo
+ * file is handed over once to the global file (site values win, fb_* cache and stamps copied along, site file
+ * emptied after the handover, idempotent on repeat calls).
  */
 @RunWith(RobolectricTestRunner::class)
 class CalibrationEngineGlobalEchoTest {

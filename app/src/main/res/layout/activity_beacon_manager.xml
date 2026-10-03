@@ -6,7 +6,7 @@
     android:orientation="vertical"
     android:background="@color/sa_bg">
 
-    <!-- 상단 바 -->
+    <!-- Top bar -->
     <LinearLayout style="@style/SA.TopBar">
         <TextView style="@style/SA.TopBarTitle" android:text="비콘 관리"/>
         <TextView android:id="@+id/tv_count"
@@ -17,13 +17,13 @@
     <View android:layout_width="match_parent" android:layout_height="@dimen/sa_stroke_hairline"
         android:background="@color/sa_divider"/>
 
-    <!-- 안내 배너 -->
+    <!-- Info banner -->
     <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
         android:background="@color/sa_tint_blue" android:padding="@dimen/sa_space_md"
         android:text="같은 UUID로 설정된 비콘은 전부 자동 감지됩니다.  iBeacon · Eddystone · 커스텀 UUID 지원"
         android:textSize="@dimen/sa_type_caption" android:textColor="@color/sa_accent"/>
 
-    <!-- 버튼 영역 -->
+    <!-- Button area -->
     <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
         android:orientation="horizontal" android:padding="@dimen/sa_space_md" android:gravity="center">
         <Button android:id="@+id/btn_add_uuid"
@@ -51,7 +51,7 @@
             android:backgroundTint="@color/sa_tint_green" android:textColor="@color/sa_safe"/>
     </LinearLayout>
 
-    <!-- 기기 간 공유 영역 -->
+    <!-- Device-to-device sharing area -->
     <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:paddingStart="@dimen/sa_space_md" android:paddingEnd="@dimen/sa_space_md"
@@ -78,7 +78,7 @@
             android:backgroundTint="@color/sa_tint_cyan" android:textColor="@color/sa_cyan"/>
     </LinearLayout>
 
-    <!-- 스캔 결과 섹션 (스캔 중 표시) -->
+    <!-- Scan results section (shown when scanning) -->
     <LinearLayout android:id="@+id/layout_scan_result"
         android:layout_width="match_parent"
         android:layout_height="0dp"
@@ -112,7 +112,7 @@
             android:background="@color/sa_divider"/>
     </LinearLayout>
 
-    <!-- 등록된 UUID 목록 -->
+    <!-- Registered beacon profiles (UUID or MAC) -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="0dp"

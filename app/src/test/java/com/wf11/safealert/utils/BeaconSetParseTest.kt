@@ -7,7 +7,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
-/** (v1.1.97) 공유 세트 파싱 — 읽을 수 없는 항목이 하나라도 있으면 세트 전체를 거부. org.json 이 필요해 Robolectric. */
+/** Shared set parsing — if even one entry is unreadable, the whole set is rejected. Robolectric because org.json is needed. */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class BeaconSetParseTest {
@@ -28,17 +28,17 @@ class BeaconSetParseTest {
     @Test
     fun `읽을 수 없는 항목이 하나라도 있으면 세트 전체를 거부한다`() {
         val bad = listOf(
-            "5",                                                        // 객체 아님
+            "5",                                                        // not an object
             """{"label":"UUID 없음"}""",
-            """{"uuid":123}""",                                         // UUID 가 숫자
-            """{"uuid":"AA:BB:CC:DD:EE:01","rssiOffset":"10"}""",       // 숫자 자리에 문자열
-            """{"uuid":"AA:BB:CC:DD:EE:02","visitorBeacon":"no"}"""     // 참/거짓 자리에 문자열
+            """{"uuid":123}""",                                         // UUID is a number
+            """{"uuid":"AA:BB:CC:DD:EE:01","rssiOffset":"10"}""",       // string where a number belongs
+            """{"uuid":"AA:BB:CC:DD:EE:02","visitorBeacon":"no"}"""     // string where a boolean belongs
         )
         for (b in bad) assertTrue(b, BeaconRegistry.parseProfiles("[$ok,$b]").isFailure)
         assertTrue("JSON 손상", BeaconRegistry.parseProfiles("[$ok").isFailure)
     }
 
-    /** (v1.1.98) 거부 사유에 몇 번째 항목의 어느 값인지 담는다. */
+    /** The rejection reason says which entry and which value. */
     @Test
     fun `거부 사유는 항목 번호와 필드를 알려 준다`() {
         assertEquals("2번째 항목의 rssiOffset 값 형식이 틀렸습니다",

@@ -8,7 +8,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** SosMail: rescue mail queue fed by the ledger's server-confirmed points (v1.2.2). No network. */
+/** SosMail: rescue mail queue fed by the ledger's server-confirmed points. No network. */
 class SosMailTest {
 
     private class Call<T>(val path: String, val key: String, val cb: (T) -> Unit)

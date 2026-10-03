@@ -9,45 +9,39 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.util.ReflectionHelpers
 
 /**
- * BUG-02 저속 접근 지연 격상 회귀 골든 (02-golden Plan 04, D-3A/D-3B/D-3D).
+ * Regression golden for delayed escalation on a slow approach: when a forklift approaches slowly, the
+ * alert level must not wait until it is right up close.
  *
- * 배경: 지게차가 느린 속도로 다가오는 시퀀스에서 경보 등급이 늦게 뜬다는 현장 보고(BUG-02,
- * "느리니까 안 울린다" → 실제로는 코앞까지 붙고 나서야 뜬다).
+ * Root cause (measured): the approach Time-Gate (kfApproaching/timeGateMs) alone does not explain it.
+ *   1) Smooth monotonic ramp (no noise, 0.25dBm/s): kfApproaching never becomes true, yet the alert
+ *      escalates normally: the streak bypass on raw threshold crossings (fastContact, warnStreak>=2)
+ *      skips the Time-Gate on every frame. The bug does not reproduce on a monotonic ramp.
+ *   2) Noisy ramp (±2dBm with a 4-frame period on a 0.25dBm/s trend, this file's scenario): with a
+ *      hard streak reset, noise near the threshold keeps breaking the streak. That delays the bypass
+ *      but cannot block it: the monotonic trend eventually outruns the noise amplitude, two
+ *      consecutive threshold passes line up and fastContact escalates. From then on
+ *      isFirstDetection stays false, so the Time-Gate no longer applies and the level keeps rising
+ *      on threshold crossings alone.
+ *   3) So the defect is not "never alerts" but "the 2-consecutive-frame streak confirmation is
+ *      fragile against noise near the threshold, so escalation is badly delayed". The root cause is
+ *      the hard reset of the WARNING streak (a single miss sets it to 0).
  *
- * [D-3B 근본 원인 실측 결론 — 3회 반복 실측 후 확정] PROJECT.md 의 기존 가설("접근
- * Time-Gate가 저속 접근을 막는다", processAlert:2395-2465 부근 kfApproaching/timeGateMs)은
- * 부분 불일치로 판정한다. 실측 결과:
- *   1) 매끈한 단조 램프(잡음 없음, 0.25dBm/s): kfApproaching 이 끝까지 한 번도 true 가
- *      안 됐음에도(Time-Gate 정성적으로 확인) frame 42 에서 정상 격상 — Time-Gate 는
- *      raw RSSI 임계값 교차 streak 기반 우회로(fastContact, warnStreak>=2)로 매 프레임
- *      무력화된다. 단조 램프에서는 버그가 재현되지 않는다.
- *   2) 잡음 얹은 램프(4프레임 주기 ±2dBm, 0.25dBm/s 추세, 이 파일의 실제 시나리오):
- *      잡음이 threshold 부근 streak 를 반복적으로 끊어(frame 80-84 관측: warnStreak 가
- *      1↔0 을 4회 왕복) Time-Gate 우회로 자체를 지연시키는 데는 성공하지만, 완전히
- *      막지는 못한다 — 단조 추세가 잡음 진폭을 결국 앞질러 frame 85 에서 2연속
- *      임계값 통과가 우연히 정렬되며 fastContact 로 격상된다. 이후 isFirstDetection 이
- *      영구히 false 가 되어 Time-Gate 자체가 완전히 우회되고, 등급은 임계값 통과만으로
- *      계속 오른다.
- *   3) 따라서 실측된 결함은 "영원히 안 뜬다"가 아니라 "streak 확인 요구(2연속 프레임)가
- *      threshold 근접 잡음에 취약해 격상이 심각하게 지연된다"이다 — 근본 원인은 WARNING
- *      streak 하드리셋(단발 미달 즉시 0) 자체.
+ * Rule: AlertStateMachine gives the WARNING streak its own rate-of-change (dBm/s) gate
+ * (WARNING_DEPART_RATE_DBM_PER_SEC=3.0). On a miss frame the streak is kept while the median falls
+ * slower than that since the previous frame (gentle noise) and the device is still approaching
+ * (kfVel > 0); a faster fall (real departure or sharp drop) resets it to 0 at once. In this scenario
+ * (1000ms frames) the largest measured noise fall is -1.0dBm/s, below the threshold, so the streak
+ * survives; AlertCascadeGoldenTest.release_goldenTimeline (120ms frames, about -8.3dBm/s) is far
+ * above it and still resets at once, so that golden is unaffected.
  *
- * [D-3A 완료 — 수정 전/후 골든 diff] BleService.kt 에 WARNING streak 전용 변화율(dBm/s)
- * 게이트를 추가(WARNING_DEPART_RATE_DBM_PER_SEC=3.0) — 미달 프레임이라도 직전 프레임 대비
- * 하강률이 이 임계 미만(완만한 잡음)이면 streak 를 보존하고, 임계 이상(진짜 이탈/급하강)이면
- * 원래대로 즉시 0 리셋한다. 이 시나리오(1000ms 프레임 간격)의 실측 최대 잡음 하강률은
- * -1.0dBm/s 로 임계 미만이라 streak 가 보존되고, AlertCascadeGoldenTest 의
- * release_goldenTimeline(120ms 간격, 실측 하강률 ≈ -8.3dBm/s)은 임계를 훨씬 초과해
- * 원래 동작(즉시 리셋)이 그대로 유지된다(D-3D 골든 무변화로 확인).
+ * Effect: gentle noise dips near the threshold keep the WARNING streak, so they cannot keep pushing
+ * back the first escalation (level 1/WARNING); see LOWSPEED_GOLDEN.
+ * The DANGER streak (dangerContactStreakMap) keeps the hard reset: since effDanger ⊂ effWarning,
+ * relaxing WARNING alone gives a slow approach its first confirmation (WARNING level), while DANGER
+ * keeps its immediate suppression (fast release when leaving).
  *
- * 효과: 최초 격상(level 1/WARNING) 도달 프레임이 85 → 82 로 3프레임(3초) 단축됐다(아래
- * LOWSPEED_GOLDEN 참고, frame=000~080 은 수정 전과 동일 — 분기는 frame=081 부터 시작).
- * DANGER streak(dangerContactStreakMap)는 수정하지 않았다 — effDanger ⊂ effWarning
- * 상위호환 구조상 WARNING 만 완화해도 저속 접근의 최초 확증(경고 등급) 목표는 달성되고,
- * DANGER 쪽 즉시 억제(이탈 시 빠른 해제) 의미는 그대로 보존된다.
- *
- * record-then-freeze, 손 계산 금지 — 아래 골든 배열은 수정 후 1회 실제 구동 값 그대로
- * 캡처(T-02-05 계승).
+ * record-then-freeze, no hand calculation: the golden arrays below are captured as is from one real
+ * run.
  */
 @RunWith(RobolectricTestRunner::class)
 class LowSpeedApproachRegressionTest {
@@ -63,13 +57,13 @@ class LowSpeedApproachRegressionTest {
     }
 }
 
-// ── 저속 접근 프레임별 골든 배선 (02-04 Task 1, D-3A/D-2E 계승) ──────────────────────
-// [D-3C 파라미터 탐색 — 총 3회차, 최종 채택안] 1회차(FRAME_DT_MS=3000, 클램프 왜곡)·2회차
-// (매끈한 단조 램프)는 재현 실패 — 위 클래스 KDoc D-3B 결론 참고. 3회차(현재 채택):
-// baseline(4프레임당 +1dBm, 0.25dBm/s 추세)에 4프레임 주기 잡음패턴 [0,-1,+2,-1]
-// (평균 0, 진폭 ±2dBm, 다중경로 페이딩 모사)을 얹어 threshold 부근 streak 를 반복
-// 차단 — 완전 차단은 아니지만(수학적으로 단조 추세가 유한 잡음 진폭을 결국 앞지름)
-// 실측 지연(frame 85 최초 격상)을 안정 재현한다.
+// ── Low-speed approach per-frame golden wiring ──────────────────────────────────────────
+// Scenario: a baseline of +1dBm every 4 frames (0.25dBm/s trend) with the 4-frame noise pattern
+// [0,-1,+2,-1] on top (mean 0, amplitude ±2dBm, mimicking multipath fading). Near the threshold the
+// noise keeps dipping below it, which would break a hard-reset streak again and again. It cannot block
+// escalation outright (a monotonic trend eventually outruns bounded noise), but it reproduces the
+// hard-reset delay reliably. A smooth monotonic ramp does not reproduce it (see the class KDoc), and
+// FRAME_DT_MS=3000 is distorted by clamping.
 private const val T0_MS = 1_000_000L
 private const val FRAME_DT_MS = 1000L
 private const val LOWSPEED_DEVICE_ID = "AA:BB:CC:DD:EE:CB"
@@ -81,42 +75,52 @@ private val LOWSPEED_RSSI = IntArray(FRAMES) { i ->
     START_DBM + i / NOISE_PATTERN.size + NOISE_PATTERN[i % NOISE_PATTERN.size]
 }
 
-/** BleService.kt private enum TrackingState + trackingStateMap — 리플렉션 전용(toString만 사용). */
+/**
+ * BleService's private trackingStateMap (alias of
+ * AlertStateMachine.trackingStateMap), read by reflection; values are used only
+ * through toString().
+ */
 @Suppress("UNCHECKED_CAST")
 private fun trackingStateOf(service: BleService, deviceId: String): String {
     val map = ReflectionHelpers.getField(service, "trackingStateMap") as Map<String, *>
     return map[deviceId]?.toString() ?: "NONE"
 }
 
-/** dangerContactStreakMap/warningContactStreakMap/fastApproachStreakMap 공용 판독. */
+/** Shared reader for dangerContactStreakMap/warningContactStreakMap/fastApproachStreakMap. */
 @Suppress("UNCHECKED_CAST")
 private fun streakOf(service: BleService, fieldName: String, deviceId: String): Int {
     val map = ReflectionHelpers.getField(service, fieldName) as Map<String, Int>
     return map[deviceId] ?: 0
 }
 
-/** private val kalmanFilters — KalmanFilter.estimatedVel(public)은 리플렉션 없이 직접 접근. */
+/** Private kalmanFilters map, read by reflection; KalmanFilter.estimatedVel is public, so it is read directly. */
 @Suppress("UNCHECKED_CAST")
 private fun kfVelOf(service: BleService, deviceId: String): Double {
     val map = ReflectionHelpers.getField(service, "kalmanFilters") as Map<String, KalmanFilter>
     return map[deviceId]?.estimatedVel ?: 0.0
 }
 
-/** BleService.kt:655 pendingDisplayMap — Time-Gate 에 걸려 최초 등록이 보류 중인지(D-3A 관측 컬럼). */
+/**
+ * BleService's private pendingDisplayMap (alias of the AlertStateMachine map): whether the device is listed but
+ * not yet registered in alertState, i.e. its first registration is still held (pending column).
+ */
 @Suppress("UNCHECKED_CAST")
 private fun pendingOf(service: BleService, deviceId: String): Boolean {
     val map = ReflectionHelpers.getField(service, "pendingDisplayMap") as Map<String, Long>
     return map.containsKey(deviceId)
 }
 
-/** BleService.kt:657 approachStreakStartMap — 이번 프레임에 kfApproaching==true 였는지(D-3A 관측 컬럼). */
+/**
+ * BleService's private approachStreakStartMap (alias of the AlertStateMachine
+ * map): whether kfApproaching was true on this frame (kfAppr column).
+ */
 @Suppress("UNCHECKED_CAST")
 private fun kfApproachingOf(service: BleService, deviceId: String): Boolean {
     val map = ReflectionHelpers.getField(service, "approachStreakStartMap") as Map<String, Long>
     return map.containsKey(deviceId)
 }
 
-/** 프레임 1개를 고정폭 한 줄로 직렬화 — AlertCascadeGoldenTest.renderFrame(D-2F) 확장, pending/kfAppr 2컬럼 추가. */
+/** Serializes one frame into one fixed-width line: AlertCascadeGoldenTest.renderFrame plus two columns, pending and kfAppr. */
 private fun renderFrame(service: BleService, deviceId: String, frameIdx: Int, rssi: Int): String {
     val level = BleServiceTestHarness.alertLevelOf(service, deviceId)
     val entryRel = BleServiceTestHarness.alertEntryMsOf(service, deviceId)?.minus(T0_MS)
@@ -135,7 +139,7 @@ private fun renderFrame(service: BleService, deviceId: String, frameIdx: Int, rs
         )
 }
 
-/** AlertCascadeGoldenTest.runScenario(D-2E) 개명·이식 — FRAME_DT_MS 간격으로 nowMs 를 전진시킨다. */
+/** Like AlertCascadeGoldenTest.runScenario (without startFrame): advances nowMs by FRAME_DT_MS on every frame. */
 private fun runLowSpeedScenario(
     service: BleService,
     deviceId: String,
@@ -164,20 +168,13 @@ private fun assertLowSpeedScenario(
     }
 }
 
-// 아래 두 배열은 1회 실제 구동 캡처값(D-3A 3단계, 수정 후 — BleService.kt WARNING_DEPART_RATE_DBM_PER_SEC
-// 변화율 게이트 적용 후 재캡처) — 손 계산 금지, 재동결은 수동 파일 편집만 허용(T-02-05 계승).
-// [실측 요약] 최초 격상(level 1/WARNING) = frame 82(rssi=-73) — 수정 전 frame 85 대비 3프레임(3초)
-// 단축. frame=000~080 은 수정 전과 완전 동일(공유 경로 무변화 확인, D-3D 취지의 로컬 대조).
-// frame=081 부터 분기 시작 — 수정 전에는 이 프레임에서 warnStreak 가 0 으로 즉시 리셋됐으나(잡음
-// 미달 프레임), 수정 후에는 직전 프레임 대비 하강률이 WARNING_DEPART_RATE_DBM_PER_SEC(3.0dBm/s)
-// 미만이라 streak=1 로 보존되어 다음 2연속 통과(frame=82)에서 곧바로 격상된다. 이후 DANGER(level 2)
-// 도달 프레임 및 그 이후 warnStreak 누적값도 이 3프레임 조기 격상의 연쇄 효과로 함께 이동한다
-// (정확 값은 아래 골든 배열 자체가 기록 — record-then-freeze, 손으로 계산·역산하지 않음).
-// [재동결 v1.1.95, 2026-09-15] 임계 위험 -65·경고 -78, 기본 밴드 10 에서 재캡처. 위 frame 82/85 는 경고 -75
-// 시절 값이다. kfVel 은 frame=028 부터, render 는 frame=068 부터 변경. WARNING(level 1) 최초 =
-// frame=070(rssi=-76, entry=70000), DANGER(level 2) 최초 = frame=123(rssi=-66, entry=123000).
-// [재동결 v1.1.96, 2026-09-16] MedianFilter 부분버퍼 짝수=약한 쪽. kfVel 만 frame=026 부터 변경,
-// render 264행은 그대로(WARNING 최초 frame=070, DANGER 최초 frame=123 유지).
+// The two arrays below are captured from one real run — never hand-calculated; re-freeze only by editing this file by hand.
+// Captured with thresholds danger -65 / warning -78 and default band 10. First WARNING (level 1) = frame=070
+// (rssi=-76, entry=70000); first DANGER (level 2) = frame=123 (rssi=-66, entry=123000).
+// On this slow approach, a frame below the warning threshold keeps warnStreak instead of resetting it while the
+// device is approaching (kfVel > 0) and falls slower than AlertStateMachine.WARNING_DEPART_RATE_DBM_PER_SEC (3.0dBm/s)
+// from the previous frame, so noisy misses do not restart the 2-frame confirmation. The exact values are whatever the
+// golden arrays record (record-then-freeze; never calculated or back-derived by hand).
 private val LOWSPEED_GOLDEN: Array<String> = arrayOf(
     "frame=000 rssi= -95 level=null entry=null track=NONE        dangerStreak=0 warnStreak=0 fastStreak=0 bcast=0 pending=Y kfAppr=N",
     "frame=001 rssi= -96 level=null entry=null track=NONE        dangerStreak=0 warnStreak=0 fastStreak=0 bcast=0 pending=Y kfAppr=N",

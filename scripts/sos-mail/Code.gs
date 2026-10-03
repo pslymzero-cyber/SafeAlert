@@ -1,31 +1,36 @@
 /*
- * SafeAlert 단독 작업자 구조 요청 메일 (v1.2.2)
- * 앱이 구조 요청·해제를 서버에 기록한 뒤 이 웹 앱에 알리면, 서버 기록을 직접 확인하고 정해진 양식의 메일을 한 번 보낸다.
- * 평문과 같은 내용을 표로 정리한 HTML 본문도 함께 보낸다.
+ * SafeAlert lone-worker SOS mail
+ * When the app has recorded an SOS or its resolution on the server and notifies this web app,
+ * the script checks the server record itself and sends one mail in a fixed format.
+ * It also sends an HTML body that lays out the same content as the plain text in a table.
  *
- * 설치 순서
- *  1. 알림 전용 구글 계정으로 로그인한다. 메일은 이 계정 이름으로 나간다.
- *     이 계정의 하루 메일 한도(일반 구글 계정 받는 사람 100명, Workspace 1,500명)가 차면 다음 날까지
- *     해제 메일도 막힐 수 있다(구조 요청 메일을 먼저 보낸다).
- *  2. script.google.com → 새 프로젝트. 이름은 'SafeAlert 구조 요청 메일'.
- *  3. 기본 코드를 지우고 이 파일 전체를 붙여넣은 뒤 저장한다.
- *  4. 왼쪽 톱니(프로젝트 설정) → 시간대를 (GMT+09:00) 서울로.
- *  5. 같은 화면 아래 '스크립트 속성'에 추가한다.
- *     - FIREBASE_DB_URL    : 파이어베이스 콘솔 Realtime Database 화면 맨 위 주소 (https://….firebaseio.com 등)
- *     - FIREBASE_DB_SECRET : 파이어베이스 프로젝트 설정 > 서비스 계정 > 데이터베이스 비밀번호
- *     - ALLOWED_DOMAINS    : 메일을 받을 수 있는 도메인. 비우면 coupangfs.com. 쉼표·세미콜론·공백·줄바꿈 어느 것으로
- *                            나눠도 되고 앞의 '@' 와 대소문자는 무시한다. 정확한 주소(me@example.com)도 넣을 수 있다.
- *     - DAILY_MAX (선택)   : 사업장(루트+센터)마다 최근 24시간 동안 보낸 구조 요청 메일 수 상한. 기본 50, 1~60.
- *                            해제 메일은 세지 않고 막지도 않는다.
- *     'S|' 로 시작하는 속성은 스크립트가 쓰는 보낸 기록이라 손대지 않는다(구조 요청 7일·해제 24시간 보관 뒤
- *     자동 삭제. 합쳐 3,000건이 넘으면 오래된 것부터 지운다(지워진 구조 요청은 해제 메일만 못 나간다).
- *     예전 SENT_LOG 속성이 있으면 지워도 된다).
- *  6. 배포 > 새 배포 > 유형 '웹 앱', 실행 계정 '나', 액세스 '모든 사용자' → 배포.
- *  7. 권한 창에서 계정 선택 → '고급' → 이동 → 허용 (메일 보내기·외부 서비스 연결).
- *  8. 나온 웹 앱 주소를 GitHub 저장소 Settings > Secrets and variables > Actions 의 비밀값 SA_SOS_MAIL_URL 로 저장한다.
- *  9. 코드를 고친 뒤에는 배포 > 배포 관리 > 연필 > 버전 '새 버전' → 배포. 주소가 그대로 유지된다
- *     ('새 배포'를 다시 하면 주소가 바뀌어 앱을 다시 빌드해야 한다).
- * 비밀값은 스크립트 속성에만 넣는다. 이 파일과 저장소에는 적지 않는다.
+ * Setup
+ *  1. Sign in with a Google account used only for alerts. Mail is sent from this account.
+ *     Once this account's daily mail quota (100 recipients for a regular Google account, 1,500 for Workspace) runs out,
+ *     resolution mails can be blocked too until the next day (the SOS mail is sent first).
+ *  2. script.google.com → New project. Name it 'SafeAlert 구조 요청 메일'.
+ *  3. Delete the default code, paste in this whole file and save.
+ *  4. Gear icon on the left (Project Settings) → set the time zone to (GMT+09:00) Seoul.
+ *  5. Further down the same page, add these under 'Script Properties' ('스크립트 속성').
+ *     - FIREBASE_DB_URL : the address at the top of the Realtime Database page in
+ *     the Firebase console (https://….firebaseio.com or similar)
+ *     - FIREBASE_DB_SECRET : Firebase Project settings > Service accounts > Database secrets
+ *     - ALLOWED_DOMAINS    : domains that may receive the mail; empty means coupangfs.com. Separate entries with commas,
+ *                            semicolons, spaces or newlines; a leading '@' and
+ *                            letter case are ignored. An exact address
+ *                            (me@example.com) also works.
+ *     - DAILY_MAX          : (optional) cap on SOS mails sent per site (root + center) in the last 24 hours. Default 50, range 1–60.
+ *                            Resolution mails are neither counted nor blocked.
+ *     Properties starting with 'S|' are the script's own sent log; leave them alone (SOS entries are kept 7 days and
+ *     resolution entries 24 hours, then deleted automatically; beyond 3,000 in total the oldest go first, and a deleted SOS entry
+ *     only stops its resolution mail. A leftover SENT_LOG property can be deleted).
+ *  6. Deploy > New deployment > type 'Web app' ('웹 앱'), execute as 'Me' ('나'), access 'Anyone' ('모든 사용자') → Deploy.
+ *  7. In the permission window pick the account → 'Advanced' ('고급') → go to the project → Allow (send mail, connect to external services).
+ *  8. Save the resulting web app URL as the secret SA_SOS_MAIL_URL under the
+ *  GitHub repository's Settings > Secrets and variables > Actions.
+ *  9. After changing the code: Deploy > Manage deployments > pencil > Version 'New version' ('새 버전') → Deploy. The URL stays the same
+ *     (running 'New deployment' ('새 배포') again changes the URL, and the app must be rebuilt).
+ * Secrets go only in the script properties, never in this file or the repository.
  */
 
 var SITE_RE = /^[A-Za-z0-9_-]{1,32}$/;
@@ -34,10 +39,11 @@ var ID_RE = /^[A-Za-z0-9_-]{1,40}$/;
 var TO_RE = /^[A-Za-z0-9%+_-]+(\.[A-Za-z0-9%+_-]+)*@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/;
 var DB_URL_RE = /^https:\/\/[A-Za-z0-9.-]+\/?$/;
 var DAY_MS = 24 * 3600 * 1000;
-// 구조 요청 메일 기록은 해제 메일 확인용으로 7일 보관. 일반 계정은 많아야 700건 안팎(약 100KB, 저장소 500KB 한도 안).
+// SOS mail records are kept 7 days so resolution mails can be checked against them. With a regular
+// account that is at most about 700 records (about 100KB, within the 500KB store limit).
 var KEEP_MS = 7 * DAY_MS;
-// 보낸 기록은 합쳐 많아야 3,000건(긴 키도 약 370KB, 저장소 500KB 안). 넘으면 오래된 것부터 지워
-// 그 기록의 해제 메일만 못 나간다. 구조 요청 메일은 막지 않는다.
+// Sent records are capped at 3,000 in total (about 370KB even with long keys, within the 500KB store). Past that the oldest are deleted,
+// which only stops the resolution mail for those records. SOS mails are never blocked by this.
 var MAX_SENT = 3000;
 var FRESH_MS = 2 * 3600 * 1000;
 var RATE_PER_MIN = 30;
@@ -45,7 +51,7 @@ var DEFAULT_CAP = 50;
 var MAX_CAP = 60;
 var SENT = 'S|';
 var TAIL = '이 메일은 SafeAlert가 자동으로 보냈습니다. 회신하지 마십시오.';
-// 장비 코드 → 영문 이름. 앱 PitType.kt 와 같아야 한다(ScriptRulesParityTest 가 대조).
+// Equipment code → English name. Must match the app's PitType.kt (ScriptRulesParityTest compares them).
 var PIT_NAMES = { CB: 'Counterbalance', RT: 'Reach Truck', HR: 'High Reach', OP: 'Order Picker',
   ST: 'Stacker', TT: 'Tow Tractor', EP: 'Electric Pallet Jack', WK: 'Walkie Stacker' };
 
@@ -59,7 +65,8 @@ function doPost(e) {
 }
 
 function handle(p) {
-  // ponytail: 잠금 없이 세므로 동시 요청이 몰리면 분당 수가 조금 넘을 수 있다. 정확히 막아야 하면 잠금 안으로.
+  // ponytail: counted outside the lock, so a burst of concurrent requests can slightly
+  // exceed the per-minute limit. Move it inside the lock if it must be exact.
   var cache = CacheService.getScriptCache();
   var rateKey = 'rate:' + Math.floor(Date.now() / 60000);
   var hits = parseInt(cache.get(rateKey), 10) || 0;
@@ -130,7 +137,7 @@ function handle(p) {
     if (typeof at !== 'number' || now - at > FRESH_MS) return 'stale';
 
     var m = buildMail(event, sc, id, rec, p.stillMin);
-    // 보낼 기록을 먼저 남긴다. 저장이 안 되면 보내지 않고, 보내기가 실패하면 기록을 지운다.
+    // Record the send first: if saving fails nothing is sent, and if sending fails the record is deleted.
     store.setProperty(key, String(now));
     try {
       MailApp.sendEmail({ to: to, subject: m.subject, body: m.body, htmlBody: m.html, name: 'SafeAlert' });
@@ -144,14 +151,14 @@ function handle(p) {
   }
 }
 
-/** DAILY_MAX 값 → 1~MAX_CAP 정수(숫자가 아니면 DEFAULT_CAP). */
+/** DAILY_MAX value → integer in 1..MAX_CAP (DEFAULT_CAP when not a number). */
 function cap(v) {
   var n = parseInt(v, 10);
   if (isNaN(n)) n = DEFAULT_CAP;
   return Math.min(MAX_CAP, Math.max(1, n));
 }
 
-/** 소문자 주소의 SHA-256 앞 6바이트(16진 12자). 속성 키에 주소 원문을 남기지 않는다. */
+/** First 6 bytes (12 hex chars) of the SHA-256 of the lowercased address, so property keys never hold the raw address. */
 function addrTag(lower) {
   var d = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, lower, Utilities.Charset.UTF_8);
   var s = '';
@@ -159,7 +166,7 @@ function addrTag(lower) {
   return s;
 }
 
-/** 도메인 항목은 '@' + 도메인으로 끝날 때, '@' 가 든 항목은 주소가 완전히 같을 때만 허용. */
+/** A domain entry allows addresses ending in '@' + domain; an entry containing '@' allows only that exact address. */
 function allowed(to, list) {
   var items = String(list || '').split(/[\s,;]+/)
     .map(function (s) { return s.trim().toLowerCase().replace(/^@+/, ''); })
@@ -231,7 +238,10 @@ function buildMail(event, sc, id, rec, stillMin) {
   };
 }
 
-/** 역할 표시: 보행자, 이름이 장비 ID(PitType.parse 와 같은 형식)면 장비 영문 이름, 아니면 지게차·EPJ·알 수 없음. 앱 sosRoleLabel 과 같은 규칙. */
+/**
+ * Role label: "보행자" for a walker; if the name is an equipment ID (same format as PitType.parse), the
+ * equipment's English name; otherwise "지게차", "EPJ" or "알 수 없음". Same rule as the app's sosRoleLabel.
+ */
 function roleName(r, name) {
   if (r === 'WALKER') return '보행자';
   var m = /^([A-Z]{2})-([0-9]{2})$/.exec(str(name).trim().toUpperCase());
@@ -241,7 +251,7 @@ function roleName(r, name) {
   return '알 수 없음';
 }
 
-/** 1~30 정수면 그 값, 아니면 0(숫자 없는 문구). */
+/** An integer 1–30 is returned as is; anything else gives 0 (wording without a number). */
 function stillMinutes(v) {
   var s = str(v);
   if (!/^[0-9]{1,2}$/.test(s)) return 0;
@@ -249,33 +259,33 @@ function stillMinutes(v) {
   return n >= 1 && n <= 30 ? n : 0;
 }
 
-/** 제어 문자·줄 구분·폭 0·방향 제어·BOM 을 공백으로 바꿔 한 줄로. */
+/** Replaces control, line-separator, zero-width and bidi-control characters and the BOM with spaces, making one line. */
 function oneLine(v) {
   return str(v)
     .replace(/[\u0000-\u001f\u007f-\u009f\u200B-\u200F\u2028-\u202E\u2060-\u206F\uFEFF]+/g, ' ')
     .trim().slice(0, 64);
 }
 
-/** HTML 특수 문자 다섯 개(& < > " ')를 바꿔 넣는다. */
+/** Escapes the five HTML special characters (& < > " '). */
 function esc(v) {
   var map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
   return str(v).replace(/[&<>"']/g, function (c) { return map[c]; });
 }
 
-/** 상태 칸의 색 글자 상자. */
+/** Colored text box for the status cell. */
 function badge(bg, fg, html) {
   return '<span style="background:' + bg + ';color:' + fg + ';font-weight:bold;padding:2px 8px;">' + html + '</span>';
 }
 
-/** '사업장' 칸: 띠와 같은 색 상자에 센터, 비콘 이름을 알면 옆에 붙인다. */
+/** The '사업장' (site) cell: the center in a box the same color as the header band, plus the beacon name when known. */
 function siteCell(color, sc, rec) {
   var beacon = oneLine(rec.beacon);
   return badge(color, '#ffffff', esc(sc)) + (beacon ? ' · ' + esc(beacon) : '');
 }
 
 /**
- * 색 띠 + 표 메일 본문(표와 인라인 style 만, 가운데 최대 600px). 받은 문자열을 그대로 넣으므로
- * 바뀌는 값은 esc 로 감싸서 넘긴다. rows 는 [라벨, 값 html, 굵게] 목록.
+ * Mail body with a colored band and a table (tables and inline styles only, centered, max 600px). Strings are inserted as is,
+ * so wrap changing values in esc before passing them in. rows is a list of [label, value html, bold].
  */
 function mailHtml(color, title, who, lead, rows) {
   var cells = rows.map(function (r, i) {

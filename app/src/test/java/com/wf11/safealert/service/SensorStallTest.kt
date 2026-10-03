@@ -6,7 +6,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** SensorStall: accelerometer silence detection (v1.1.99, RR08). Pure JVM. */
+/** SensorStall: accelerometer silence detection. Pure JVM. */
 class SensorStallTest {
 
     @Test

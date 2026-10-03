@@ -5,7 +5,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** App rules vs. the mail script (Code.gs) and the database rules: they must agree (v1.2.2). */
+/** App rules vs. the mail script (Code.gs) and the database rules: they must agree. */
 class ScriptRulesParityTest {
 
     private fun hbBlock(): String {

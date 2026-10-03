@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""단독 작업자 '살아 있음' 세션(hb 노드) → ALERTS.md 의 '연락 끊김 (기록만)' 표. 표준 라이브러리만.
+"""Lone-worker 'alive' sessions (hb node) → the '연락 끊김 (기록만)' table in ALERTS.md. Standard library only.
 
 python .github/scripts/hb_digest.py hb.json --md ALERTS.md --from 20260901
-입력 = {센터 코드: {세션 키: {uid, role, start, last, end?, g?: {n: {from, to}}}}} (밀리초).
-식별자(uid·세션 키·이름)는 출력하지 않고 센터별 숫자만 남긴다. 메일·알림은 없다.
+Input = {center code: {session key: {uid, role, start, last, end?, g?: {n: {from, to}}}}} (milliseconds).
+Identifiers (uid, session key, name) are never printed; only per-center counts are kept. No mail or notifications.
 """
 import argparse
 import bisect
@@ -12,10 +12,10 @@ import json
 import sys
 import time
 
-from analyze_alerts import KST  # 경보 집계와 같은 한국 시간대(tzdata 가 없으면 고정 +9)
+from analyze_alerts import KST  # same Korea time zone as the alert digest (fixed +9 without tzdata)
 
-GAP_MS = 15 * 60_000  # 마지막 갱신이 이보다 오래면 '끊긴 채 끝남'(앱의 끊김 기준과 같다). 재시작 기준도 같은 15분
-BUCKETS = [(30, "15~30분"), (60, "30~60분"), (120, "1~2시간"), (None, "2시간+")]  # 분 상한
+GAP_MS = 15 * 60_000  # last update older than this = '끊긴 채 끝남' (same as the app's gap threshold); restarts use the same 15 min
+BUCKETS = [(30, "15~30분"), (60, "30~60분"), (120, "1~2시간"), (None, "2시간+")]  # upper bound in minutes
 TITLE = "### 연락 끊김 (기록만)"
 NOTE = "> 단독 작업 감시 중 단말이 5분마다 남긴 살아 있음 기록. 메일·알림 없음. 이름·기기 식별자는 집계하지 않는다."
 EMPTY = "> 기간 안 기록 없음."
@@ -33,7 +33,7 @@ def _num(v):
 
 
 def _gaps(g):
-    # REST 는 0..n 키를 배열로 준다(빈 자리 null). 객체로 와도 같게 센다.
+    # REST returns 0..n keys as an array (null in empty slots). An object is counted the same way.
     if isinstance(g, list):
         return [x for x in g if x is not None]
     if isinstance(g, dict):
@@ -60,7 +60,7 @@ def _uid(s):
 
 
 def _restarted(starts, start, last):
-    # 자기보다 늦게 시작한 같은 단말의 가장 이른 세션이 last 뒤 15분 안(겹쳐도 포함)에 시작했는가
+    # Did the earliest later-starting session of the same device start within 15 min after last (overlap included)?
     if not starts:
         return False
     i = bisect.bisect_right(starts, start)
@@ -68,7 +68,7 @@ def _restarted(starts, start, last):
 
 
 def summarize(data, from_ms, now_ms):
-    """센터 코드 → 수치. from_ms 이전에 시작한 세션과 형식이 틀린 세션·구간은 건너뛴다."""
+    """Center code → counts. Skips sessions that started before from_ms and malformed sessions or gaps."""
     out = {}
     if not isinstance(data, dict):
         return out
@@ -76,7 +76,7 @@ def summarize(data, from_ms, now_ms):
         if not isinstance(sessions, dict):
             continue
         ok = [s for s in sessions.values() if isinstance(s, dict) and _num(s.get("start")) and _num(s.get("last"))]
-        starts = {}  # 이 센터의 uid → 정렬된 시작 시각(기간 필터 전 전체). 짝짓기에만 쓰고 출력하지 않는다
+        starts = {}  # this center's uid → sorted start times (all, before the period filter); used only for pairing, never printed
         for s in ok:
             if _uid(s):
                 starts.setdefault(_uid(s), []).append(s["start"])
@@ -136,7 +136,7 @@ def main(argv=None):
     ap.add_argument("--from", dest="frm", default="19700101", help="YYYYMMDD(KST) 이후 시작한 세션만")
     ap.add_argument("--now", type=int, help="기준 시각(밀리초, 테스트용)")
     a = ap.parse_args(argv)
-    # ponytail: hb 노드를 통째로 받는다. 세션이 많아지면 start 기준 키 범위로 잘라 받기.
+    # ponytail: reads the whole hb node. If sessions pile up, fetch only a key range by start.
     with open(a.json, encoding="utf-8") as f:
         data = json.load(f)
     now = a.now if a.now is not None else int(time.time() * 1000)

@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- [v1.0.50 #2] 일시 무음 인디케이터 박스 (다크 앰버) -->
+<!-- Temporary-mute indicator box (dark amber) -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
     <solid android:color="@color/sa_tint_amber" />
     <corners android:radius="@dimen/sa_radius_sm" />

@@ -5,19 +5,19 @@ import org.junit.Assert.assertFalse
 import org.junit.Test
 
 /**
- * 기기 간 필터 상태 격리 테스트 (D-07).
+ * Per-device filter state isolation test.
  *
- * `MedianFilter`·`RssiPreFilter` 는 둘 다 `deviceId` 키의 `MutableMap` 으로 기기별 상태를
- * 보관한다. `KalmanFilter` 는 기기별로 별도 인스턴스를 새로 만드는 배선(BleService.kt:1473
- * 부근)이라 공유 맵이 없으므로 이 파일의 격리 검증 범위 밖이다 — 이 파일은 median/prefilter
- * 두 단만 다룬다.
+ * `MedianFilter` and `RssiPreFilter` both keep per-device state in a `MutableMap` keyed by `deviceId`.
+ * `KalmanFilter` holds one device's state and is wired as a separate instance per device (the `kalmanFilters`
+ * map in AlertStateMachine), so it has no shared map and is outside this file's isolation scope — this file
+ * covers only the median and prefilter stages.
  *
- * 여기서 record-then-freeze(D-09) 는 쓰지 않는다: 기대값이 "다른 실행(단독 실행)의 출력과
- * 같다"는 **관계**로 정의되므로 숫자를 동결할 필요 자체가 없다. `INPUT_A`/`INPUT_B` 는
- * RssiCascadeTest.kt 의 시퀀스와 값이 같더라도(재선언, 두 파일은 결합하지 않는다) 이 파일
- * 안에서 독립적으로 선언한다.
+ * No record-then-freeze here: the expected value is defined by a **relation** ("equals the output of a
+ * separate, solo run"), so there are no numbers to freeze. `INPUT_A`/`INPUT_B` are declared independently in
+ * this file even though their values match the sequences in RssiCascadeTest.kt (redeclared on purpose; the two
+ * files are not coupled).
  *
- * 실패 메시지 규약(D-19 확장): `"isolation/<state> frame=<i> stage=<median|prefilter>"`.
+ * Failure message format: `"isolation/<state> frame=<i> stage=<median|prefilter>"`.
  */
 class RssiCascadeIsolationTest {
 
@@ -25,14 +25,14 @@ class RssiCascadeIsolationTest {
         const val DEVICE_01 = "AA:BB:CC:DD:EE:01"
         const val DEVICE_02 = "AA:BB:CC:DD:EE:02"
 
-        /** device01 시퀀스 — 단조 접근(수기 설계, 실기 캡처 아님). */
+        /** device01 sequence — monotonic approach (hand-designed, not a field capture). */
         val INPUT_A = intArrayOf(-92, -90, -88, -87, -85, -83, -82, -80, -78, -77, -75, -73, -72, -70, -68, -67, -65, -63, -62, -60)
 
-        /** device02 시퀀스 — device01 과 성격이 다른 단조 이탈. 간섭 유무를 뚜렷이 드러내기 위한 대비값. */
+        /** device02 sequence — a monotonic departure, unlike device01. The contrast makes any interference obvious. */
         val INPUT_B = intArrayOf(-60, -62, -63, -65, -67, -68, -70, -72, -73, -75, -77, -78, -80, -82, -83, -85, -87, -88, -90, -92)
     }
 
-    /** device01 을 단독으로(다른 기기 개입 없이) 밀어넣었을 때의 median/prefilter 기준 출력. */
+    /** Baseline median/prefilter output for device01 pushed alone (no other device involved). */
     private fun soloBaseline(): Pair<IntArray, IntArray> {
         val medianFilter = MedianFilter()
         val rssiPreFilter = RssiPreFilter()
@@ -48,8 +48,8 @@ class RssiCascadeIsolationTest {
     }
 
     /**
-     * (1) 인터리브 불변성 — device01 을 device02(다른 성격의 시퀀스)와 번갈아 밀어넣어도
-     * device01 의 프레임별 출력이 단독 실행 기준값과 정확히 일치해야 한다.
+     * (1) Interleaving invariance — even when device01 is pushed alternately with device02 (a different kind of
+     * sequence), device01's per-frame output must exactly match the solo baseline.
      */
     @Test
     fun interleavedPush_deviceOneMatchesSoloBaseline() {
@@ -60,8 +60,8 @@ class RssiCascadeIsolationTest {
         for (i in INPUT_A.indices) {
             val m1 = medianFilter.push(DEVICE_01, INPUT_A[i])
             val p1 = rssiPreFilter.push(DEVICE_01, m1, prevVel = 0.0, fallBoost = false)
-            // device02 를 매 프레임 함께 밀어넣는다 — 아래 두 줄을 주석 처리해도 device01 어서션은
-            // 그대로 통과해야 한다(교차오염 없음의 수동 검증 절차, acceptance_criteria 항목).
+            // Push device02 every frame as well — commenting out the two lines below must leave the device01 assertions
+            // passing (manual check that there is no cross-contamination).
             val m2 = medianFilter.push(DEVICE_02, INPUT_B[i])
             rssiPreFilter.push(DEVICE_02, m2, prevVel = 0.0, fallBoost = false)
 
@@ -71,8 +71,8 @@ class RssiCascadeIsolationTest {
     }
 
     /**
-     * (2) 선택적 clear — 인터리브 중간에 device02 만 `clear()` 해도 device01 의 출력은
-     * 영향받지 않는다.
+     * (2) Selective clear — clearing only device02 (`clear()`) mid-interleave leaves device01's output
+     * unaffected.
      */
     @Test
     fun selectiveClear_onlyAffectsTargetDevice() {
@@ -99,9 +99,8 @@ class RssiCascadeIsolationTest {
     }
 
     /**
-     * (3) `clearAll()` — 모든 기기를 콜드스타트로 되돌린다. 직후 `MedianFilter.isFull(device01)`
-     * 은 반드시 false 여야 하고, device01 을 처음부터 다시 밀어넣으면 단독 실행 기준값을
-     * 그대로 재현해야 한다.
+     * (3) `clearAll()` — returns every device to cold start. Right after it, `MedianFilter.isFull(device01)`
+     * must be false, and pushing device01 again from the start must reproduce the solo baseline exactly.
      */
     @Test
     fun clearAll_resetsAllDevicesToColdStart() {
@@ -110,7 +109,7 @@ class RssiCascadeIsolationTest {
         val medianFilter = MedianFilter()
         val rssiPreFilter = RssiPreFilter()
 
-        // device01 을 윈도우가 가득 찰 때까지(3프레임 이상) 밀어넣어 비-콜드 상태로 만든다.
+        // Push device01 until its window is full (3+ frames) so it is no longer cold.
         for (i in 0 until 5) {
             val m = medianFilter.push(DEVICE_01, INPUT_A[i])
             rssiPreFilter.push(DEVICE_01, m, prevVel = 0.0, fallBoost = false)

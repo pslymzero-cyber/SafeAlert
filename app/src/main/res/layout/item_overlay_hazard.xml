@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- (v1.1.65) 사이드바 위험 기기 1행. 배경 tint 는 OverlayManager 가 경보 레벨별로 갈아끼운다. -->
+<!-- One sidebar row per hazard device. OverlayManager swaps the background tint per alert level. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"

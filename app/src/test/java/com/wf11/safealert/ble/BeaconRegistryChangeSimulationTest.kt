@@ -24,16 +24,17 @@ import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 /**
- * [시뮬레이션] 비콘 레지스트리 변경 -> 스캐너 반영. 커밋 8447150 의 실기 검증 2건을 하드웨어 없이 재현한다.
+ * [Simulation] Beacon registry change -> scanner update. Reproduces two on-device checks without hardware.
  *
- *   s1  UUID 삭제  -> 상태 엔트리 즉시 소멸(좀비 잔류 없음)
- *   s2  UUID 등록  -> HW ScanFilter 갱신(스캔 재시작으로 감지 대상 편입)
+ *   s1  UUID removed -> state entries vanish at once (no zombie leftovers)
+ *   s2  UUID added   -> HW ScanFilter rebuilt (the scan restart adds it to the detection targets)
  *
- * 인과 격리: TTL 스윕(BleScanner.kt:253)은 System.currentTimeMillis() 벽시계를 쓰므로
- * Robolectric 가상 루퍼를 아무리 전진시켜도 발화하지 않는다. s1 의 onDeviceLost 는 forceLoseAll() 뿐이다.
- * 콜백 배선은 손으로 복사하지 않고 실제 startScanning() 이 설치하게 둔다.
+ * Causal isolation: the TTL sweep (BleScanner.timeoutChecker) compares against the System.currentTimeMillis()
+ * wall clock, so advancing Robolectric's virtual looper never makes it expire a device; in s1 every
+ * onDeviceLost comes from forceLoseAll(). The callback wiring is not copied by hand: the real
+ * startScanning() installs it.
  *
- * 출력: build/sim_registry_<name>.log
+ * Output: build/sim_registry_<name>.log
  */
 @RunWith(RobolectricTestRunner::class)
 class BeaconRegistryChangeSimulationTest {
@@ -58,7 +59,7 @@ class BeaconRegistryChangeSimulationTest {
         val app = RuntimeEnvironment.getApplication()
         DevSettings.init(app)
         BeaconRegistry.init(app)
-        // object 싱글턴 - 테스트 간 prefs/콜백 누수 차단
+        // object singleton: keep prefs/callbacks from leaking between tests
         BeaconRegistry.onChanged = null
         app.getSharedPreferences("beacon_registry", Context.MODE_PRIVATE).edit().clear().commit()
 
@@ -73,7 +74,7 @@ class BeaconRegistryChangeSimulationTest {
         BeaconRegistry.onChanged = null
     }
 
-    /** 등록된 UUID 를 지우면 감지 상태가 그 자리에서 비워진다. */
+    /** Deleting a registered UUID clears the detected state on the spot. */
     @Test fun s1_deleteUuid_purgesDetectedState() {
         val uuid = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"
         assertTrue("등록 실패", BeaconRegistry.add(BeaconProfile(uuid = uuid, label = "삭제대상")))
@@ -81,7 +82,7 @@ class BeaconRegistryChangeSimulationTest {
         scanner.startScanning(cb)
         idle()
 
-        // 감지 중이던 기기 3대를 심는다(스캔 콜백이 채우는 자리와 동일한 맵).
+        // Seed 3 devices as currently detected (the same map the scan callback fills).
         val detected = ReflectionHelpers.getField<MutableMap<String, Long>>(scanner, "detectedDevices")
         val seeded = listOf("SAFEALERT_WALKER_BEA_AAAAAAAA", "SAFEALERT_FORK_0001", "SAFEALERT_EPJ_0002")
         val now = System.currentTimeMillis()
@@ -104,14 +105,14 @@ class BeaconRegistryChangeSimulationTest {
         assertEquals(emptyList<Int>(), errors)
     }
 
-    /** 신규 UUID 를 등록하면 서비스 재시작 없이 HW 필터가 다시 만들어진다. */
+    /** Registering a new UUID rebuilds the HW filter without restarting the service. */
     @Test fun s2_addUuid_rebuildsHardwareFilter() {
         scanner.startScanning(cb)
         idle()
 
         val before = shadowOf(hw).activeScans.last().scanFilters()
 
-        // 대시 없는 32-hex - normUuid 왕복까지 함께 검증한다(정규화 실패 시 필터가 조용히 누락됐던 자리).
+        // Dash-less 32-hex: also checks the normUuid round trip (without normalization the HW filter would be silently dropped).
         val raw = "11223344556677889900AABBCCDDEEFF"
         assertTrue("등록 실패", BeaconRegistry.add(BeaconProfile(uuid = raw, label = "신규비콘")))
         idle()
@@ -137,7 +138,7 @@ class BeaconRegistryChangeSimulationTest {
         assertEquals(emptyList<Int>(), errors)
     }
 
-    // restartScan 의 재시작 지연이 300ms 이므로 400ms 를 돌린다.
+    // restartScan restarts after a 300ms delay, so advance 400ms.
     private fun idle() = shadowOf(Looper.getMainLooper()).idleFor(400, TimeUnit.MILLISECONDS)
 
     private fun write(name: String, body: CharSequence) {

@@ -5,19 +5,19 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * `MedianFilter.isFull()` 워밍업 계약 테스트 (CR-01 대응).
+ * `MedianFilter.isFull()` warm-up contract test.
  *
- * [왜 별도 파일인가] 골든 캐스케이드 테스트(RssiCascadeTest)는 median 단의 **출력값**만 대조하고
- *   윈도우 **충전 여부**는 보지 않는다. 격리 테스트(RssiCascadeIsolationTest)에는 `assertFalse`
- *   1건뿐이라 `isFull()` 의 true 경로가 저장소 전체에서 미검증이었다. 그 결과 `isFull()` 이 항상
- *   false 를 반환하는 회귀가 기존 11개 테스트를 전원 통과한 뒤, 프로덕션 유일 호출부인
- *   `BleService.kt:1524` 의 `val warmingUp = !medianFilter.isFull(deviceId)` 를 영구 true 로
- *   만들어 전 경보 무발령을 초래할 수 있었다.
+ * [Why a separate file] The golden cascade test (RssiCascadeTest) compares only the median stage's **output**, not
+ *   whether the window is **full**, and the isolation test (RssiCascadeIsolationTest) has a single `assertFalse`, so
+ *   nothing else checks the true path of `isFull()`. A regression where `isFull()` always returns false would pass
+ *   every other test, yet make `val warmingUp = !fx.medianFilter.isFull(deviceId)` in AlertStateMachine.kt (the only
+ *   production call site) permanently true and suppress alerts.
  *
- * [커버 범위] false→true 전이 시점, 윈도우 초과 후 유지, `clear()` 후 복귀, 기기별 독립성,
- *   커스텀 windowSize, 미등록 기기. 항상-false 변이와 항상-true 변이를 모두 죽인다.
+ * [Coverage] the false→true transition point, staying true after the window overflows, back to false after `clear()`,
+ *   per-device independence, a custom windowSize, and an unknown device. Kills both the always-false and the
+ *   always-true mutant.
  *
- * 실패 메시지 규약(D-19 확장): `"warmup/<case> n=<표본수> stage=median"`.
+ * Failure message format: `"warmup/<case> n=<samples> stage=median"`.
  */
 class MedianFilterWarmupTest {
 
@@ -25,11 +25,11 @@ class MedianFilterWarmupTest {
         const val DEVICE_01 = "AA:BB:CC:DD:EE:01"
         const val DEVICE_02 = "AA:BB:CC:DD:EE:02"
 
-        /** 임의의 유효 RSSI 표본. 값 자체는 isFull() 판정에 영향이 없다(개수만 관여). */
+        /** Arbitrary valid RSSI samples. The values do not affect isFull(); only the count matters. */
         val SAMPLES = intArrayOf(-92, -88, -85, -83, -80, -77, -75, -72, -70, -68)
     }
 
-    /** FIFO 로 오래된 표본이 밀려나도 크기는 windowSize 로 유지되므로 true 가 지속된다. */
+    /** FIFO pushes old samples out, but the size stays at windowSize, so it stays true. */
     @Test
     fun isFull_staysTrue_afterWindowOverflows() {
         val medianFilter = MedianFilter()
@@ -45,7 +45,7 @@ class MedianFilterWarmupTest {
         }
     }
 
-    /** `clear(deviceId)` 는 해당 기기만 콜드스타트로 되돌린다. */
+    /** `clear(deviceId)` returns only that device to cold start. */
     @Test
     fun clear_returnsDeviceToNotFull() {
         val medianFilter = MedianFilter()
@@ -57,7 +57,7 @@ class MedianFilterWarmupTest {
         assertFalse("warmup/clear n=0 after stage=median", medianFilter.isFull(DEVICE_01))
     }
 
-    /** 충전 상태는 기기별로 독립이다 — device01 이 가득 차도 device02 는 워밍업 구간이다. */
+    /** Fill state is per device — device01 being full leaves device02 still warming up. */
     @Test
     fun isFull_isPerDevice() {
         val medianFilter = MedianFilter()
@@ -69,7 +69,7 @@ class MedianFilterWarmupTest {
         assertFalse("warmup/perDevice device02 n=1 stage=median", medianFilter.isFull(DEVICE_02))
     }
 
-    /** 전이 시점은 하드코딩 3 이 아니라 생성자 windowSize 를 따른다. */
+    /** The transition point follows the constructor's windowSize, not a hard-coded 3. */
     @Test
     fun isFull_respectsCustomWindowSize() {
         val medianFilter = MedianFilter(windowSize = 5)
@@ -81,7 +81,7 @@ class MedianFilterWarmupTest {
         assertTrue("warmup/customWindow n=5 stage=median", medianFilter.isFull(DEVICE_01))
     }
 
-    /** 표본을 한 번도 받지 않은 기기는 워밍업 구간으로 취급한다(널 버퍼 경로). */
+    /** A device that has never received a sample counts as warming up (null-buffer path). */
     @Test
     fun isFull_falseForUnknownDevice() {
         val medianFilter = MedianFilter()

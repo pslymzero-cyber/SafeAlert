@@ -13,11 +13,11 @@ import kotlin.math.abs
 import kotlin.math.sqrt
 
 /**
- * SirenGenerator PCM 파형 테스트 (v1.1.99, D-09). 순수 JVM.
+ * SirenGenerator PCM waveform tests. Pure JVM.
  */
 class SirenGeneratorTest {
 
-    // 구간 내 부호 변화 횟수로 추정한 주파수(Hz). 0 은 직전 부호를 유지한다.
+    // Frequency (Hz) estimated from the number of sign changes in the range. A zero sample keeps the previous sign.
     private fun zeroCrossHz(pcm: ShortArray, from: Int, to: Int): Double {
         var crossings = 0
         var prev = 0
@@ -76,7 +76,7 @@ class SirenGeneratorTest {
         assertEquals(0, pcm[0].toInt())
         assertEquals(0, pcm[pcm.size - 1].toInt())
 
-        // 10 ms 블록 RMS 로 톤 구간(무음에서 소리로의 전이) 개수를 센다
+        // Count tone segments (silence-to-sound transitions) by 10 ms block RMS
         val block = SAMPLE_RATE / 100
         var segments = 0
         var loud = false

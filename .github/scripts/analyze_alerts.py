@@ -1,31 +1,31 @@
 #!/usr/bin/env python3
-"""Firebase 경보 이력을 집계한다.
+"""Aggregates Firebase alert history.
 
-두 곳에서 쓴다.
-  · 로컬  — Firebase CLI 로 받은 JSON 을 넘긴다
-  · CI    — `.github/workflows/alert-digest.yml` 이 사업장별로 받아 넘기고,
-            `--md` 로 마크다운 요약을 만들어 저장소에 커밋한다 (폰에서 GitHub 앱으로 본다)
+Used in two places:
+  · local — pass JSON downloaded with the Firebase CLI
+  · CI    — `.github/workflows/alert-digest.yml` fetches it per site, passes it in,
+            and commits the Markdown summary made with `--md` to the repo (read on a phone in the GitHub app)
 
     python3 analyze_alerts.py alerts.json [--days 28] [--out summary.json]
     python3 analyze_alerts.py alerts.json --label WF11 --md DIGEST.md [--append] [--no-ids]
 
-받는 모양 (FirebaseManager.kt 의 saveAlert 이 쓰는 그대로) - 둘이 섞여도 된다:
-    날짜 층 (siteCode 빈 값):    { "20260901": { "<uuid>": {timestamp, deviceId, walkerId, rssi, alertLevel}, ... }, ... }
-    사업장 층 (v1.1.77~):        { "<siteCode>": { "20260901": { "<uuid>": {...}, ... }, ... }, ... }
-    두 구조를 키 모양이 아니라 값 구조로 가른다(_flatten) - 숫자만인 사업장 코드(예: "12345678")도
-    날짜로 오인되지 않는다. 루트가 사업장 노드 전체여도 되고(alerts 를 알아서 찾는다), alerts 노드만이어도 된다.
+Accepted shapes (exactly as saveAlert in FirebaseManager.kt writes them); the two may be mixed:
+    date level (empty siteCode): { "20260901": { "<uuid>": {timestamp, deviceId, walkerId, rssi, alertLevel}, ... }, ... }
+    site level:                  { "<siteCode>": { "20260901": { "<uuid>": {...}, ... }, ... }, ... }
+    The two are told apart by value structure, not key shape (_flatten), so an all-digit site code (e.g. "12345678")
+    is not mistaken for a date. The root may be the whole site node (alerts is found automatically) or just the alerts node.
 
-건수의 의미 — 같은 기기에 대해 1분 1회로 스로틀돼 있다 (BleService.kt).
-따라서 1건 = 경보 1회가 아니라 '해당 분(分)에 그 기기와 가까워졌다' 다.
-중복이 걷힌 값이라 위험했던 순간의 대용 지표로 쓸 수 있다. 사고 건수가 아니다.
+What a count means: saves are throttled to once per minute per peer device and level (AlertStateMachine.kt).
+So one record is not one alert but 'came close to that device within that minute'.
+With duplicates removed, it serves as a proxy for risky moments. It is not an accident count.
 """
 import argparse, json, os, sys
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 
-# 시각은 현장 시간(KST)으로 읽는다. datetime.fromtimestamp() 는 실행 환경의
-# 로컬 시간을 쓰는데, GitHub Actions 러너는 UTC 라 시간대별 그래프가 9시간
-# 어긋난다. tzdata 가 없는 환경을 대비해 고정 +9 로 물러선다.
+# Read times in site local time (KST). datetime.fromtimestamp() uses the host's local time,
+# and GitHub Actions runners are on UTC, so the per-hour chart would be 9 hours off.
+# Falls back to a fixed +9 where tzdata is missing.
 try:
     from zoneinfo import ZoneInfo
     KST = ZoneInfo("Asia/Seoul")
@@ -36,10 +36,10 @@ CAVEAT = ("1건 = 경보 1회가 아니라 가까워진 1분이다 (같은 상�
           "사고 건수가 아니라 위험했던 순간의 대용 지표다.")
 
 
-# 같은 단말이 두 형태로 기록된다 — saveAlert 의 deviceId 는 스캐너가 만든 fullId
-#   (BleConstants.DEVICE_PREFIX/WALKER_PREFIX + 상대 ID) 이고, walkerId 는 접두사 없는
-#   자기 myId 다. 접두사를 떼지 않으면 한 대가 두 대로 세어지고, 같은 조우를 양쪽이
-#   기록해도 짝이 맞지 않는다.
+# The same device is recorded in two forms — saveAlert's deviceId is the scanner-built fullId
+#   (BleConstants.DEVICE_PREFIX/WALKER_PREFIX + peer ID), while walkerId is the recorder's own myId
+#   without a prefix. Unless the prefix is stripped, one device counts as two, and when both sides
+#   record the same encounter the records do not pair up.
 ID_PREFIXES = ("SAFEALERT_DEVICE_", "SAFEALERT_WALKER_")
 
 
@@ -59,15 +59,15 @@ def load(path):
 
 
 def _is_record(d):
-    """레코드 = 비-dict(스칼라) 값을 하나 이상 가진 dict."""
+    """A record is a dict with at least one non-dict (scalar) value."""
     return isinstance(d, dict) and any(not isinstance(x, dict) for x in d.values())
 
 
 def _flatten(alerts):
-    """날짜 층·사업장 층을 값 구조로 가려 {yyyyMMdd: {uuid: rec}} 로 편다.
+    """Tells the date level and site level apart by value structure and flattens them to {yyyyMMdd: {uuid: rec}}.
 
-    키 모양(8자리 숫자)이 아니라 값 구조로 판별하므로 숫자만인 사업장 코드가
-    날짜로 오인되지 않는다. 같은 날짜가 루트와 여러 사업장에 걸쳐 있으면 병합된다.
+    It judges by value structure, not key shape (8 digits), so an all-digit site code
+    is not mistaken for a date. The same date under the root and several sites is merged.
     """
     if not isinstance(alerts, dict):
         return {}
@@ -76,9 +76,9 @@ def _flatten(alerts):
         if not isinstance(v, dict):
             continue
         if any(_is_record(child) for child in v.values()):
-            out.setdefault(key, {}).update(v)          # 날짜 층: key 가 날짜, v 가 {uuid: rec}
+            out.setdefault(key, {}).update(v)          # date level: key is the date, v is {uuid: rec}
         else:
-            for date, recs in v.items():                # 사업장 층: v 가 {날짜: {uuid: rec}}
+            for date, recs in v.items():                # site level: v is {date: {uuid: rec}}
                 if isinstance(recs, dict):
                     out.setdefault(date, {}).update(recs)
     return out
@@ -94,7 +94,7 @@ def aggregate(alerts, days=0, since=""):
     per_day, per_hour, per_dow = defaultdict(Counter), defaultdict(Counter), defaultdict(Counter)
     pairs, devices, rssi = Counter(), set(), defaultdict(list)
     total, roles = Counter(), Counter()
-    events = []                                    # 파생 지표용 원시 이벤트
+    events = []                                    # raw events for derived metrics
     for d in dates:
         for rec in (alerts.get(d) or {}).values():
             if not isinstance(rec, dict):
@@ -107,7 +107,7 @@ def aggregate(alerts, days=0, since=""):
             pairs[tuple(sorted((a, b)))] += 1
             if isinstance(rec.get("rssi"), int):
                 rssi[lv].append(rec["rssi"])
-            # v1.1.72 부터 기록된다. 이전 레코드에는 없으므로 그때는 집계에서 빠진다.
+            # Records from older app versions have no myRole/peerRole, so they are left out of this tally.
             mine, peer = rec.get("myRole"), rec.get("peerRole")
             if mine and peer and "UNKNOWN" not in (mine, peer):
                 roles[tuple(sorted((str(mine), str(peer))))] += 1
@@ -116,7 +116,7 @@ def aggregate(alerts, days=0, since=""):
                 t = datetime.fromtimestamp(ts / 1000, KST)
                 per_hour[t.hour][lv] += 1
                 per_dow["월화수목금토일"[t.weekday()]][lv] += 1
-                events.append((ts / 1000.0, b, a, lv))   # (초, 기록자, 상대, 등급) - 둘 다 정규화됨
+                events.append((ts / 1000.0, b, a, lv))   # (seconds, recorder, peer, level), both IDs normalized
     n = len(dates) or 1
     out = {
         "dates": dates, "n_days": len(dates),
@@ -124,7 +124,7 @@ def aggregate(alerts, days=0, since=""):
         "danger_avg": round(total.get("DANGER", 0) / n, 1),
         "warning_avg": round(total.get("WARNING", 0) / n, 1),
         "devices": len(devices), "pairs": len(pairs),
-        # 실동률 분자 — 상대로만 잡힌 기기는 빼고, 스스로 기록을 남긴 기기만 센다.
+        # Active-rate numerator — count only devices that recorded alerts themselves, not ones seen only as a peer.
         "recorders": sorted({b for _, b, _, _ in events}),
         "top_pairs": pairs.most_common(5),
         "per_day": {d: dict(c) for d, c in sorted(per_day.items())},
@@ -138,7 +138,7 @@ def aggregate(alerts, days=0, since=""):
 
 
 def load_node(path):
-    """alerts 가 아닌 노드(echo_calib · uwb_probe)를 그대로 읽는다. 없으면 빈 dict."""
+    """Reads a non-alerts node (echo_calib, uwb_probe) as is. Empty dict if missing."""
     if not path or not os.path.exists(path):
         return {}
     try:
@@ -147,16 +147,16 @@ def load_node(path):
         return {}
 
 
-# ── 단말 가동 ────────────────────────────────────────────────
-#   '경보가 없었다' 와 '앱이 꺼져 있었다' 를 가른다.
-#   echo_calib/<기기ID> = {model, ts, peers} 는 앱이 도는 동안 1시간마다 덮어써진다
+# ── Device uptime ────────────────────────────────────────────
+#   Tells 'there were no alerts' apart from 'the app was off'.
+#   echo_calib/<deviceId> = {model, ts, peers} is overwritten every hour while the app runs
 #   (CalibrationEngine.maybeUploadEchoCalib · ECHO_FB_UPLOAD_INTERVAL_MS = 3_600_000).
-#   그 ts 가 곧 기기별 마지막 생존 신호라 하트비트를 따로 만들 필요가 없다.
-#   한계 둘 — 노드는 덮어쓰기라 과거 이력이 없어 '지금 몇 대가 살아 있나' 만 나오고,
-#   에코 상대가 하나도 없으면 업로드를 건너뛰므로(peers.isEmpty) 하루 종일 혼자였던
-#   기기는 안 잡힌다. 즉 이 값은 실동 대수의 하한이다.
-FRESH_H = 24         # 이 시간 안에 스탬프가 찍혔으면 '가동 중'
-STALE_D = 7          # 이 기간을 넘으면 '멈춘 것으로 본다'
+#   That ts is each device's last sign of life, so no separate heartbeat is needed.
+#   Two limits — the node is overwritten, so there is no history, only 'how many are alive now';
+#   and the upload is skipped when there are no echo peers (peers.isEmpty), so a device that was
+#   alone all day is missed. So this is a lower bound on the number of devices in use.
+FRESH_H = 24         # stamped within this many hours = 'running'
+STALE_D = 7          # older than this many days = 'stopped'
 
 
 def uptime(echo, recorders, now_s=None):
@@ -167,8 +167,9 @@ def uptime(echo, recorders, now_s=None):
     fresh, week, stale, models = [], [], [], Counter()
     reg = set()
     for key, node in echo.items():
-        # model 키가 없으면 구버전 echo_calib/<사업장>/<기기ID> 잔존 노드다(앱은 model
-        # 없는 노드를 버린다 - FirebaseManager.kt :244/:266) - registered/models/silent 에서 뺀다.
+        # A node without a model key is the site segment of the old echo_calib/<site>/<deviceId> layout, left by older
+        # versions (the app reads only its children, as legacy device nodes that the current path overrides —
+        # FirebaseManager.downloadEchoCalibAll); leave it out of registered/models/silent.
         if not isinstance(node, dict) or "model" not in node:
             continue
         dev = _norm(key)
@@ -182,38 +183,38 @@ def uptime(echo, recorders, now_s=None):
             fresh.append(dev)
         else:
             week.append(dev)
-    silent = sorted(reg - rec)                 # 등록돼 있는데 기간 중 기록이 하나도 없는 기기
+    silent = sorted(reg - rec)                 # registered, but recorded nothing in the period
     return {
         "registered": len(reg),
         "fresh": len(fresh), "week": len(week), "stale": len(stale),
         "recorded": len(reg & rec),
         "silent": len(silent),
-        "unregistered": len(rec - reg),        # 기록은 남겼는데 echo 노드가 없는 기기
+        "unregistered": len(rec - reg),        # recorded alerts, but has no echo node
         "rate": round(len(reg & rec) / len(reg) * 100, 1) if reg else None,
         "models": models.most_common(6),
     }
 
 
-# ── UWB 실거리 대비 RSSI ──────────────────────────────────────
-#   경보 임계는 dBm 인데 현장이 묻는 것은 미터다. uwb_probe 는 UWB 가 잰 실거리와
-#   같은 프레임의 RSSI 를 짝지어 둔 원표본이라(AlertStateMachine.uploadUwbProbe),
-#   여기서 "경고 -75dBm · 위험 -55dBm 이 실제 몇 m 인가" 를 역산한다.
-#   개발자 설정의 'UWB 실측 표본 업로드' 가 켜진 세션에서만 쌓인다 — 기본 OFF.
-BIN_M = 0.5          # 거리 구간 폭
-MIN_BIN_N = 3        # 이 미만인 구간은 중앙값을 믿지 않는다
+# ── RSSI vs. UWB-measured distance ────────────────────────────
+#   Alert thresholds are in dBm, but the site asks in meters. uwb_probe holds raw samples pairing
+#   the UWB-measured distance with the RSSI of the same frame (AlertStateMachine.uploadUwbProbe),
+#   so this works back to "how many meters WARNING -75dBm and DANGER -55dBm really are".
+#   Samples accumulate only in sessions with 'UWB 실측 표본 업로드' on in developer settings (off by default).
+BIN_M = 0.5          # distance bin width
+MIN_BIN_N = 3        # don't trust the median of a bin with fewer samples than this
 THRESHOLDS = (("경고", -75), ("위험", -55))
 
 
 def _cross(bins, thr):
-    """중앙값 RSSI 가 임계를 지나는 거리를 이웃 구간 사이 선형보간으로 찾는다.
-    잡음으로 한 구간만 튀어 내려간 곳을 임계 통과로 읽지 않도록, 다음 구간도
-    임계 아래에 있을 때만 인정한다(마지막 구간은 확인할 다음이 없어 그대로 본다)."""
+    """Finds the distance where the median RSSI crosses the threshold, by linear interpolation between neighboring bins.
+    So that a single bin dipped by noise is not read as a crossing, a crossing counts only when the next bin
+    is also below the threshold (a crossing into the last bin has nothing after it to check, so it is accepted as is)."""
     pts = [(b["mid"], b["p50"]) for b in bins if b["n"] >= MIN_BIN_N]
     for i, ((d0, r0), (d1, r1)) in enumerate(zip(pts, pts[1:])):
         if (r0 - thr) * (r1 - thr) > 0 or r0 == r1:
             continue
         if i + 2 < len(pts) and pts[i + 2][1] > thr:
-            continue                                   # 곧바로 되돌아옴 = 잡음
+            continue                                   # bounces right back = noise
         return round(d0 + (d1 - d0) * (r0 - thr) / (r0 - r1), 1)
     return None
 
@@ -251,15 +252,15 @@ def probe_bins(probe, since=""):
     }
 
 
-# ── 파생 지표 ────────────────────────────────────────────────
-#   집계값(건수·평균)만으로는 답할 수 없는 세 가지를 원시 이벤트에서 뽑는다.
-#     · 경고 선행률   = 위험이 뜨기 전에 경고가 먼저 떴는가 (회피 시간 확보의 직접 증거)
-#     · 양측 검출률   = 같은 조우를 양쪽 단말이 모두 기록했는가 (편측 미검출 탐지)
-#     · RSSI 분포     = 어느 신호 세기에서 경보가 났는가 (성능 사양의 실측 근거)
-#   쓰로틀(같은 상대 1분 1회, 등급 공용)이 있으므로 선행률은 하한값이다.
-PRECEDE_S = 180      # 위험 앞 이 시간 안의 경고를 '선행'으로 본다
-PAIR_S = 90          # 같은 조우로 묶는 시간 창
-GAP_S = 150          # 조우가 끊겼다고 보는 간격
+# ── Derived metrics ──────────────────────────────────────────
+#   Pulls three things from raw events that totals (counts, averages) alone cannot answer.
+#     · warning lead rate   = did a WARNING fire before the DANGER (direct evidence of time to avoid)
+#     · both-side detection = did both devices record the same encounter (catches one-sided misses)
+#     · RSSI distribution   = at what signal strength alerts fired (measured basis for the spec)
+#   Saves are throttled (once per minute per peer and level), so the lead rate is a lower bound.
+PRECEDE_S = 180      # a WARNING within this many seconds before a DANGER counts as leading
+PAIR_S = 90          # time window that groups records into one encounter
+GAP_S = 150          # gap after which an encounter counts as over
 
 
 def _pct(v, p):
@@ -274,7 +275,7 @@ def derive(events, rssi, per_day):
         directed[(me, other)].append((ts, lv))
         undirected[tuple(sorted((me, other)))].append((ts, me))
 
-    # 경고 선행률
+    # Warning lead rate
     led = tot_d = 0
     gaps = []
     for seq in directed.values():
@@ -287,7 +288,7 @@ def derive(events, rssi, per_day):
                 led += 1
                 gaps.append(ts - prev[-1])
 
-    # 양측 동시 검출률 + 조우 지속시간
+    # Both-side detection rate + encounter duration
     both = one = 0
     dur = []
     for seq in undirected.values():
@@ -314,7 +315,7 @@ def derive(events, rssi, per_day):
         if st is not None:
             dur.append(pv - st)
 
-    # 일별 위험/경고 비 — 합산 한 값이 가리는 편차를 드러낸다
+    # Daily DANGER/WARNING ratio — shows the spread a single total hides
     ratios = [c.get("DANGER", 0) / c["WARNING"] for c in per_day.values() if c.get("WARNING")]
     enc = both + one
     return {
@@ -392,7 +393,7 @@ def markdown(a, label, up=None, pb=None):
         L.append(f"| {d} | {w:,} | {g:,} | {g/w:.2f} |" if w else f"| {d} | {w:,} | {g:,} | - |")
     L += [""]
 
-    # ── 파생 지표 ──────────────────────────────────────────
+    # ── Derived metrics ────────────────────────────────────
     L += ["### 파생 지표", "",
           "집계 건수만으로는 답할 수 없는 값들이다. 원시 레코드에서 계산한다.", "",
           "| 지표 | 값 | 뜻 |", "|------|----|----|"]
@@ -481,7 +482,7 @@ def main():
     pb = probe_bins(load_node(args.probe), args.since) if args.probe else None
     if args.no_ids:
         a.pop("top_pairs", None)
-    a.pop("recorders", None)                       # 기기 ID 라 결과물에 남기지 않는다
+    a.pop("recorders", None)                       # device IDs; keep them out of the output
 
     if args.md:
         with open(args.md, "a" if args.append else "w", encoding="utf-8") as f:

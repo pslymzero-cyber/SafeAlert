@@ -10,7 +10,7 @@ import kotlin.math.cos
 import kotlin.math.sin
 
 /**
- * MotionAnalyzer synthetic 50 Hz trace tests (v1.1.99). m/s^2 with gravity, 20 ms step.
+ * MotionAnalyzer synthetic 50 Hz trace tests. m/s^2 with gravity, 20 ms step.
  */
 class MotionAnalyzerTest {
 
@@ -137,7 +137,6 @@ class MotionAnalyzerTest {
         assertEquals(1, trace(60.0).times(Signal.FALL).size)
     }
 
-    // v1.1.99 review fixes
 
     @Test fun long_gap_shifts_still_windows_before_moved_is_evaluated() {
         val r = Run()
@@ -193,7 +192,6 @@ class MotionAnalyzerTest {
         assertEquals(1, trace(MotionAnalyzer(MotionAnalyzer.impactGFor(19.6f))).times(Signal.FALL).size)
     }
 
-    // v1.1.99 re-review fixes
 
     @Test fun masked_samples_never_count_as_motion() {
         val r = Run()

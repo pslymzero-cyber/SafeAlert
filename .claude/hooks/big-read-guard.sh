@@ -1,18 +1,19 @@
 #!/usr/bin/env bash
-# 큰 파일을 통째로 읽는 호출을 거부하고, 대신 어디를 볼지 알려준다.
+# Rejects calls that read a large file whole and says where to look instead.
 #
-# 왜: 대형 파일 두세 개면 한 턴에 컨텍스트 창이 차고 자동 압축이 연쇄로 터진다.
-#     CLAUDE.md 의 "읽지 마라" 는 권고문이라 강제력이 없다.
+# Why: two or three large files fill the context window in one turn and set off a chain of auto-compactions.
+#      The "do not read" note in CLAUDE.md is only advice; it cannot enforce anything.
 #
-# 목록이 아니라 크기로 판정하므로 프로젝트마다 표를 관리할 필요가 없다.
-# graphify 그래프가 있으면 그래프 명령으로, 없으면 grep 으로 안내한다.
+# It judges by size, not by a list, so no per-project table needs maintaining.
+# It points to graphify commands when a graph exists, otherwise to grep.
 #
-# Read            limit 이 MAX_LINES 이하인 범위 읽기만 통과. offset 만 주면 기본 2000줄이라 막는다.
-# Bash/PowerShell cat·type·more·less·Get-Content 로 큰 파일을 파이프·리다이렉트 없이 찍으면 막는다.
-# ponytail: 셸 검사는 공백 분리라 공백 든 경로·head -n 5000·sed -n '1,$p' 는 못 잡는다. 실제로 새면 그때 추가.
+# Read            only range reads with limit <= MAX_LINES pass. offset alone means the default 2000 lines, so it is blocked.
+# Bash/PowerShell printing a large file with cat/type/more/less/Get-Content and no pipe or redirect is blocked.
+# ponytail: the shell check splits on spaces, so it misses paths with spaces,
+# head -n 5000 and sed -n '1,$p'. Add them if they actually leak.
 
-# 전역 훅(~/.claude/hooks/)이 깔려 있으면 그쪽이 처리한다. 같은 메시지가
-# 두 번 뜨는 것을 막는다.
+# If the global hook (~/.claude/hooks/) is set up, it handles this instead, so the same
+# message does not show twice.
 [ -f "$HOME/.claude/hooks/big-read-guard.sh" ] && \
   grep -q big-read-guard "$HOME/.claude/settings.json" 2>/dev/null && exit 0
 
@@ -21,7 +22,7 @@ MAX_LINES=${CLAUDE_READ_MAX_LINES:-200}
 
 j=$(tr -d '\n')
 
-block() {  # $1=경로 $2=바이트 $3=사유
+block() {  # $1=path $2=bytes $3=reason
   local tok=$(($2 * 100 / 329)) bn=${1##*/}
   {
     echo "차단: $1 는 ${2}바이트(약 ${tok}토큰)다. $3"
@@ -46,7 +47,7 @@ block() {  # $1=경로 $2=바이트 $3=사유
   exit 2
 }
 
-jstr() {  # JSON 문자열 필드 값. \\ 는 / 로(Windows 경로), \n 은 ; 로(여러 줄 명령)
+jstr() {  # JSON string field value. \\ becomes / (Windows paths), \n becomes ; (multi-line commands)
   printf '%s' "$j" | sed -nE "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"(([^\"\\\\]|\\\\.)*)\".*/\\1/p" |
     sed 's|\\\\|/|g; s|\\n|;|g; s|\\t| |g; s|\\"|"|g'
 }
@@ -61,7 +62,7 @@ if [ "$tool" = Bash ] || [ "$tool" = PowerShell ]; then
   shopt -s nocasematch
   base=$(jstr cwd); base=${base:-${CLAUDE_PROJECT_DIR:-.}}
   while IFS= read -r seg; do
-    case "$seg" in *'|'*|*'>'*) continue ;; esac   # 파이프·리다이렉트로 걸렀으면 통과
+    case "$seg" in *'|'*|*'>'*) continue ;; esac   # filtered through a pipe or redirect: let it pass
     set -f; set -- $seg; set +f
     [ $# -gt 0 ] || continue
     c=$1; shift
@@ -90,7 +91,7 @@ fi
 p=$(jstr file_path)
 [ -n "$p" ] || exit 0
 shopt -s nocasematch
-case "$p" in *.png|*.jpg|*.jpeg|*.gif|*.webp|*.bmp|*.pdf) exit 0 ;; esac   # 이미지·PDF 는 바이트가 토큰이 아니다
+case "$p" in *.png|*.jpg|*.jpeg|*.gif|*.webp|*.bmp|*.pdf) exit 0 ;; esac   # image/PDF bytes are not tokens
 sz=$(wc -c 2>/dev/null < "$p") || exit 0
 [ "${sz:-0}" -le "$MAX_BYTES" ] && exit 0
 

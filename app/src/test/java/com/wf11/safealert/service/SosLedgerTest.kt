@@ -8,7 +8,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** SosLedger: own SOS storage and retry state machine (v1.1.99). In-memory kv and a capturing transport. */
+/** SosLedger: own SOS storage and retry state machine. In-memory kv and a capturing transport. */
 class SosLedgerTest {
 
     private class Call<T>(val path: String, val key: String, val cb: (T) -> Unit)

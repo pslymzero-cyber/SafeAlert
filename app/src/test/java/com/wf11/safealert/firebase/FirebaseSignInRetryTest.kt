@@ -7,8 +7,8 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * (결정 A) 익명 로그인 헬스체크 재시도 회귀 — 진행 중 중복 차단, 완료 후 재시도,
- * 로그인 상태 무호출, 예외 시 플래그 해제 4건을 internal 판정 오버로드로 검증한다.
+ * Regression for the anonymous sign-in health-check retry — checks 4 cases through the internal decision overload: duplicate
+ * blocked while in progress, retry after completion, no call when already signed in, flag released on exception.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])

@@ -1,8 +1,8 @@
 <resources>
 
-    <!-- (v1.1.65) 앱 고정 다크. 부모가 Light.* 가 아니라는 점이 핵심 —
-         시스템 다크 설정과 무관하게 항상 이 한 벌을 쓴다(values-night/ 없음).
-         메인 화면은 원래부터 다크였고 설정 화면들만 라이트였다. 이제 앱 전체가 메인의 톤을 따른다. -->
+    <!-- Fixed dark theme for the whole app. The key point is that the parent is not a Light.* theme —
+         this one set is always used regardless of the system dark setting (no values-night/).
+         The whole app follows the main screen's dark tone. -->
     <style name="Theme.SafeAlert" parent="Theme.MaterialComponents.NoActionBar">
         <item name="colorPrimary">@color/sa_accent</item>
         <item name="colorPrimaryVariant">@color/sa_accent_dim</item>
@@ -22,13 +22,13 @@
         <item name="android:textColorSecondary">@color/sa_text_secondary</item>
         <item name="android:textColorHint">@color/sa_text_tertiary</item>
 
-        <!-- windowBackground 가 다크여야 화면 전환 순간 흰 판이 번쩍이지 않는다. -->
+        <!-- windowBackground must be dark so no white plate flashes during screen transitions. -->
         <item name="android:windowBackground">@color/sa_bg</item>
         <item name="android:statusBarColor">@color/sa_bg</item>
         <item name="android:navigationBarColor">@color/sa_bg</item>
         <item name="android:windowLightStatusBar">false</item>
 
-        <!-- 플랫폼 AlertDialog 기본 테마는 회색 판(#424242)이라 setView 본문(sa_surface)과 제목 영역 색이 갈렸다. -->
+        <!-- The platform AlertDialog default theme uses a gray plate (#424242), so its title area would not match a setView body (sa_surface). -->
         <item name="android:alertDialogTheme">@style/SA.Dialog.Alert</item>
     </style>
 
@@ -37,7 +37,7 @@
         <item name="android:textColorPrimary">@color/sa_text_primary</item>
         <item name="android:textColorSecondary">@color/sa_text_secondary</item>
         <item name="android:colorAccent">@color/sa_accent</item>
-        <!-- 버튼 글자색을 accent 추론에 맡기면 기기에 따라 어두운 회색으로 떠 바탕에 묻힌다 — 직접 지정 -->
+        <!-- Left to accent inference, button text turns dark gray on some devices and vanishes into the background — set it explicitly -->
         <item name="android:buttonBarPositiveButtonStyle">@style/SA.Dialog.Button.Positive</item>
         <item name="android:buttonBarNegativeButtonStyle">@style/SA.Dialog.Button</item>
         <item name="android:buttonBarNeutralButtonStyle">@style/SA.Dialog.Button</item>
@@ -51,7 +51,7 @@
         <item name="android:textColor">@color/sa_accent</item>
     </style>
 
-    <!-- PIN 다이얼로그 키패드 버튼 -->
+    <!-- PIN dialog keypad button -->
     <style name="PinButton">
         <item name="android:layout_width">0dp</item>
         <item name="android:layout_height">match_parent</item>
@@ -66,9 +66,9 @@
         <item name="android:focusable">true</item>
     </style>
 
-    <!-- (v1.1.63) 설정 화면 공통 스타일 SA.* — BLE 감지 설정·개발자 설정 UI 통일 + 아코디언 섹션.
-         SA = 공통 부모(빈 스타일).
-         (v1.1.65) 색·치수를 전부 토큰 참조로 바꿨다. 여기서 값을 고치면 두 화면이 함께 따라온다. -->
+    <!-- Shared settings-screen styles SA.* — one look for BLE detection settings and developer settings, plus accordion sections.
+         SA = common parent (empty style).
+         Colors and dimensions all reference tokens; change a value here and both screens follow. -->
     <style name="SA" />
 
     <style name="SA.TopBar">
@@ -89,7 +89,7 @@
         <item name="android:textColor">@color/sa_text_primary</item>
     </style>
 
-    <!-- 아코디언 섹션 = 카드 1장: 헤더(탭=펼침/접힘 토글, 제목+요약값+셰브런) + 바디(기본 접힘) -->
+    <!-- Accordion section = one card: header (tap toggles expand/collapse; title + summary + chevron) + body (collapsed by default) -->
     <style name="SA.Card">
         <item name="android:layout_width">match_parent</item>
         <item name="android:layout_height">wrap_content</item>
@@ -132,7 +132,7 @@
         <item name="android:layout_marginStart">@dimen/sa_space_sm</item>
         <item name="android:src">@drawable/ic_chevron_down</item>
     </style>
-    <!-- 진입(오른쪽) 셰브런. 같은 벡터를 -90도 돌려 쓴다 — 아이콘을 하나만 유지하기 위함. -->
+    <!-- Entry (right-pointing) chevron. Reuses the same vector rotated -90° to keep a single icon. -->
     <style name="SA.ChevronRight">
         <item name="android:layout_width">@dimen/sa_icon_sm</item>
         <item name="android:layout_height">@dimen/sa_icon_sm</item>
