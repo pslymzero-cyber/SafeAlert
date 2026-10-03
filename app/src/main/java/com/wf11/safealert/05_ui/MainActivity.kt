@@ -288,7 +288,7 @@ class MainActivity : AppCompatActivity() {
         //   Without a site code, requireSiteCode shows the input popup and blocks start.
         // There is a single equipment card. The chosen equipment sets the role (Category) —
         //   picking a role first and then equipment could make the two disagree.
-        //   card_role_epj is gone in the layout, so it gets no listener (EPJ and walkie stacker are in the equipment list).
+        //   EPJ and walkie stacker are picked from the equipment list.
         binding.cardRoleWalker.setOnClickListener   { requireSiteCode { onRoleSelected("WALKER", BleConstants.CAT_WALKER) } }
         binding.cardRoleForklift.setOnClickListener { requireSiteCode { startAsPitOperator() } }
         binding.btnStop.setOnClickListener       { if (!LoneWorkerUi.blockIfOwnSos(this)) stopServiceImmediately() }

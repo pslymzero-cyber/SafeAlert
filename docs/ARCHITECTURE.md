@@ -62,13 +62,13 @@
 - `settings.gradle` - Module inclusion (`:app` only)
 - `gradle/wrapper/gradle-wrapper.properties` - Gradle distribution version
 - Debug keystore: `$HOME/.android/debug.keystore` (hardcoded path in signingConfigs)
-- ProGuard rules: `app/proguard-rules.pro` - Obfuscation disabled (`minifyEnabled false` in release build)
+- ProGuard rules: `app/proguard-rules.pro` - R8 obfuscation on (`minifyEnabled true` in the release build, `shrinkResources` off)
 
 ## Platform Requirements
 
 - JDK 17 (Temurin or equivalent)
 - Android SDK 34 (Build Tools 34.x)
-- Gradle 8.3.2 (via wrapper)
+- Gradle 8.6 (via wrapper)
 - Kotlin 1.9.22
 - Deployment target: Android 8.0+ (minSdk 26)
 - Runtime permissions: BLUETOOTH, BLUETOOTH_SCAN, BLUETOOTH_ADVERTISE, BLUETOOTH_CONNECT, ACCESS_FINE_LOCATION, FOREGROUND_SERVICE, UWB_RANGING, INTERNET, VIBRATE, WAKE_LOCK, MODIFY_AUDIO_SETTINGS, SYSTEM_ALERT_WINDOW, POST_NOTIFICATIONS, REQUEST_INSTALL_PACKAGES, REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, RECEIVE_BOOT_COMPLETED

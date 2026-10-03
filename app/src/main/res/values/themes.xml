@@ -67,7 +67,7 @@
     </style>
 
     <!-- Shared SA.* styles — one look for BLE detection settings and developer settings, plus accordion sections.
-         Also used elsewhere: SA.TopBar/SA.TopBarTitle on the beacon manager, SA.ChevronRight on six main-screen cards.
+         Also used elsewhere: SA.TopBar/SA.TopBarTitle on the beacon manager, SA.ChevronRight on the main-screen cards.
          SA = common parent (empty style).
          Colors and dimensions all reference tokens; change a value here and every screen using that style follows. -->
     <style name="SA" />
