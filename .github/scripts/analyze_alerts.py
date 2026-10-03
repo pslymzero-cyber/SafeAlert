@@ -3,27 +3,30 @@
 
 Used in two places:
   · local — pass JSON downloaded with the Firebase CLI
-  · CI    — `.github/workflows/alert-digest.yml` fetches it per site, passes it in,
+  · CI    — `.github/workflows/alert-digest.yml` fetches it per firebaseRoot node, passes it in,
             and commits the Markdown summary made with `--md` to the repo (read on a phone in the GitHub app)
 
     python3 analyze_alerts.py alerts.json [--days 28] [--out summary.json]
     python3 analyze_alerts.py alerts.json --label WF11 --md DIGEST.md [--append] [--no-ids]
 
 Accepted shapes (exactly as saveAlert in FirebaseManager.kt writes them); the two may be mixed:
-    date level (empty siteCode): { "20260901": { "<uuid>": {timestamp, deviceId, walkerId, rssi, alertLevel}, ... }, ... }
-    site level:                  { "<siteCode>": { "20260901": { "<uuid>": {...}, ... }, ... }, ... }
-    The two are told apart by value structure, not key shape (_flatten), so an all-digit site code (e.g. "12345678")
-    is not mistaken for a date. The root may be the whole site node (alerts is found automatically) or just the alerts node.
+    date level (empty center code): { "20260901": { "<uuid>": {timestamp, deviceId, walkerId, rssi, alertLevel}, ... }, ... }
+    center level:                   { "<centerCode>": { "20260901": { "<uuid>": {...}, ... }, ... }, ... }
+    The two are told apart by value structure, not key shape (_flatten), so an all-digit center code (e.g. "12345678")
+    is not mistaken for a date. The input may be the whole firebaseRoot node (alerts is found automatically) or just
+    the alerts node. The center code is DevSettings.siteCode in the app.
 
-What a count means: saves are throttled to once per minute per peer device and level (AlertStateMachine.kt).
-So one record is not one alert but 'came close to that device within that minute'.
+What a count means: saves are throttled per peer device and level (AlertStateMachine.kt; window 1 minute by default).
+So one record is not one alert but 'came close to that device within that window'.
 With duplicates removed, it serves as a proxy for risky moments. It is not an accident count.
 """
 import argparse, json, os, sys
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 
-# Read times in site local time (KST). datetime.fromtimestamp() uses the host's local time,
+from uwb_probe import _pct, probe_bins, probe_md, threshold_note
+
+# Read times in workplace local time (KST). datetime.fromtimestamp() uses the host's local time,
 # and GitHub Actions runners are on UTC, so the per-hour chart would be 9 hours off.
 # Falls back to a fixed +9 where tzdata is missing.
 try:
@@ -32,23 +35,44 @@ try:
 except Exception:                                  # pragma: no cover
     KST = timezone(timedelta(hours=9))
 
-CAVEAT = ("1건 = 경보 1회가 아니라 가까워진 1분이다 (같은 상대는 1분에 한 번만 기록된다). "
+THROTTLE_DEFAULT_S = 60   # app default save window per peer and level (DevSettings.DEFAULT_FIREBASE_THROTTLE_MS)
+_WINDOW = f"{THROTTLE_DEFAULT_S // 60}분" if THROTTLE_DEFAULT_S % 60 == 0 else f"{THROTTLE_DEFAULT_S}초"
+CAVEAT = ("1건 = 경보 1회가 아니라 한 상대·한 등급(경고/위험)의 기록 1회다. 같은 상대·같은 등급은 "
+          f"저장 간격(기본 {_WINDOW}, 개발자 설정에서 변경 가능) 안에 한 번만 남고, "
+          "상대가 경보 범위를 벗어나면 간격이 초기화돼 다시 다가오면 곧바로 또 남는다. "
           "사고 건수가 아니라 위험했던 순간의 대용 지표다.")
 
 
 # The same device is recorded in two forms — saveAlert's deviceId is the scanner-built fullId
 #   (BleConstants.DEVICE_PREFIX/WALKER_PREFIX + peer ID), while walkerId is the recorder's own myId
-#   without a prefix. Unless the prefix is stripped, one device counts as two, and when both sides
-#   record the same encounter the records do not pair up.
+#   without a prefix. Records with a center code carry it in a 'site' field; from the build that added
+#   FirebaseManager.withSite on, both IDs are also written as "<code>-<id>". Both prefixes are stripped down to
+#   the bare ID that echo_calib keys use; otherwise one device counts as two, both sides of one encounter never
+#   pair up, and recorders never match their echo node.
+# ponytail: identity is the bare ID, so the same equipment number at two centers under one firebaseRoot counts
+#   once (echo_calib is keyed the same way); split the digest per center code if a root ever holds several.
 ID_PREFIXES = ("SAFEALERT_DEVICE_", "SAFEALERT_WALKER_")
 
 
-def _norm(v):
+def _norm(v, site=""):
     s = str(v if v is not None else "?")
+    if site and s.startswith(site + "-"):
+        s = s[len(site) + 1:]
     for p in ID_PREFIXES:
         if s.startswith(p):
             return s[len(p):]
     return s
+
+
+def _ids(rec):
+    """(peer, recorder) bare IDs of one record. withSite prefixes both IDs at once, and an unprefixed deviceId
+    starts with SAFEALERT_ (or BEA_ for a beacon), so the deviceId alone tells whether this record carries the
+    center prefix. Records that have the 'site' field but no prefix keep IDs that may themselves start
+    with '<code>-'."""
+    site = str(rec.get("site") or "")
+    if not site or not str(rec.get("deviceId") or "").startswith(site + "-"):
+        site = ""
+    return _norm(rec.get("deviceId"), site), _norm(rec.get("walkerId"), site)
 
 
 def load(path):
@@ -64,10 +88,11 @@ def _is_record(d):
 
 
 def _flatten(alerts):
-    """Tells the date level and site level apart by value structure and flattens them to {yyyyMMdd: {uuid: rec}}.
+    """Tells the date level and center level apart by value structure and flattens them to {yyyyMMdd: {uuid: rec}}.
 
-    It judges by value structure, not key shape (8 digits), so an all-digit site code
-    is not mistaken for a date. The same date under the root and several sites is merged.
+    It judges by value structure, not key shape (8 digits), so an all-digit center code
+    is not mistaken for a date. The same date under the root and several centers is merged
+    (each record keeps its center code in its 'site' field).
     """
     if not isinstance(alerts, dict):
         return {}
@@ -78,7 +103,7 @@ def _flatten(alerts):
         if any(_is_record(child) for child in v.values()):
             out.setdefault(key, {}).update(v)          # date level: key is the date, v is {uuid: rec}
         else:
-            for date, recs in v.items():                # site level: v is {date: {uuid: rec}}
+            for date, recs in v.items():                # center level: v is {date: {uuid: rec}}
                 if isinstance(recs, dict):
                     out.setdefault(date, {}).update(recs)
     return out
@@ -102,11 +127,12 @@ def aggregate(alerts, days=0, since=""):
             lv = rec.get("alertLevel", "?")
             total[lv] += 1
             per_day[d][lv] += 1
-            a, b = _norm(rec.get("deviceId")), _norm(rec.get("walkerId"))
+            a, b = _ids(rec)
             devices.update((a, b))
             pairs[tuple(sorted((a, b)))] += 1
-            if isinstance(rec.get("rssi"), int):
-                rssi[lv].append(rec["rssi"])
+            q = rec.get("rssi")
+            if isinstance(q, int) and not isinstance(q, bool) and q != 0:   # 0 = the app had no RSSI to save
+                rssi[lv].append(q)
             # Records from older app versions have no myRole/peerRole, so they are left out of this tally.
             mine, peer = rec.get("myRole"), rec.get("peerRole")
             if mine and peer and "UNKNOWN" not in (mine, peer):
@@ -195,63 +221,6 @@ def uptime(echo, recorders, now_s=None):
     }
 
 
-# ── RSSI vs. UWB-measured distance ────────────────────────────
-#   Alert thresholds are in dBm, but the site asks in meters. uwb_probe holds raw samples pairing
-#   the UWB-measured distance with the RSSI of the same frame (AlertStateMachine.uploadUwbProbe),
-#   so this works back to "how many meters WARNING -75dBm and DANGER -55dBm really are".
-#   Samples accumulate only in sessions with 'UWB 실측 표본 업로드' on in developer settings (off by default).
-BIN_M = 0.5          # distance bin width
-MIN_BIN_N = 3        # don't trust the median of a bin with fewer samples than this
-THRESHOLDS = (("경고", -75), ("위험", -55))
-
-
-def _cross(bins, thr):
-    """Finds the distance where the median RSSI crosses the threshold, by linear interpolation between neighboring bins.
-    So that a single bin dipped by noise is not read as a crossing, a crossing counts only when the next bin
-    is also below the threshold (a crossing into the last bin has nothing after it to check, so it is accepted as is)."""
-    pts = [(b["mid"], b["p50"]) for b in bins if b["n"] >= MIN_BIN_N]
-    for i, ((d0, r0), (d1, r1)) in enumerate(zip(pts, pts[1:])):
-        if (r0 - thr) * (r1 - thr) > 0 or r0 == r1:
-            continue
-        if i + 2 < len(pts) and pts[i + 2][1] > thr:
-            continue                                   # bounces right back = noise
-        return round(d0 + (d1 - d0) * (r0 - thr) / (r0 - r1), 1)
-    return None
-
-
-def probe_bins(probe, since=""):
-    recs = []
-    for day, items in (probe or {}).items():
-        if not (isinstance(day, str) and day.isdigit() and len(day) == 8):
-            continue
-        if since and day < since:
-            continue
-        for r in (items or {}).values():
-            if not isinstance(r, dict):
-                continue
-            d, q = r.get("distM"), r.get("rssi")
-            if isinstance(d, (int, float)) and isinstance(q, int) and d > 0:
-                recs.append((float(d), q, str(r.get("pairKey") or "?")))
-    if not recs:
-        return {}
-    by_bin = defaultdict(list)
-    for d, q, _ in recs:
-        by_bin[int(d / BIN_M)].append(q)
-    bins = []
-    for k in sorted(by_bin):
-        v = sorted(by_bin[k])
-        bins.append({"lo": round(k * BIN_M, 1), "hi": round((k + 1) * BIN_M, 1),
-                     "mid": round((k + 0.5) * BIN_M, 1), "n": len(v),
-                     "p10": _pct(v, 10), "p50": _pct(v, 50), "p90": _pct(v, 90)})
-    return {
-        "n": len(recs),
-        "days": len({d for d in (probe or {}) if isinstance(d, str) and d.isdigit()}),
-        "bins": bins,
-        "pairs": Counter(k for _, _, k in recs).most_common(6),
-        "cross": {nm: _cross(bins, thr) for nm, thr in THRESHOLDS},
-    }
-
-
 # ── Derived metrics ──────────────────────────────────────────
 #   Pulls three things from raw events that totals (counts, averages) alone cannot answer.
 #     · warning lead rate   = did a WARNING fire before the DANGER (direct evidence of time to avoid)
@@ -261,11 +230,6 @@ def probe_bins(probe, since=""):
 PRECEDE_S = 180      # a WARNING within this many seconds before a DANGER counts as leading
 PAIR_S = 90          # time window that groups records into one encounter
 GAP_S = 150          # gap after which an encounter counts as over
-
-
-def _pct(v, p):
-    s = sorted(v)
-    return s[max(0, min(len(s) - 1, round(p / 100 * (len(s) - 1))))] if s else None
 
 
 def derive(events, rssi, per_day):
@@ -421,30 +385,10 @@ def markdown(a, label, up=None, pb=None):
             if s:
                 nm = {"WARNING": "경고", "DANGER": "위험"}[lv]
                 L.append(f"| {nm} | {s['n']:,} | {s['p10']} | **{s['p50']}** | {s['p90']} | ")
-        L += ["", "> 설정 임계는 경고 -75dBm · 위험 -55dBm 이고 역할쌍 보정 +0~8dB 가 붙는다. "
-                  "위 실측 분포가 그 임계와 얼마나 맞는지가 판정 정확도의 1차 지표다.", ""]
+        L += ["", threshold_note(), ""]
 
     if pb:
-        L += ["### UWB 실거리 대비 RSSI (임계의 미터 환산)", "",
-              f"UWB 가 잰 실거리와 같은 프레임의 RSSI 표본 **{pb['n']:,}건** "
-              f"({pb['days']}일). 임계가 실제로 몇 m 인지를 재는 유일한 근거다.", "",
-              "| 거리 | 표본 | P10 | 중앙값 | P90 |", "|------|-----:|----:|------:|----:|"]
-        for b_ in pb["bins"]:
-            mark = "" if b_["n"] >= MIN_BIN_N else " ·표본부족"
-            L.append(f"| {b_['lo']}~{b_['hi']}m | {b_['n']:,}{mark} | {b_['p10']} | "
-                     f"**{b_['p50']}** | {b_['p90']} |")
-        L += [""]
-        hit = [f"{nm} {thr}dBm → 약 **{pb['cross'][nm]}m**"
-               for nm, thr in THRESHOLDS if pb["cross"].get(nm) is not None]
-        miss = [f"{nm} {thr}dBm" for nm, thr in THRESHOLDS if pb["cross"].get(nm) is None]
-        if hit:
-            L += ["> 중앙값 곡선이 임계를 지나는 지점 — " + " · ".join(hit), ""]
-        if miss:
-            L += ["> " + " · ".join(miss) + " 은 표본 구간 밖이라 환산되지 않았다. "
-                  "그 거리대에서 표본을 더 받아야 한다.", ""]
-        if pb.get("pairs"):
-            L += ["> 역할쌍별 표본 — " +
-                  " · ".join(f"{k} {c:,}" for k, c in pb["pairs"]), ""]
+        L += probe_md(pb)
 
     if a.get("role_pairs"):
         tot = sum(c for _, c in a["role_pairs"])

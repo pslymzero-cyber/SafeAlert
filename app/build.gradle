@@ -77,7 +77,8 @@ android {
         unitTests.all {
             // Cross-check tests read these repo files — a change to any of them alone reruns the tests
             inputs.files(rootProject.file('database.rules.json'), rootProject.file('scripts/sos-mail/Code.gs'),
-                rootProject.file('.github/scripts/hb_digest.py'))
+                rootProject.file('.github/scripts/hb_digest.py'), rootProject.file('.github/scripts/analyze_alerts.py'),
+                rootProject.file('.github/scripts/uwb_probe.py'))
             testLogging {
                 events 'failed'
                 exceptionFormat 'full'

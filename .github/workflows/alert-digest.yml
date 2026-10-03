@@ -62,8 +62,8 @@ jobs:
             echo "missing=$MISS" >> "$GITHUB_OUTPUT"
           fi
 
-      # List the site nodes. shallow fetches only the keys, not the values.
-      #   /version is the shared update channel, not a site, so it is skipped.
+      # List the firebaseRoot nodes (one per workplace). shallow fetches only the keys, not the values.
+      #   /version is the shared update channel, not a root, so it is skipped.
       - name: 사업장 목록
         id: sites
         if: steps.creds.outputs.missing == ''
@@ -137,7 +137,7 @@ jobs:
 
           for SITE in $SITES; do
             # Fetch only the recent range with orderBy="$key" + startAt (not the whole node).
-            # Limit: an all-digit site code sorts as an integer key and, if smaller than FROM, is cut off by the server-side startAt;
+            # Limit: an all-digit center code sorts as an integer key and, if smaller than FROM, is cut off by the server-side startAt;
             # a non-numeric code sorts after the integer keys, so its whole history comes down and --from trims it.
             if curl -fsS --get "${DB%/}/$SITE/alerts.json" \
                  --data-urlencode "auth=$KEY" \
