@@ -17,13 +17,14 @@
 [ -f "$HOME/.claude/hooks/big-read-guard.sh" ] && \
   grep -q big-read-guard "$HOME/.claude/settings.json" 2>/dev/null && exit 0
 
-MAX_BYTES=${CLAUDE_READ_MAX_BYTES:-30000}
+# 21,300 bytes ≈ 10,000 tokens at 2.13 bytes/token, the factor scripts/context-budget.py uses
+MAX_BYTES=${CLAUDE_READ_MAX_BYTES:-21300}
 MAX_LINES=${CLAUDE_READ_MAX_LINES:-200}
 
 j=$(tr -d '\n')
 
 block() {  # $1=path $2=bytes $3=reason
-  local tok=$(($2 * 100 / 329)) bn=${1##*/}
+  local tok=$(($2 * 100 / 213)) bn=${1##*/}
   {
     echo "차단: $1 는 ${2}바이트(약 ${tok}토큰)다. $3"
     echo

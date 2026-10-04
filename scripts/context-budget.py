@@ -26,6 +26,8 @@ import sys
 # ponytail: one factor for every file. Korean text is denser (the same two files with Korean comments
 # measured 1.88), so the PROGRESS rows run low; weight by non-ASCII share if they must be exact.
 # Re-measure after a model or tokenizer change, or when the mix of languages or file types changes.
+# The read-guard hook (.claude/hooks/big-read-guard.sh and its ~/.claude/hooks copy) repeats this factor and blocks
+# whole reads above 21,300 bytes (the 10,000-token threshold here); change them together.
 BYTES_PER_TOKEN = 2.13
 
 # Local-only files the table lists although git never sees them (.git/info/exclude)

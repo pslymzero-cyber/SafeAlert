@@ -16,6 +16,28 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7   # node24 runtime (v4 uses node20)
 
+      # Strip the v from the tag name to get the version (e.g. v1.0.52 → 1.0.52)
+      # is_release: true only for a release tag of exactly the form vX.Y.Z (an allowlist, not a denylist).
+      #   Anything extra (citest, rc, typos) gives false → the Firebase production channel is left untouched.
+      - name: Extract version
+        id: ver
+        run: |
+          echo "name=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+          if printf '%s' "$GITHUB_REF_NAME" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            # Devices compare Firebase latest (the tag) with their own versionName: a tag ahead of it offers the
+            # same update on every start, one behind hides the update. Checked before the tests so the run stops
+            # right away.
+            VN=$(sed -nE 's/^[[:space:]]*versionName "([^"]+)".*/\1/p' app/build.gradle)
+            if [ "v$VN" != "$GITHUB_REF_NAME" ]; then
+              echo "::error::태그 $GITHUB_REF_NAME 와 app/build.gradle versionName '$VN' 이 다르다 — versionName 을 맞추고 다시 태그한다"
+              exit 1
+            fi
+            echo "is_release=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_release=false" >> $GITHUB_OUTPUT
+            echo "::notice::'$GITHUB_REF_NAME' 은 정식 릴리스 태그(vX.Y.Z)가 아니다 — Firebase 업데이트를 건너뛴다"
+          fi
+
       # Do not build if the settings PIN secret is empty or not exactly 3 digits (the value is never printed).
       #   Local builds keep the '000' default (app/build.gradle). Checked before the tests so the run stops right away.
       - name: Check dev PIN secret
@@ -106,20 +128,6 @@ jobs:
           if [ "$TOTAL" -lt "$MIN_TOTAL" ]; then
             echo "::error::실행된 테스트가 $TOTAL 건으로 하한 $MIN_TOTAL 미만이다 — 테스트가 조용히 사라졌다"
             exit 1
-          fi
-
-      # Strip the v from the tag name to get the version (e.g. v1.0.52 → 1.0.52)
-      # is_release: true only for a release tag of exactly the form vX.Y.Z (an allowlist, not a denylist).
-      #   Anything extra (citest, rc, typos) gives false → the Firebase production channel is left untouched.
-      - name: Extract version
-        id: ver
-        run: |
-          echo "name=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
-          if printf '%s' "$GITHUB_REF_NAME" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "is_release=true" >> $GITHUB_OUTPUT
-          else
-            echo "is_release=false" >> $GITHUB_OUTPUT
-            echo "::notice::'$GITHUB_REF_NAME' 은 정식 릴리스 태그(vX.Y.Z)가 아니다 — Firebase 업데이트를 건너뛴다"
           fi
 
       - name: Build release APK
