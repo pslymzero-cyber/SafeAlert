@@ -24,7 +24,7 @@ class SosMailTest {
         override fun create(path: String, key: String, rec: SosLedger.Record, uid: String, done: (Boolean) -> Unit) {
             creates.add(Call(path, key, done))
         }
-        override fun resolve(path: String, key: String, done: (Boolean) -> Unit) {
+        override fun resolve(path: String, key: String, auto: Boolean, done: (Boolean) -> Unit) {
             resolves.add(Call(path, key, done))
         }
         override fun read(path: String, key: String, done: (Remote) -> Unit) {

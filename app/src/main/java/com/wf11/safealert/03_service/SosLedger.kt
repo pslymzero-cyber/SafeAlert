@@ -15,7 +15,8 @@ interface SosTransport {
     fun sitePath(): String?
     fun newKey(path: String): String
     fun create(path: String, key: String, rec: SosLedger.Record, uid: String, done: (Boolean) -> Unit)
-    fun resolve(path: String, key: String, done: (Boolean) -> Unit)
+    /** auto = released by the one-hour limit rather than by "괜찮아요" (recorded on the server as reason auto). */
+    fun resolve(path: String, key: String, auto: Boolean, done: (Boolean) -> Unit)
     fun read(path: String, key: String, done: (SosLedger.Remote) -> Unit)
 }
 
@@ -34,13 +35,17 @@ interface SosTransport {
  * onSaved fires the moment the server save is confirmed — the SOS mail starts here.
  * If a resolve is confirmed for a record whose SOS was not yet confirmed, the SOS is reported first; the
  * script then sends the late SOS mail as "해제됨". Already-confirmed records report only the resolve.
+ * An SOS whose server record has been up AUTO_RELEASE_MS is released automatically (reason auto on the server); one the
+ * server never confirmed is not, since nobody was told about it. Its resolve mail is not sent: that mail tells the site the
+ * worker pressed "괜찮아요", which an automatic release is not.
  */
 class SosLedger(
     private val kv: SosKv,
     private val transport: SosTransport,
     private val clock: () -> Long,
     private val onSaved: (event: String, path: String, key: String) -> Unit = { _, _, _ -> },
-    private val onChange: () -> Unit = {}
+    private val onChange: () -> Unit = {},
+    private val wallClock: () -> Long = System::currentTimeMillis
 ) {
     data class Record(
         val bleId: String, val name: String, val role: String, val trigger: String,
@@ -62,11 +67,19 @@ class SosLedger(
         private const val K_KEY = "a.key"
         private const val K_PATH = "a.path"
         private const val K_SENT = "a.sent"
+        private const val K_AT = "a.at"   // wall-clock time the server confirmed the SOS (survives restarts and reboots)
         private const val K_PENDING = "r.list"
         private const val K_EP_LAST = "ep.last"
         private val ACTIVE_KEYS = listOf(
-            K_TRIGGER, K_BLE, K_NAME, K_ROLE, K_BEACON, K_RSSI, K_SID, K_EP, K_KEY, K_PATH, K_SENT
+            K_TRIGGER, K_BLE, K_NAME, K_ROLE, K_BEACON, K_RSSI, K_SID, K_EP, K_KEY, K_PATH, K_SENT, K_AT
         )
+
+        /**
+         * An SOS still active this long after its server record was made is released automatically, on the SOS phone and on
+         * every other phone: the site was alerted and mailed long before, and a rescue has come and gone. The database rules
+         * hold the same number for the other phones' server record.
+         */
+        const val AUTO_RELEASE_MS = 60 * 60_000L
 
         const val STATUS_SENT = "서버 전송됨"
         const val STATUS_SENDING = "서버 전송 중"
@@ -85,8 +98,11 @@ class SosLedger(
         fun nextEpisode(prev: Int): Int = (prev.coerceAtLeast(0) % 255) + 1
     }
 
-    /** sent = whether the SOS was confirmed on the server at resolve time (set later if the create confirmation arrives late). */
-    private class Pending(val path: String, val key: String, val sent: Boolean)
+    /**
+     * sent = whether the SOS was confirmed on the server at resolve time (set later if the create confirmation arrives late);
+     * auto = released by the one-hour limit.
+     */
+    private class Pending(val path: String, val key: String, val sent: Boolean, val auto: Boolean = false)
 
     // In-flight state, failures and next-allowed time live in memory only (a restart
     // retries immediately). Create and resolve are counted separately.
@@ -96,11 +112,27 @@ class SosLedger(
     private val resolveBusy = HashSet<String>()
     private val resolveFails = HashMap<String, Int>()
     private val resolveNext = HashMap<String, Long>()
+    /** clock() when the active SOS's server record was confirmed: set then, or anchored from a.at once after a restart. */
+    private var sentAt: Long? = null
 
     fun hasActive(): Boolean = kv.get(K_TRIGGER) != null
     fun restoredTrigger(): String? = kv.get(K_TRIGGER)
     fun episode(): Int = kv.get(K_EP)?.toIntOrNull() ?: 0
     fun hint(): Int = kv.get(K_SID)?.toIntOrNull() ?: 0
+
+    /**
+     * How long the active SOS's server record has been up, or null without one or before the server confirmed it. Counted
+     * on clock(), so a wall-clock change while running is ignored; across a restart the gap comes from the wall clock (a
+     * backward step counts as none). A record confirmed before a.at was kept counts from now.
+     */
+    fun activeForMs(): Long? {
+        if (!hasActive() || kv.get(K_SENT) == null) return null
+        val at = sentAt ?: run {
+            val wallAt = kv.get(K_AT)?.toLongOrNull() ?: wallClock().also { kv.put(mapOf(K_AT to it.toString())) }
+            clock() - (wallClock() - wallAt).coerceAtLeast(0L)
+        }.also { sentAt = it }
+        return clock() - at
+    }
 
     /** SOS entered. If a stored SOS (restored) already exists, keep it so no second record is created. */
     fun begin(rec: Record) {
@@ -118,6 +150,7 @@ class SosLedger(
         ch[K_EP] = ep.toString()
         ch[K_EP_LAST] = ep.toString()
         kv.put(ch)
+        sentAt = null
         trySend()
         onChange()
     }
@@ -136,8 +169,11 @@ class SosLedger(
         return STATUS_FAILED
     }
 
-    /** Resolve (called only from "괜찮아요"). Empties the active slot at once and moves the resolve to the pending list. */
-    fun resolve() {
+    /**
+     * Resolve: "괜찮아요", or auto = the one-hour limit. Empties the active slot at once and moves the resolve to the pending
+     * list.
+     */
+    fun resolve(auto: Boolean = false) {
         if (!hasActive()) return
         val key = kv.get(K_KEY)
         val path = kv.get(K_PATH)
@@ -146,10 +182,11 @@ class SosLedger(
         if (key != null && path != null) {
             val list = pending()
             if (list.none { it.key == key && it.path == path }) {
-                ch[K_PENDING] = encode(list + Pending(path, key, kv.get(K_SENT) != null))
+                ch[K_PENDING] = encode(list + Pending(path, key, kv.get(K_SENT) != null, auto))
             }
         }
         kv.put(ch)
+        sentAt = null
         sendResolves()
         onChange()
     }
@@ -209,9 +246,12 @@ class SosLedger(
         // Report even a late confirmation, since the record now exists on the server.
         // The mail queue entry must be saved first so that, if the process dies in between, a re-check reports it again
         onSaved(SosMail.EVENT_SOS, path, key)
-        if (active) kv.put(mapOf(K_SENT to "1"))
+        if (active) {
+            kv.put(mapOf(K_SENT to "1", K_AT to wallClock().toString()))
+            sentAt = clock()
+        }
         if (waiting) {
-            val marked = list.map { if (it.key == key && it.path == path) Pending(it.path, it.key, true) else it }
+            val marked = list.map { if (it.key == key && it.path == path) Pending(it.path, it.key, true, it.auto) else it }
             kv.put(mapOf(K_PENDING to encode(marked)))
         }
     }
@@ -229,7 +269,7 @@ class SosLedger(
             val key = e.key
             if (key in resolveBusy || (resolveNext[key] ?: 0L) > clock()) continue
             resolveBusy.add(key)
-            transport.resolve(e.path, key) { ok ->
+            transport.resolve(e.path, key, e.auto) { ok ->
                 if (ok) {
                     resolveBusy.remove(key)
                     resolved(e)
@@ -262,7 +302,7 @@ class SosLedger(
     private fun resolved(e: Pending) {
         val now = pending().firstOrNull { it.key == e.key && it.path == e.path }
         if (now != null && !now.sent) onSaved(SosMail.EVENT_SOS, e.path, e.key)
-        onSaved(SosMail.EVENT_RESOLVED, e.path, e.key)
+        if (!e.auto) onSaved(SosMail.EVENT_RESOLVED, e.path, e.key)
         drop(e)
     }
 
@@ -273,19 +313,27 @@ class SosLedger(
         resolveNext.remove(e.key)
     }
 
-    // List storage format: one "path TAB key" per line; only entries resolved before the SOS was confirmed get "TAB 0" appended.
-    // Lines without a third field (including the older format) are read as confirmed. Broken lines are skipped.
+    // List storage format: one "path TAB key" per line; an entry resolved before the SOS was confirmed gets "TAB 0", and an
+    // automatic release gets "TAB auto" after that (alone when confirmed, which a version without automatic release reads
+    // as a confirmed resolve and still resends). Lines without a third field are read as confirmed. Broken lines are skipped.
     private fun pending(): List<Pending> {
         val raw = kv.get(K_PENDING) ?: return emptyList()
         val out = ArrayList<Pending>()
         for (line in raw.split('\n')) {
             val f = line.split('\t')
-            if (f.size !in 2..3 || f[0].isEmpty() || f[1].isEmpty()) continue
-            out.add(Pending(f[0], f[1], f.getOrNull(2) != "0"))
+            if (f.size !in 2..4 || f[0].isEmpty() || f[1].isEmpty()) continue
+            out.add(Pending(f[0], f[1], f.getOrNull(2) != "0", "auto" in f.drop(2)))
         }
         return out
     }
 
     private fun encode(list: List<Pending>): String =
-        list.joinToString("\n") { it.path + "\t" + it.key + if (it.sent) "" else "\t0" }
+        list.joinToString("\n") {
+            it.path + "\t" + it.key + when {
+                it.auto && it.sent -> "\tauto"
+                it.auto -> "\t0\tauto"
+                it.sent -> ""
+                else -> "\t0"
+            }
+        }
 }

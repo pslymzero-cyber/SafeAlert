@@ -43,6 +43,20 @@ class MountedStillTest {
         l.opensAt(280_000)
     }
 
+    // A mount whose SOS ended by the one-hour limit waits as well: no new check while the equipment stands still, and a
+    //   turn starts the count again.
+    @Test fun mount_after_an_sos_ended_by_the_limit_waits_for_a_turn() {
+        val l = mounted()
+        l.opensAt(180_000)
+        assertEquals(Mode.SOS, l.seenAt(300_000))
+        l.cancelSos(400_000)
+        l.holdStill(400_000)
+        assertEquals(Rest.WAIT, l.rest)
+        assertEquals(Mode.WATCHING, l.seenAt(2_200_000))
+        l.onTurn(2_300_000)
+        l.opensAt(2_480_000)
+    }
+
     @Test fun turn_closes_mounted_still_check() {
         val l = mounted()
         l.opensAt(180_000)

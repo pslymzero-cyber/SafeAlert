@@ -12,8 +12,8 @@ android {
         applicationId "com.wf11.safealert"
         minSdk 26
         targetSdk 34
-        versionCode 161
-        versionName "1.2.5"
+        versionCode 162
+        versionName "1.2.6"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         // Settings PIN — injected at build time (BuildConfig + CI Secrets). The real value is never kept in the repo.
         //   Precedence: -PdevPin / ~/.gradle/gradle.properties devPin → env var SA_DEV_PIN → '000'

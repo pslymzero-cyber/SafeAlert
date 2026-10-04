@@ -35,7 +35,8 @@ object SosRemote {
         val active: Boolean,
         val uid: String,          // Writer uid ("" if none); used to filter out my own records
         val ep: Int = 0,          // SOS episode 1..255 (0 = none); same value as the BLE advertised episode
-        val resolvedAt: Long = 0L // Resolve server time (0 if none)
+        val resolvedAt: Long = 0L, // Resolve server time (0 if none)
+        val auto: Boolean = false // Released by the one-hour limit (reason auto), not by its worker
     )
 
     private const val SOS_STR_MAX = 64
@@ -83,7 +84,8 @@ object SosRemote {
             active = status == "active",
             uid = (m["uid"] as? String).orEmpty().take(SOS_STR_MAX),
             ep = (m["ep"] as? Number)?.toInt()?.takeIf { it in 1..255 } ?: 0,
-            resolvedAt = (m["resolvedAt"] as? Number)?.toLong() ?: 0L
+            resolvedAt = (m["resolvedAt"] as? Number)?.toLong() ?: 0L,
+            auto = m["reason"] == "auto"
         )
     }
 
@@ -144,16 +146,20 @@ object SosRemote {
     }
 
     /**
-     * Resolves the SOS — status=resolved + resolvedAt (server time). Writes to the
-     * saved path and never rebuilds it from the current site code.
+     * Resolves the SOS — status=resolved + resolvedAt (server time), at the given path (never rebuilt from the current site
+     * code). auto = the one-hour limit released it (reason auto); the rules let any phone do that once the record is an hour
+     * old, and only its writer otherwise. uid and the other fields stay as they are. Rules older than the reason field refuse
+     * it, so a refused automatic resolve goes again without it (the writer's then lands).
      */
-    fun resolve(path: String, key: String, onDone: (Boolean) -> Unit) {
+    fun resolve(path: String, key: String, auto: Boolean = false, onDone: (Boolean) -> Unit) {
+        val fields = mutableMapOf<String, Any>("status" to "resolved", "resolvedAt" to ServerValue.TIMESTAMP)
+        if (auto) fields["reason"] = "auto"
         FirebaseDatabase.getInstance().reference.child(path).child(key)
-            .updateChildren(mapOf("status" to "resolved", "resolvedAt" to ServerValue.TIMESTAMP))
+            .updateChildren(fields)
             .addOnCompleteListener {
                 if (it.isSuccessful) Log.d(TAG, "구조 요청 해제 기록: $key")
                 else Log.e(TAG, "구조 요청 해제 기록 실패: ${it.exception?.message}")
-                onDone(it.isSuccessful)
+                if (!it.isSuccessful && auto) resolve(path, key, false, onDone) else onDone(it.isSuccessful)
             }
     }
 

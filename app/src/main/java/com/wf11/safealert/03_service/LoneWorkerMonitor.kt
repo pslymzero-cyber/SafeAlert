@@ -41,6 +41,8 @@ class LoneWorkerMonitor(
         val closesByTurn: Boolean = false   // Mounted no-motion window: closes by turn, 3 s shake or "괜찮아요"
     ) {
         val peerActive: Boolean get() = peers.any { it.active }
+        /** Every row shown ended by the one-hour limit, not by its worker. */
+        val peerAutoEnded: Boolean get() = peers.isNotEmpty() && peers.all { it.autoEnded }
     }
 
     companion object {
@@ -61,9 +63,12 @@ class LoneWorkerMonitor(
         { rec ->
             if (started) {
                 val t = now()
+                val serverNow = SosRemote.serverNowMs()
+                val wall = System.currentTimeMillis()
                 logic.onPeerServer(LoneWorkerPeers.ServerRec(
                     rec.key, rec.bleId, rec.name, rec.role, rec.trigger, rec.beacon, rec.createdAt, rec.active, rec.ep,
-                    LoneWorkerPeers.resolvedLocalMs(rec.resolvedAt, SosRemote.serverNowMs(), System.currentTimeMillis(), t)
+                    LoneWorkerPeers.resolvedLocalMs(rec.resolvedAt, serverNow, wall, t),
+                    LoneWorkerPeers.startLocalMs(rec.createdAt, serverNow, t), rec.auto
                 ), t)
                 render()
             }
@@ -124,6 +129,9 @@ class LoneWorkerMonitor(
         logic.myBleId = bleId
         logic.setEquipment(equipment, now()) // Before startFrom so restore sees the mount; a role change restarts via applyMode
         if (started) return
+        // A saved own SOS already past the limit ends here, recorded as automatic, while nothing renders (not started yet)
+        val overdue = sosOverdue()
+        if (overdue) sync.resolve(auto = true)
         started = true
         // Start docked if charging, otherwise waiting for the first clear movement
         val plugged = power.start()
@@ -132,6 +140,7 @@ class LoneWorkerMonitor(
         // Without a vibrator there is no siren vibration and no no-motion count pause during it
         logic.canVibrate = VibrationHelper.vibrator(ctx)?.hasVibrator() == true
         logic.startFrom(t0, zoneInside, plugged, resume.load(t0))
+        if (overdue) logic.holdStill(t0)
         // Revive a saved own SOS before the first render — the siren and advertisement bit1 come back on with the same server key
         sync.restoredTrigger()?.let { logic.restoreSos(it, now()) }
         notifier.createChannel()
@@ -158,6 +167,7 @@ class LoneWorkerMonitor(
         override fun run() {
             if (!started) return
             sync.tick()
+            releaseOldSos()
             sync.heartbeat(DevSettings.lwEnabled, roleName) // Liveness record only; unrelated to judgment
             onPowerRaw(power.plugged(), true) // Sticky battery fixes missed broadcasts (dropped if pending, same 2 s debounce)
             sensors.refreshSteps() // Sync step sensor registration if activity permission changed
@@ -360,6 +370,21 @@ class LoneWorkerMonitor(
         render()
     }
 
+    /** Whether my SOS's server record has been up SosLedger.AUTO_RELEASE_MS. */
+    private fun sosOverdue() = (sync.sosActiveForMs() ?: 0L) >= SosLedger.AUTO_RELEASE_MS
+
+    /**
+     * My SOS whose server record has been up SosLedger.AUTO_RELEASE_MS ends, recorded as automatic, and the no-motion watch
+     * then waits for movement (LoneWorkerLogic.holdStill). start() ends a saved one already past the limit the same way.
+     */
+    private fun releaseOldSos() {
+        if (logic.mode != LoneWorkerLogic.Mode.SOS || !sosOverdue()) return
+        val t = now()
+        logic.cancelSos(t) // First, so the render the resolve triggers finds no SOS whose stored one is gone
+        logic.holdStill(t)
+        sync.resolve(auto = true)
+    }
+
     /** Mutes only the entries in targets (entry id -> episode ID). */
     fun silencePeers(targets: Map<String, String>) {
         if (!started) return
@@ -387,7 +412,7 @@ class LoneWorkerMonitor(
         return UiState(
             logic.mode,
             ((left + 999L) / 1000L).toInt(),
-            shown.map { PeerRow(it.id, it.epId, it.line(t), it.active) },
+            shown.map { PeerRow(it.id, it.epId, it.line(t), it.active, it.autoEnded) },
             if (logic.mode == LoneWorkerLogic.Mode.SOS) sync.statusText() else null,
             alarm.volumeFault,
             logic.trigger,
@@ -454,6 +479,7 @@ class LoneWorkerMonitor(
             sync.resolve()
             advertiseSos(false, 0, 0)
         }
+        logic.takeAutoReleasedPeers().forEach { sync.autoResolvePeer(it) }
         lastMode = mode
         lastRest = logic.rest
 

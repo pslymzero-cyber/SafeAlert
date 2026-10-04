@@ -21,10 +21,16 @@ package com.wf11.safealert.service
  *   An acknowledgement for an entry that does not exist yet stays as a pending mute for 60 s: a new BLE entry is muted if it
  *   has the same episode; a server entry (created, absorbed, or first heard over BLE) is muted only if its server key or the
  *   absorbed BLE entry has a pending mute.
+ * - A server entry still active SosLedger.AUTO_RELEASE_MS after its record was made (on the known server clock, otherwise
+ *   from when first heard here) is over: it ends as automatic (autoEnded, also set by a record released with reason auto,
+ *   even on an entry that already ended on air), its episode's adverts open no entry until they turn false (not episode 0:
+ *   an old sender's next SOS cannot be told apart), and its record is queued (takeAutoReleased) to be marked released on
+ *   the server, where its writer may be gone. A BLE-only entry may never have reached the server (nobody was told), so it
+ *   ends that way only once its adverts have stopped as well.
  */
 
 /** One peer row used by the screen and the acknowledge gate. id = entry id, epId = episode ID. */
-data class PeerRow(val id: String, val epId: String, val line: String, val active: Boolean)
+data class PeerRow(val id: String, val epId: String, val line: String, val active: Boolean, val autoEnded: Boolean = false)
 
 class LoneWorkerPeers {
 
@@ -43,7 +49,11 @@ class LoneWorkerPeers {
         /** SOS episode number (1..255, 0 = unknown). */
         val episode: Int,
         /** Last time BLE showed sos=true for this entry. */
-        val lastBleMs: Long = Long.MIN_VALUE
+        val lastBleMs: Long = Long.MIN_VALUE,
+        /** When the SOS began on this device's clock: the server record's time, or when first heard over BLE. */
+        val startMs: Long = firstSeenMs,
+        /** Ended by the one-hour limit, not by its worker. */
+        val autoEnded: Boolean = false
     ) {
         val fromServer: Boolean get() = key != null
         /** Store key. */
@@ -52,10 +62,14 @@ class LoneWorkerPeers {
         val epId: String get() = "$bleId#$episode"
     }
 
-    /** One server record. resolvedLocalMs = resolve time converted to this device's elapsed time (null if unknown). */
+    /**
+     * One server record. resolvedLocalMs / startLocalMs = resolve and creation times converted to this device's elapsed
+     * time (null if unknown); auto = released by the one-hour limit (reason auto).
+     */
     data class ServerRec(
         val key: String, val bleId: String, val name: String, val role: String, val trigger: String,
-        val beacon: String, val createdAtMs: Long, val active: Boolean, val ep: Int, val resolvedLocalMs: Long?
+        val beacon: String, val createdAtMs: Long, val active: Boolean, val ep: Int, val resolvedLocalMs: Long?,
+        val startLocalMs: Long? = null, val auto: Boolean = false
     )
 
     companion object {
@@ -75,6 +89,13 @@ class LoneWorkerPeers {
         fun resolvedLocalMs(resolvedAtMs: Long, serverNowMs: Long?, wallNowMs: Long, nowMs: Long): Long? =
             if (resolvedAtMs <= 0L) null
             else nowMs - ((serverNowMs ?: wallNowMs) - resolvedAtMs) - (if (serverNowMs == null) CLOCK_SLACK_MS else 0L)
+
+        /**
+         * Converts a server creation time to elapsed time on a known server time only: the age can end a ringing SOS, so this
+         * phone's wall clock is never used (null when unknown; the SOS is then timed from when it is first heard here).
+         */
+        fun startLocalMs(createdAtMs: Long, serverNowMs: Long?, nowMs: Long): Long? =
+            if (createdAtMs <= 0L || serverNowMs == null) null else nowMs - (serverNowMs - createdAtMs)
     }
 
     private val map = LinkedHashMap<String, Peer>()
@@ -83,8 +104,15 @@ class LoneWorkerPeers {
     /** Entry id / episode ID acknowledged while no entry existed -> expiry time. */
     private val pendingIds = HashMap<String, Long>()
     private val pendingEps = HashMap<String, Long>()
-    /** Resolves rejected only because the advertisement was heard: BLE entry id -> converted resolve time. */
-    private val pendingResolve = HashMap<String, Long>()
+    /**
+     * Resolves rejected only because the advertisement was heard: BLE entry id -> converted resolve time and whether the
+     * record was released by the one-hour limit.
+     */
+    private val pendingResolve = HashMap<String, Pair<Long, Boolean>>()
+    /** Server episodes released by the one-hour limit: their adverts open no entry until they turn false. */
+    private val expiredEps = HashSet<String>()
+    /** Server keys released by the one-hour limit, waiting to be marked released on the server. */
+    private val autoReleased = ArrayList<String>()
 
     val all: Collection<Peer> get() = map.values
 
@@ -93,14 +121,22 @@ class LoneWorkerPeers {
         val kId = "k:$key"
         val epId = "$bleId#$ep"
         val bId = "b:$epId"
+        if (active && rec.startLocalMs != null && nowMs - rec.startLocalMs >= SosLedger.AUTO_RELEASE_MS) {
+            for (p in listOfNotNull(map[kId], if (ep != 0) map[bId] else null)) expire(p, nowMs)
+            if (ep != 0) expiredEps.add(epId)
+            if (key !in autoReleased) autoReleased.add(key)
+            return
+        }
         if (!active) {
             val cur = map[kId]
             val b = if (ep != 0) map[bId] else null
             val r = rec.resolvedLocalMs
             if (cur != null && cur.active) {
-                map[kId] = resolve(cur, nowMs)
+                map[kId] = resolve(cur, nowMs, rec.auto)
             } else if (b != null && b.active && r != null && r >= b.firstSeenMs) {
-                if (adGone(b, nowMs)) map[bId] = resolve(b, nowMs) else pendingResolve[bId] = r
+                if (adGone(b, nowMs)) map[bId] = resolve(b, nowMs, rec.auto) else pendingResolve[bId] = r to rec.auto
+            } else if (b != null && !b.active && rec.auto) {
+                map[bId] = b.copy(autoEnded = true) // It already ended on air; the record says why
             }
             // An untracked resolve (old record replayed on connect) does not create an entry.
             return
@@ -111,7 +147,8 @@ class LoneWorkerPeers {
             if (cur.active) {
                 map[kId] = cur.copy(
                     name = name, role = role, trigger = trigger,
-                    beacon = beacon.ifEmpty { cur.beacon }, createdAtMs = createdAtMs
+                    beacon = beacon.ifEmpty { cur.beacon }, createdAtMs = createdAtMs,
+                    startMs = rec.startLocalMs ?: cur.startMs
                 )
             }
             return
@@ -124,25 +161,27 @@ class LoneWorkerPeers {
             map[kId] = Peer(
                 bleId, key, name, role, trigger, beacon.ifEmpty { b.beacon }, createdAtMs,
                 firstSeenMs = b.firstSeenMs, active = true, silenced = coldServer(kId, epId, nowMs),
-                resolvedAtMs = 0L, episode = ep, lastBleMs = b.lastBleMs
+                resolvedAtMs = 0L, episode = ep, lastBleMs = b.lastBleMs, startMs = rec.startLocalMs ?: b.startMs
             )
             return
         }
         map[kId] = Peer(
             bleId, key, name, role, trigger, beacon, createdAtMs,
             firstSeenMs = nowMs, active = true, silenced = coldServer(kId, epId, nowMs),
-            resolvedAtMs = 0L, episode = ep
+            resolvedAtMs = 0L, episode = ep, startMs = rec.startLocalMs ?: nowMs
         )
     }
 
     fun onBle(bleId: String, sos: Boolean, nowMs: Long, ep: Int, beacon: String) {
         if (!sos) {
+            expiredEps.removeAll { it.startsWith("$bleId#") }   // its SOS ended on air: a later one is new
             if (map.values.none { it.bleId == bleId && it.key == null && it.active }) return
             falseSince.putIfAbsent(bleId, nowMs)
             settle(bleId, nowMs)
             return
         }
         falseSince.remove(bleId)
+        if ("$bleId#$ep" in expiredEps) return
         val matches = map.values.filter { it.bleId == bleId && it.episode == ep }
         if (matches.any { it.active }) {
             for (p in matches) {
@@ -189,13 +228,18 @@ class LoneWorkerPeers {
     fun audible(): List<Peer> = map.values.filter { it.active && !it.silenced }
 
     fun tick(nowMs: Long) {
+        for (p in map.values.toList()) {
+            if (p.active && nowMs - p.startMs >= SosLedger.AUTO_RELEASE_MS && (p.key != null || adGone(p, nowMs))) expire(p, nowMs)
+        }
         for (id in falseSince.keys.toList()) settle(id, nowMs)
         val pr = pendingResolve.entries.iterator()
         while (pr.hasNext()) {
-            val (bId, r) = pr.next()
+            val (bId, v) = pr.next()
+            val (r, auto) = v
             val b = map[bId]
-            if (b == null || !b.active || r < b.firstSeenMs) pr.remove()
-            else if (adGone(b, nowMs)) { map[bId] = resolve(b, nowMs); pr.remove() }
+            if (b == null || r < b.firstSeenMs) pr.remove()
+            else if (!b.active) { if (auto) map[bId] = b.copy(autoEnded = true); pr.remove() } // Ended on air meanwhile
+            else if (adGone(b, nowMs)) { map[bId] = resolve(b, nowMs, auto); pr.remove() }
         }
         map.values.removeAll { !it.active && nowMs - it.resolvedAtMs >= RESOLVED_KEEP_MS }
         val ids = map.values.mapTo(HashSet()) { it.bleId }
@@ -216,8 +260,23 @@ class LoneWorkerPeers {
     /** Whether the advertisement has been silent for 15 s or more. */
     private fun adGone(b: Peer, nowMs: Long) = b.lastBleMs == Long.MIN_VALUE || nowMs - b.lastBleMs >= PEER_LIVE_AD_MS
 
-    /** On resolution, lifts the mute so the "해제됨" row shows. */
-    private fun resolve(p: Peer, nowMs: Long) = p.copy(active = false, resolvedAtMs = nowMs, silenced = false)
+    /** Server keys released by the one-hour limit since the last call, to be marked released on the server. */
+    fun takeAutoReleased(): List<String> = autoReleased.toList().also { autoReleased.clear() }
+
+    /**
+     * The one-hour limit ends this entry: resolved here; a server entry's episode is then ignored on air (not episode 0) and
+     * its record queued. A BLE-only entry ends only once silent, so its episode heard again rings as live.
+     */
+    private fun expire(p: Peer, nowMs: Long) {
+        if (p.active) map[p.id] = resolve(p, nowMs, auto = true)
+        val key = p.key ?: return
+        if (p.episode != 0) expiredEps.add(p.epId)
+        if (key !in autoReleased) autoReleased.add(key)
+    }
+
+    /** On resolution, lifts the mute so the ended row shows; auto = ended by the one-hour limit. */
+    private fun resolve(p: Peer, nowMs: Long, auto: Boolean = false) =
+        p.copy(active = false, resolvedAtMs = nowMs, silenced = false, autoEnded = auto)
 
     private fun live(until: Long?, nowMs: Long) = until != null && until > nowMs
 
@@ -239,3 +298,5 @@ fun LoneWorkerLogic.onPeerBle(bleId: String, sos: Boolean, nowMs: Long, episode:
 fun LoneWorkerLogic.silencePeers(nowMs: Long, targets: Map<String, String>) = peerStore.silence(nowMs, targets)
 /** Ringing peer entries — delegated from LoneWorkerLogic, kept here due to the 500-line limit. */
 fun LoneWorkerLogic.audiblePeers(): List<LoneWorkerPeers.Peer> = peerStore.audible()
+/** Server keys of peer SOS released by the one-hour limit — delegated from LoneWorkerLogic. */
+fun LoneWorkerLogic.takeAutoReleasedPeers(): List<String> = peerStore.takeAutoReleased()

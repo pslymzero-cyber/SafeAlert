@@ -66,6 +66,8 @@ class LoneWorkerSosSync(
 
         private val mailExec: ExecutorService by lazy { Executors.newSingleThreadExecutor() }
         private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
+        /** A peer's one-hour release is written this long after it, past the server-time margin of the rules. */
+        const val PEER_RELEASE_DELAY_MS = 60_000L
 
         /**
          * Store backed by the ledger file. Writes use commit (synchronous), so they survive dying
@@ -159,8 +161,8 @@ class LoneWorkerSosSync(
             SosRemote.create(path, key, payload) { ok -> handler.post { done(ok) } }
         }
 
-        override fun resolve(path: String, key: String, done: (Boolean) -> Unit) {
-            SosRemote.resolve(path, key) { ok -> handler.post { done(ok) } }
+        override fun resolve(path: String, key: String, auto: Boolean, done: (Boolean) -> Unit) {
+            SosRemote.resolve(path, key, auto) { ok -> handler.post { done(ok) } }
         }
 
         override fun read(path: String, key: String, done: (SosLedger.Remote) -> Unit) {
@@ -181,7 +183,7 @@ class LoneWorkerSosSync(
     private val ledger by lazy {
         SosLedger(kv, transport, SystemClock::elapsedRealtime, { event, path, key ->
             if (mailEnabled) mail(ctx).enqueue(event, path, key, DevSettings.lwStillMin)
-        }) { onChange() }
+        }, onChange = { onChange() })
     }
 
     // Liveness record while monitoring — record only; failures are ignored, unrelated to alerts and judgment
@@ -211,6 +213,8 @@ class LoneWorkerSosSync(
 
     private var remover: (() -> Unit)? = null
     private var listenPath = ""
+    /** Node each peer record was received from (server key -> path), for its one-hour release. */
+    private val peerPaths = HashMap<String, String>()
     private var generation = 0
 
     // ── Own SOS persistence / upload (delegated to the ledger) ───
@@ -229,8 +233,24 @@ class LoneWorkerSosSync(
     /** Server upload status text; null without an own SOS. */
     fun statusText(): String? = ledger.statusText()
 
-    /** Clear (called only from "괜찮아요"). The active slot empties at once and the clear is retried until confirmed. */
-    fun resolve() = ledger.resolve()
+    /**
+     * Clear: "괜찮아요", or auto = the one-hour limit. The active slot empties at once and the clear is retried until
+     * confirmed.
+     */
+    fun resolve(auto: Boolean = false) = ledger.resolve(auto)
+
+    /** How long my SOS's server record has been up, or null without one or before the server confirmed it. */
+    fun sosActiveForMs(): Long? = ledger.activeForMs()
+
+    /**
+     * Records the one-hour release of another phone's SOS on the server, on the node the record came from: its writer may
+     * be gone, and while the record stays active every phone that starts replays it. Written PEER_RELEASE_DELAY_MS later so
+     * the rules' hour (server time) has surely passed. Best effort — a record already resolved simply refuses the write.
+     */
+    fun autoResolvePeer(key: String) {
+        val path = peerPaths[key] ?: return
+        handler.postDelayed({ SosRemote.resolve(path, key, auto = true) { } }, PEER_RELEASE_DELAY_MS)
+    }
 
     /** Whether the clear has not reached the server yet and is being resent. */
     fun resolveFailing(): Boolean = ledger.resolveFailing()
@@ -268,7 +288,10 @@ class LoneWorkerSosSync(
                 handler.post {
                     // Skip my own records (including those under my bleId from before a role switch)
                     val mine = SosRemote.currentUid()
-                    if (gen == generation && !(rec.uid.isNotEmpty() && rec.uid == mine)) onPeer(rec)
+                    if (gen == generation && !(rec.uid.isNotEmpty() && rec.uid == mine)) {
+                        peerPaths[rec.key] = path
+                        onPeer(rec)
+                    }
                 }
             },
             // The server time listener survives a cancel, so detach it before clearing

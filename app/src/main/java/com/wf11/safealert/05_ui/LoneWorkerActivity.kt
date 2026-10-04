@@ -196,7 +196,7 @@ class LoneWorkerActivity : AppCompatActivity() {
             }
             else -> {
                 chip("같은 사업장 동료")
-                b.tvLwTitle.text = if (st.peerActive) "동료 구조 요청" else "해제됨"
+                b.tvLwTitle.text = if (st.peerActive) "동료 구조 요청" else if (st.peerAutoEnded) LoneWorkerNotifier.AUTO_ENDED else "해제됨"
                 b.tvLwBody.text = peerLines.joinToString("\n\n")
                 b.btnLwPrimary.text = if (st.peerActive) "확인" else "닫기"
                 if (st.peerActive) ALERT else DONE

@@ -20,6 +20,23 @@ class ScriptRulesParityTest {
 
     private fun script() = repoFile("scripts/sos-mail/Code.gs")
 
+    private fun sosWrite(): String {
+        val s = repoFile("database.rules.json")
+        return s.substring(s.indexOf("\"sos\": {")).substringAfter("\".write\": \"").substringBefore("\",")
+    }
+
+    // Other phones may mark an SOS released only as automatic and only after the app's one-hour limit; the writer may
+    //   resolve at any time, and a resolve may change or drop nothing else of the record (whose it is, who, where, why).
+    @Test fun sos_auto_release_rule_matches_the_app_limit() {
+        val w = sosWrite()
+        assertTrue(w.contains("newData.child('reason').val() === 'auto' && now >= data.child('createdAt').val() + " +
+            SosLedger.AUTO_RELEASE_MS))
+        assertTrue(w.contains("data.child('uid').val() === auth.uid ||"))
+        for (f in listOf("uid", "name", "role", "trigger", "beacon", "beaconRssi", "ep")) {
+            assertTrue(f, w.contains("newData.child('$f').val() === data.child('$f').val()"))
+        }
+    }
+
     private fun scriptMaxTo(gs: String) = Regex("""to\.length > (\d+)""").find(gs)!!.groupValues[1].toInt()
 
     @Test fun address_rule_matches_script_to_re() {

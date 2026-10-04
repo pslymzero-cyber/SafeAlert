@@ -119,7 +119,7 @@
           ".read": "auth != null",
           ".indexOn": ["createdAt"],
           "$id": {
-            ".write": "auth != null && $site.matches(/^[A-Za-z0-9_-]{1,32}$/) && $sc.matches(/^[A-Z0-9_-]{1,12}$/) && newData.exists() && newData.child('uid').val() === auth.uid && (!data.exists() ? newData.child('status').val() === 'active' : (data.child('uid').val() === auth.uid && data.child('status').val() === 'active' && newData.child('status').val() === 'resolved'))",
+            ".write": "auth != null && $site.matches(/^[A-Za-z0-9_-]{1,32}$/) && $sc.matches(/^[A-Z0-9_-]{1,12}$/) && newData.exists() && (!data.exists() ? (newData.child('uid').val() === auth.uid && newData.child('status').val() === 'active') : (data.child('status').val() === 'active' && newData.child('status').val() === 'resolved' && newData.child('uid').val() === data.child('uid').val() && newData.child('name').val() === data.child('name').val() && newData.child('role').val() === data.child('role').val() && newData.child('trigger').val() === data.child('trigger').val() && newData.child('beacon').val() === data.child('beacon').val() && newData.child('beaconRssi').val() === data.child('beaconRssi').val() && newData.child('ep').val() === data.child('ep').val() && (data.child('uid').val() === auth.uid || (newData.child('reason').val() === 'auto' && now >= data.child('createdAt').val() + 3600000))))",
             ".validate": "newData.hasChildren(['bleId','name','role','trigger','createdAt','status','uid'])",
             "bleId": {
               ".validate": "newData.isString() && newData.val().length <= 64 && (!data.exists() || newData.val() === data.val())"
@@ -149,7 +149,10 @@
               ".validate": "newData.isNumber() && newData.val() === now"
             },
             "uid": {
-              ".validate": "newData.isString() && newData.val() === auth.uid"
+              ".validate": "newData.isString() && (!data.exists() ? newData.val() === auth.uid : newData.val() === data.val())"
+            },
+            "reason": {
+              ".validate": "newData.val() === 'auto' && newData.parent().child('status').val() === 'resolved'"
             },
             "ep": {
               ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 255 && (!data.exists() || newData.val() === data.val())"

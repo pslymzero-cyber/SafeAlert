@@ -29,6 +29,8 @@ package com.wf11.safealert.service
  * Rest.NONE. In equipment mode, steps or walk-like windows while charging never make it carried — only an unplug does.
  * An equipment mount restarts the count on MOVED or a turn, and an open no-motion window closes on a turn, a 3 s walking-level
  * shake or "괜찮아요" (steps are not used). Fall rules and walker-mode docking are unchanged.
+ * After an SOS ended by the one-hour limit (holdStill) carrying is counted again from then, as after an unplug, and a mount
+ * waits as well until it moves (MOVED, a turn, a carry or a power change).
  * In a settled safe zone (raw inside for 60 s straight) no-motion is not counted; counting starts when the phone leaves.
  * Settling withdraws an open no-motion check window.
  * Counting also pauses while a peer siren vibrates on this device and continues from the accrued time afterwards (once the
@@ -145,6 +147,11 @@ class LoneWorkerLogic(var myBleId: String) {
     private var charging = false // Applied power; differs from PowerDebounce.reported while JudgeOrder defers
     private var chargeAt = 0L
     private var carried = false
+    /**
+     * Set by holdStill: a mount rests as Rest.WAIT too until it moves (MOVED, a turn, a carry or a power change). In memory
+     * only; an unmounted phone needs no flag, since holdStill clears carried and that state is saved for a restart.
+     */
+    private var stillHeld = false
     private var equipment = false // Equipment mode (forklift/EPJ selected; set by the monitor from the role)
     val mounted: Boolean get() = equipment && charging && !carried // Equipment mount = equipment mode + charging + not carried
 
@@ -170,7 +177,8 @@ class LoneWorkerLogic(var myBleId: String) {
 
     /** Why no-motion checking is paused. */
     val rest: Rest get() = when {
-        carried || mounted -> Rest.NONE // An equipment mount never pauses
+        mounted && stillHeld -> Rest.WAIT // Held after an SOS ended by the one-hour limit (holdStill)
+        carried || mounted -> Rest.NONE // An equipment mount never pauses otherwise
         charging -> Rest.DOCKED
         else -> Rest.WAIT
     }
@@ -192,6 +200,7 @@ class LoneWorkerLogic(var myBleId: String) {
         this.charging = charging
         chargeAt = nowMs
         carried = false
+        stillHeld = false
         walk.reset()
         floorAt = nowMs
         shakeFloorAt = nowMs
@@ -239,6 +248,7 @@ class LoneWorkerLogic(var myBleId: String) {
         charging = on
         chargeAt = atMs
         carried = false
+        stillHeld = false
         // A change applied at restart is not a docking action or a cradle-drop reference
         if (on) {
             if (!restart) lastPlugAt = atMs
@@ -305,7 +315,7 @@ class LoneWorkerLogic(var myBleId: String) {
         if (stepsAvailable) walk.firstWithin(after, DISTINCT_STEPS, DISTINCT_STEP_WINDOW_MS) else walk.firstRunEnd(after, STRONG_RUN_MS)
 
     /** Movement (MOVED) only refreshes the no-motion timer. It does not close an open check window. */
-    fun onMoved(nowMs: Long) { if (!order.keep { onMoved(nowMs) }) raiseStillBase(nowMs) }
+    fun onMoved(nowMs: Long) { if (!order.keep { onMoved(nowMs) }) { stillHeld = false; raiseStillBase(nowMs) } }
     /**
      * Equipment turn (BleService TX polling, default 0.5 s, only when not going straight): when mounted, restarts the
      * no-motion count and closes the no-motion window. Being a real-time value stamped with the polling time, it is
@@ -313,7 +323,7 @@ class LoneWorkerLogic(var myBleId: String) {
      * judgment, and a turn later than an already-passed SOS deadline does not close that window. It does not feed
      * sensedTo; like MOVED, it is held behind a blocked deadline and replayed after the judgment.
      */
-    fun onTurn(nowMs: Long) { if (!order.keep { onTurn(nowMs) } && mounted) { raiseStillBase(nowMs); closeMounted(nowMs) } }
+    fun onTurn(nowMs: Long) { if (!order.keep { onTurn(nowMs) } && mounted) { stillHeld = false; raiseStillBase(nowMs); closeMounted(nowMs) } }
 
     /**
      * Closes the mounted no-motion window on a turn or 3 s shake (time t); input later than an already-passed SOS
@@ -414,6 +424,17 @@ class LoneWorkerLogic(var myBleId: String) {
         if (mode != Mode.SOS) return false
         toWatching(nowMs)
         return true
+    }
+
+    /**
+     * After an SOS ended by the one-hour limit (here or before a restart): the no-motion watch waits for the phone to move
+     * again, carrying counted from now as after an unplug, so a phone left lying still raises no new SOS minutes later.
+     * Falls are still judged.
+     */
+    fun holdStill(nowMs: Long) {
+        carried = false
+        chargeAt = nowMs
+        stillHeld = true
     }
 
     /**
@@ -570,6 +591,7 @@ class LoneWorkerLogic(var myBleId: String) {
 
     private fun carry(t: Long) {
         carried = true
+        stillHeld = false
         raiseStillBase(t)
     }
 

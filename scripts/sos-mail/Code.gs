@@ -224,8 +224,10 @@ function buildMail(event, sc, id, rec, stillMin) {
     : (n ? n + '분 동안 움직임 없음 후 응답 없음' : '움직임 없음 후 응답 없음');
   var beacon = oneLine(rec.beacon) || '알 수 없음';
   var done = rec.status === 'resolved' && typeof rec.resolvedAt === 'number';
+  var auto = rec.reason === 'auto';   // ended by the app's one-hour limit, not by the worker (no resolve mail follows)
+  var ended = auto ? '응답 없이 자동 종료' : '해제됨';
   var state = done
-    ? '상태: 해제됨 (' + fmt(rec.resolvedAt, 'HH:mm:ss') + ')'
+    ? '상태: ' + ended + ' (' + fmt(rec.resolvedAt, 'HH:mm:ss') + ')'
     : '상태: 구조 요청 중 (작업자가 [괜찮아요]를 누르면 해제 메일이 갑니다)';
   return {
     subject: '[SafeAlert 구조 요청] ' + sc + ' ' + name + (fall ? ' - 넘어짐 감지' : ' - 움직임 없음') +
@@ -234,7 +236,8 @@ function buildMail(event, sc, id, rec, stillMin) {
       ['원인', esc(cause), true],
       ['서버 기록 시각', esc(fmt(rec.createdAt, 'yyyy-MM-dd HH:mm:ss')) + ' (한국 시간)'],
       ['사업장', siteCell('#c62828', sc, rec)],
-      ['상태', done ? badge('#e8f5e9', '#2e7d32', '해제됨 (' + esc(fmt(rec.resolvedAt, 'HH:mm:ss')) + ')')
+      ['상태', done ? badge(auto ? '#fff3e0' : '#e8f5e9', auto ? '#e65100' : '#2e7d32',
+          ended + ' (' + esc(fmt(rec.resolvedAt, 'HH:mm:ss')) + ')')
         : badge('#fdecea', '#c62828', '구조 요청 중') +
           '<br><span style="font-size:12px;color:#666666;">작업자가 [괜찮아요]를 누르면 해제 메일이 갑니다.</span>'],
       ['기록 번호', esc(no)]

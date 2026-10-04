@@ -19,10 +19,11 @@ class LoneWorkerPeerTest {
     private fun LoneWorkerLogic.srv(
         key: String, id: String, ep: Int, active: Boolean, created: Long, now: Long,
         name: String = "n", beacon: String = "",
-        resolvedAt: Long = 0L, serverNow: Long? = null, wall: Long = 0L
+        resolvedAt: Long = 0L, serverNow: Long? = null, wall: Long = 0L, auto: Boolean = false
     ) = onPeerServer(
         LoneWorkerPeers.ServerRec(key, id, name, "WALKER", "still", beacon, created, active, ep,
-            LoneWorkerPeers.resolvedLocalMs(resolvedAt, serverNow, wall, now)),
+            LoneWorkerPeers.resolvedLocalMs(resolvedAt, serverNow, wall, now),
+            LoneWorkerPeers.startLocalMs(created, serverNow, now), auto),
         now
     )
 
@@ -30,6 +31,113 @@ class LoneWorkerPeerTest {
 
     private fun LoneWorkerLogic.peer(id: String, ep: Int? = null) =
         peers.single { it.bleId == id && (ep == null || it.episode == ep) }
+
+    // An SOS still active an hour after its server record was made is over: it stops ringing, shows as ended without an
+    //   answer, its record is queued to be marked released on the server (its writer may be gone), and its adverts (an old
+    //   phone that cannot release itself keeps advertising) open nothing until they turn false; after that even the same
+    //   episode rings as a new SOS.
+    @Test fun peer_sos_stops_ringing_an_hour_after_it_began() {
+        val l = meLogic()
+        l.srv("K1", "P", 1, true, created = 5L, now = 1_000, serverNow = 5L)
+        l.onPeerBle("P", true, 1_500, 1)
+        l.tick(1_000 + SosLedger.AUTO_RELEASE_MS - 1)
+        assertEquals(1, l.audiblePeers().size)
+        assertTrue(l.takeAutoReleasedPeers().isEmpty())
+        val end = 1_000 + SosLedger.AUTO_RELEASE_MS
+        l.onPeerBle("P", true, end - 1, 1)
+        l.tick(end)
+        assertTrue("서버 기록이 있으면 광고가 들려도 끝난다", l.audiblePeers().isEmpty())
+        assertTrue("응답 없이 끝난 것으로 보인다", l.peer("P").autoEnded)
+        assertEquals(listOf("K1"), l.takeAutoReleasedPeers())
+        assertTrue(l.takeAutoReleasedPeers().isEmpty())
+        val later = end + LoneWorkerPeers.RESOLVED_KEEP_MS
+        l.tick(later)
+        l.onPeerBle("P", true, later + 1_000, 1)
+        assertTrue("같은 SOS 광고로 다시 울리면 안 된다", l.audiblePeers().isEmpty())
+        l.onPeerBle("P", false, later + 2_000)
+        l.onPeerBle("P", true, later + 3_000, 1)
+        assertEquals("광고가 꺼졌다 다시 켜지면 새 SOS 로 울린다", 1, l.audiblePeers().size)
+    }
+
+    // A record replayed after its hour is over (a phone starting later, or restarting) never rings. Its age comes only from
+    //   the server's clock: with that unknown it rings and runs an hour from when it is first heard here.
+    @Test fun replayed_sos_older_than_an_hour_never_rings() {
+        val l = meLogic()
+        val now = 2 * SosLedger.AUTO_RELEASE_MS
+        l.srv("K1", "P", 1, true, created = 5L, now = now, serverNow = 5L + SosLedger.AUTO_RELEASE_MS)
+        assertTrue(l.audiblePeers().isEmpty())
+        assertEquals(listOf("K1"), l.takeAutoReleasedPeers())
+        l.srv("K2", "Q", 1, true, created = 5L, now = now)
+        assertEquals("서버 시각을 모르면 이 폰 시계로 끝내지 않는다", 1, l.audiblePeers().size)
+        l.tick(now + SosLedger.AUTO_RELEASE_MS)
+        assertTrue(l.audiblePeers().isEmpty())
+    }
+
+    // A record marked released by the one-hour limit (reason auto) also shows as ended without an answer, not as cleared.
+    @Test fun server_auto_release_shows_as_ended_without_an_answer() {
+        val l = meLogic()
+        l.srv("K1", "P", 1, true, created = 5L, now = 1_000)
+        l.srv("K1", "P", 1, false, created = 5L, now = 2_000, auto = true)
+        assertFalse(l.peer("P").active)
+        assertTrue(l.peer("P").autoEnded)
+    }
+
+    // An old sender (episode 0) cannot tell one SOS from its next, so an hour-old record never blocks its adverts on air:
+    //   neither a stale record replayed here nor one that ran out here hides its SOS heard now.
+    @Test fun old_sender_sos_is_never_ignored_on_air() {
+        val l = meLogic()
+        val t = 2 * SosLedger.AUTO_RELEASE_MS
+        l.srv("K0", "P", 0, true, created = 5L, now = t, serverNow = 5L + SosLedger.AUTO_RELEASE_MS)
+        l.onPeerBle("P", true, t + 1_000, 0)
+        assertEquals("오래된 기록이 그 폰의 지금 구조 요청을 가리면 안 된다", 1, l.audiblePeers().size)
+
+        val m = meLogic()
+        m.srv("K0", "P", 0, true, created = 5L, now = 1_000, serverNow = 5L)
+        val end = 1_000 + SosLedger.AUTO_RELEASE_MS
+        m.tick(end)
+        assertTrue(m.audiblePeers().isEmpty())
+        m.onPeerBle("P", true, end + LoneWorkerPeers.PEER_RESOLVE_GUARD_MS + 1, 0)
+        assertEquals("한 시간 지난 기록이 그 폰의 다음 구조 요청을 가리면 안 된다", 1, m.audiblePeers().size)
+    }
+
+    // An SOS heard only over the air may never have reached the server (no mail, nobody told), so it keeps ringing past the
+    //   hour while its adverts go on; once they stop (the phone died or left) it ends without an answer, and heard again it
+    //   rings as live.
+    @Test fun ble_only_sos_rings_past_the_hour_while_heard_and_ends_once_silent() {
+        val l = meLogic()
+        l.onPeerBle("P", true, 1_000, 1)
+        val end = 1_000 + SosLedger.AUTO_RELEASE_MS
+        l.onPeerBle("P", true, end - 1, 1)
+        l.tick(end)
+        assertEquals("아직 들리는 동안은 한 시간이 지나도 울린다", 1, l.audiblePeers().size)
+        val silent = end - 1 + LoneWorkerPeers.PEER_LIVE_AD_MS
+        l.tick(silent)
+        assertTrue("광고가 끊기면 끝난다", l.audiblePeers().isEmpty())
+        assertTrue(l.peer("P").autoEnded)
+        assertTrue("서버 기록이 없으면 서버에 쓸 것도 없다", l.takeAutoReleasedPeers().isEmpty())
+        l.tick(silent + LoneWorkerPeers.RESOLVED_KEEP_MS)
+        l.onPeerBle("P", true, silent + LoneWorkerPeers.RESOLVED_KEEP_MS + 1_000, 1)
+        assertEquals("다시 들리면 다시 울린다", 1, l.audiblePeers().size)
+    }
+
+    // A record released by the one-hour limit relabels its SOS's BLE entry even when that entry ended on air (its adverts
+    //   turned false first, or the record came while they were still heard).
+    @Test fun server_auto_release_relabels_an_entry_ended_on_air() {
+        val l = meLogic()
+        l.onPeerBle("P", true, 1_000, 5)
+        l.onPeerBle("P", false, 2_000)
+        l.onPeerBle("P", false, 12_000)
+        l.srv("K1", "P", 5, false, created = 5L, now = 13_000, resolvedAt = 12_500, serverNow = 13_000, auto = true)
+        assertTrue(l.peer("P").autoEnded)
+
+        val m = meLogic()
+        m.onPeerBle("P", true, 1_000, 5)
+        m.srv("K1", "P", 5, false, created = 5L, now = 2_000, resolvedAt = 1_500, serverNow = 2_000, auto = true)
+        m.onPeerBle("P", false, 3_000)
+        m.onPeerBle("P", false, 13_000)
+        m.tick(13_000)
+        assertTrue(m.peer("P").autoEnded)
+    }
 
     @Test fun pruned_entry_then_same_bit_makes_new_entry() {
         val l = meLogic()

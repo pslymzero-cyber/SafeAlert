@@ -20,6 +20,7 @@ class SosLedgerTest {
         val creates = ArrayList<Call<Boolean>>()
         val recs = ArrayList<SosLedger.Record>()
         val resolves = ArrayList<Call<Boolean>>()
+        val autos = ArrayList<Boolean>()
         val reads = ArrayList<Call<Remote>>()
         override fun uid() = uid
         override fun sitePath() = site
@@ -28,8 +29,9 @@ class SosLedgerTest {
             recs.add(rec)
             creates.add(Call(path, key, done))
         }
-        override fun resolve(path: String, key: String, done: (Boolean) -> Unit) {
+        override fun resolve(path: String, key: String, auto: Boolean, done: (Boolean) -> Unit) {
             resolves.add(Call(path, key, done))
+            autos.add(auto)
         }
         override fun read(path: String, key: String, done: (Remote) -> Unit) {
             reads.add(Call(path, key, done))
@@ -39,6 +41,63 @@ class SosLedgerTest {
     private var now = 0L
     private fun ledger(kv: Kv, tr: Tr) = SosLedger(kv, tr, { now })
     private fun rec(sid: Int = 0) = SosLedger.Record("BLE_ME", "n", "WALKER", "still", null, null, sid)
+
+    // An SOS released by the one-hour limit is recorded on the server as automatic, and no resolve mail is reported:
+    //   that mail tells the site the worker pressed "괜찮아요".
+    @Test fun automatic_release_is_recorded_as_auto_without_a_resolve_mail() {
+        val kv = Kv(); val tr = Tr(); val seen = ArrayList<String>()
+        val l = recording(kv, tr, seen)
+        l.begin(rec())
+        tr.creates[0].cb(true)
+        l.resolve(auto = true)
+        assertEquals(listOf(true), tr.autos)
+        tr.resolves[0].cb(true)
+        assertEquals(listOf("${SosMail.EVENT_SOS}:k1"), seen)
+    }
+
+    // The automatic mark of a resolve still waiting for the server survives a late create confirmation and a restart.
+    @Test fun pending_automatic_release_stays_automatic_after_restart() {
+        val kv = Kv(); val tr = Tr()
+        val l = ledger(kv, tr)
+        l.begin(rec())
+        l.resolve(auto = true)
+        tr.creates[0].cb(true)
+        tr.resolves[0].cb(false)
+        tr.reads.last().cb(Remote.ERROR)
+        ledger(kv, tr).tick()
+        assertEquals(listOf(true, true), tr.autos)
+    }
+
+    // A confirmed automatic release waiting for the server is stored the way a version without automatic release reads a
+    //   confirmed resolve (three fields, the third not "0"), so rolling back still resends it.
+    @Test fun confirmed_automatic_release_stays_readable_by_an_older_version() {
+        val kv = Kv(); val tr = Tr()
+        val l = ledger(kv, tr)
+        l.begin(rec())
+        tr.creates[0].cb(true)
+        l.resolve(auto = true)
+        val f = kv.m.getValue("r.list").split('\t')
+        assertEquals(3, f.size)
+        assertNotEquals("0", f[2])
+    }
+
+    // My SOS's age counts from the server's confirmation (one nobody was told about never ages), on the elapsed clock
+    //   while running (a wall-clock jump changes nothing) and on the wall clock across a restart.
+    @Test fun sos_age_counts_from_server_confirmation() {
+        val kv = Kv(); val tr = Tr(); var wall = 1_000L
+        val l = SosLedger(kv, tr, { now }, wallClock = { wall })
+        l.begin(rec())
+        now += SosLedger.AUTO_RELEASE_MS
+        assertNull("서버 확인 전에는 재지 않는다", l.activeForMs())
+        tr.creates[0].cb(true)
+        now += 5_000; wall += 3 * SosLedger.AUTO_RELEASE_MS
+        assertEquals("켜져 있는 동안 벽시계가 뛰어도 그대로", 5_000L, l.activeForMs())
+        wall = 1_000L + SosLedger.AUTO_RELEASE_MS
+        val restored = SosLedger(kv, tr, { now }, wallClock = { wall })
+        assertEquals(SosLedger.AUTO_RELEASE_MS, restored.activeForMs())
+        restored.resolve()
+        assertNull(restored.activeForMs())
+    }
 
     @Test fun create_record_carries_episode() {
         val kv = Kv(); val tr = Tr(); val l = ledger(kv, tr)

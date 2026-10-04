@@ -91,6 +91,21 @@ class LoneWorkerLogicTest {
         assertFalse(l.cancelSos(400_001))
     }
 
+    // An SOS ended by the one-hour limit (holdStill) leaves the phone waiting as after an unplug: lying still raises no
+    //   new check however long, and walking starts the no-motion count again.
+    @Test fun sos_ended_by_the_limit_waits_for_movement() {
+        val l = carriedLogic()
+        l.toSos()
+        assertTrue(l.cancelSos(400_000))
+        l.holdStill(400_000)
+        assertEquals(LoneWorkerLogic.Rest.WAIT, l.rest)
+        val walked = 400_000 + 10 * stillMs
+        assertEquals(Mode.WATCHING, l.seenAt(walked))
+        l.walk(walked + 10_000, 10)
+        assertEquals(LoneWorkerLogic.Rest.NONE, l.rest)
+        assertEquals(Mode.CHECKING, l.seenAt(walked + 10_000 + stillMs))
+    }
+
     @Test fun disabled_never_checks_and_cancels_open_check_but_keeps_sos() {
         val off = carriedLogic()
         off.setEnabled(false, 0)

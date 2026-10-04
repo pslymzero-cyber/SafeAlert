@@ -45,7 +45,8 @@ internal fun LoneWorkerPeers.Peer.line(nowMs: Long): String {
     val wall = if (fromServer) createdAtMs else System.currentTimeMillis() - (nowMs - firstSeenMs)
     return listOfNotNull(
         displayName(), roleText, HHMM.format(Instant.ofEpochMilli(wall).atZone(ZoneId.systemDefault())),
-        beacon.ifEmpty { null }?.let { if (fromServer) "마지막 위치: $it" else "${it} 근처" }, if (active) "구조 요청" else "해제됨"
+        beacon.ifEmpty { null }?.let { if (fromServer) "마지막 위치: $it" else "${it} 근처" },
+        if (active) "구조 요청" else if (autoEnded) LoneWorkerNotifier.AUTO_ENDED else "해제됨"
     ).joinToString(" · ")
 }
 
@@ -71,6 +72,9 @@ class LoneWorkerNotifier(
          * How-to-close hint for the mounted no-motion window — the single text shared
          * by the screen body, the back-button hint and the notification.
          */
+        /** Status of a peer SOS ended by the one-hour limit: the row, the notification and the screen title. */
+        const val AUTO_ENDED = "응답 없이 자동 종료"
+
         const val TURN_CLOSE_HINT = "회전하거나 ${LoneWorkerLogic.STRONG_RUN_MS / 1000}초 넘게 흔들거나 [괜찮아요]를 누르면 닫혀요"
 
         /** Flag passed when the notification's "괜찮아요" opens the screen: the screen shows the confirmation dialog right away. */
@@ -169,7 +173,8 @@ class LoneWorkerNotifier(
             audible.isNotEmpty() ->
                 Triple("구조 요청", audible.joinToString(", ") { it.displayName() }, "확인" to servicePi(REQ_SILENCE, BleService.ACTION_LW_SILENCE, audible))
             quiet != null -> Triple(quiet.first, quiet.second, null)
-            else -> Triple("해제됨", resolved.joinToString(", ") { it.displayName() }, null)
+            else -> Triple(if (resolved.all { it.autoEnded }) AUTO_ENDED else "해제됨",
+                resolved.joinToString(", ") { it.displayName() }, null)
         }
         val open = activityPi(REQ_OPEN, false)
         val b = NotificationCompat.Builder(ctx, CHANNEL_ID)
