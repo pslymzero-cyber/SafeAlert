@@ -162,7 +162,7 @@ class BleService : LifecycleService() {
         if (myZoneInside) BleConstants.LEVEL_SAFE
         else alertState.values.maxOfOrNull { it.first } ?: BleConstants.LEVEL_SAFE
 
-    // 'Audible' max level — used only to decide sound ownership, excluding dwell-muted devices.
+    // 'Audible' max level — used only to decide sound ownership, excluding dwell-muted and Acknowledge-muted devices.
     //   Keeps a muted device from occupying the canonical globalMax / remaining-device resync and blocking audible
     //   alerts of new or remaining devices. Risk re-advertising (updateRisk), the list and the overlay still use the raw
     //   level (per spec: muting suppresses only sound and vibration; the risk state is unchanged).
@@ -171,7 +171,7 @@ class BleService : LifecycleService() {
         //   suppressed for all devices. resyncSoundToRemaining and the canonical alert (globalMax) read this value, so
         //   entering the zone actively stops the sound, and leaving lifts the suppression at once.
         if (myZoneInside) BleConstants.LEVEL_SAFE
-        else alertState.entries.filter { !isDwellMuted(it.key, it.value.first) }
+        else alertState.entries.filter { !isDwellMuted(it.key, it.value.first) && !isDeviceMuted(it.key) }
             .maxOfOrNull { it.value.first } ?: BleConstants.LEVEL_SAFE
 
     // UWB↔RSSI calibration learning/lookup key — role-pair segment (implementation owned by CalibrationEngine).
@@ -475,7 +475,8 @@ class BleService : LifecycleService() {
         override fun resyncSoundToRemaining() = this@BleService.resyncSoundToRemaining()
         override fun forceAlarmVolume() = this@BleService.forceAlarmVolume()
         override fun isDeviceMuted(deviceId: String) = this@BleService.isDeviceMuted(deviceId)
-        override fun updateDwellMute(deviceId: String, level: Int, now: Long) = this@BleService.updateDwellMute(deviceId, level, now)
+        override fun updateDwellMute(deviceId: String, level: Int, now: Long, quiet: Boolean) =
+            this@BleService.updateDwellMute(deviceId, level, now, quiet)
         override fun isDwellMuted(deviceId: String, level: Int) = this@BleService.isDwellMuted(deviceId, level)
         override fun clearDwellMute(deviceId: String) = this@BleService.clearDwellMute(deviceId)
         override fun updateFloatingOverlay() = this@BleService.updateFloatingOverlay()
@@ -1250,11 +1251,14 @@ class BleService : LifecycleService() {
      *  Level transition = restart the timer; upward transition (W→D) = clear DANGER mute (escalation is
      *  always audible — approved exception); continuous dwell for DWELL_MUTE_MS = mute that level
      *  (DANGER dwell mutes WARNING too — stays quiet on a D→W retreat).
+     *  Only time this device is heard counts: a frame kept quiet by the caller (quiet), muted globally or by its
+     *  Acknowledge, inside a zone, below a higher device's sound, or with nothing at its level playing (a siren stopped as
+     *  the device moved away) restarts the clock and keeps the mutes earned.
      *  The moment a new mute applies, playing sound/vibration is re-synced to the highest remaining
      *  'audible' level (resyncSoundToRemaining — computed excluding muted devices, so if only muted
      *  ones remain it drops to silence).
      */
-    private fun updateDwellMute(deviceId: String, level: Int, now: Long) {
+    private fun updateDwellMute(deviceId: String, level: Int, now: Long, quiet: Boolean) {
         val prev = dwellLevelMap[deviceId]
         if (prev != level) {
             dwellLevelMap[deviceId] = level
@@ -1266,6 +1270,10 @@ class BleService : LifecycleService() {
             }
             // Downward retreat (D→W): keep the set — if DANGER dwell muted WARNING, it stays quiet after the retreat (approved spec).
             return
+        }
+        if (quiet || isMuted || isDeviceMuted(deviceId) || myZoneInside || level < getAudibleMaxLevel() ||
+            activeSoundLevel < level) {
+            dwellSinceMap.remove(deviceId); return
         }
         val since = dwellSinceMap.getOrPut(deviceId) { now }
         if (now - since < DWELL_MUTE_MS) return

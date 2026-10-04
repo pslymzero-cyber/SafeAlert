@@ -63,7 +63,7 @@ class AlertStateMachineJvmTest {
         override fun resyncSoundToRemaining() {}
         override fun forceAlarmVolume() {}
         override fun isDeviceMuted(deviceId: String): Boolean = false
-        override fun updateDwellMute(deviceId: String, level: Int, now: Long) {}
+        override fun updateDwellMute(deviceId: String, level: Int, now: Long, quiet: Boolean) {}
         override fun isDwellMuted(deviceId: String, level: Int): Boolean = false
         override fun clearDwellMute(deviceId: String) {}
         override fun updateFloatingOverlay() {}

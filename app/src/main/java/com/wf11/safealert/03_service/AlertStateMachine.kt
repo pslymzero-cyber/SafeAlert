@@ -42,7 +42,7 @@ class AlertStateMachine(
         fun resyncSoundToRemaining()
         fun forceAlarmVolume()
         fun isDeviceMuted(deviceId: String): Boolean
-        fun updateDwellMute(deviceId: String, level: Int, now: Long)
+        fun updateDwellMute(deviceId: String, level: Int, now: Long, quiet: Boolean = false)
         fun isDwellMuted(deviceId: String, level: Int): Boolean
         fun clearDwellMute(deviceId: String)
         fun updateFloatingOverlay()
@@ -88,6 +88,10 @@ class AlertStateMachine(
     internal data class LastKfVelState(val velocity: Double, val timestamp: Long)
 
     internal val lastKfVelMap = mutableMapOf<String, LastKfVelState>()
+
+    // Capture time of the snapshot the current Kalman filter was seeded from (absent = started from 0). A seeded filter
+    //   hands the seed on with this time, so the TTL runs from the real capture however often the seed is passed on.
+    internal val kfSeedAtMap = mutableMapOf<String, Long>()
 
     internal val KF_VEL_SEED_TTL_MS = 30_000L   // Reseed snapshot lifetime (simulated 30s vs 60s differ by only +0.3s)
 
@@ -529,6 +533,7 @@ class AlertStateMachine(
             { kalmanFilters.clear() },
             { kalmanFilters.size }
         )
+        registry.addDeferred("kfSeedAtMap", kfSeedAtMap)   // lives as long as the filter it describes (kept warm across a loss)
 
         // teardown — clearAll only. Excluded from per-device purge (it would break warm-filter preservation).
         registry.addTeardown("filterPreserveMap", filterPreserveMap)
@@ -658,9 +663,10 @@ class AlertStateMachine(
             }
             TrackingState.DEPARTING -> {
                 val timeDep = now - (departingStartMap[deviceId] ?: now)
-                // After the cooldown vel is strongly positive again → re-approach
-                if (timeDep >= DEPARTING_REENTRY_COOLDOWN_MS
-                    && kfVel > (CPA_VEL_THRESHOLD * 3)) {
+                // After the cooldown, a device no longer moving away (vel at or above -CPA threshold) starts over as a
+                //   fresh contact, alerting or not: kept DEPARTING it would stay 'moving away' for good, and a hazard that
+                //   stops close by or comes back slowly would stay silent. A real departure (vel below it) keeps the state.
+                if (timeDep >= DEPARTING_REENTRY_COOLDOWN_MS && kfVel >= -CPA_VEL_THRESHOLD) {
                     departingStartMap.remove(deviceId)
                     trackingStateMap[deviceId] = TrackingState.APPROACHING
                     Log.d(TAG, "[$deviceId] DEPARTING → APPROACHING 재진입 (vel=%.2fdBm/s)".format(kfVel))
@@ -742,9 +748,10 @@ class AlertStateMachine(
             //   velocity 0 and replays the departure check from scratch. The entry is consumed once regardless of sign
             //   (remove).
             //   TTL check — a snapshot older than KF_VEL_SEED_TTL_MS since capture is discarded (restart from 0.0).
-            val seedVel = lastKfVelMap.remove(deviceId)
+            val seed = lastKfVelMap.remove(deviceId)
                 ?.takeIf { android.os.SystemClock.elapsedRealtime() - it.timestamp <= KF_VEL_SEED_TTL_MS }
-                ?.velocity?.takeIf { it < 0.0 }?.coerceAtLeast(-1.5) ?: 0.0
+            if (seed != null) kfSeedAtMap[deviceId] = seed.timestamp else kfSeedAtMap.remove(deviceId)
+            val seedVel = seed?.velocity?.takeIf { it < 0.0 }?.coerceAtLeast(-1.5) ?: 0.0
             KalmanFilter(DevSettings.kalmanPreset).apply { injectWarmup(inputRssi, seedVel) }
         }
         // Previous frame Kalman velocity (estimatedVel) — shared by the rush FAST check and the D-Boost feedback.
@@ -1058,7 +1065,12 @@ class AlertStateMachine(
             dangerContactStreakMap.remove(deviceId)   // clear first-contact DANGER counter
             warningContactStreakMap.remove(deviceId)  // clear first-contact WARNING counter
             warningMissRefMap.remove(deviceId)     // clear WARNING miss reference
-            kalmanFilters[deviceId]?.let { lastKfVelMap[deviceId] = LastKfVelState(it.estimatedVel, android.os.SystemClock.elapsedRealtime()) }   // capture velocity for reseed (with timestamp)
+            // Capture velocity for reseed (with timestamp). A seeded filter hands the seed on with its original capture time,
+            //   so neither frames out of range nor a flicker across the band edge restart its TTL. A filter that started
+            //   from 0 gives its velocity a fresh time once warmed up: before that it holds only the start-up transient.
+            val seedAt = kfSeedAtMap[deviceId]
+            if (seedAt != null || !warmingUp)
+                lastKfVelMap[deviceId] = LastKfVelState(kf.estimatedVel, seedAt ?: android.os.SystemClock.elapsedRealtime())
             kalmanFilters.remove(deviceId)    // drop Kalman instance of untracked device (no stale reappearance)
             shadowFusionMap.remove(deviceId)  // clear shadow fusion state (untracked device)
             recedingStartMap.remove(deviceId)    // avoid departure-state leak and stale peak reappearing
@@ -1450,8 +1462,10 @@ class AlertStateMachine(
         //   continuously, auto-mute that level's sound/vibration (fx.updateDwellMute also re-syncs).
         //   SAFE frames are reset by fx.clearDwellMute in the SAFE handling below (zone exit = release,
         //   re-entry = normal alert).
+        //   Only audible time counts (fx.updateDwellMute checks mutes, zone, priority and what is playing); quiet = a
+        //   WARNING kept quiet by idle-idle, which still sets the sound level and so only this side knows.
         if (stableLevel >= BleConstants.LEVEL_WARNING && alertState.containsKey(deviceId))
-            fx.updateDwellMute(deviceId, stableLevel, now)
+            fx.updateDwellMute(deviceId, stableLevel, now, quiet = stableLevel == BleConstants.LEVEL_WARNING && idleIdleQuiet)
 
         // ── SAFE handling ───────────────────────────────────────────────────
         if (stableLevel == BleConstants.LEVEL_SAFE) {
@@ -1517,8 +1531,9 @@ class AlertStateMachine(
         // Reaching here = non-SAFE (alert situation). Ensure combat mode (ACTIVE) at once, even when stationary.
         fx.bleScanner?.setEcoMode(false)
 
-        // Muted: keep state tracking only (global mute or this device's Acknowledge mute)
-        if (fx.isMuted || fx.isDeviceMuted(deviceId)) {
+        // Global mute (screen touch): keep state tracking only. This device's Acknowledge mute is checked after the TTC
+        //   pre-alert below, which must break through it.
+        if (fx.isMuted) {
             alertState[deviceId] = Pair(stableLevel, alertState[deviceId]?.second ?: now)
             pendingDisplayMap.remove(deviceId)   // alert registered: clear pending display
             return
@@ -1633,6 +1648,7 @@ class AlertStateMachine(
                 forwardBiasLatchMap.remove(deviceId)
                 approachLastSeenMap.remove(deviceId)
                 fx.clearDwellMute(deviceId)
+                mutedDevices.remove(deviceId)   // the release ends the alert its Acknowledge covered (as the SAFE cleanup does)
                 deviceRssiMap.remove(deviceId)
                 clearFbThrottle(deviceId)
                 pendingDisplayMap.remove(deviceId)
@@ -1707,6 +1723,7 @@ class AlertStateMachine(
                 forwardBiasLatchMap.remove(deviceId)      // departure cleanup: reset latch
                 approachLastSeenMap.remove(deviceId)
                 fx.clearDwellMute(deviceId)                  // departure confirmed = zone exit: reset dwell mute
+                mutedDevices.remove(deviceId)                // the release ends the alert its Acknowledge covered
                 deviceRssiMap.remove(deviceId)
                 clearFbThrottle(deviceId)
                 pendingDisplayMap.remove(deviceId)
@@ -1790,6 +1807,13 @@ class AlertStateMachine(
             }
         }
 
+        // This device's Acknowledge mute (sidebar row tap): keep state tracking only
+        if (fx.isDeviceMuted(deviceId)) {
+            alertState[deviceId] = Pair(stableLevel, alertState[deviceId]?.second ?: now)
+            pendingDisplayMap.remove(deviceId)   // alert registered: clear pending display
+            return
+        }
+
         if (DevSettings.logVerbose)   // per-frame log only when verbose (battery)
             Log.d(TAG, ("RSSI raw=$rssi → med=$medianValue → pre=$preFiltered → kf=%.1f → pEma=$pEma " +
                 "vel=%.2fdBm/s state=$newState stable=$stableLevel fast=$promoteFast warm=$warmingUp").format(kfRssi, kfVel))
@@ -1862,7 +1886,8 @@ class AlertStateMachine(
             else if (!fx.isMuted && !fx.isDeviceMuted(deviceId) && alertState.containsKey(deviceId) &&
                      fx.activeSoundLevel >= BleConstants.LEVEL_DANGER && stableLevel < fx.activeSoundLevel) {
                 val otherMax = alertState.entries
-                    .filter { it.key != deviceId && !fx.isDwellMuted(it.key, it.value.first) }   // muted devices don't own the sound
+                    .filter { it.key != deviceId && !fx.isDwellMuted(it.key, it.value.first) &&
+                        !fx.isDeviceMuted(it.key) }   // muted devices don't own the sound
                     .maxOfOrNull { it.value.first } ?: BleConstants.LEVEL_SAFE
                 if (otherMax < fx.activeSoundLevel) {
                     AlertSoundPlayer.stopSound()
@@ -2078,10 +2103,6 @@ class AlertStateMachine(
         }
         suddenLabelMap.remove(deviceId)
 
-        // Dwell tracking — UWB mirror of the same rule as canonical (processAlert).
-        if (stableLevel >= BleConstants.LEVEL_WARNING && alertState.containsKey(deviceId))
-            fx.updateDwellMute(deviceId, stableLevel, now)
-
         // SAFE — mirrors the canonical SAFE cleanup (one-shot: only devices in alertState). The RSSI head keeps warming
         //   the filters, so clearing them reconverges within a few frames — the fallback stays seamless.
         if (stableLevel == BleConstants.LEVEL_SAFE) {
@@ -2148,6 +2169,11 @@ class AlertStateMachine(
         val idleIdleQuiet = quietArmed && ImuFusion.isStationary &&
             rState == BleConstants.PSTATE_IDLE
 
+        // Dwell tracking — UWB mirror of the same rule as canonical (processAlert); a WARNING kept quiet by idle-idle is not
+        //   audible time. Placed after the SAFE cleanup, which never reaches it, so idle-idle is only computed when needed.
+        if (stableLevel >= BleConstants.LEVEL_WARNING && alertState.containsKey(deviceId))
+            fx.updateDwellMute(deviceId, stableLevel, now, quiet = stableLevel == BleConstants.LEVEL_WARNING && idleIdleQuiet)
+
         // Muted — keep tracking the level only (alert time preserved, mirrors the canonical mute)
         if (fx.isMuted || fx.isDeviceMuted(deviceId)) {
             alertState[deviceId] = Pair(stableLevel, prev?.second ?: now)
@@ -2166,7 +2192,8 @@ class AlertStateMachine(
             alertState[deviceId] = Pair(stableLevel, lastAlertTime)
             if (fx.activeSoundLevel >= BleConstants.LEVEL_DANGER && stableLevel < fx.activeSoundLevel) {
                 val otherMax = alertState.entries
-                    .filter { it.key != deviceId && !fx.isDwellMuted(it.key, it.value.first) }   // muted devices don't own the sound
+                    .filter { it.key != deviceId && !fx.isDwellMuted(it.key, it.value.first) &&
+                        !fx.isDeviceMuted(it.key) }   // muted devices don't own the sound
                     .maxOfOrNull { it.value.first } ?: BleConstants.LEVEL_SAFE
                 if (otherMax < fx.activeSoundLevel) {
                     AlertSoundPlayer.stopSound()
