@@ -69,6 +69,7 @@
 - SafeAlert 작업은 `C:\Users\pslym\Downloads\SafeAlert` 에서 연 세션에서 한다. 하네스 자동 메모리는 **세션을 연 디렉터리 기준**으로 경로가 갈리므로, 다른 폴더에서 열면 위 이력이 붙지 않는다. 폴더 무관 통합 이력은 MemPalace 가 담당한다.
 - Downloads 에서 열린 세션에서 SafeAlert 를 건드려야 하면, **손대기 전에 먼저** 이 파일과 위 `MEMORY.md` 를 읽는다(연속 파일은 grep). 건너뛰지 않는다.
 - git 명령은 `git -C C:/Users/pslym/Downloads/SafeAlert ...` 로 경로를 명시한다 (턴마다 cwd 가 세션 폴더로 리셋되고, 명령 안의 `cd` 는 권한 확인을 부를 수 있다).
+- 커밋 메시지에 Co-Authored-By 줄을 붙이지 않는다(2026-10-03 사용자 결정). 도구가 기본 문구로 제안해도 넣지 않는다.
 
 <!-- GSD:project-start source:PROJECT.md -->
 
@@ -91,7 +92,7 @@ v1.0.1 이후 수십 차례 릴리스하며 실제로 동작해 왔다. 이번 �
 - **Security**: 릴리스 빌드는 R8 난독화가 켜져 있다(`minifyEnabled true`). Firebase 경보 로그는 평문 저장
 - **Platform**: 포그라운드 서비스 + 지속 알림 필수 (Android 정책). 화면 꺼짐 상태에서도 스캔 유지 필요
 - **Timeline**: JVM 회귀·골든 테스트(`app/src/test/`)가 있지만 BLE 실측 회귀는 실기 검증뿐 — 검증 사이클이 사용자 현장 가용 시간에 묶임
-- **Process**: 기능 추가 시 `versionName` patch +0.0.1 · 커밋 · 태그 · 푸시. 버그·단순 수정은 버전 유지
+- **Process**: 기능 추가 시 `versionName` patch +0.0.1 · 커밋까지. 태그·푸시는 사용자가 지시할 때만 한다. 버그·단순 수정은 버전 유지
 
 <!-- GSD:project-end -->
 
