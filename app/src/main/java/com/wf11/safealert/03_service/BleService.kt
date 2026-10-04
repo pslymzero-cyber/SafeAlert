@@ -248,6 +248,17 @@ class BleService : LifecycleService() {
         }
     }
 
+    // Restart after Bluetooth comes back (1 s settle). At most one is pending: STATE_OFF, a newer STATE_ON and stopAll
+    //   cancel it, so a stale restart neither runs with Bluetooth off nor revives a stopped service.
+    private val btRestartHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val btRestart = Runnable {
+        val btOn = (getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter?.isEnabled == true
+        if (!isRunning || !btOn) return@Runnable
+        checkSystemHealth()   // clears the Bluetooth fault first, so the losses below don't post it as their status
+        stopBle()
+        applyMode()
+    }
+
     private val btStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             val state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, -1)
@@ -255,17 +266,18 @@ class BleService : LifecycleService() {
                 BluetoothAdapter.STATE_ON -> {
                     Log.d(TAG, "블루투스 켜짐 → BLE 재시작")
                     sendStatusBroadcast("블루투스 켜짐 → BLE 재시작")
-                    android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                        // BT toggle race right after "중지" — don't revive BLE if the service has already stopped
-                        if (!isRunning) return@postDelayed
-                        stopBle()
-                        applyMode()
-                    }, 1000)
+                    btRestartHandler.removeCallbacks(btRestart)
+                    btRestartHandler.postDelayed(btRestart, 1000)
                 }
                 BluetoothAdapter.STATE_OFF -> {
                     Log.d(TAG, "블루투스 꺼짐")
+                    btRestartHandler.removeCallbacks(btRestart)
                     sendStatusBroadcast("블루투스 꺼짐")
-                    stopBle()
+                    // No radio, but the scanner stays: its loss sweep still retires devices the normal way (BLE timeout,
+                    //   deferred while UWB ranging continues), so no alert outlives its device and a live UWB session keeps
+                    //   protecting both phones while it lasts. STATE_ON replaces the scanner.
+                    bleAdvertiser?.stopAdvertising(); bleAdvertiser = null
+                    bleScanner?.suspendRadio()
                     // A broadcast alone only reaches someone with the screen open; BT turning off in a pocket would leave the wearer
                     //   unprotected with no notice → surface it in the persistent notification.
                     checkSystemHealth()
@@ -988,7 +1000,9 @@ class BleService : LifecycleService() {
             collapseOverlay()
             activeSoundLevel = BleConstants.LEVEL_SAFE
             // Inside a zone, the last device leaving would overwrite the safe-zone status with "경보 중지" — so branch.
-            sendStatusBroadcast(if (myZoneInside) "세이프존 — 경보 억제 중" else "기기 이탈 → 경보 중지")
+            //   A system fault (Bluetooth, a permission or location off) comes first, as in the notification: it is what
+            //   the user must fix, and "기기 이탈" would read as all clear.
+            sendStatusBroadcast(systemFault ?: if (myZoneInside) "세이프존 — 경보 억제 중" else "기기 이탈 → 경보 중지")
         } else {
             resyncSoundToRemaining()  // higher device left → lower the sound to the remaining max level
             updateFloatingOverlay()   // switch the floating overlay to another hazard
@@ -1008,6 +1022,9 @@ class BleService : LifecycleService() {
     //   Decouples the judgment rate from BLE scan reception quality, shortening it to the UWB report period (FREQUENT ~120ms).
     //   Only Case A pairs are judged here; otherwise only the sample time is recorded (Case A freshness evidence).
     private fun onUwbSampleReceived(deviceId: String, distM: Float) {
+        // Only for devices the scanner still tracks. A controller drops a lost peer only a moment later, and one more sample
+        //   in that window would bring the device back as a first detection that no loss can end.
+        if (bleScanner?.isTracked(deviceId) == false) return
         val now = System.currentTimeMillis()
         uwbSampleAtMsMap[deviceId] = now
         // Full safe-zone suppression — block UWB as strictly as the RSSI path (the early return before processAlert).
@@ -1882,13 +1899,21 @@ class BleService : LifecycleService() {
     }
 
     // ── Stop BLE only (service keeps running) ───────────────────────────────────────
+    //   stopScanning forgets detected devices without a loss callback, so they are reported lost first: their alert state,
+    //   siren, overlay and RISK broadcast must not outlive the scanner. UWB stops before that (no advertiser, no ranger),
+    //   so no late sample brings a device back.
     private fun stopBle() {
         bleAdvertiser?.stopAdvertising(); bleAdvertiser = null
+        uwbRanger?.stop(); uwbRanger = null
+        bleScanner?.forceLoseAll()
         bleScanner?.stopScanning();       bleScanner    = null
     }
 
     private fun stopAll() {
-        stopBle()
+        btRestartHandler.removeCallbacks(btRestart)
+        // Silent BLE teardown, not stopBle: everything below is cleared in bulk (echo calibration is persisted once)
+        bleAdvertiser?.stopAdvertising(); bleAdvertiser = null
+        bleScanner?.stopScanning();       bleScanner    = null
         // Clean up IMU dynamic scan mode — unregister callbacks + cancel the debounce timer
         ImuFusion.onStationaryChanged = null
         ImuFusion.onMotionStateChanged = null   // unregister the motion state callback

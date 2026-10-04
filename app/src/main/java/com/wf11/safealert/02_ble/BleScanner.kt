@@ -74,6 +74,7 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
 
     private var scanCallback: BleScanCallback? = null
     private var isScanning = false
+    private var radioOff = false   // Bluetooth is off: no scan can start until BleService replaces this scanner
     private val handler = Handler(Looper.getMainLooper())
     private val detectedDevices = mutableMapOf<String, Long>()
     var onStatusUpdate: ((String) -> Unit)? = null
@@ -304,12 +305,16 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
     }
 
     /**
-     * Immediately marks every detected device as lost — on entering the safe zone (full suppression) and when
-     * beacon registrations change. Runs the normal BleService.onDeviceLost path, so per-device state
-     * (DeviceStateRegistry) and UWB sessions are cleaned up at once (filters follow onDeviceLost's warm-preserve
-     * rule). Also clears detectedDevices, so each device then resumes from its first advertisement, like a new
-     * device.
+     * Immediately marks every detected device as lost — on entering the safe zone (full suppression), when beacon
+     * registrations change and before BleService drops the scanner on a Bluetooth restart. Runs the normal
+     * BleService.onDeviceLost path, so per-device state (DeviceStateRegistry) is cleaned up at once and UWB candidates
+     * are dropped (filters follow onDeviceLost's warm-preserve rule). A live UWB controller session is reconfigured
+     * only a moment later, so a caller that must not see late samples stops UWB first. Also clears detectedDevices,
+     * so each device then resumes from its first advertisement, like a new device.
      */
+    /** Whether the device is still detected; BleService judges UWB samples only for these. */
+    fun isTracked(id: String) = id in detectedDevices
+
     fun forceLoseAll() {
         val ids = detectedDevices.keys.toList()
         detectedDevices.clear()
@@ -390,12 +395,14 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
         // tv_ble_status is for the detected device list only, so no scan-start status is posted.
         // Apply beacon registration/deletion immediately. HW filters are a snapshot taken at startScan, so they update
         // only on restart, and a deleted device stops producing samples, so state-transition cleanup never runs
-        // (the TTL sweep is also deferred while UWB ranging continues).
-        BeaconRegistry.onChanged = { handler.post { forceLoseAll(); restartScan() } }
+        // (the TTL sweep is also deferred while UWB ranging continues). With the radio off there is nothing to rescan,
+        // and force-losing would cut the UWB sessions suspendRadio keeps; the STATE_ON rebuild picks up the new filters.
+        BeaconRegistry.onChanged = { handler.post { if (!radioOff) { forceLoseAll(); restartScan() } } }
         liveRestart = { handler.post { restartScan() } }
     }
 
     private fun startScanInternal() {
+        if (radioOff) return
         // Scan mode is currentScanMode: activeScanMode (mapped from scanPeriodMs). After 5 s of confirmed IMU
         // stillness it switches to rest (restScanMode), which is the same mode, so receive scanning is never lowered.
         // Batch delay is decided separately by screen state (orthogonal to scan mode).
@@ -506,6 +513,17 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
         ScanSettings.SCAN_MODE_BALANCED    -> "BALANCED"
         ScanSettings.SCAN_MODE_LOW_POWER   -> "LOW_POWER"
         else                               -> "MODE_$mode"
+    }
+
+    /**
+     * Bluetooth turned off. Scanning stops for good (BleService replaces the scanner on STATE_ON), but the loss sweep
+     * keeps running, so devices still leave the normal way — BLE timeout, deferred while UWB ranging continues. Their
+     * alert state is cleaned up, and a UWB session that still protects both phones is not cut short.
+     */
+    fun suspendRadio() {
+        radioOff = true
+        handler.removeCallbacks(antiThrottleRunnable)
+        try { scanner.stopScan(bleScanCallback) } catch (_: Exception) {}
     }
 
     fun stopScanning() {

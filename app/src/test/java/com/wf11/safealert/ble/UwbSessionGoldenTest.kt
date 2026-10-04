@@ -1,8 +1,14 @@
 package com.wf11.safealert.ble
 
+import android.bluetooth.BluetoothAdapter
+import android.content.BroadcastReceiver
+import android.content.Intent
+import android.os.Looper
 import com.wf11.safealert.service.AlertStateMachine
 import com.wf11.safealert.service.BleService
+import com.wf11.safealert.service.UwbDistanceManager
 import com.wf11.safealert.support.BleServiceTestHarness
+import com.wf11.safealert.utils.BeaconRegistry
 import com.wf11.safealert.utils.DevSettings
 import com.wf11.safealert.utils.UwbRanger
 import kotlinx.coroutines.CoroutineScope
@@ -10,6 +16,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -17,8 +24,11 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows.shadowOf
+import org.robolectric.shadows.ShadowBluetoothLeScanner
 import org.robolectric.util.ReflectionHelpers
 import org.robolectric.util.ReflectionHelpers.ClassParameter
+import java.time.Duration
 
 /**
  * End-to-end golden (tracer) for UwbRanger injection + the Case A (UWB↔UWB exclusive judging) early branch.
@@ -389,5 +399,128 @@ class UwbSessionGoldenTest {
         assertSame("warm 칼만을 그대로 이어 쓴다", kf, asm.kalmanFilters[DEVICE_ID])
         assertEquals("중앙값 창이 소실 전 표본에 이어진다", 2, (filterStateOf(service, "medianFilter")[DEVICE_ID] as Collection<*>).size)
         assertTrue("Time-Gate 1회 면제가 주어진다", DEVICE_ID in asm.timeGateWaiveSet)
+    }
+
+    /**
+     * A service with a real scanner wired the way applyMode wires it (loss callback to the real handler, UWB hold by the
+     * production freshness check) and an idle ranger. DEVICE_ID and OTHER_DEVICE_ID are detected and alerting; OTHER also
+     * has a fresh UWB sample, dated ahead so it stays fresh under either clock. Returns the scanner (the caller stops it),
+     * its detected map and its shadow hardware scanner.
+     */
+    private fun startBtScene(service: BleService, ranger: UwbRanger): Triple<BleScanner, MutableMap<String, Long>, ShadowBluetoothLeScanner> {
+        injectRanger(service, ranger)
+        val adapter = BluetoothAdapter.getDefaultAdapter()
+        shadowOf(adapter).setEnabled(true)
+        val hw = adapter.bluetoothLeScanner
+        val scanner = BleScanner(hw)
+        scanner.startScanning(object : BleScanCallback {
+            override fun onDeviceDetected(deviceId: String, rssi: Int, remoteState: Int, remoteTurn: Int,
+                                          payloadPresent: Boolean, peerEchoRssi: Int, peerInZone: Boolean) = Unit
+            override fun onDeviceLost(deviceId: String) = BleServiceTestHarness.deviceLost(service, deviceId)
+            override fun onScanError(errorCode: Int) = Unit
+        })
+        val uwbDist = ReflectionHelpers.getField<UwbDistanceManager>(service, "uwbDist")
+        scanner.uwbMeasuringCheck = { id -> uwbDist.freshUwbDistM(id) != null }
+        ReflectionHelpers.setField(service, "bleScanner", scanner)
+        val detected = ReflectionHelpers.getField<MutableMap<String, Long>>(scanner, "detectedDevices")
+        var t = T0_MS
+        repeat(6) {
+            for (id in listOf(DEVICE_ID, OTHER_DEVICE_ID)) {
+                detected[id] = System.currentTimeMillis()
+                BleServiceTestHarness.callProcessAlert(service, id, rssi = -50, nowMs = t)
+            }
+            t += FRAME_DT_MS
+        }
+        injectUwbSample(service, ranger, OTHER_DEVICE_ID, 2.0f, System.currentTimeMillis() + 3_600_000)
+        assertNotNull(BleServiceTestHarness.alertLevelOf(service, DEVICE_ID))
+        assertNotNull(BleServiceTestHarness.alertLevelOf(service, OTHER_DEVICE_ID))
+        return Triple(scanner, detected, shadowOf(hw))
+    }
+
+    // ── Behavior 14: Bluetooth off. Nothing is forgotten on the spot and the radio stays off (no rescan, not even for a
+    //    beacon change). The scanner's loss sweep keeps retiring devices the normal way: once the BLE timeout passes, a
+    //    device without fresh UWB goes (alert cleared, SAFE broadcast); one still UWB-ranged stays, and so does the ranger,
+    //    because the session also protects the other phone. It goes when its UWB goes stale, and the status then shows the
+    //    fault, not "기기 이탈". So no alert outlives its device; such an alert would keep the siren, overlay and RISK
+    //    broadcast going until monitoring stops.
+    @Test
+    fun behavior14_bluetoothOff_devicesStillLeaveTheNormalWay() {
+        val service = BleServiceTestHarness.newService()
+        val ranger = newRanger()
+        val (scanner, detected, hw) = startBtScene(service, ranger)
+        try {
+            val off = Intent(BluetoothAdapter.ACTION_STATE_CHANGED).putExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.STATE_OFF)
+            ReflectionHelpers.getField<BroadcastReceiver>(service, "btStateReceiver").onReceive(RuntimeEnvironment.getApplication(), off)
+            assertNotNull("꺼지는 순간에 잊지 않는다", BleServiceTestHarness.alertLevelOf(service, DEVICE_ID))
+            assertSame("UWB 는 그대로 — 세션이 상대 기기도 지킨다", ranger, ReflectionHelpers.getField<UwbRanger?>(service, "uwbRanger"))
+            assertTrue("스캔을 멈춘다", hw.activeScans.isEmpty())
+            scanner.restartScan()
+            BeaconRegistry.onChanged?.invoke()
+            shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(2))   // restarts and sweeps run; no timeout yet
+            assertTrue("꺼진 동안 다시 스캔하지 않는다", hw.activeScans.isEmpty())
+            assertNotNull("비콘 변경으로 한꺼번에 잃지 않는다", BleServiceTestHarness.alertLevelOf(service, DEVICE_ID))
+            assertNotNull(BleServiceTestHarness.alertLevelOf(service, OTHER_DEVICE_ID))
+
+            detected.replaceAll { _, _ -> System.currentTimeMillis() - 60_000 }   // no advertisement since
+            shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(2))
+            assertNull("BLE 시간 초과로 소실돼야 경보가 남지 않는다", BleServiceTestHarness.alertLevelOf(service, DEVICE_ID))
+            assertEquals(BleConstants.LEVEL_SAFE, lastAlertLevelSentFor(DEVICE_ID))
+            assertNotNull("UWB 실측이 이어지는 기기는 남는다", BleServiceTestHarness.alertLevelOf(service, OTHER_DEVICE_ID))
+
+            val fault = "블루투스 꺼짐 — 감지 중단"
+            ReflectionHelpers.setField(service, "systemFault", fault)   // checkSystemHealth sets it on a running service
+            ranger.uwbDistances.remove(OTHER_DEVICE_ID)                   // its UWB goes stale too
+            shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(2))
+            assertNull(BleServiceTestHarness.alertLevelOf(service, OTHER_DEVICE_ID))
+            assertEquals("고장 중에는 '기기 이탈' 대신 고장 내용", fault, BleService.lastStatus)
+        } finally {
+            scanner.stopScanning()
+            BleService.lastStatus = ""
+        }
+    }
+
+    // ── Behavior 15: Bluetooth back on. STATE_ON's restart runs stopBle before applyMode: UWB stops first, so no late sample
+    //    can bring a device back, then every device still held (here also the UWB-kept one) is reported lost before the
+    //    scanner is dropped. None keeps its alert past the restart.
+    @Test
+    fun behavior15_bluetoothBackOn_stopBleLosesEveryHeldDevice() {
+        val service = BleServiceTestHarness.newService()
+        val (scanner, _, _) = startBtScene(service, newRanger())
+        try {
+            ReflectionHelpers.callInstanceMethod<Unit>(service, "stopBle")
+            assertNull(ReflectionHelpers.getField<UwbRanger?>(service, "uwbRanger"))
+            assertNull(ReflectionHelpers.getField<BleScanner?>(service, "bleScanner"))
+            for (id in listOf(DEVICE_ID, OTHER_DEVICE_ID)) {
+                assertNull("재시작 뒤까지 경보가 남지 않는다", BleServiceTestHarness.alertLevelOf(service, id))
+                assertEquals(BleConstants.LEVEL_SAFE, lastAlertLevelSentFor(id))
+            }
+        } finally {
+            scanner.stopScanning()
+        }
+    }
+
+    // ── Behavior 16: a UWB sample counts only for a device the scanner still tracks. A controller drops a lost peer a moment
+    //    late; without this gate one more sample would bring the device back as a first detection that no loss can end.
+    @Test
+    fun behavior16_uwbSample_judgedOnlyWhileTheScannerTracksTheDevice() {
+        val service = BleServiceTestHarness.newService()
+        val ranger = newRanger()
+        injectRanger(service, ranger)
+        val adapter = BluetoothAdapter.getDefaultAdapter()
+        shadowOf(adapter).setEnabled(true)
+        val scanner = BleScanner(adapter.bluetoothLeScanner)
+        ReflectionHelpers.setField(service, "bleScanner", scanner)
+        ranger.uwbDistances[DEVICE_ID] = 2.0f
+        val sample = {
+            ReflectionHelpers.callInstanceMethod<Unit>(service, "onUwbSampleReceived",
+                ClassParameter.from(String::class.java, DEVICE_ID), ClassParameter.from(Float::class.javaPrimitiveType, 2.0f))
+        }
+
+        sample()
+        assertNull("스캐너가 잃은 기기의 UWB 표본은 판정하지 않는다", BleServiceTestHarness.alertLevelOf(service, DEVICE_ID))
+
+        ReflectionHelpers.getField<MutableMap<String, Long>>(scanner, "detectedDevices")[DEVICE_ID] = System.currentTimeMillis()
+        sample()
+        assertNotNull("추적 중인 기기는 그대로 판정한다", BleServiceTestHarness.alertLevelOf(service, DEVICE_ID))
     }
 }
