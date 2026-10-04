@@ -2,7 +2,7 @@
 
 **1턴 읽기 예산: 30,000 토큰 이하. 초과 시 작업을 쪼개 다음 턴으로 넘긴다.**
 
-### 전체 읽기 금지 파일 (Read 도구 사용 금지)
+### 전체 읽기 금지 파일 (Read는 offset/limit 구간만)
 | 파일 | 토큰 |
 |---|---|
 | PROGRESS_archive_202609.md | 93,693 |
@@ -32,8 +32,8 @@
 | .planning/** | 전량 |
 
 ### 위 파일 접근 절차 (예외 없음)
-1. `grep -n "함수명|키워드" <file>` 로 위치를 특정한다
-2. `sed -n 'START,ENDp' <file>` 로 해당 구간 ±60줄만 읽는다
+1. `grep -nE "함수명|키워드" <file>` 로 위치를 특정한다
+2. Read(offset, limit)로 해당 구간 ±60줄만 읽는다. Edit는 이 세션에서 Read한 파일만 고칠 수 있다
 3. 수정은 Edit로 최소 블록만 바꾼다
 
 ### 조사는 서브에이전트에 위임한다
@@ -61,14 +61,14 @@
 - `*.bak` 삭제 조건: GSD가 CLAUDE.md를 1회 재생성한 뒤 마커 쌍 무결 + 7,000자 이하가 확인된 시점. 그때까지 보관한다.
 
 ### SafeAlert 이력 메모리
-- 인덱스: `~/.claude/projects/C--Users-pslym-Downloads-SafeAlert/memory/` 의 `MEMORY.md` + `MEMORY_1.md` + `MEMORY_2.md`
+- 인덱스: `~/.claude/projects/C--Users-pslym-Downloads-SafeAlert/memory/` 의 `MEMORY.md`(자동 로드). 연속 파일 `MEMORY_1.md`·`MEMORY_2.md` 는 통째로 읽지 않고 grep 으로만 조회한다.
 - SafeAlert 폴더에서 연 세션에만 자동 로드된다. Downloads 에서 열었으면 로드되지 않으니 grep 으로 조회한다.
 - 신규 메모리는 Downloads 인덱스가 아니라 위 SafeAlert 경로에 쓴다.
 
 ### 세션 폴더·git 규칙
 - SafeAlert 작업은 `C:\Users\pslym\Downloads\SafeAlert` 에서 연 세션에서 한다. 하네스 자동 메모리는 **세션을 연 디렉터리 기준**으로 경로가 갈리므로, 다른 폴더에서 열면 위 이력이 붙지 않는다. 폴더 무관 통합 이력은 MemPalace 가 담당한다.
-- Downloads 에서 열린 세션에서 SafeAlert 를 건드려야 하면, **손대기 전에 먼저** 이 파일과 위 메모리 인덱스를 읽는다. 건너뛰지 않는다.
-- git 명령은 `cd /c/Users/pslym/Downloads/SafeAlert && git ...` 로 경로를 명시한다 (턴마다 cwd 가 Downloads 로 리셋됨).
+- Downloads 에서 열린 세션에서 SafeAlert 를 건드려야 하면, **손대기 전에 먼저** 이 파일과 위 `MEMORY.md` 를 읽는다(연속 파일은 grep). 건너뛰지 않는다.
+- git 명령은 `git -C C:/Users/pslym/Downloads/SafeAlert ...` 로 경로를 명시한다 (턴마다 cwd 가 세션 폴더로 리셋되고, 명령 안의 `cd` 는 권한 확인을 부를 수 있다).
 
 <!-- GSD:project-start source:PROJECT.md -->
 
@@ -78,7 +78,7 @@
 
 블루투스 신호를 앱이 설치된 기기끼리 주고받아, 신호 세기로 추정한 거리가 위험 구간에 들어오면 알림을 주는 Android 근접 경보 앱이다. 물류 현장에서 지게차·EPJ(전동 파렛트 잭)·보행자가 서로를 감지하는 것이 실사용 맥락이며, 역할 조합에 따라 경고·위험 반경이 다르게 적용된다.
 
-v1.0.1부터 v1.1.70까지 3개월간 70회 이상 릴리스하며 실제로 동작해 왔다. 이번 작업은 새 기능을 붙이는 것이 아니라, **판정이 흔들리는 구조적 원인**을 걷어내는 것이다.
+v1.0.1 이후 수십 차례 릴리스하며 실제로 동작해 왔다. 이번 작업은 새 기능을 붙이는 것이 아니라, **판정이 흔들리는 구조적 원인**을 걷어내는 것이다.
 
 **Core Value:** **BLE RSSI 근접 판정이 같은 상황에서 같은 결과를 낸다.** 경보가 떠야 할 때 뜨고, 꺼져야 할 때 꺼지며, 한 번 고친 증상이 다시 돌아오지 않는다. UWB·iBeacon·Firebase가 전부 실패해도 이것만은 동작해야 한다.
 
@@ -87,27 +87,27 @@ v1.0.1부터 v1.1.70까지 3개월간 70회 이상 릴리스하며 실제로 동
 - **Tech stack**: Kotlin / Android — `minSdk 26`, `targetSdk 34`, `compileSdk 34`, JDK 17, viewBinding — 기존 코드베이스 전제
 - **Dependencies**: `androidx.core.uwb:1.0.0-alpha09` 프리릴리스에 경보 로직의 30~40%가 의존 — API 파괴 변경 리스크 상존
 - **Compatibility**: 1바이트 비트팩 BLE 프로토콜 — 현장에 배포된 구버전 기기와 통신해야 하므로 페이로드 레이아웃 변경 불가
-- **Performance**: `processAlert`(약 1,000줄, `BleService.kt:1406-2554`)가 스캔 콜백 = 메인 스레드에서 실행 — 20대 이상에서 프레임 드랍, 50대 초과 시 GC 200ms+
-- **Security**: `minifyEnabled false` (`app/build.gradle:36`) — 릴리스 빌드 난독화 없음. Firebase 경보 로그 평문 저장
+- **Performance**: `processAlert`(본체 `AlertStateMachine.kt`, `BleService`는 위임만)가 스캔 콜백 = 메인 스레드에서 실행(리팩터 전 진단, 재확인 필요) — 20대 이상에서 프레임 드랍, 50대 초과 시 GC 200ms+
+- **Security**: 릴리스 빌드는 R8 난독화가 켜져 있다(`minifyEnabled true`). Firebase 경보 로그는 평문 저장
 - **Platform**: 포그라운드 서비스 + 지속 알림 필수 (Android 정책). 화면 꺼짐 상태에서도 스캔 유지 필요
-- **Timeline**: 실기 검증이 유일한 회귀 확인 수단 — 검증 사이클이 사용자 현장 가용 시간에 묶임
+- **Timeline**: JVM 회귀·골든 테스트(`app/src/test/`)가 있지만 BLE 실측 회귀는 실기 검증뿐 — 검증 사이클이 사용자 현장 가용 시간에 묶임
 - **Process**: 기능 추가 시 `versionName` patch +0.0.1 · 커밋 · 태그 · 푸시. 버그·단순 수정은 버전 유지
 
 <!-- GSD:project-end -->
 
 <!-- GSD:stack-start -->
 ## Technology Stack
-상세: `sed -n '5,77p' docs/ARCHITECTURE.md` — 이 범위만 읽는다. 전체 읽기 금지.
+상세: `sed -n '7,80p' docs/ARCHITECTURE.md` — 이 범위만 읽는다. 전체 읽기 금지.
 <!-- GSD:stack-end -->
 
 <!-- GSD:conventions-start -->
 ## Conventions
-상세: `sed -n '79,181p' docs/ARCHITECTURE.md` — 이 범위만 읽는다. 전체 읽기 금지.
+상세: `sed -n '81,184p' docs/ARCHITECTURE.md` — 이 범위만 읽는다. 전체 읽기 금지.
 <!-- GSD:conventions-end -->
 
 <!-- GSD:architecture-start -->
 ## Architecture
-상세: `sed -n '183,350p' docs/ARCHITECTURE.md` — 이 범위만 읽는다. 전체 읽기 금지.
+상세: `sed -n '185,350p' docs/ARCHITECTURE.md` — 이 범위만 읽는다. 전체 읽기 금지.
 <!-- GSD:architecture-end -->
 
 <!-- GSD:skills-start source:skills/ -->
