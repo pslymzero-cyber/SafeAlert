@@ -108,7 +108,7 @@ jobs:
           # The "com.wf11.safealert.ble." package prefix before the class names is hard-coded in the path built below —
           # if the golden tests move out of this package, update this script too.
           REQUIRED="RssiCascadeTest RssiCascadeIsolationTest MedianFilterWarmupTest AlertCascadeGoldenTest UwbSessionGoldenTest LowSpeedApproachRegressionTest BeaconFullIdTest SpecialAlertTimeGateTest"
-          MIN_TOTAL=511   # floor for the total unit test count = number of @Test methods; fewer runs mean tests silently disappeared
+          MIN_TOTAL=528   # floor for the total unit test count = number of @Test methods; fewer runs mean tests silently disappeared
 
           if [ ! -d "$XML_DIR" ]; then
             echo "::error::테스트 결과 디렉터리가 없다: $XML_DIR — 테스트가 한 건도 실행되지 않았다"

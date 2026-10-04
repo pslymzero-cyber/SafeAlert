@@ -59,8 +59,9 @@ object SosRemote {
      */
     fun serverNowMs(): Long? = serverAnchor?.let { (s, e) -> s + (SystemClock.elapsedRealtime() - e) }
 
-    /** Receive replay window: records created up to 30 minutes before start are received. */
-    const val REPLAY_WINDOW_MS = 30 * 60_000L
+    /** Receive replay window: records created up to one shift (12 h) before start are received, so a phone that
+     *  starts or restarts later in the shift still gets a request nobody has resolved. */
+    const val REPLAY_WINDOW_MS = 12 * 60 * 60_000L
 
     /** Snapshot value (Map) → SosRecord. Boundary input, so a wrong type or length gives null (ignored). */
     fun parseSosRecord(key: String, v: Any?): SosRecord? {
@@ -105,7 +106,7 @@ object SosRemote {
         return data
     }
 
-    /** Receive query start: 30 minutes before the call time (converted to server time). */
+    /** Receive query start: REPLAY_WINDOW_MS before the call time (converted to server time). */
     fun replayStartAt(t0WallMs: Long, serverOffsetMs: Long): Long = t0WallMs + serverOffsetMs - REPLAY_WINDOW_MS
 
     fun nodePath(root: String, site: String): String = "$root/sos/$site"
@@ -174,7 +175,7 @@ object SosRemote {
 
     /**
      * Real-time SOS reception. Captures the call time t0 and, after the server time offset is first read, queries records created after
-     * (t0 + offset - 30 min). So active records within 30 minutes are replayed and sound,
+     * (t0 + offset - REPLAY_WINDOW_MS). So active records from the shift are replayed and sound,
      * older records are not queried, and resolved records do not notify.
      * Deleted records are delivered as resolved. On cancel (onCancelled) the query is dropped and onCancel is called once.
      * Returns a detach function that is safe to call even before the offset read finishes.

@@ -7,7 +7,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** SOS record parsing at the RTDB snapshot boundary (map input, no Firebase needed). */
+/** SOS record parsing and the receive query bound at the RTDB boundary (map input, no Firebase needed). */
 class SosRecordParseTest {
 
     private fun valid(): MutableMap<String, Any?> = mutableMapOf(
@@ -121,5 +121,14 @@ class SosRecordParseTest {
         assertEquals(0, SosRemote.parseSosRecord("k", valid())!!.ep)
         assertEquals(0, SosRemote.parseSosRecord("k", valid().apply { put("ep", 300L) })!!.ep)
         assertEquals(0, SosRemote.parseSosRecord("k", valid().apply { put("ep", "7") })!!.ep)
+    }
+
+    // A worker who fell before the crew's phones started is still waiting for rescue: a phone that starts (or restarts
+    //   after an update or OS kill) hours later in the shift must still query that unresolved request.
+    @Test
+    fun replay_reachesARequestFromEarlierInTheShift() {
+        val start = 1_780_000_000_000L
+        val createdAt = start - 11 * 3_600_000L   // 11 h before the phone started listening
+        assertTrue(createdAt >= SosRemote.replayStartAt(start, 0L))
     }
 }
