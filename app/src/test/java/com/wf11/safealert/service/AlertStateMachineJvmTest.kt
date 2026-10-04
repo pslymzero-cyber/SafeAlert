@@ -49,7 +49,6 @@ class AlertStateMachineJvmTest {
         override val myMode: String,
     ) : AlertStateMachine.Effects {
         override val myId: String = "SAFEALERT_DEVICE_ME"
-        override val isMuted: Boolean = false
         override val myZoneInside: Boolean = false
         override var activeSoundLevel: Int = BleConstants.LEVEL_SAFE
         override var lastApproachAtMs: Long = 0L

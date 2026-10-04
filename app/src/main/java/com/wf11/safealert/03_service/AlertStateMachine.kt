@@ -28,7 +28,6 @@ class AlertStateMachine(
         val myId: String
         val myMode: String
         val myCategory: Int
-        val isMuted: Boolean
         val myZoneInside: Boolean
         var activeSoundLevel: Int
         var lastApproachAtMs: Long
@@ -256,7 +255,8 @@ class AlertStateMachine(
     // Last avgRssi per device — used to pick and sort the top-priority device for the floating widget
     internal val deviceRssiMap     = mutableMapOf<String, Int>()
 
-    // Per-device mute (Acknowledge) — deviceId → mute end time (ms). Registered when the floating widget is tapped.
+    // Per-device mute (Acknowledge) — deviceId → mute end time (elapsedRealtime ms). Set by a floating-widget tap, a
+    //   mute-all or a temporary mute.
     internal val mutedDevices      = mutableMapOf<String, Long>()
 
     internal val peerInZoneMap    = mutableMapOf<String, Boolean>() // deviceId → IN_ZONE declared by the other device
@@ -510,7 +510,6 @@ class AlertStateMachine(
         registry.addImmediate("fastApproachStreakMap", fastApproachStreakMap)
         registry.addImmediate("approachLastSeenMap", approachLastSeenMap)
         registry.addImmediate("forwardBiasLatchMap", forwardBiasLatchMap)
-        registry.addImmediate("mutedDevices", mutedDevices)
         registry.addImmediate("peerInZoneMap", peerInZoneMap)
         registry.addImmediate("suddenLabelMap", suddenLabelMap)
         registry.addImmediate("deviceCategoryMap", deviceCategoryMap)
@@ -534,6 +533,7 @@ class AlertStateMachine(
             { kalmanFilters.size }
         )
         registry.addDeferred("kfSeedAtMap", kfSeedAtMap)   // lives as long as the filter it describes (kept warm across a loss)
+        registry.addDeferred("mutedDevices", mutedDevices) // a short loss keeps an Acknowledge: the user saw that device
 
         // teardown — clearAll only. Excluded from per-device purge (it would break warm-filter preservation).
         registry.addTeardown("filterPreserveMap", filterPreserveMap)
@@ -1122,8 +1122,8 @@ class AlertStateMachine(
             fx.bleScanner?.setEcoMode(false)   // switch to combat mode (ACTIVE) immediately
             Log.w(TAG, "특수경보(STATE=$rState CAT=$rCategory): $deviceId pEma=$pEma kfRssi=%.1f".format(kfRssi))
             fx.updateDwellMute(deviceId, BleConstants.LEVEL_DANGER, now)   // special alerts also track dwell (5s continuous dwell = mute)
-            // Respect mute (global/per-device/dwell/zone): keep state and display, suppress only sound/vibration
-            if (fx.isMuted || fx.isDeviceMuted(deviceId) || fx.isDwellMuted(deviceId, BleConstants.LEVEL_DANGER) || fx.myZoneInside) {
+            // Respect mute (acknowledge/dwell/zone): keep state and display, suppress only sound/vibration
+            if (fx.isDeviceMuted(deviceId) || fx.isDwellMuted(deviceId, BleConstants.LEVEL_DANGER) || fx.myZoneInside) {
                 fx.updateFloatingOverlay()
                 return
             }
@@ -1531,14 +1531,6 @@ class AlertStateMachine(
         // Reaching here = non-SAFE (alert situation). Ensure combat mode (ACTIVE) at once, even when stationary.
         fx.bleScanner?.setEcoMode(false)
 
-        // Global mute (screen touch): keep state tracking only. This device's Acknowledge mute is checked after the TTC
-        //   pre-alert below, which must break through it.
-        if (fx.isMuted) {
-            alertState[deviceId] = Pair(stableLevel, alertState[deviceId]?.second ?: now)
-            pendingDisplayMap.remove(deviceId)   // alert registered: clear pending display
-            return
-        }
-
         // Record IMU stationary→moving transition
         val nowStationary  = ImuFusion.isStationary
         val prevStationary = wasStationaryMap.getOrDefault(deviceId, false)
@@ -1680,15 +1672,14 @@ class AlertStateMachine(
             val justStartedReceding = !recedingStartMap.containsKey(deviceId)
             if (justStartedReceding) {
                 recedingStartMap[deviceId] = now
-                val hasOtherAlerts = alertState.any { (id, pair) ->
-                    id != deviceId && pair.first >= BleConstants.LEVEL_WARNING
-                }
-                if (!hasOtherAlerts) {
+                val others = alertState.filter { (id, pair) -> id != deviceId && pair.first >= BleConstants.LEVEL_WARNING }
+                // Muted devices are silent, so they keep nothing sounding; they stay listed, so the sidebar stays open for them
+                if (others.none { (id, pair) -> !fx.isDeviceMuted(id) && !fx.isDwellMuted(id, pair.first) }) {
                     AlertSoundPlayer.stopSound()
                     fx.stopVibration()
-                    fx.collapseOverlay()
                     fx.activeSoundLevel = BleConstants.LEVEL_SAFE
                 }
+                if (others.isEmpty()) fx.collapseOverlay()
                 Log.d(TAG, "이탈 감지 즉시 소리 중지: $deviceId (peak=%.1f, ref=%.1f, drop=%.1f dBm)".format(recedePeak, recedeRef, recedePeak - recedeRef))
                 fx.sendStatusBroadcast("↗ 이탈 감지 → 경보 일시 해제: ${fx.extractDisplayName(deviceId)}")
             }
@@ -1862,7 +1853,7 @@ class AlertStateMachine(
             //   !isReceding is an explicit guard: isReceding also includes isDepartingNow, so it can be true at
             //   stableLevel>=DANGER while moving away; without it this recovery would revive, in the same frame, a siren the
             //   departure branch just stopped (alerts persisting while departing).
-            if (!fx.isMuted && !fx.isDeviceMuted(deviceId) && alertState.containsKey(deviceId) &&
+            if (!fx.isDeviceMuted(deviceId) && alertState.containsKey(deviceId) &&
                 !fx.isDwellMuted(deviceId, stableLevel) &&   // respect dwell mute — intentional silence is not 'recovered'
                 !fx.myZoneInside &&                          // inside a zone = audible suppressed — fail-loud recovery won't revive it
                 stableLevel >= BleConstants.LEVEL_DANGER && !isDepartingNow && !isReceding &&   // no silence-recovery re-alert on the departing side
@@ -1883,7 +1874,7 @@ class AlertStateMachine(
             //   Keep it if another device is still at an equal or higher level: alertState[deviceId] still holds the old level here
             //   (updated later on the canonical path), so decide with otherMax (excluding this device) instead of
             //   getCurrentMaxLevel(). Lowering the sound is always safe regardless of isDepartingNow (even preferable when departing).
-            else if (!fx.isMuted && !fx.isDeviceMuted(deviceId) && alertState.containsKey(deviceId) &&
+            else if (!fx.isDeviceMuted(deviceId) && alertState.containsKey(deviceId) &&
                      fx.activeSoundLevel >= BleConstants.LEVEL_DANGER && stableLevel < fx.activeSoundLevel) {
                 val otherMax = alertState.entries
                     .filter { it.key != deviceId && !fx.isDwellMuted(it.key, it.value.first) &&
@@ -1942,7 +1933,6 @@ class AlertStateMachine(
         pendingDisplayMap.remove(deviceId)   // gate passed → clear the held display (alert registered below)
 
         alertState[deviceId] = Pair(stableLevel, now)
-        if (fx.isMuted) return
 
         // Dwell-mute gate — if this device/level is muted after a 5 s dwell, skip only sound and vibration (display,
         //   broadcast, Firebase and the rest of the alert recipe still run). Approved exception: a fast approach (kfVel≥2.0,
@@ -2087,7 +2077,7 @@ class AlertStateMachine(
             pendingDisplayMap.remove(deviceId)
             fx.bleScanner?.setEcoMode(false)
             fx.updateDwellMute(deviceId, BleConstants.LEVEL_DANGER, now)   // special alerts are dwell-tracked too
-            if (fx.isMuted || fx.isDeviceMuted(deviceId) ||
+            if (fx.isDeviceMuted(deviceId) ||
                 fx.isDwellMuted(deviceId, BleConstants.LEVEL_DANGER) ||
                 fx.myZoneInside) {   // inside a zone = audible suppressed (state and display already updated above)
                 fx.updateFloatingOverlay(); return
@@ -2175,7 +2165,7 @@ class AlertStateMachine(
             fx.updateDwellMute(deviceId, stableLevel, now, quiet = stableLevel == BleConstants.LEVEL_WARNING && idleIdleQuiet)
 
         // Muted — keep tracking the level only (alert time preserved, mirrors the canonical mute)
-        if (fx.isMuted || fx.isDeviceMuted(deviceId)) {
+        if (fx.isDeviceMuted(deviceId)) {
             alertState[deviceId] = Pair(stableLevel, prev?.second ?: now)
             pendingDisplayMap.remove(deviceId)
             return

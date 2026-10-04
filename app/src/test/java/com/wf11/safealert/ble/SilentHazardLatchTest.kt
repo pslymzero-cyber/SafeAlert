@@ -1,5 +1,9 @@
 package com.wf11.safealert.ble
 
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.media.AudioManager
 import android.os.Looper
 import android.os.SystemClock
 import com.wf11.safealert.service.AlertStateMachine
@@ -53,21 +57,85 @@ class SilentHazardLatchTest {
         assertEquals("묵음 중에도 위험 사이렌이 울려야 한다", BleConstants.LEVEL_DANGER, soundLevel(s))
     }
 
-    // A device that arrives during a mute must sound once the mute ends: time spent silenced does not count toward the 5 s
-    //   dwell auto-mute.
+    // A temporary mute (volume key, notification tap) means "I've seen what is sounding": it quiets the devices alerting
+    //   when it starts (a short dropout of one does not end it), a device that comes in during it alerts at once, and a
+    //   quieted device still near sounds again when the mute ends (its silenced time does not count toward the 5 s dwell
+    //   auto-mute).
     @Test
-    fun deviceArrivingDuringMuteSoundsWhenTheMuteEnds() {
+    fun temporaryMuteQuietsOnlyTheDevicesAlertingWhenItStarts() {
         val s = BleServiceTestHarness.newService()
-        ReflectionHelpers.setField(s, "isMuted", true)
         var f = 0
-        repeat(60) { frame(s, f++, -55) }   // 7.2 s at the danger range, all of it muted
+        repeat(10) { frame(s, f++, -55) }
         assertEquals(BleConstants.LEVEL_DANGER, level(s))
-        ReflectionHelpers.setField(s, "isMuted", false)
+        muteTemporarily(s)
 
+        val newcomerHeard = (0 until 20).any {
+            frame(s, f, -55)
+            BleServiceTestHarness.callProcessAlert(s, OTHER, -74, nowMs = T0 + f++ * DT)
+            soundLevel(s) == BleConstants.LEVEL_WARNING
+        }
+        assertTrue("일시 묵음 중 새로 들어온 기기는 바로 경보", newcomerHeard)
+        assertTrue("묵음 때 울리던 기기는 조용", asmOf(s).mutedDevices.containsKey(ID))
+        BleServiceTestHarness.deviceLost(s, ID)   // drops out behind a rack for a moment
+        repeat(5) { frame(s, f++, -55) }
+        assertTrue("잠깐 끊겼다 다시 잡혀도 본 장비는 조용", soundLevel(s) < BleConstants.LEVEL_DANGER)
+
+        idle(11)   // the 10 s mute runs out
         val sounded = (0 until 10).any { frame(s, f++, -55); soundLevel(s) == BleConstants.LEVEL_DANGER }
-
-        assertTrue("묵음이 풀리면 한 번은 울려야 한다", sounded)
+        assertTrue("묵음이 풀리면 다시 울려야 한다", sounded)
     }
+
+    // '즉시 재개' lifts the temporary mute it started, not a longer acknowledge the user gave a device.
+    @Test
+    fun immediateResumeLiftsOnlyTheTemporaryMute() {
+        val s = BleServiceTestHarness.newService()
+        var f = 0
+        repeat(10) {
+            frame(s, f, -55)
+            BleServiceTestHarness.callProcessAlert(s, OTHER, -55, nowMs = T0 + f++ * DT)
+        }
+        ReflectionHelpers.callInstanceMethod<Unit>(s, "muteDevice", ClassParameter.from(String::class.java, OTHER))
+        muteTemporarily(s)
+        ReflectionHelpers.callInstanceMethod<Unit>(s, "unmuteImmediately")
+
+        assertFalse("일시 묵음은 풀린다", asmOf(s).mutedDevices.containsKey(ID))
+        assertTrue("30초 확인은 그대로", asmOf(s).mutedDevices.containsKey(OTHER))
+    }
+
+    // The test alert puts nothing in alertState, yet a volume key or notification tap still pauses it.
+    @Test
+    fun temporaryMutePausesTheTestAlert() {
+        val s = BleServiceTestHarness.newService()
+        ReflectionHelpers.callInstanceMethod<Unit>(s, "startTestAlert")
+        muteTemporarily(s)
+        assertTrue("테스트 경보도 볼륨 버튼으로 멈춘다", BleService.isMutedPublic)
+        ReflectionHelpers.callInstanceMethod<Unit>(s, "unmuteImmediately")
+        ReflectionHelpers.callInstanceMethod<Unit>(s, "stopTestAlert")
+    }
+
+    // The app's own siren-volume change reported after its 300 ms guard is not a volume press: it reports the alarm stream at
+    //   the value the app set (taken as a press it would mute whatever is alerting, a newcomer during a mute included),
+    //   while a press moves the volume off it.
+    @Test
+    fun lateEchoOfTheAppsOwnVolumeChangeIsNotAPress() {
+        val s = BleServiceTestHarness.newService()
+        var f = 0
+        repeat(10) { frame(s, f++, -55) }
+        idle(1)   // the 300 ms guard is over
+        val applied = (s.getSystemService(Context.AUDIO_SERVICE) as AudioManager).getStreamVolume(AudioManager.STREAM_ALARM)
+        val receiver = ReflectionHelpers.getField<BroadcastReceiver>(s, "volumeReceiver")
+        fun volume(v: Int) = receiver.onReceive(s, Intent("android.media.VOLUME_CHANGED_ACTION")
+            .putExtra("android.media.EXTRA_VOLUME_STREAM_TYPE", AudioManager.STREAM_ALARM)
+            .putExtra("android.media.EXTRA_VOLUME_STREAM_VALUE", v))
+        volume(applied)
+        assertFalse("앱이 맞춘 볼륨이 늦게 알려져도 묵음이 아니다", asmOf(s).mutedDevices.containsKey(ID))
+        volume(applied - 1)
+        assertTrue("사용자가 볼륨을 움직이면 묵음", asmOf(s).mutedDevices.containsKey(ID))
+        ReflectionHelpers.callInstanceMethod<Unit>(s, "unmuteImmediately")
+    }
+
+    private fun muteTemporarily(s: BleService) =
+        ReflectionHelpers.callInstanceMethod<Unit>(s, "muteTemporarily", ClassParameter.from(String::class.java, "볼륨 버튼"))
 
     // A departure state left behind after a pass ends once its cooldown is over: a hazard that comes back and stops close by
     //   is judged as a fresh contact (alerted and audible), not as one still moving away.
@@ -169,6 +237,27 @@ class SilentHazardLatchTest {
         }
 
         assertTrue("확인한 위험 기기가 다른 기기의 경고를 막으면 안 된다", heard)
+    }
+
+    // A muted device is silent, so it keeps nothing sounding either: when the device that is heard starts to pull away its
+    //   siren stops at once, though the acknowledged one still sits at DANGER.
+    @Test
+    fun mutedDangerDoesNotKeepADepartingDevicesSirenOn() {
+        val s = BleServiceTestHarness.newService()
+        var f = acknowledgedAtDanger(s)
+        val heard = (0 until 20).any {
+            frame(s, f, -55)
+            BleServiceTestHarness.callProcessAlert(s, OTHER, -55, nowMs = T0 + f++ * DT)
+            soundLevel(s) == BleConstants.LEVEL_DANGER
+        }
+        assertTrue(heard)
+        val asm = asmOf(s)
+        while (!asm.recedingStartMap.containsKey(OTHER) && f < 100) {
+            frame(s, f, -55)
+            BleServiceTestHarness.callProcessAlert(s, OTHER, -70, nowMs = T0 + f++ * DT)
+        }
+        assertTrue(asm.recedingStartMap.containsKey(OTHER))
+        assertEquals("조용히 둔 기기가 떠나는 기기의 사이렌을 붙잡으면 안 된다", BleConstants.LEVEL_SAFE, soundLevel(s))
     }
 
     // Dwell counts only time a device is actually heard: a warning under a higher device's sound, one whose sound was

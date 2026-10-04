@@ -105,7 +105,7 @@ class BleService : LifecycleService() {
     private val testHandler = android.os.Handler(android.os.Looper.getMainLooper())
 
     private val MUTE_DURATION_MS = 10_000L
-    // Duration for ACK mutes only — separate from the screen-touch temporary mute (MUTE_DURATION_MS, 10 s).
+    // Duration for ACK mutes only — longer than the temporary mute (volume key / notification tap, MUTE_DURATION_MS).
     //   Used by a sidebar row tap (muteDevice) and a full drag (muteAllHazards).
     private val ACK_MUTE_DURATION_MS = 30_000L
     // How long a device must stay at the same alert level (WARNING/DANGER) before it is auto-muted.
@@ -142,7 +142,6 @@ class BleService : LifecycleService() {
     //   Don't share muteHandler: muteTemporarily()'s removeCallbacksAndMessages(null) would also drop the release
     //   callback, leaving ignoringVolumeChange=true stuck (volume-button mute permanently disabled).
     private val volumeGuardHandler = android.os.Handler(android.os.Looper.getMainLooper())
-    @Volatile private var isMuted = false
     // Lone-worker no-motion/fall SOS — the constructor only stores references; every entry point is a no-op before start()
     private val loneWorker by lazy {
         LoneWorkerMonitor(this, advertiseSos = { sos, ep, hint -> bleAdvertiser?.updateSos(sos, ep, hint) }, setAlarmVolume = { setAlarmVolumeGuarded(it) })
@@ -192,7 +191,7 @@ class BleService : LifecycleService() {
         if (remainingMax >= activeSoundLevel) return          // a remaining device is at the same or higher level — keep the siren
         AlertSoundPlayer.stopSound()                          // stop the departed higher device's stale siren now
         activeSoundLevel = remainingMax
-        if (remainingMax == BleConstants.LEVEL_WARNING && !isMuted) {
+        if (remainingMax == BleConstants.LEVEL_WARNING) {
             if (DevSettings.vibrationEnabled) VibrationHelper.vibrateWarning(this)
             if (DevSettings.soundEnabled)     AlertSoundPlayer.playWarning(this)
         } else if (remainingMax <= BleConstants.LEVEL_SAFE) {
@@ -227,10 +226,19 @@ class BleService : LifecycleService() {
 
     private val volumeReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-            if (isMuted || ignoringVolumeChange) return
+            if (ignoringVolumeChange || isOwnAlarmVolume(intent)) return
             muteTemporarily("볼륨 버튼")
         }
     }
+
+    // Alarm volume this service last set. A broadcast reporting the alarm stream at exactly this value is its own change
+    //   arriving after the 300 ms guard, not a press (a press moves the volume off it); taken as a press it would mute
+    //   whatever is alerting, a device that just came in during a mute included.
+    @Volatile private var appliedAlarmVolume = -1
+
+    private fun isOwnAlarmVolume(intent: Intent) =
+        intent.getIntExtra("android.media.EXTRA_VOLUME_STREAM_TYPE", -1) == AudioManager.STREAM_ALARM &&
+            intent.getIntExtra("android.media.EXTRA_VOLUME_STREAM_VALUE", -2) == appliedAlarmVolume
 
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -458,7 +466,6 @@ class BleService : LifecycleService() {
         override val myId get() = this@BleService.myId
         override val myMode get() = this@BleService.myMode
         override val myCategory get() = this@BleService.myCategory
-        override val isMuted get() = this@BleService.isMuted
         override val myZoneInside get() = this@BleService.myZoneInside
         override var activeSoundLevel: Int
             get() = this@BleService.activeSoundLevel
@@ -1143,6 +1150,7 @@ class BleService : LifecycleService() {
                 (maxVol * DevSettings.alarmVolume / 100f).toInt().coerceIn(0, maxVol), cur, AlarmVolumeShare.sosSounding)
             am.setStreamVolume(AudioManager.STREAM_ALARM, target, 0)
             val actual = am.getStreamVolume(AudioManager.STREAM_ALARM)   // read back to verify it was actually applied
+            appliedAlarmVolume = actual
             AlarmVolumeShare.noteCollision(android.os.SystemClock.elapsedRealtime())
             Log.d(TAG, "알람 볼륨: $actual/$maxVol (요청 $target, ${DevSettings.alarmVolume}%)")
             // target == 0 means the user deliberately set the alarm volume to 0%, so it is not a fault.
@@ -1164,30 +1172,32 @@ class BleService : LifecycleService() {
     private fun setAlarmVolumeGuarded(level: Int) {
         ignoringVolumeChange = true
         runCatching {
-            (getSystemService(AUDIO_SERVICE) as AudioManager).setStreamVolume(AudioManager.STREAM_ALARM, level, 0)
+            val am = getSystemService(AUDIO_SERVICE) as AudioManager
+            am.setStreamVolume(AudioManager.STREAM_ALARM, level, 0)
+            appliedAlarmVolume = am.getStreamVolume(AudioManager.STREAM_ALARM)
         }.onFailure { Log.w(TAG, "사이렌 볼륨 설정 실패: ${it.message}") }
         volumeGuardHandler.removeCallbacksAndMessages(null)
         volumeGuardHandler.postDelayed({ ignoringVolumeChange = false }, 300)
     }
 
+    // Expiry of the latest temporary mute, so '즉시 재개' lifts exactly the mutes it set (never a longer Acknowledge)
+    private var tempMuteUntil = 0L
+
+    /**
+     * Volume key or notification tap = the user has seen what is sounding: the devices alerting now (WARNING or above)
+     *   are acknowledge-muted for MUTE_DURATION_MS, like muteAllHazards. A device that comes in during the mute is not one
+     *   the user saw, so it alerts as usual. Nothing alerting and no test alert = nothing to mute.
+     */
     private fun muteTemporarily(source: String) {
-        isMuted = true
+        val targets = alertingDevices()
+        if (targets.isEmpty() && testRunnable == null) return
+        tempMuteUntil = acknowledge(targets, MUTE_DURATION_MS)
         isMutedPublic = true
-        AlertSoundPlayer.stopSound()
-        VibrationHelper.stopVibration(this)
-        // Global mute = only collapse the list. The sidebar stays, keeping the process-change entry point.
-        //   isDeviceMuted does not look at global mute, so updateFloatingOverlay() would not collapse it.
-        collapseOverlay()
-        val now = System.currentTimeMillis()
-        alertState.entries.forEach { (key, value) ->
-            alertState[key] = Pair(value.first, now)
-        }
         sendStatusBroadcast("무음 ($source) — 탭하여 즉시 재개")
         sendAlertBroadcast("", BleConstants.LEVEL_SAFE)
-        Log.d(TAG, "임시 무음: $source")
+        Log.d(TAG, "임시 무음: $source (${targets.size}대)")
         muteHandler.removeCallbacksAndMessages(null)
         muteHandler.postDelayed({
-            isMuted = false
             isMutedPublic = false
             sendStatusBroadcast("무음 해제 — 재경보 준비")
             Log.d(TAG, "무음 해제")
@@ -1196,23 +1206,35 @@ class BleService : LifecycleService() {
 
     private fun unmuteImmediately() {
         muteHandler.removeCallbacksAndMessages(null)
-        isMuted = false
+        mutedDevices.values.removeAll { it == tempMuteUntil }
         isMutedPublic = false
         sendStatusBroadcast("즉시 재개됨")
         Log.d(TAG, "즉시 무음 해제")
     }
 
     // ── Per-device Acknowledge mute + floating widget top-priority device ──────────
-    /** A driver who tapped a sidebar row has visually confirmed → that device's alerts (siren, sidebar row) stop for 30s. */
-    private fun muteDevice(deviceId: String?) {
-        if (deviceId.isNullOrEmpty()) return
-        mutedDevices[deviceId] = System.currentTimeMillis() + ACK_MUTE_DURATION_MS
-        // Stop the current sound/vibration at once (if other hazard devices remain, the next scan re-fires)
+    /** Devices alerting now (WARNING or above): what a mute-all or a temporary mute covers. */
+    private fun alertingDevices() = alertState.entries.filter { it.value.first >= BleConstants.LEVEL_WARNING }.map { it.key }
+
+    /**
+     * Acknowledge-mutes the devices for ms (never shortening a longer mute), stops the current sound/vibration at once (if
+     *   other hazard devices remain, the next scan re-fires) and moves the floating widget to the top-priority device left.
+     *   The expiry is on the elapsed clock, so a wall-clock change neither shortens nor stretches a mute. Returns it.
+     */
+    private fun acknowledge(ids: Collection<String>, ms: Long): Long {
+        val until = android.os.SystemClock.elapsedRealtime() + ms
+        ids.forEach { mutedDevices[it] = maxOf(mutedDevices[it] ?: 0L, until) }
         AlertSoundPlayer.stopSound()
         VibrationHelper.stopVibration(this)
         activeSoundLevel = BleConstants.LEVEL_SAFE
-        // Update the floating widget to the top-priority device other than this one (hide if none)
         updateFloatingOverlay()
+        return until
+    }
+
+    /** A driver who tapped a sidebar row has visually confirmed → that device's alerts (siren, sidebar row) stop for 30s. */
+    private fun muteDevice(deviceId: String?) {
+        if (deviceId.isNullOrEmpty()) return
+        acknowledge(listOf(deviceId), ACK_MUTE_DURATION_MS)
         sendStatusBroadcast("${extractDisplayName(deviceId)} 확인됨 — 30초 무음")
         Log.d(TAG, "기기 음소거(Acknowledge): $deviceId (30초)")
     }
@@ -1220,20 +1242,13 @@ class BleService : LifecycleService() {
     /**
      * Dragging the sidebar fully closed = mute all.
      *   Applies ACK mute in bulk to every device currently alerting (WARNING or above). Reuses the existing
-     *   mutedDevices map instead of new state, so 30s auto-expiry and cleanup on device loss/SAFE apply as-is.
-     *   Devices entering after the mute are not in the map and alert normally; a TTC early alert clears the
-     *   mute and re-alerts.
+     *   mutedDevices map instead of new state, so the 30s auto-expiry and the cleanup on a departure/SAFE release or
+     *   a cold loss apply as-is (a short loss keeps it: the user saw that device). Devices entering after the mute are
+     *   not in the map and alert normally; a TTC early alert clears the mute and re-alerts.
      */
     private fun muteAllHazards() {
-        val until = System.currentTimeMillis() + ACK_MUTE_DURATION_MS
-        val targets = alertState.entries
-            .filter { it.value.first >= BleConstants.LEVEL_WARNING }
-            .map { it.key }
-        targets.forEach { mutedDevices[it] = until }
-        AlertSoundPlayer.stopSound()
-        VibrationHelper.stopVibration(this)
-        activeSoundLevel = BleConstants.LEVEL_SAFE
-        updateFloatingOverlay()
+        val targets = alertingDevices()
+        acknowledge(targets, ACK_MUTE_DURATION_MS)
         sendStatusBroadcast("전체 확인됨 (${targets.size}대) — 30초 무음")
         Log.d(TAG, "전체 음소거(Acknowledge): ${targets.size}대 (30초)")
     }
@@ -1241,7 +1256,7 @@ class BleService : LifecycleService() {
     /** Whether the device is currently Acknowledge-muted. Expired entries are cleaned up and return false. */
     private fun isDeviceMuted(deviceId: String): Boolean {
         val until = mutedDevices[deviceId] ?: return false
-        if (System.currentTimeMillis() >= until) {
+        if (android.os.SystemClock.elapsedRealtime() >= until) {
             mutedDevices.remove(deviceId)
             return false
         }
@@ -1255,8 +1270,8 @@ class BleService : LifecycleService() {
      *  Level transition = restart the timer; upward transition (W→D) = clear DANGER mute (escalation is
      *  always audible — approved exception); continuous dwell for DWELL_MUTE_MS = mute that level
      *  (DANGER dwell mutes WARNING too — stays quiet on a D→W retreat).
-     *  Only time this device is heard counts: a frame kept quiet by the caller (quiet), muted globally or by its
-     *  Acknowledge, inside a zone, below a higher device's sound, or with nothing at its level playing (a siren stopped as
+     *  Only time this device is heard counts: a frame kept quiet by the caller (quiet), muted by an Acknowledge or a
+     *  temporary mute, inside a zone, below a higher device's sound, or with nothing at its level playing (a siren stopped as
      *  the device moved away) restarts the clock and keeps the mutes earned.
      *  The moment a new mute applies, playing sound/vibration is re-synced to the highest remaining
      *  'audible' level (resyncSoundToRemaining — computed excluding muted devices, so if only muted
@@ -1275,7 +1290,7 @@ class BleService : LifecycleService() {
             // Downward retreat (D→W): keep the set — if DANGER dwell muted WARNING, it stays quiet after the retreat (approved spec).
             return
         }
-        if (quiet || isMuted || isDeviceMuted(deviceId) || myZoneInside || level < getAudibleMaxLevel() ||
+        if (quiet || isDeviceMuted(deviceId) || myZoneInside || level < getAudibleMaxLevel() ||
             activeSoundLevel < level) {
             dwellSinceMap.remove(deviceId); return
         }
@@ -1434,7 +1449,7 @@ class BleService : LifecycleService() {
 
     /**
      * Returns the sidebar to its collapsed state — it is not removed.
-     *   hazardListForOverlay() does not account for global mute (isMuted) or the safe zone. Calling
+     *   hazardListForOverlay() does not account for the safe zone. Calling
      *   updateFloatingOverlay() on that path would leave the list showing, so pass an empty list explicitly.
      */
     private fun collapseOverlay() {
@@ -1480,7 +1495,7 @@ class BleService : LifecycleService() {
         sendStatusBroadcast("테스트 경보 실행 중")
         testRunnable = object : Runnable {
             override fun run() {
-                if (isMuted) { testHandler.postDelayed(this, 3000); return }
+                if (isMutedPublic) { testHandler.postDelayed(this, 3000); return }
                 forceAlarmVolume()
                 if (DevSettings.vibrationEnabled) VibrationHelper.vibrateDanger(this@BleService)
                 if (DevSettings.soundEnabled)     AlertSoundPlayer.playDanger(this@BleService)
@@ -1960,7 +1975,6 @@ class BleService : LifecycleService() {
         muteHandler.removeCallbacksAndMessages(null)
         volumeGuardHandler.removeCallbacksAndMessages(null)   // cancel the pending volume-guard release
         ignoringVolumeChange = false
-        isMuted = false
         isMutedPublic = false
         healthCheckHandler.removeCallbacksAndMessages(null)
         advPowerHandler.removeCallbacksAndMessages(null)   // stop the advertising power evaluation loop
