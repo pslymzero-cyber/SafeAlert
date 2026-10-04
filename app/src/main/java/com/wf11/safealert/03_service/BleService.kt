@@ -334,6 +334,7 @@ class BleService : LifecycleService() {
     //   Updated every frame by processAlert; isDangerPresent() checks it against
     //   SIGNAL_STALE_MS freshness. (@Volatile Long, like lastScanResultMs)
     @Volatile private var lastApproachAtMs = 0L
+    @Volatile private var lastNearSampleMs = 0L   // last RSSI sample at or above WAKE_RSSI_DBM (scan batching promotion)
     private val ecoDowngradeRunnable = Runnable {
         // Set the rest flag only if still stationary after 5 s with no danger signal at all (stay in combat on proximity/alert/approach)
         if (ImuFusion.isStationary && !isDangerPresent()) {
@@ -840,8 +841,11 @@ class BleService : LifecycleService() {
             return
         }
 
-        // A new advertiser and scanner are created from here. A TX fault reason left by the previous instance is no
-        //   longer valid, so clear it first (if the new advertiser fails too, its callback sets it again).
+        // A new advertiser and scanner are created from here. Retire any previous pair first (a repeated start while
+        //   running would otherwise leave it advertising and scanning beside the new one, and nothing would stop it).
+        //   A TX fault reason left by the previous instance is no longer valid either (if the new advertiser fails too,
+        //   its callback sets it again).
+        stopBle()
         txFault = null
 
         val doTx = if (myMode == "DEVICE") DevSettings.deviceTx else DevSettings.walkerTx
@@ -1692,6 +1696,7 @@ class BleService : LifecycleService() {
     private fun noteRssiForWake(deviceId: String, rssi: Int) {
         wakeRssiMap[deviceId] = Pair(rssi, System.currentTimeMillis())
         if (rssi >= WAKE_RSSI_DBM) {
+            lastNearSampleMs = System.currentTimeMillis()
             // Peer entered the warning range (WAKE) → speed up my advertising with a LOW_LATENCY burst so the peer
             //   finds me sooner (mutual protection). Request it before waking: even if I was asleep, the following
             //   resumeAdvertising/startAdvertising sees burstUntilMs and starts in LOW_LATENCY.
@@ -1764,11 +1769,13 @@ class BleService : LifecycleService() {
                 }
             }
         }
-        // Scan batching promotion/return is synced with advertising sleep/wake using the same tally —
-        //   near/alert ongoing → stay at 0ms; all stale + no alert → back to 500ms power saving.
-        //   Moving, however, is excluded from scan batching — merely moving does not justify 0ms scanning.
+        // Scan batching promotion/return — near/alert ongoing → stay at 0ms; all stale + no alert → back to 500ms power
+        //   saving. Moving, however, is excluded from scan batching — merely moving does not justify 0ms scanning.
         //   Only advertising is kept awake; scan batching speeds up only for real proximity/alerts.
-        bleScanner?.setHazardNear(anyNear || hasAlert)
+        //   Near here = any sample at or above WAKE within SIGNAL_STALE_MS, not each device's latest one as for
+        //   advertising above: a peer hovering around WAKE would otherwise flip it every cycle, and every flip restarts
+        //   the scan (Android allows 5 per 30 s).
+        bleScanner?.setHazardNear(now - lastNearSampleMs <= SIGNAL_STALE_MS || hasAlert)
     }
 
     /**

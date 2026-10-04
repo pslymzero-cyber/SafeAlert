@@ -8,6 +8,7 @@ import android.bluetooth.le.ScanSettings
 import android.os.Handler
 import android.os.Looper
 import android.os.ParcelUuid
+import android.os.SystemClock
 import android.util.Log
 import com.wf11.safealert.service.BleService
 import com.wf11.safealert.utils.BeaconRegistry
@@ -20,6 +21,32 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
         // Avoid the 30-minute throttle: turn the scan off and on every 45s (works around the OS policy that blocks
         //   30 minutes of continuous scanning)
         private const val SCAN_RESTART_MS   = 45_000L
+        // Android lets an app start START_LIMIT scans per START_WINDOW_MS and refuses the next one (silently up to
+        //   Android 12), leaving reception dead until a later start. It counts per app, so the start log is shared by
+        //   every BleScanner and by BeaconManagerActivity's discovery scan (noteScanStart). Restarts keep one start of
+        //   headroom (START_BUDGET); one that would exceed it keeps the running scan and is postponed until a start frees
+        //   up. Urgent restarts (hazard-near promotion, discovery filter switches, retry after a failed start) may use
+        //   the headroom.
+        private const val START_LIMIT     = 5
+        private const val START_BUDGET    = 4
+        private const val START_WINDOW_MS = 30_000L
+        private val recentStarts = ArrayDeque<Long>()   // elapsedRealtime of the app's scan starts inside START_WINDOW_MS
+
+        /** Records a scan start the app made (BleScanner's own, or BeaconManagerActivity's discovery scan). */
+        fun noteScanStart() = synchronized(recentStarts) { recentStarts.addLast(SystemClock.elapsedRealtime()) }
+
+        /** The newest start failed (onScanFailed): Android did not count it, so the log does not either. */
+        private fun dropLastStart() = synchronized(recentStarts) { recentStarts.removeLastOrNull() }
+
+        /** 0 when one more start fits [budget], otherwise how long until the oldest start leaves the window. */
+        private fun msUntilStartAllowed(budget: Int): Long = synchronized(recentStarts) {
+            val now = SystemClock.elapsedRealtime()
+            while (recentStarts.isNotEmpty() && now - recentStarts.first() >= START_WINDOW_MS) recentStarts.removeFirst()
+            if (recentStarts.size < budget) 0L else START_WINDOW_MS - (now - recentStarts.first())
+        }
+
+        /** Tests only: the log is process-wide, and Robolectric keeps it from one test to the next. */
+        internal fun resetStartLog() = synchronized(recentStarts) { recentStarts.clear() }
         // Device-lost timeout, tied to the current radio duty (dynamic).
         //  Continuous (LOW_LATENCY): dense scanning → lost after 2s without reception (fast reaction).
         //  Duty-cycled (BALANCED/LOW_POWER): the scan-OFF window is long, so gaps over 2s are normal; extended
@@ -76,6 +103,21 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
     private var isScanning = false
     private var radioOff = false   // Bluetooth is off: no scan can start until BleService replaces this scanner
     private val handler = Handler(Looper.getMainLooper())
+    // A restart postponed by the start budget runs once, as immediate/urgent as the most demanding request it absorbed
+    private var postponedImmediate = false
+    private var postponedUrgent = false
+    private val postponedRestart = Runnable {
+        val immediate = postponedImmediate; val urgent = postponedUrgent
+        postponedImmediate = false; postponedUrgent = false
+        if (isScanning) restartScanInternal(immediate, urgent)
+    }
+    private val delayedStart = Runnable { if (isScanning) startScanInternal() }
+    // After a failed start nothing scans, so the retry is urgent: there is no running scan to keep while it waits
+    private val failRetry = Runnable { if (isScanning) restartScanInternal(urgent = true) }
+    // Settings of the scan actually running, set at each start: while a restart waits for the budget, the loss sweep and
+    //   the batching switches go by what the radio is doing, not by what was asked for.
+    @Volatile private var runningScanMode = ScanSettings.SCAN_MODE_LOW_LATENCY
+    private var runningBatchDelay = BATCH_DELAY_ACTIVE_MS
     private val detectedDevices = mutableMapOf<String, Long>()
     var onStatusUpdate: ((String) -> Unit)? = null
 
@@ -265,8 +307,10 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
             Log.e(TAG, "스캔 실패: $reason")
             onStatusUpdate?.invoke("스캔 오류: $reason")
             scanCallback?.onScanError(errorCode)
+            dropLastStart()   // nothing started, so the retry is not held back by a start that never counted
             val delayMs = if (errorCode == 6) 31_000L else 2_000L
-            handler.postDelayed({ if (isScanning) restartScanInternal() }, delayMs)
+            handler.removeCallbacks(failRetry)
+            handler.postDelayed(failRetry, delayMs)
         }
     }
 
@@ -275,10 +319,10 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
             val now = System.currentTimeMillis()
             // Duty-cycled scans (BALANCED/LOW_POWER) have long scan-OFF windows, so the timeout must be longer to avoid
             // falsely losing healthy devices ("감지 없음" flicker).
-            // The timeout follows the current radio duty, not the eco state. Only continuous scanning (LOW_LATENCY)
-            //   uses 2 s — 2 s on a duty scan would drop healthy devices during the scan-OFF window (up to ~4.6 s).
-            //   The default scanPeriodMs (1000ms → LOW_LATENCY) uses 2 s.
-            val timeoutMs = if (currentScanMode == ScanSettings.SCAN_MODE_LOW_LATENCY)
+            // The timeout follows the radio duty of the running scan, not the eco state or a mode still waiting for its
+            //   restart. Only continuous scanning (LOW_LATENCY) uses 2 s — 2 s on a duty scan would drop healthy devices
+            //   during the scan-OFF window (up to ~4.6 s). The default scanPeriodMs (1000ms → LOW_LATENCY) uses 2 s.
+            val timeoutMs = if (runningScanMode == ScanSettings.SCAN_MODE_LOW_LATENCY)
                                 DEVICE_TIMEOUT_ACTIVE_MS else DEVICE_TIMEOUT_REST_MS
             detectedDevices.entries
                 .filter {
@@ -389,7 +433,9 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
         scanCallback   = callback
         isScanning     = true
         totalBleCount  = 0
-        startScanInternal()
+        // A scanner replaced moments ago may have used the app's starts: wait for a free one rather than be refused
+        val waitMs = msUntilStartAllowed(START_LIMIT)
+        if (waitMs > 0) handler.postDelayed(delayedStart, waitMs) else startScanInternal()
         handler.post(timeoutChecker)
         handler.postDelayed(antiThrottleRunnable, SCAN_RESTART_MS)
         // tv_ble_status is for the detected device list only, so no scan-start status is posted.
@@ -398,16 +444,20 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
         // (the TTL sweep is also deferred while UWB ranging continues). With the radio off there is nothing to rescan,
         // and force-losing would cut the UWB sessions suspendRadio keeps; the STATE_ON rebuild picks up the new filters.
         BeaconRegistry.onChanged = { handler.post { if (!radioOff) { forceLoseAll(); restartScan() } } }
-        liveRestart = { handler.post { restartScan() } }
+        // Discovery switches are urgent: the lift must land within the 15 s discovery (in a quiet office the watchdog's
+        //   restarts fill the budget), and with the screen off Android delivers nothing to an unfiltered scan.
+        liveRestart = { handler.post { if (isScanning) restartScanInternal(urgent = true) } }
     }
+
+    // Batch delay is decided by screen state (orthogonal to scan mode). Even with the screen off, a near hazard
+    //   (hazardNear) gets 0ms immediate delivery — safety first.
+    private fun wantedBatchDelay() = if (!isScreenOn && !hazardNear) BATCH_DELAY_SCREEN_OFF_MS else BATCH_DELAY_ACTIVE_MS
 
     private fun startScanInternal() {
         if (radioOff) return
         // Scan mode is currentScanMode: activeScanMode (mapped from scanPeriodMs). After 5 s of confirmed IMU
         // stillness it switches to rest (restScanMode), which is the same mode, so receive scanning is never lowered.
-        // Batch delay is decided separately by screen state (orthogonal to scan mode).
-        // Even with the screen off, a near hazard (hazardNear) gets 0ms immediate delivery — safety first.
-        val batchDelay = if (!isScreenOn && !hazardNear) BATCH_DELAY_SCREEN_OFF_MS else BATCH_DELAY_ACTIVE_MS
+        val batchDelay = wantedBatchDelay()
         val settings = ScanSettings.Builder()
             .setScanMode(currentScanMode)
             .setReportDelay(batchDelay)
@@ -419,6 +469,9 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
             .build()
         try {
             scanner.startScan(buildFilters(), settings, bleScanCallback)
+            noteScanStart()
+            runningScanMode = currentScanMode
+            runningBatchDelay = batchDelay
             Log.d(TAG, "스캔 시작 (${scanModeName(currentScanMode)} · batch=${batchDelay}ms)")
         } catch (e: SecurityException) {
             Log.e(TAG, "스캔 권한 없음"); onStatusUpdate?.invoke("스캔 권한 없음")
@@ -427,7 +480,18 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
         }
     }
 
-    private fun restartScanInternal(immediate: Boolean = false) {
+    private fun restartScanInternal(immediate: Boolean = false, urgent: Boolean = false) {
+        val waitMs = msUntilStartAllowed(if (urgent) START_LIMIT else START_BUDGET)
+        if (waitMs > 0) {   // keep the running scan rather than stop it into a refused start
+            postponedImmediate = postponedImmediate || immediate
+            postponedUrgent = postponedUrgent || urgent
+            handler.removeCallbacks(postponedRestart)
+            handler.postDelayed(postponedRestart, waitMs)
+            Log.d(TAG, "스캔 재시작 보류: 30초 시작 한도 — ${waitMs}ms 뒤")
+            return
+        }
+        // This restart applies the latest settings, so it covers one still waiting for the budget
+        handler.removeCallbacks(postponedRestart); postponedImmediate = false; postponedUrgent = false
         // Flush the batch queue right before restarting — deliver the pending results stopScan would drop (up to
         //   0.5 s of screen-off 500ms batching) first, for a lossless switch.
         //   With 0ms batching the queue is empty, so this is a no-op.
@@ -436,12 +500,15 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
         if (immediate) {
             // Only for the hazard-near batching switch (setHazardNear) — restart immediately without the 300ms wait,
             //   removing the scan gap when the screen is off and a hazard is near. Ghost scans are prevented by the
-            //   isScanning guard, not by the delay, so the immediate path is equally safe.
+            //   isScanning guard, not by the delay, so the immediate path is equally safe. It replaces a start still
+            //   pending from an earlier restart, so one restart never costs two starts.
+            handler.removeCallbacks(delayedStart)
             if (isScanning) startScanInternal()
             return
         }
-        // Prevent a leftover lambda from restarting a ghost scan right after stopScanning()
-        handler.postDelayed({ if (isScanning) startScanInternal() }, 300)
+        // One pending start at most (stopScanning removes it, so no ghost scan restarts after a stop)
+        handler.removeCallbacks(delayedStart)
+        handler.postDelayed(delayedStart, 300)
     }
 
     // RX-only restart for the watchdog (healthCheck) — TX advertising is untouched, so there is no
@@ -450,24 +517,25 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
         if (isScanning) restartScanInternal()
     }
 
-    // Notifies whether a hazard/alert is near while the screen is off — true: 0ms batching (immediate delivery),
-    //   false: back to power-saving batching (500ms). With the screen on it is 0ms anyway, so no restart.
-    //   Restarts the scan only when the value actually changes (no restart storm per packet). true comes
-    //   immediately from onDeviceDetected, false from the evaluateAdvertiserPower (2.5s) aggregation — the same
-    //   asymmetry as advertising sleep/wake.
+    // Notifies whether a hazard/alert is near — true: 0ms batching (immediate delivery) even with the screen off,
+    //   false: power-saving batching (500ms) again while the screen is off. Restarts the scan only when the running
+    //   scan's batching differs (no restart storm per packet, none with the screen on). true comes immediately from
+    //   onDeviceDetected, false from the evaluateAdvertiserPower (2.5s) aggregation — the same asymmetry as
+    //   advertising sleep/wake.
     fun setHazardNear(v: Boolean) {
         if (hazardNear == v) return
         hazardNear = v
-        if (!isScreenOn && isScanning) {
-            Log.d(TAG, "화면 꺼짐 위험근접=$v → 배칭 ${if (v) BATCH_DELAY_ACTIVE_MS else BATCH_DELAY_SCREEN_OFF_MS}ms 전환")
-            restartScanInternal(immediate = true)   // Hazard-near batching switch is immediate, without the 300ms gap
+        if (isScanning && wantedBatchDelay() != runningBatchDelay) {
+            Log.d(TAG, "화면 꺼짐 위험근접=$v → 배칭 ${wantedBatchDelay()}ms 전환")
+            // Immediate, without the 300ms gap; a promotion is urgent and may use the start headroom
+            restartScanInternal(immediate = true, urgent = v)
         }
     }
 
-    /** Screen off → switch to 500ms hardware batching (scan mode kept; only minimizes CPU wake-ups) */
+    /** Screen off → 500ms hardware batching unless a hazard is near (scan mode kept; only minimizes CPU wake-ups) */
     fun notifyScreenOff() {
         isScreenOn = false
-        if (isScanning) {
+        if (isScanning && wantedBatchDelay() != runningBatchDelay) {
             Log.d(TAG, "화면 꺼짐 → ${scanModeName(currentScanMode)} + ${BATCH_DELAY_SCREEN_OFF_MS}ms 배칭 전환")
             restartScanInternal()
         }
@@ -476,7 +544,7 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
     /** Screen on → back to 0ms immediate delivery (current scan mode kept) */
     fun notifyScreenOn() {
         isScreenOn = true
-        if (isScanning) {
+        if (isScanning && wantedBatchDelay() != runningBatchDelay) {
             Log.d(TAG, "화면 켜짐 → 0ms 즉시 전달 복귀")
             restartScanInternal()
         }
@@ -523,13 +591,20 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
     fun suspendRadio() {
         radioOff = true
         handler.removeCallbacks(antiThrottleRunnable)
+        cancelPendingStarts()
         try { scanner.stopScan(bleScanCallback) } catch (_: Exception) {}
+    }
+
+    private fun cancelPendingStarts() {
+        handler.removeCallbacks(postponedRestart); handler.removeCallbacks(delayedStart); handler.removeCallbacks(failRetry)
+        postponedImmediate = false; postponedUrgent = false
     }
 
     fun stopScanning() {
         isScanning = false
         handler.removeCallbacks(timeoutChecker)
         handler.removeCallbacks(antiThrottleRunnable)
+        cancelPendingStarts()
         try { scanner.stopScan(bleScanCallback) } catch (_: Exception) {}
         detectedDevices.clear()
         scanCallback = null

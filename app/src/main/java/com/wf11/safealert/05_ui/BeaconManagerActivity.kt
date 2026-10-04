@@ -429,6 +429,7 @@ class BeaconManagerActivity : AppCompatActivity() {
 
         val settings = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build()
         scanner.startScan(null, settings, scanCallback)
+        com.wf11.safealert.ble.BleScanner.noteScanStart()   // Android counts it against the app's scan start limit too
         stopHandler.postDelayed({ if (isScanning) stopScan() }, 15_000)
     }
 

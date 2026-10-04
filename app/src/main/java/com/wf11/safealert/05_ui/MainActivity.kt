@@ -577,7 +577,8 @@ class MainActivity : AppCompatActivity() {
             )
             .setPositiveButton("권한 허용") { _, _ ->
                 try {
-                    batteryOptLauncher.launch(
+                    // Only asks for the exemption: monitoring may already run, so no result handler re-sends a start
+                    startActivity(
                         Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
                             data = Uri.parse("package:$packageName")
                         }

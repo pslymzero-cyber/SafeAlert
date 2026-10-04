@@ -61,6 +61,7 @@ class BeaconRegistryChangeSimulationTest {
         BeaconRegistry.init(app)
         // object singleton: keep prefs/callbacks from leaking between tests
         BeaconRegistry.onChanged = null
+        BleScanner.resetStartLog()
         app.getSharedPreferences("beacon_registry", Context.MODE_PRIVATE).edit().clear().commit()
 
         val adapter = BluetoothAdapter.getDefaultAdapter()

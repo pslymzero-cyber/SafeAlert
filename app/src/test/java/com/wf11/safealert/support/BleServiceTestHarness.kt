@@ -2,6 +2,7 @@ package com.wf11.safealert.support
 
 import android.content.Intent
 import com.wf11.safealert.ble.BleConstants
+import com.wf11.safealert.ble.BleScanner
 import com.wf11.safealert.ble.KalmanFilter
 import com.wf11.safealert.service.BleService
 import com.wf11.safealert.utils.DevSettings
@@ -34,6 +35,7 @@ object BleServiceTestHarness {
     fun newService(): BleService {
         DevSettings.init(RuntimeEnvironment.getApplication())
         applyGoldenDevSettings()
+        BleScanner.resetStartLog()   // process-wide scan start log: starts of earlier tests must not hold this one's back
         val service = Robolectric.buildService(BleService::class.java).get()
         ReflectionHelpers.callInstanceMethod<Unit>(service, "registerDeviceState")
         ReflectionHelpers.callInstanceMethod<Unit>(service, "applyEmaAlphas")
