@@ -50,11 +50,18 @@ class SirenGeneratorTest {
         val pcm = SirenGenerator.wailCycle()
         val win = SAMPLE_RATE / 10
         var from = 0
+        var lo = Double.MAX_VALUE
+        var hi = 0.0
         while (from + win <= pcm.size) {
             val hz = zeroCrossHz(pcm, from, from + win)
             assertTrue("window $from hz=$hz", hz >= WAIL_LOW_HZ * 0.95 && hz <= WAIL_HIGH_HZ * 1.05)
+            lo = minOf(lo, hz); hi = maxOf(hi, hz)
             from += win
         }
+        // A tone fixed anywhere in the range fails one of these: the cycle must reach both ends of the sweep.
+        val quarter = (WAIL_HIGH_HZ - WAIL_LOW_HZ) / 4
+        assertTrue("lowest window hz=$lo", lo < WAIL_LOW_HZ + quarter)
+        assertTrue("highest window hz=$hi", hi > WAIL_HIGH_HZ - quarter)
     }
 
     @Test fun wail_amplitude_is_bounded_and_loud_enough() {

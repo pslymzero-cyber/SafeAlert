@@ -5,6 +5,8 @@ import androidx.lifecycle.Lifecycle
 import com.wf11.safealert.service.BleService
 import com.wf11.safealert.service.BootRestoreReceiver
 import com.wf11.safealert.support.BleServiceTestHarness
+import com.wf11.safealert.support.BleServiceTestHarness.assertGoldenScenario
+import com.wf11.safealert.support.BleServiceTestHarness.runGoldenScenario
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -17,7 +19,6 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.shadows.ShadowLog
-import org.robolectric.util.ReflectionHelpers
 
 /**
  * Golden cascade regression test — record-then-freeze.
@@ -109,7 +110,8 @@ class AlertCascadeGoldenTest {
     }
 
     /**
-     * Release (DANGER→SAFE) golden, replayed straight on from the end state of the escalation run.
+     * Escalation (SAFE→WARNING→DANGER, see [ESCALATION_GOLDEN]) and then release (DANGER→SAFE), the release replayed
+     * straight on from the end state of the escalation run.
      * record-then-freeze: [RELEASE_GOLDEN]/[RELEASE_KFVEL] are values captured from one real run, never
      * computed by hand. Re-freeze only by editing these arrays in this file by hand (there is no automatic
      * update path).
@@ -129,15 +131,13 @@ class AlertCascadeGoldenTest {
      * restamps the entry time while DANGER is held.
      */
     @Test
-    fun release_goldenTimeline() {
+    fun escalationThenRelease_goldenTimeline() {
         val service = BleServiceTestHarness.newService()
         BleServiceTestHarness.resetBetweenTests(service)
         val escalation = runScenario(service, CASCADE_DEVICE_ID, ESCALATION_RSSI, startFrame = 0)
-        assertEquals("escalation 프레임 수 불일치", FRAMES, escalation.first.size)
-        assertScenario("escalation", escalation, ESCALATION_GOLDEN, ESCALATION_KFVEL)
-        val actual = runScenario(service, CASCADE_DEVICE_ID, RELEASE_RSSI, startFrame = FRAMES)
-        assertEquals("release 프레임 수 불일치", RELEASE_FRAMES, actual.first.size)
-        assertScenario("release", actual, RELEASE_GOLDEN, RELEASE_KFVEL)
+        assertGoldenScenario("escalation", escalation, ESCALATION_GOLDEN, ESCALATION_KFVEL)
+        val release = runScenario(service, CASCADE_DEVICE_ID, RELEASE_RSSI, startFrame = FRAMES)
+        assertGoldenScenario("release", release, RELEASE_GOLDEN, RELEASE_KFVEL)
     }
 
     /**
@@ -153,7 +153,7 @@ class AlertCascadeGoldenTest {
      * 3s threshold) and DANGER waits for the TTC pre-alert at frame=008. The -62dBm step keeps that TTC margin;
      * a bigger step speeds kfVel up and lets the TTC pre-alert hide the override. The override's own log line
      * (dangerStreak=2) is asserted before the golden, so a re-freeze cannot silently stop exercising it.
-     * release_goldenTimeline reaches the override too (DANGER at escalation frame=032), but only when its loop runs
+     * escalationThenRelease_goldenTimeline reaches the override too (DANGER at escalation frame=032), but only when its loop runs
      * fast: avg1sec reads the wall clock, so a pause of about 1s can move that first DANGER.
      */
     @Test
@@ -161,16 +161,15 @@ class AlertCascadeGoldenTest {
         val service = BleServiceTestHarness.newService()
         BleServiceTestHarness.resetBetweenTests(service)
         val actual = runScenario(service, CONTACT_DEVICE_ID, CONTACT_RSSI, startFrame = 0)
-        assertEquals("suddenContact 프레임 수 불일치", CONTACT_FRAMES, actual.first.size)
         assertTrue("dangerStreak>=2 즉시 격상이 이 기기에 실제로 걸려야 한다",
             ShadowLog.getLogs().any { it.msg?.contains("즉시 격상 DANGER: $CONTACT_DEVICE_ID (dangerStreak=2") == true })
-        assertScenario("suddenContact", actual, CONTACT_GOLDEN, CONTACT_KFVEL)
+        assertGoldenScenario("suddenContact", actual, CONTACT_GOLDEN, CONTACT_KFVEL)
     }
 }
 
 // ── Per-frame golden cascade wiring ─────────────────────────────────────────────────────
-// Observed per frame: alertState (level + entry time relative to T0), tracking state, the 3
-// streak maps and the cumulative broadcast count, rendered as one full line; kfVel
+// Observed per frame (BleServiceTestHarness.renderGoldenFrame): alertState (level + entry time relative to T0),
+// tracking state, the 3 streak maps and the cumulative broadcast count, rendered as one full line; kfVel
 // (estimatedVel) is kept in a separate DoubleArray, apart from the string.
 // medianValue and avgRssi (= pEma) are not observed here. RssiCascadeTest pins the median, pre-filter
 // and Kalman stages, but pEma is outside its golden as well, so no test pins pEma values directly:
@@ -291,90 +290,12 @@ private val RELEASE_KFVEL: DoubleArray = doubleArrayOf(
     0.0,
 )
 
-/**
- * BleService's private trackingStateMap (alias of
- * AlertStateMachine.trackingStateMap), read by reflection; values are used only
- * through toString().
- */
-@Suppress("UNCHECKED_CAST")
-private fun trackingStateOf(service: BleService, deviceId: String): String {
-    val map = ReflectionHelpers.getField(service, "trackingStateMap") as Map<String, *>
-    return map[deviceId]?.toString() ?: "NONE"
-}
+/** Frame numbers continue from [startFrame] (the release run carries on from the escalation run). */
+private fun runScenario(service: BleService, deviceId: String, rssiSeq: IntArray, startFrame: Int) =
+    runGoldenScenario(service, deviceId, rssiSeq, T0_MS, FRAME_DT_MS, startFrame)
 
 /**
- * Shared reader for BleService's private
- * dangerContactStreakMap/warningContactStreakMap/fastApproachStreakMap (aliases of
- * the AlertStateMachine maps).
- */
-@Suppress("UNCHECKED_CAST")
-private fun streakOf(service: BleService, fieldName: String, deviceId: String): Int {
-    val map = ReflectionHelpers.getField(service, fieldName) as Map<String, Int>
-    return map[deviceId] ?: 0
-}
-
-/**
- * BleService's private kalmanFilters (alias of AlertStateMachine.kalmanFilters), read by
- * reflection; KalmanFilter.estimatedVel is public, so it is read directly.
- */
-@Suppress("UNCHECKED_CAST")
-private fun kfVelOf(service: BleService, deviceId: String): Double {
-    val map = ReflectionHelpers.getField(service, "kalmanFilters") as Map<String, KalmanFilter>
-    return map[deviceId]?.estimatedVel ?: 0.0
-}
-
-/** Serializes one frame into one fixed-width line. entry is relative to T0_MS, "null" when absent. */
-private fun renderFrame(service: BleService, deviceId: String, frameIdx: Int, rssi: Int): String {
-    val level = BleServiceTestHarness.alertLevelOf(service, deviceId)
-    val entryRel = BleServiceTestHarness.alertEntryMsOf(service, deviceId)?.minus(T0_MS)
-    val track = trackingStateOf(service, deviceId)
-    val dangerStreak = streakOf(service, "dangerContactStreakMap", deviceId)
-    val warnStreak = streakOf(service, "warningContactStreakMap", deviceId)
-    val fastStreak = streakOf(service, "fastApproachStreakMap", deviceId)
-    val bcast = BleServiceTestHarness.alertBroadcasts().size
-    return "frame=%03d rssi=%4d level=%s entry=%s track=%-11s dangerStreak=%d warnStreak=%d fastStreak=%d bcast=%d"
-        .format(frameIdx, rssi, level?.toString() ?: "null", entryRel?.toString() ?: "null", track, dangerStreak, warnStreak, fastStreak, bcast)
-}
-
-/**
- * Advances nowMs by FRAME_DT_MS on every frame and calls callProcessAlert, returning the renderFrame
- * string array together with the kfVel DoubleArray. startFrame is the global frame number (the release
- * run continues the numbering).
- */
-private fun runScenario(
-    service: BleService,
-    deviceId: String,
-    rssiSeq: IntArray,
-    startFrame: Int,
-): Pair<Array<String>, DoubleArray> {
-    val frames = Array(rssiSeq.size) { "" }
-    val kfVel = DoubleArray(rssiSeq.size)
-    for (i in rssiSeq.indices) {
-        val frameIdx = startFrame + i
-        val nowMs = T0_MS + frameIdx * FRAME_DT_MS
-        BleServiceTestHarness.callProcessAlert(service, deviceId, rssiSeq[i], nowMs = nowMs)
-        frames[i] = renderFrame(service, deviceId, frameIdx, rssiSeq[i])
-        kfVel[i] = kfVelOf(service, deviceId)
-    }
-    return frames to kfVel
-}
-
-/** Two assertions per frame: the render string, and kfVel within delta 1e-9. */
-private fun assertScenario(
-    scenario: String,
-    actual: Pair<Array<String>, DoubleArray>,
-    expectedFrames: Array<String>,
-    expectedKfVel: DoubleArray,
-) {
-    val (frames, kfVel) = actual
-    for (i in expectedFrames.indices) {
-        assertEquals("$scenario frame=$i stage=render", expectedFrames[i], frames[i])
-        assertEquals("$scenario frame=$i stage=kfVel", expectedKfVel[i], kfVel[i], 1e-9)
-    }
-}
-
-/**
- * Escalation (SAFE→WARNING→DANGER) golden. release_goldenTimeline asserts it first, before replaying the release.
+ * Escalation (SAFE→WARNING→DANGER) golden. escalationThenRelease_goldenTimeline asserts it first, before replaying the release.
  * record-then-freeze: [ESCALATION_GOLDEN]/[ESCALATION_KFVEL] are values captured from one real run,
  * never computed by hand. Re-freeze only by editing these arrays in this file by hand (there is no
  * automatic update path).

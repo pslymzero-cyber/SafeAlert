@@ -79,13 +79,13 @@ class SensorStallTest {
     }
 
     /**
-     * The monitor feeds broadcasts (not sticky) and the 10 s sticky check to the logic and ticks and renders on one path
+     * Source check: the monitor feeds broadcasts (not sticky) and the 10 s sticky check to the logic and ticks and renders on one path
      * when it applied or the wait changed, tells the logic each sensor callback ended, schedules its first tick at the
      * end of start and flushes only for missing data. The wake-lock decision is a behavior test
      * (MountedStillTest.mounted_keeps_wake_lock_and_renew_loop).
      */
     @Test
-    fun monitor_feeds_raw_power_and_flushes_only_for_missing_data() {
+    fun source_monitor_feeds_raw_power_and_flushes_only_for_missing_data() {
         val m = serviceSource("LoneWorkerMonitor.kt")
         assertTrue(m.contains("LoneWorkerPower(ctx) { onPowerRaw(it, false) }"))
         assertTrue(sourceBlock(m, "private val syncRunnable").contains("onPowerRaw(power.plugged(), true)"))

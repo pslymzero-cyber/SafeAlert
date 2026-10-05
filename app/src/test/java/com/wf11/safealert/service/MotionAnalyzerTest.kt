@@ -20,41 +20,28 @@ class MotionAnalyzerTest {
             val s = a.add(t, x, y, z)
             if (s != Signal.NONE) signals.add(t to s)
         }
-        fun span(from: Long, to: Long, f: (Long) -> FloatArray) {
-            var t = from
-            while (t < to) {
-                val v = f(t)
-                sample(t, v[0], v[1], v[2])
-                t += 20
-            }
-        }
-        fun maskedSpan(from: Long, to: Long, f: (Long) -> FloatArray) {
-            var t = from
-            while (t < to) {
-                val v = f(t)
-                val s = a.add(t, v[0], v[1], v[2], masked = true)
-                if (s != Signal.NONE) signals.add(t to s)
-                t += 20
-            }
-        }
+        fun span(from: Long, to: Long, f: (Long) -> FloatArray) { signals += a.feed(from, to, f = f) }
+        fun span(from: Long, to: Long, v: FloatArray) { span(from, to) { v } }
+        fun maskedSpan(from: Long, to: Long, f: (Long) -> FloatArray) { signals += a.feed(from, to, masked = true, f = f) }
+        fun maskedSpan(from: Long, to: Long, v: FloatArray) { maskedSpan(from, to) { v } }
         fun times(s: Signal) = signals.filter { it.second == s }.map { it.first }
     }
 
     private fun sec(t: Long) = t / 1000.0
-    private val still = { _: Long -> floatArrayOf(0f, 0f, 9.81f) }
+    private val still = UPRIGHT_STILL
     private val breathing = { t: Long ->
         floatArrayOf(0f, 0f, (9.81 + 0.05 * sin(2 * PI * 0.3 * sec(t))).toFloat())
     }
     private fun walking(amp: Double, hz: Double) = { t: Long ->
         floatArrayOf(0f, 0f, (9.81 + amp * sin(2 * PI * hz * sec(t))).toFloat())
     }
-    private val lying = { _: Long -> floatArrayOf(9.81f, 0f, 0f) }
+    private val lying = LYING_STILL
 
     // Fall trace head: upright 3 s, 200 ms free fall, 3 impact samples. Impact at 3200.
     private fun Run.fallHead() {
         span(0, 3000, still)
-        span(3000, 3200) { floatArrayOf(0f, 0f, 1.5f) }
-        span(3200, 3260) { floatArrayOf(0f, 0f, 30f) }
+        span(3000, 3200, FREE_FALL_SAMPLE)
+        span(3200, 3260, IMPACT_SAMPLE)
     }
 
     @Test fun still_with_breathing_never_moves() {
@@ -121,7 +108,9 @@ class MotionAnalyzerTest {
         }
         assertTrue(40L < MotionAnalyzer.FREE_FALL_MIN_MS)
         assertTrue(trace(40).times(Signal.FALL).isEmpty())
-        assertEquals(1, trace(60).times(Signal.FALL).size)
+        val sixty = trace(60)
+        assertEquals(1, sixty.times(Signal.FALL).size)
+        assertEquals(60L, sixty.a.fallShape.freeFallMs)
     }
 
     /** Rule: the posture changes at least POSTURE_DEG (45). A full fall ending 30 deg from upright is not a fall. */
@@ -152,31 +141,65 @@ class MotionAnalyzerTest {
         assertTrue(r.times(Signal.MOVED).contains(7_000L))
     }
 
-    @Test fun impact_threshold_follows_sensor_range() {
-        assertEquals(1.8, MotionAnalyzer.impactGFor(19.6f), 0.01)
-        assertEquals(MotionAnalyzer.IMPACT_G, MotionAnalyzer.impactGFor(78.4f), 1e-9)
-        assertEquals(MotionAnalyzer.IMPACT_G, MotionAnalyzer.impactGFor(0f), 1e-9)
-    }
-
-    @Test fun implausibly_small_range_uses_default_threshold() {
+    /**
+     * Impact threshold (G) from the sensor's reported maximum range: a 2 G-class sensor that clips below the wanted
+     * threshold uses 90 % of its range; an unknown (0, negative, NaN), implausibly small or large enough range keeps
+     * the wanted G, and a zone setting below IMPACT_G never lowers it. Small ranges are read as g units.
+     * Rows: range, zone setting (null = the plain call, IMPACT_G), want, tolerance.
+     */
+    @Test fun impact_threshold_by_sensor_range_and_setting() {
         val g = MotionAnalyzer.G.toFloat()
-        assertEquals(MotionAnalyzer.IMPACT_G, MotionAnalyzer.impactGFor(1.4f * g), 1e-9)
-        assertEquals(MotionAnalyzer.IMPACT_G, MotionAnalyzer.impactGFor(-1f), 1e-9)
-        assertEquals(MotionAnalyzer.IMPACT_G, MotionAnalyzer.impactGFor(1.5f * g), 1e-9)
-        assertEquals(1.62, MotionAnalyzer.impactGFor(1.8f * g), 0.01)
-        assertEquals(2.16, MotionAnalyzer.impactGFor(2.4f * g), 0.01)
-        assertEquals(MotionAnalyzer.IMPACT_G, MotionAnalyzer.impactGFor(2.6f * g), 1e-9)
+        val base = MotionAnalyzer.IMPACT_G
+        for ((i, row) in listOf(
+            // m/s^2
+            listOf(19.6f, null, 1.8, 0.01),
+            listOf(78.4f, null, base, 1e-9),
+            listOf(0f, null, base, 1e-9),
+            listOf(-1f, null, base, 1e-9),
+            listOf(Float.NaN, null, 2.5, 1e-9),
+            listOf(1.4f * g, null, base, 1e-9),
+            listOf(1.5f * g, null, base, 1e-9),
+            listOf(1.8f * g, null, 1.62, 0.01),
+            listOf(2.4f * g, null, 2.16, 0.01),
+            listOf(2.6f * g, null, base, 1e-9),
+            // g units; 16 (g) / G = 1.63: still read as g units, not as a 1.63 g sensor
+            listOf(2.0f, null, 1.8, 0.01),
+            listOf(2.4f, null, 2.16, 0.01),
+            listOf(1.4f, null, base, 1e-9),
+            listOf(2.6f, null, base, 1e-9),
+            listOf(4f, null, base, 1e-9),
+            listOf(8f, null, base, 1e-9),
+            listOf(16f, null, base, 1e-9),
+            // a safe-zone setting
+            listOf(19.6f, 4.0, 1.8, 0.01),
+            listOf(78.4f, 4.0, 4.0, 0.0),
+            listOf(78.4f, 8.0, 7.2, 0.01),
+            listOf(78.4f, 1.5, 2.5, 0.0),
+            listOf(2.4f * g, 1.5, 2.16, 0.01),   // a low setting does not lower a small sensor's threshold either
+            listOf(2.6f * g, 2.7, 2.5, 1e-9),
+            listOf(0f, 3.0, 3.0, 1e-9),
+            listOf(Float.NaN, 3.0, 3.0, 1e-9),
+            listOf(Float.NaN, 1.5, 2.5, 1e-9)).withIndex()) {
+            val range = row[0] as Float
+            val want = row[1] as Double?
+            val got = if (want == null) MotionAnalyzer.impactGFor(range) else MotionAnalyzer.impactGFor(range, want)
+            assertEquals("row $i range $range setting $want", row[2] as Double, got, row[3] as Double)
+        }
     }
 
-    @Test fun range_reported_in_g_units_uses_90_percent() {
-        assertEquals(1.8, MotionAnalyzer.impactGFor(2.0f), 0.01)
-        assertEquals(2.16, MotionAnalyzer.impactGFor(2.4f), 0.01)
-        assertEquals(MotionAnalyzer.IMPACT_G, MotionAnalyzer.impactGFor(1.4f), 1e-9)
-        assertEquals(MotionAnalyzer.IMPACT_G, MotionAnalyzer.impactGFor(2.6f), 1e-9)
-        assertEquals(MotionAnalyzer.IMPACT_G, MotionAnalyzer.impactGFor(4f), 1e-9)
-        assertEquals(MotionAnalyzer.IMPACT_G, MotionAnalyzer.impactGFor(8f), 1e-9)
-        // 16 (g) / G = 1.63: still read as g units, not as a 1.63 g sensor
-        assertEquals(MotionAnalyzer.IMPACT_G, MotionAnalyzer.impactGFor(16f), 1e-9)
+    /** Raising the zone setting never lowers the threshold, and the default setting equals the plain call. */
+    @Test fun raising_the_zone_setting_never_lowers_the_threshold() {
+        val g = MotionAnalyzer.G.toFloat()
+        for (r in listOf(19.6f, 2.0f, 2.4f, 2.6f * g, 2.7f * g, 39.2f, 78.4f, 0f, 16f)) {
+            val base = MotionAnalyzer.impactGFor(r)
+            assertEquals(base, MotionAnalyzer.impactGFor(r, 2.5), 1e-9)
+            var prev = base
+            for (i in 25..80) {
+                val v = MotionAnalyzer.impactGFor(r, i / 10.0)
+                assertTrue("range $r want ${i / 10.0}", v >= prev && v >= base)
+                prev = v
+            }
+        }
     }
 
     @Test fun clipped_two_g_sensor_needs_the_range_based_threshold() {

@@ -15,25 +15,25 @@ class AlarmVolumeShareTest {
 
     @Test
     fun restore_when_still_ours_and_collision_old() {
-        assertEquals(Restore.RESTORE, AlarmVolumeShare.restoreAction(7, 3, 7, 100_000, 89_000))
+        assertEquals(Restore.RESTORE, AlarmVolumeShare.restoreAction(cur = 7, orig = 3, ours = 7, nowMs = 100_000, collisionAtMs = 89_000))
     }
 
     @Test
     fun drop_when_not_ours_or_unknown() {
-        assertEquals(Restore.DROP, AlarmVolumeShare.restoreAction(6, 3, 7, 100_000, 0))
-        assertEquals(Restore.DROP, AlarmVolumeShare.restoreAction(3, 3, 3, 100_000, 0))
-        assertEquals(Restore.DROP, AlarmVolumeShare.restoreAction(null, 3, 7, 100_000, 0))
-        assertEquals(Restore.DROP, AlarmVolumeShare.restoreAction(7, 3, -1, 100_000, 0))
-        assertEquals(Restore.DROP, AlarmVolumeShare.restoreAction(7, -1, 7, 100_000, 0))
+        assertEquals(Restore.DROP, AlarmVolumeShare.restoreAction(cur = 6, orig = 3, ours = 7, nowMs = 100_000, collisionAtMs = 0))
+        assertEquals(Restore.DROP, AlarmVolumeShare.restoreAction(cur = 3, orig = 3, ours = 3, nowMs = 100_000, collisionAtMs = 0))
+        assertEquals(Restore.DROP, AlarmVolumeShare.restoreAction(cur = null, orig = 3, ours = 7, nowMs = 100_000, collisionAtMs = 0))
+        assertEquals(Restore.DROP, AlarmVolumeShare.restoreAction(cur = 7, orig = 3, ours = -1, nowMs = 100_000, collisionAtMs = 0))
+        assertEquals(Restore.DROP, AlarmVolumeShare.restoreAction(cur = 7, orig = -1, ours = 7, nowMs = 100_000, collisionAtMs = 0))
         // someone else changed it during a recent collision: drop, never wait
-        assertEquals(Restore.DROP, AlarmVolumeShare.restoreAction(5, 3, 7, 100_000, 99_000))
+        assertEquals(Restore.DROP, AlarmVolumeShare.restoreAction(cur = 5, orig = 3, ours = 7, nowMs = 100_000, collisionAtMs = 99_000))
     }
 
     @Test
     fun final_stop_restores_even_within_collision_hold() {
-        assertEquals(Restore.RESTORE, AlarmVolumeShare.restoreAction(7, 3, 7, 100_000, 99_000, final = true))
-        assertEquals(Restore.WAIT, AlarmVolumeShare.restoreAction(7, 3, 7, 100_000, 99_000, final = false))
-        assertEquals(Restore.WAIT, AlarmVolumeShare.restoreAction(7, 3, 7, 100_000, 97_000))
-        assertEquals(Restore.DROP, AlarmVolumeShare.restoreAction(5, 3, 7, 100_000, 99_000, final = true))
+        assertEquals(Restore.RESTORE, AlarmVolumeShare.restoreAction(cur = 7, orig = 3, ours = 7, nowMs = 100_000, collisionAtMs = 99_000, final = true))
+        assertEquals(Restore.WAIT, AlarmVolumeShare.restoreAction(cur = 7, orig = 3, ours = 7, nowMs = 100_000, collisionAtMs = 99_000, final = false))
+        assertEquals(Restore.WAIT, AlarmVolumeShare.restoreAction(cur = 7, orig = 3, ours = 7, nowMs = 100_000, collisionAtMs = 97_000))
+        assertEquals(Restore.DROP, AlarmVolumeShare.restoreAction(cur = 5, orig = 3, ours = 7, nowMs = 100_000, collisionAtMs = 99_000, final = true))
     }
 }

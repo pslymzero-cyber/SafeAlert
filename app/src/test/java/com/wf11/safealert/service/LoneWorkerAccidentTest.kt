@@ -3,7 +3,6 @@ package com.wf11.safealert.service
 import com.wf11.safealert.service.LoneWorkerLogic.Mode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -20,12 +19,9 @@ class LoneWorkerAccidentTest {
 
     private val late = LoneWorkerLogic.LATE_MS
 
-    /** Carried, not charging, rule 2 pushed out of the way so only rule 1 acts. */
-    private fun rule1(charging: Boolean = false, zoneInside: Boolean = false) =
-        newLogic(charging, zoneInside, carried = true).apply { stillMs = 3_600_000L }
-
-    @Test fun fall_opens_suspicion_without_prior_motion() {
-        val l = rule1()
+    /** A fall alone opens the suspicion; 30 s without distinct motion after it opens the accident check. */
+    @Test fun fall_opens_accident_check_after_30s_without_distinct_motion() {
+        val l = fallRuleOnly()
         l.onAccident(6_000)
         assertEquals(Mode.WATCHING, l.modeAt(18_000))
         assertEquals(Mode.WATCHING, l.seenAt(35_999))
@@ -34,7 +30,7 @@ class LoneWorkerAccidentTest {
     }
 
     @Test fun accident_check_unanswered_for_1min_becomes_sos() {
-        val l = rule1()
+        val l = fallRuleOnly()
         l.responseMs = 600_000L
         l.onAccident(6_000)
         assertEquals(Mode.CHECKING, l.seenAt(36_000))
@@ -45,43 +41,43 @@ class LoneWorkerAccidentTest {
     }
 
     @Test fun fall_while_charging_inside_zone_is_ignored_right_after_entering() {
-        val l = rule1(charging = true)
+        val l = fallRuleOnly(charging = true)
         l.onZone(true, 5_000)
         l.onAccident(6_000)
         for (t in 40_000L..400_000L step 10_000L) assertEquals(Mode.WATCHING, l.seenAt(t))
         // a full-shape fall (long drop, hard impact, big tilt) is ignored the same way
-        val full = rule1(charging = true)
+        val full = fallRuleOnly(charging = true)
         full.onZone(true, 5_000)
         full.onAccident(6_000, MotionAnalyzer.FallShape(400, 5.0, 90.0))
         for (t in 40_000L..400_000L step 10_000L) assertEquals(Mode.WATCHING, full.seenAt(t))
     }
 
     @Test fun fall_while_charging_outside_zone_counts() {
-        val l = rule1(charging = true)
+        val l = fallRuleOnly(charging = true)
         l.onAccident(20_000)
         assertEquals(Mode.CHECKING, l.seenAt(50_000))
     }
 
     @Test fun plug_within_10s_before_trigger_ignores_it() {
-        val l = rule1()
+        val l = fallRuleOnly()
         l.reportPower(true, 10_000)
         l.onAccident(20_000)
         for (t in 50_000L..330_000L step 10_000L) assertEquals(Mode.WATCHING, l.seenAt(t))
 
-        val early = rule1()
+        val early = fallRuleOnly()
         early.reportPower(true, 9_999)
         early.onAccident(20_000)
         assertEquals(Mode.CHECKING, early.seenAt(50_000))
     }
 
     @Test fun plug_during_suspicion_ends_it_without_check() {
-        val l = rule1()
+        val l = fallRuleOnly()
         l.onAccident(10_000)
         assertEquals(Mode.WATCHING, l.seenAt(29_000))
         l.reportPower(true, 30_000)
         for (t in 40_000L..400_000L step 10_000L) assertEquals(Mode.WATCHING, l.seenAt(t))
         // also after steps closed the accident check (suspicion still running)
-        val s = rule1()
+        val s = fallRuleOnly()
         s.onAccident(10_000)
         assertEquals(Mode.CHECKING, s.seenAt(40_000))
         s.walk(45_000, 5)
@@ -91,7 +87,7 @@ class LoneWorkerAccidentTest {
     }
 
     @Test fun real_plug_during_accident_check_closes_it_and_ends_suspicion() {
-        val l = rule1()
+        val l = fallRuleOnly()
         l.onAccident(10_000)
         assertEquals(Mode.CHECKING, l.seenAt(40_000))
         l.reportPower(true, 50_000)
@@ -100,7 +96,7 @@ class LoneWorkerAccidentTest {
     }
 
     @Test fun unplug_during_accident_check_keeps_it_running_to_sos() {
-        val l = rule1(charging = true)
+        val l = fallRuleOnly(charging = true)
         l.onAccident(10_000)
         assertEquals(Mode.CHECKING, l.seenAt(40_000))
         l.reportPower(false, 45_000)
@@ -109,7 +105,7 @@ class LoneWorkerAccidentTest {
     }
 
     @Test fun power_changes_during_sos_do_not_end_sos() {
-        val l = rule1()
+        val l = fallRuleOnly()
         l.onAccident(10_000)
         assertEquals(Mode.CHECKING, l.seenAt(40_000))
         assertEquals(Mode.SOS, l.seenAt(100_000))
@@ -123,21 +119,21 @@ class LoneWorkerAccidentTest {
     }
 
     @Test fun non_walking_steps_do_not_hold() {
-        val l = rule1()
+        val l = fallRuleOnly()
         l.onAccident(10_000)
         l.shuffle(38_000, 5)
         assertEquals(Mode.CHECKING, l.seenAt(40_000))
     }
 
     @Test fun steps_during_app_vibration_do_not_hold() {
-        val l = rule1()
+        val l = fallRuleOnly()
         l.onAccident(10_000)
         for (i in 4 downTo 0) l.step(38_000 - i * 500L, vibrating = true)
         assertEquals(Mode.CHECKING, l.seenAt(40_000))
     }
 
     @Test fun late_step_before_sos_deadline_closes_check() {
-        val l = rule1()
+        val l = fallRuleOnly()
         l.onAccident(10_000)
         assertEquals(Mode.CHECKING, l.seenAt(40_000))
         // deadline 100 s passes before the batch carrying steps up to 99.9 s arrives
@@ -149,7 +145,7 @@ class LoneWorkerAccidentTest {
     }
 
     @Test fun sos_waits_for_sensor_data_up_to_6s() {
-        val l = rule1()
+        val l = fallRuleOnly()
         l.onAccident(10_000)
         assertEquals(Mode.CHECKING, l.seenAt(40_000))
         assertEquals(Mode.CHECKING, l.modeAt(100_000))
@@ -158,7 +154,7 @@ class LoneWorkerAccidentTest {
     }
 
     @Test fun sos_fires_at_deadline_when_data_covers_it() {
-        val l = rule1()
+        val l = fallRuleOnly()
         l.onAccident(10_000)
         assertEquals(Mode.CHECKING, l.seenAt(40_000))
         assertEquals(Mode.CHECKING, l.seenAt(99_999))
@@ -170,20 +166,20 @@ class LoneWorkerAccidentTest {
     }
 
     @Test fun accident_check_open_waits_for_sensor_data() {
-        val l = rule1()
+        val l = fallRuleOnly()
         l.onAccident(10_000)
         assertEquals(Mode.WATCHING, l.modeAt(40_000))
         assertEquals(Mode.WATCHING, l.modeAt(40_000 + late - 1))
         assertEquals(Mode.CHECKING, l.modeAt(40_000 + late))
         assertEquals(60_000L, l.responseLeftMs(40_000 + late))
 
-        val seen = rule1()
+        val seen = fallRuleOnly()
         seen.onAccident(10_000)
         assertEquals(Mode.CHECKING, seen.seenAt(40_000))
     }
 
-    @Test fun accident_switch_from_still_check_resets_step_floor() {
-        val l = rule1()
+    @Test fun fall_check_replacing_a_still_check_counts_steps_from_the_switch() {
+        val l = fallRuleOnly()
         l.stillMs = 180_000L
         assertEquals(Mode.CHECKING, l.seenAt(180_000))
         assertEquals("still", l.trigger)
@@ -199,7 +195,7 @@ class LoneWorkerAccidentTest {
     }
 
     @Test fun still_period_must_complete_within_5min() {
-        val l = rule1()
+        val l = fallRuleOnly()
         l.onAccident(10_000)
         for (last in 35_000L..285_000L step 25_000L) {
             l.walk(last, 5)
@@ -211,7 +207,7 @@ class LoneWorkerAccidentTest {
     }
 
     @Test fun new_trigger_during_suspicion_extends_window() {
-        val l = rule1()
+        val l = fallRuleOnly()
         l.onAccident(10_000)
         for (last in 35_000L..285_000L step 25_000L) {
             l.walk(last, 5)
@@ -223,21 +219,21 @@ class LoneWorkerAccidentTest {
     }
 
     @Test fun four_steps_are_not_distinct_motion() {
-        val l = rule1()
+        val l = fallRuleOnly()
         l.onAccident(10_000)
         l.walk(30_000, 4)
         assertEquals(Mode.CHECKING, l.seenAt(40_000))
     }
 
     @Test fun five_steps_spread_over_more_than_10s_are_not_distinct_motion() {
-        val l = rule1()
+        val l = fallRuleOnly()
         l.onAccident(10_000)
         for (i in 0 until 5) l.step(12_000 + i * 2_501L)
         assertEquals(Mode.CHECKING, l.seenAt(40_000))
     }
 
     @Test fun five_steps_within_10s_are_distinct_motion() {
-        val l = rule1()
+        val l = fallRuleOnly()
         l.onAccident(10_000)
         for (i in 0 until 5) l.step(12_000 + i * 2_500L)
         assertEquals(Mode.WATCHING, l.seenAt(51_999))
@@ -245,7 +241,7 @@ class LoneWorkerAccidentTest {
     }
 
     @Test fun sporadic_single_steps_never_close_accident_check() {
-        val l = rule1()
+        val l = fallRuleOnly()
         l.onAccident(10_000)
         assertEquals(Mode.CHECKING, l.seenAt(40_000))
         for (t in 41_000L..98_000L step 3_000L) {
@@ -256,7 +252,7 @@ class LoneWorkerAccidentTest {
     }
 
     @Test fun ok_closes_accident_check_and_ends_suspicion() {
-        val l = rule1()
+        val l = fallRuleOnly()
         l.onAccident(10_000)
         assertEquals(Mode.CHECKING, l.seenAt(40_000))
         assertEquals(true, l.ackWorking(45_000))
@@ -264,7 +260,7 @@ class LoneWorkerAccidentTest {
     }
 
     @Test fun steps_close_accident_check_and_watching_continues_until_5min() {
-        val l = rule1()
+        val l = fallRuleOnly()
         l.onAccident(10_000)
         assertEquals(Mode.CHECKING, l.seenAt(40_000))
         l.walk(50_000, 5)
@@ -277,7 +273,7 @@ class LoneWorkerAccidentTest {
     }
 
     @Test fun ok_on_still_check_also_ends_accident_suspicion() {
-        val l = rule1()
+        val l = fallRuleOnly()
         l.stillMs = 180_000L
         assertEquals(Mode.CHECKING, l.seenAt(180_000))
         assertEquals("still", l.trigger)
@@ -287,14 +283,14 @@ class LoneWorkerAccidentTest {
     }
 
     @Test fun without_step_sensor_3s_strong_motion_holds() {
-        val l = rule1()
+        val l = fallRuleOnly()
         l.stepsAvailable = false
         l.onAccident(10_000)
         l.strongRun(36_000, 3)
         assertEquals(Mode.WATCHING, l.seenAt(67_999))
         assertEquals(Mode.CHECKING, l.seenAt(68_000))
 
-        val two = rule1()
+        val two = fallRuleOnly()
         two.stepsAvailable = false
         two.onAccident(10_000)
         two.strongRun(30_000, 2)
@@ -302,7 +298,7 @@ class LoneWorkerAccidentTest {
     }
 
     @Test fun strong_window_containing_the_trigger_does_not_count() {
-        val l = rule1()
+        val l = fallRuleOnly()
         l.stepsAvailable = false
         l.onAccident(10_500)
         l.strongRun(11_000, 3) // windows 10-11 s, 11-12 s, 12-13 s: only two start after the trigger
@@ -310,14 +306,14 @@ class LoneWorkerAccidentTest {
     }
 
     @Test fun with_step_sensor_strong_motion_alone_does_not_hold() {
-        val l = rule1()
+        val l = fallRuleOnly()
         l.onAccident(10_000)
         l.strongRun(20_000, 5)
         assertEquals(Mode.CHECKING, l.seenAt(40_000))
     }
 
     @Test fun earlier_deadline_wins_when_accident_fires_during_still_check() {
-        val l = rule1()
+        val l = fallRuleOnly()
         l.stillMs = 180_000L
         assertEquals(Mode.CHECKING, l.seenAt(180_000))
         assertEquals("still", l.trigger)
@@ -327,7 +323,7 @@ class LoneWorkerAccidentTest {
         assertEquals(Mode.CHECKING, l.seenAt(264_999))
         assertEquals(Mode.SOS, l.seenAt(265_000))
 
-        val later = rule1()
+        val later = fallRuleOnly()
         later.stillMs = 180_000L
         later.seenAt(180_000)
         later.onAccident(215_000)
@@ -338,7 +334,7 @@ class LoneWorkerAccidentTest {
     }
 
     @Test fun accident_deadline_that_cannot_beat_still_check_is_not_pending() {
-        val l = rule1()
+        val l = fallRuleOnly()
         l.stillMs = 180_000L
         assertEquals(Mode.CHECKING, l.seenAt(180_000))
         l.onAccident(215_000)
@@ -349,7 +345,7 @@ class LoneWorkerAccidentTest {
         assertEquals(Mode.CHECKING, l.modeAt(245_000))
         assertEquals("still", l.trigger)
 
-        val early = rule1()
+        val early = fallRuleOnly()
         early.stillMs = 180_000L
         early.seenAt(180_000)
         early.onAccident(175_000)
@@ -364,7 +360,7 @@ class LoneWorkerAccidentTest {
     }
 
     @Test fun sos_in_progress_ignores_new_triggers() {
-        val l = rule1()
+        val l = fallRuleOnly()
         l.restoreSos("still", 1_000)
         l.onAccident(10_000)
         assertEquals(Mode.SOS, l.seenAt(40_000))
@@ -373,12 +369,12 @@ class LoneWorkerAccidentTest {
     }
 
     @Test fun disabled_ignores_accident_and_withdraws_accident_check() {
-        val off = rule1()
+        val off = fallRuleOnly()
         off.setEnabled(false, 0)
         off.onAccident(10_000)
         assertEquals(Mode.WATCHING, off.seenAt(40_000))
 
-        val chk = rule1()
+        val chk = fallRuleOnly()
         chk.onAccident(10_000)
         assertEquals(Mode.CHECKING, chk.seenAt(40_000))
         chk.setEnabled(false, 41_000)
@@ -391,38 +387,33 @@ class LoneWorkerAccidentTest {
     // and a real unplug within 10 s before the impact counts too (fell off the cradle)
 
     @Test fun fall_just_after_unplug_in_safe_zone_is_ignored() {
-        val l = rule1(charging = true, zoneInside = true)
+        val l = fallRuleOnly(charging = true, zoneInside = true)
         l.reportPower(false, 100_000)
         l.onAccident(100_400)
         for (t in 130_400L..430_400L step 10_000L) assertEquals(Mode.WATCHING, l.seenAt(t))
     }
 
-    @Test fun unplug_11s_before_fall_counts_unplug_after_fall_is_ignored() {
-        val after = rule1(charging = true, zoneInside = true)
+    /**
+     * The unplug-before-fall window is "within 10 s": an unplug exactly UNPLUG_FALL_MS before the fall still ignores it,
+     * one 11 s before the fall does not. (A fall before the unplug: LoneWorkerOrderTest.fall_before_an_unplug_is_ignored_whenever_it_is_processed.)
+     */
+    @Test fun unplug_10s_before_fall_in_safe_zone_ignores_it_11s_does_not() {
+        val l = fallRuleOnly(charging = true, zoneInside = true)
+        l.reportPower(false, 100_000)
+        l.onAccident(100_000 + LoneWorkerLogic.UNPLUG_FALL_MS)
+        for (t in 140_000L..440_000L step 10_000L) assertEquals(Mode.WATCHING, l.seenAt(t))
+
+        val after = fallRuleOnly(charging = true, zoneInside = true)
         after.reportPower(false, 100_000)
         after.onAccident(111_000)
         assertEquals(Mode.WATCHING, after.seenAt(140_999))
         assertEquals(Mode.CHECKING, after.seenAt(141_000))
         assertEquals("fall", after.trigger)
-
-        val before = rule1(charging = true, zoneInside = true)
-        before.reportPower(false, 100_000)
-        before.onAccident(89_000)
-        assertEquals(Mode.WATCHING, before.seenAt(119_000))
-        assertNull(before.snapshot(119_000).accidentUntil)
-    }
-
-    /** The unplug-before-fall window is "within 10 s": an unplug exactly UNPLUG_FALL_MS before the fall still ignores it. */
-    @Test fun unplug_exactly_10s_before_fall_in_safe_zone_is_ignored() {
-        val l = rule1(charging = true, zoneInside = true)
-        l.reportPower(false, 100_000)
-        l.onAccident(100_000 + LoneWorkerLogic.UNPLUG_FALL_MS)
-        for (t in 140_000L..440_000L step 10_000L) assertEquals(Mode.WATCHING, l.seenAt(t))
     }
 
     /** A second fall while a fall check is open neither reopens nor moves that check: SOS stays due 60 s after it opened. */
     @Test fun second_fall_during_open_fall_check_does_not_move_it() {
-        val l = rule1()
+        val l = fallRuleOnly()
         l.onAccident(10_000)
         assertEquals(Mode.CHECKING, l.seenAt(40_000))
         l.onAccident(45_000)
@@ -432,7 +423,7 @@ class LoneWorkerAccidentTest {
     }
 
     @Test fun unplug_fall_window_only_inside_safe_zone() {
-        val l = rule1(charging = true)
+        val l = fallRuleOnly(charging = true)
         l.reportPower(false, 100_000)
         l.onAccident(100_400)
         assertEquals(Mode.CHECKING, l.seenAt(130_400))

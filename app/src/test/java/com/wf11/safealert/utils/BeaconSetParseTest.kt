@@ -1,6 +1,7 @@
 package com.wf11.safealert.utils
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -22,27 +23,23 @@ class BeaconSetParseTest {
         val r = BeaconRegistry.parseProfiles("[$ok,$oldFormat]").getOrThrow()
         assertEquals(2, r.size)
         assertEquals(10, r[0].rssiOffset)
+        val old = r[1]
+        assertTrue("an old entry is a visitor beacon unless it says otherwise", old.visitorBeacon)
+        assertFalse(old.zoneMute)
+        assertEquals(-80, old.zoneEnterRssi)
+        assertEquals(0, old.rssiOffset)
+        assertEquals("IBEACON", old.type)
         assertEquals(0, BeaconRegistry.parseProfiles("[]").getOrThrow().size)
     }
 
+    /** One unreadable entry rejects the whole set, and the reason says which entry and which value. */
     @Test
-    fun `읽을 수 없는 항목이 하나라도 있으면 세트 전체를 거부한다`() {
-        val bad = listOf(
-            "5",                                                        // not an object
-            """{"label":"UUID 없음"}""",
-            """{"uuid":123}""",                                         // UUID is a number
-            """{"uuid":"AA:BB:CC:DD:EE:01","rssiOffset":"10"}""",       // string where a number belongs
-            """{"uuid":"AA:BB:CC:DD:EE:02","visitorBeacon":"no"}"""     // string where a boolean belongs
-        )
-        for (b in bad) assertTrue(b, BeaconRegistry.parseProfiles("[$ok,$b]").isFailure)
-        assertTrue("JSON 손상", BeaconRegistry.parseProfiles("[$ok").isFailure)
-    }
-
-    /** The rejection reason says which entry and which value. */
-    @Test
-    fun `거부 사유는 항목 번호와 필드를 알려 준다`() {
+    fun `읽을 수 없는 항목이 하나라도 있으면 세트 전체를 거부하고 항목 번호와 필드를 알려 준다`() {
         assertEquals("2번째 항목의 rssiOffset 값 형식이 틀렸습니다",
             reason("""[$ok,{"uuid":"AA:BB:CC:DD:EE:01","rssiOffset":"10"}]"""))
+        assertEquals("2번째 항목의 uuid 값 형식이 틀렸습니다", reason("""[$ok,{"uuid":123}]"""))
+        assertEquals("2번째 항목의 visitorBeacon 값 형식이 틀렸습니다",
+            reason("""[$ok,{"uuid":"AA:BB:CC:DD:EE:02","visitorBeacon":"no"}]"""))
         assertEquals("2번째 항목에 UUID 가 없습니다", reason("""[$ok,{"label":"x"}]"""))
         assertEquals("1번째 항목이 비콘 정보 형식이 아닙니다", reason("[5]"))
         assertEquals("JSON 형식이 깨졌습니다", reason("[$ok"))

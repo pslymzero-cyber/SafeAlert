@@ -17,16 +17,13 @@ import org.junit.Test
  */
 class ZoneFallTest {
 
-    private val still = floatArrayOf(0f, 0f, 9.81f)
-    private val lying = floatArrayOf(9.81f, 0f, 0f)
-    private val freeFall = floatArrayOf(0f, 0f, 1.5f)
+    private val still = UPRIGHT_STILL
+    private val lying = LYING_STILL
+    private val freeFall = FREE_FALL_SAMPLE
+    private val impact = IMPACT_SAMPLE
 
     private fun MotionAnalyzer.span(from: Long, to: Long, v: FloatArray, out: MutableList<Long>) {
-        var t = from
-        while (t < to) {
-            if (add(t, v[0], v[1], v[2]) == Signal.FALL) out.add(t)
-            t += 20
-        }
+        out += feed(from, to) { v }.filter { it.second == Signal.FALL }.map { it.first }
     }
 
     /** Upright from 0 to ffFrom, free fall ffMs, the impact samples, then lying 15 s. Returns FALL times. */
@@ -49,14 +46,9 @@ class ZoneFallTest {
 
     private fun seg(from: Long, to: Long, v: FloatArray) = Triple(from, to, v)
 
-    private val impact = floatArrayOf(0f, 0f, 30f)
-
-    private fun rule1(charging: Boolean = false, zoneInside: Boolean = false) =
-        newLogic(charging, zoneInside, carried = true).apply { stillMs = 3_600_000L }
-
     /** Settled inside the zone (not charging), fall at 100 s. */
     private fun zoneFall(shape: FallShape, zone: ZoneFall = ZoneFall()): LoneWorkerLogic {
-        val l = rule1(zoneInside = true)
+        val l = fallRuleOnly(zoneInside = true)
         l.zoneFall = zone
         l.tick(60_000)
         l.onAccident(100_000, shape)
@@ -94,18 +86,8 @@ class ZoneFallTest {
         assertNull(a.fallShape.postureDeg)
     }
 
-    @Test fun base_60ms_free_fall_still_falls() {
-        val a = MotionAnalyzer()
-        assertEquals(1, a.fall(3000, 60).size)
-        assertEquals(60L, a.fallShape.freeFallMs)
-    }
-
-    @Test fun impact_g_scaling_and_free_fall_ms() {
-        assertEquals(1.8, MotionAnalyzer.impactGFor(19.6f, 4.0), 0.01)
-        assertEquals(4.0, MotionAnalyzer.impactGFor(78.4f, 4.0), 0.0)
-        // a zone G below the base never lowers the threshold
-        assertEquals(2.5, MotionAnalyzer.impactGFor(78.4f, 1.5), 0.0)
-        assertEquals(1.8, MotionAnalyzer.impactGFor(19.6f), 0.01)
+    /** Zone impact thresholds by sensor range: MotionAnalyzerTest.impact_threshold_by_sensor_range_and_setting. */
+    @Test fun zone_defaults_and_free_fall_ms_for_drop_height() {
         assertEquals(247L, MotionAnalyzer.freeFallMsFor(30))
         assertEquals(64L, MotionAnalyzer.freeFallMsFor(2))
         assertEquals(452L, MotionAnalyzer.freeFallMsFor(100))
@@ -134,8 +116,8 @@ class ZoneFallTest {
 
     // -- drop length, posture, zone state at the impact, zone impact threshold --
 
-    /** Tracer: a mid-air upright blip does not shorten the drop, and the zone is read at the impact. */
-    @Test fun tracer_blip_split_fall_and_impact_zone_state() {
+    /** From the analyzer trace to the zone verdict: a mid-air upright blip does not shorten the drop. */
+    @Test fun mid_air_blip_keeps_the_full_drop_for_the_zone_rule() {
         val a = MotionAnalyzer()
         val falls = a.trace(
             seg(0, 3000, still), seg(3000, 3100, freeFall), seg(3100, 3120, still), seg(3120, 3300, freeFall),
@@ -143,7 +125,7 @@ class ZoneFallTest {
         )
         assertEquals(1, falls.size)
         assertEquals(280L, a.fallShape.freeFallMs)
-        val l = rule1(zoneInside = true)
+        val l = fallRuleOnly(zoneInside = true)
         l.tick(60_000)
         l.onAccident(100_000, a.fallShape)
         assertChecking(l)
@@ -154,7 +136,7 @@ class ZoneFallTest {
     }
 
     @Test fun zone_entered_after_impact_uses_outside_rule() {
-        val l = rule1()
+        val l = fallRuleOnly()
         l.onZone(true, 105_000)
         l.onAccident(100_000, FallShape(60, 2.6, 46.0))
         assertEquals(Mode.WATCHING, l.seenAt(129_999))
@@ -163,7 +145,7 @@ class ZoneFallTest {
     }
 
     @Test fun charging_in_zone_at_impact_ignored_after_leaving() {
-        val l = rule1(charging = true)
+        val l = fallRuleOnly(charging = true)
         l.onZone(true, 5_000)
         // inside at the impact; the exit is confirmed 15 s after it, so the inside rule still applies
         l.onZone(false, 21_000)
@@ -204,25 +186,7 @@ class ZoneFallTest {
         assertEquals(0, falls.size)
     }
 
-    @Test fun zone_impact_monotonic_and_reachable() {
-        val g = MotionAnalyzer.G.toFloat()
-        assertEquals(2.5, MotionAnalyzer.impactGFor(2.6f * g, 2.7), 1e-9)
-        assertEquals(7.2, MotionAnalyzer.impactGFor(78.4f, 8.0), 0.01)
-        assertEquals(3.0, MotionAnalyzer.impactGFor(0f, 3.0), 1e-9)
-        assertEquals(2.5, MotionAnalyzer.impactGFor(78.4f, 1.5), 1e-9)
-        for (r in listOf(19.6f, 2.0f, 2.4f, 2.6f * g, 2.7f * g, 39.2f, 78.4f, 0f, 16f)) {
-            val base = MotionAnalyzer.impactGFor(r)
-            assertEquals(base, MotionAnalyzer.impactGFor(r, 2.5), 1e-9)
-            var prev = base
-            for (i in 25..80) {
-                val v = MotionAnalyzer.impactGFor(r, i / 10.0)
-                assertTrue("range $r want ${i / 10.0}", v >= prev && v >= base)
-                prev = v
-            }
-        }
-    }
-
-    // -- zone exit lag and NaN range --
+    // -- zone exit lag --
 
     private val short = FallShape(60, 2.6, 46.0)
 
@@ -230,7 +194,7 @@ class ZoneFallTest {
         assertEquals(12_000L, ZoneHistory.EXIT_LAG_MS)
         assertTrue(ZoneHistory.EXIT_LAG_MS <= MotionAnalyzer.POST_END_MS)
         for (exit in 108_000L..112_000L step 1_000L) {
-            val l = rule1(zoneInside = true)
+            val l = fallRuleOnly(zoneInside = true)
             l.tick(60_000)
             l.onZone(false, exit)
             l.onAccident(100_000, short)
@@ -239,7 +203,7 @@ class ZoneFallTest {
     }
 
     @Test fun zone_exit_confirmed_after_12s_keeps_inside_rule() {
-        val l = rule1(zoneInside = true)
+        val l = fallRuleOnly(zoneInside = true)
         l.tick(60_000)
         l.onZone(false, 113_000)
         l.onAccident(100_000, short)
@@ -247,7 +211,7 @@ class ZoneFallTest {
     }
 
     @Test fun charging_in_zone_exit_within_12s_uses_outside_rule() {
-        val l = rule1(charging = true)
+        val l = fallRuleOnly(charging = true)
         l.onZone(true, 5_000)
         l.onZone(false, 8_000)
         l.onAccident(6_000, FallShape(400, 5.0, 90.0))
@@ -263,11 +227,5 @@ class ZoneFallTest {
         l.onAccident(2_000, short)
         assertEquals(Mode.CHECKING, l.seenAt(32_000))
         assertEquals("fall", l.trigger)
-    }
-
-    @Test fun nan_sensor_range_uses_base_threshold() {
-        assertEquals(2.5, MotionAnalyzer.impactGFor(Float.NaN), 1e-9)
-        assertEquals(3.0, MotionAnalyzer.impactGFor(Float.NaN, 3.0), 1e-9)
-        assertEquals(2.5, MotionAnalyzer.impactGFor(Float.NaN, 1.5), 1e-9)
     }
 }

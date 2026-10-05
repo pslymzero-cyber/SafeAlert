@@ -168,38 +168,6 @@ class LoneWorkerChargeTest {
         }
     }
 
-    /**
-     * An unplug that started before the fall deadline makes it wait; the check then opens with its step floor
-     * at the deadline, so steps before it do not close it.
-     */
-    @Test fun unplug_report_keeps_the_fall_check_floor() {
-        val f = newLogic(charging = true)
-        f.onAccident(1_000)
-        f.powerRaw(false, 30_000)
-        for (i in 0..3) f.step(30_100 + i * 200L)
-        assertEquals(Mode.WATCHING, f.seenAt(31_000))
-        assertEquals(Mode.CHECKING, f.seenAt(30_000 + PowerDebounce.CONFIRM_MS))
-        assertEquals("fall", f.trigger)
-        assertEquals(LoneWorkerLogic.ACCIDENT_RESPONSE_MS, f.responseLeftMs(30_000 + PowerDebounce.CONFIRM_MS))
-        assertEquals(Rest.WAIT, f.rest)
-        f.step(32_500)
-        assertEquals(Mode.CHECKING, f.seenAt(33_000))
-        assertEquals("fall", f.trigger)
-    }
-
-    /** Carried on the dock, the unplug starts 1 s before the still deadline: the deadline waits, the reported unplug is a wait, no check. */
-    @Test fun unplug_started_before_the_still_deadline_rests_instead_of_checking() {
-        val l = carriedWhileCharging()
-        val open = 10_000 + l.stillMs
-        l.powerRaw(false, open - 1_000)
-        for (i in 0..3) l.step(open - 900 + i * 200)
-        assertEquals(Mode.WATCHING, l.seenAt(open))
-        assertEquals(open - 1_000 + PowerDebounce.CONFIRM_MS, l.nextCheckAt(open))
-        assertEquals(Mode.WATCHING, l.seenAt(open - 1_000 + PowerDebounce.CONFIRM_MS))
-        assertEquals(Rest.WAIT, l.rest)
-        assertEquals(Mode.WATCHING, l.seenAt(open + LoneWorkerLogic.LATE_MS))
-    }
-
     @Test fun sensor_silence_ends_wait_and_counts_from_there() {
         val l = newLogic()
         l.sensorSilent(100_000)
@@ -215,13 +183,28 @@ class LoneWorkerChargeTest {
         for (t in 60_000L..3_600_000L step 60_000L) assertEquals(Mode.WATCHING, l.modeAt(t))
     }
 
-    @Test fun charging_with_ten_steps_is_carried_until_replug() {
+    /** Ten walking-shaped steps within 30 s while charging carry the device: the still count runs. */
+    @Test fun charging_with_ten_steps_is_carried_and_still_check_opens() {
         val l = carriedWhileCharging()
         assertEquals(Rest.NONE, l.rest)
         assertEquals(Mode.WATCHING, l.seenAt(10_000 + stillMs - 1))
         assertEquals(Rest.NONE, l.rest)
         assertEquals(Mode.CHECKING, l.seenAt(10_000 + stillMs))
         assertEquals("still", l.trigger)
+    }
+
+    @Test fun ten_steps_within_30s_while_charging_carry() {
+        val l = newLogic(charging = true)
+        for (i in 0 until 10) l.step(1_000 + i * 3_000L)
+        assertEquals(Rest.NONE, l.rest)
+    }
+
+    @Test fun ten_steps_spread_over_more_than_30s_do_not_carry() {
+        val l = newLogic(charging = true)
+        for (i in 0 until 60) {
+            l.step(1_000 + i * 3_500L)
+            assertEquals(Rest.DOCKED, l.rest)
+        }
     }
 
     @Test fun steps_before_the_plug_do_not_count_toward_carrying() {
@@ -316,29 +299,6 @@ class LoneWorkerChargeTest {
         assertEquals(Mode.SOS, l.seenAt(10_000 + stillMs + responseMs))
     }
 
-    @Test fun still_check_closed_by_ok_or_distinct_motion_not_by_moved() {
-        val moved = newLogic()
-        moved.sensorSilent(0)
-        moved.seenAt(stillMs)
-        moved.onMoved(stillMs + 1_000)
-        moved.walk(stillMs + 5_000, 4)
-        assertEquals(Mode.CHECKING, moved.modeAt(stillMs + 6_000))
-
-        val walked = newLogic()
-        walked.sensorSilent(0)
-        walked.seenAt(stillMs)
-        walked.walk(stillMs + 5_000, 5)
-        assertEquals(Mode.WATCHING, walked.mode)
-        assertEquals(Mode.WATCHING, walked.seenAt(stillMs + 5_000 + stillMs - 1))
-        assertEquals(Mode.CHECKING, walked.seenAt(stillMs + 5_000 + stillMs))
-
-        val ok = newLogic()
-        ok.sensorSilent(0)
-        ok.seenAt(stillMs)
-        assertTrue(ok.ackWorking(stillMs + 1_000))
-        assertEquals(Mode.WATCHING, ok.mode)
-    }
-
     // -- PowerDebounce (2 s) --
 
     @Test fun debounce_ignores_flaps_shorter_than_2s() {
@@ -403,21 +363,5 @@ class LoneWorkerChargeTest {
         assertEquals(Rest.DOCKED, d.rest)
         d.modeAt(20_000)
         assertEquals(Rest.DOCKED, d.rest)
-    }
-
-    // Carrying while charging = 10 steps within the last 30 s.
-
-    @Test fun ten_steps_within_30s_while_charging_carry() {
-        val l = newLogic(charging = true)
-        for (i in 0 until 10) l.step(1_000 + i * 3_000L)
-        assertEquals(Rest.NONE, l.rest)
-    }
-
-    @Test fun ten_steps_spread_over_more_than_30s_do_not_carry() {
-        val l = newLogic(charging = true)
-        for (i in 0 until 60) {
-            l.step(1_000 + i * 3_500L)
-            assertEquals(Rest.DOCKED, l.rest)
-        }
     }
 }

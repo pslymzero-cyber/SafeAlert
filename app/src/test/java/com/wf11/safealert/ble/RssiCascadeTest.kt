@@ -64,8 +64,7 @@ class RssiCascadeTest {
         )
 
         // ── approach / warmStart expected values (record-then-freeze) ───────────────────
-        val EXPECTED_APPROACH_WARM_MEDIAN = EXPECTED_APPROACH_COLD_MEDIAN
-        val EXPECTED_APPROACH_WARM_PREFILTER = EXPECTED_APPROACH_COLD_PREFILTER
+        // warmStart only changes the Kalman stage; median and prefilter equal the coldStart arrays.
         val EXPECTED_APPROACH_WARM_KALMAN = doubleArrayOf(
             -92.0, -92.0, -91.66995714217292, -91.20307811031887, -90.61941825644338,
             -89.91475287524315, -89.09072492489423, -87.92615900158611, -86.71026502944834,
@@ -86,8 +85,7 @@ class RssiCascadeTest {
         )
 
         // ── departure / warmStart expected values (record-then-freeze) ──────────────────
-        val EXPECTED_DEPARTURE_WARM_MEDIAN = EXPECTED_DEPARTURE_COLD_MEDIAN
-        val EXPECTED_DEPARTURE_WARM_PREFILTER = EXPECTED_DEPARTURE_COLD_PREFILTER
+        // warmStart only changes the Kalman stage; median and prefilter equal the coldStart arrays.
         val EXPECTED_DEPARTURE_WARM_KALMAN = doubleArrayOf(
             -60.0, -60.46030408157192, -60.64449030508961, -61.026851455224445, -61.54980874333675,
             -62.20590993873243, -62.98965609438461, -64.12094097836678, -65.30991229474967,
@@ -169,40 +167,36 @@ class RssiCascadeTest {
         }
     }
 
+    /** Failure message format: `"<scenario>/warmStart frame=<i> stage=kalman"`. */
+    private fun assertWarmKalman(scenario: String, actual: Triple<IntArray, IntArray, DoubleArray>, expectedKalman: DoubleArray) {
+        val kalman = actual.third
+        for (i in expectedKalman.indices) {
+            assertEquals("$scenario/warmStart frame=$i stage=kalman", expectedKalman[i], kalman[i], 1e-9)
+        }
+    }
+
+    /**
+     * Cold and warm start in one test. Production seeds every device's Kalman filter through injectWarmup
+     * (the warmStart path), so the warm Kalman column is the field path; the median and prefilter stages do not
+     * depend on the start state and are asserted once on the cold run.
+     */
     @Test
-    fun approach_coldStart_matchesGolden() {
-        val actual = runCascade(INPUT_APPROACH, warmStart = false)
+    fun approach_coldAndWarmStart_matchesGolden() {
         assertCascade(
-            "approach", "coldStart", actual,
+            "approach", "coldStart", runCascade(INPUT_APPROACH, warmStart = false),
             EXPECTED_APPROACH_COLD_MEDIAN, EXPECTED_APPROACH_COLD_PREFILTER, EXPECTED_APPROACH_COLD_KALMAN,
         )
+        assertWarmKalman("approach", runCascade(INPUT_APPROACH, warmStart = true), EXPECTED_APPROACH_WARM_KALMAN)
     }
 
+    /** Same split as approach; the departure warm Kalman values differ from approach, so both are kept. */
     @Test
-    fun approach_warmStart_matchesGolden() {
-        val actual = runCascade(INPUT_APPROACH, warmStart = true)
+    fun departure_coldAndWarmStart_matchesGolden() {
         assertCascade(
-            "approach", "warmStart", actual,
-            EXPECTED_APPROACH_WARM_MEDIAN, EXPECTED_APPROACH_WARM_PREFILTER, EXPECTED_APPROACH_WARM_KALMAN,
-        )
-    }
-
-    @Test
-    fun departure_coldStart_matchesGolden() {
-        val actual = runCascade(INPUT_DEPARTURE, warmStart = false)
-        assertCascade(
-            "departure", "coldStart", actual,
+            "departure", "coldStart", runCascade(INPUT_DEPARTURE, warmStart = false),
             EXPECTED_DEPARTURE_COLD_MEDIAN, EXPECTED_DEPARTURE_COLD_PREFILTER, EXPECTED_DEPARTURE_COLD_KALMAN,
         )
-    }
-
-    @Test
-    fun departure_warmStart_matchesGolden() {
-        val actual = runCascade(INPUT_DEPARTURE, warmStart = true)
-        assertCascade(
-            "departure", "warmStart", actual,
-            EXPECTED_DEPARTURE_WARM_MEDIAN, EXPECTED_DEPARTURE_WARM_PREFILTER, EXPECTED_DEPARTURE_WARM_KALMAN,
-        )
+        assertWarmKalman("departure", runCascade(INPUT_DEPARTURE, warmStart = true), EXPECTED_DEPARTURE_WARM_KALMAN)
     }
 
     @Test

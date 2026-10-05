@@ -2,11 +2,13 @@ package com.wf11.safealert.ble
 
 import com.wf11.safealert.service.BleService
 import com.wf11.safealert.support.BleServiceTestHarness
-import org.junit.Assert.assertEquals
+import com.wf11.safealert.support.BleServiceTestHarness.assertGoldenScenario
+import com.wf11.safealert.support.BleServiceTestHarness.fieldOf
+import com.wf11.safealert.support.BleServiceTestHarness.renderGoldenFrame
+import com.wf11.safealert.support.BleServiceTestHarness.runGoldenScenario
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
-import org.robolectric.util.ReflectionHelpers
 
 /**
  * Regression golden for delayed escalation on a slow approach: when a forklift approaches slowly, the
@@ -31,7 +33,7 @@ import org.robolectric.util.ReflectionHelpers
  * slower than that since the previous frame (gentle noise) and the device is still approaching
  * (kfVel > 0); a faster fall (real departure or sharp drop) resets it to 0 at once. In this scenario
  * (1000ms frames) the largest measured noise fall is -1.0dBm/s, below the threshold, so the streak
- * survives; AlertCascadeGoldenTest.release_goldenTimeline (120ms frames, about -8.3dBm/s) is far
+ * survives; AlertCascadeGoldenTest.escalationThenRelease_goldenTimeline (120ms frames, about -8.3dBm/s) is far
  * above it and still resets at once, so that golden is unaffected.
  *
  * Effect: gentle noise dips near the threshold keep the WARNING streak, so they cannot keep pushing
@@ -46,14 +48,15 @@ import org.robolectric.util.ReflectionHelpers
 @RunWith(RobolectricTestRunner::class)
 class LowSpeedApproachRegressionTest {
 
+    /** Gentle noise dips below the warning line keep the WARNING streak, so the first WARNING is not pushed back. */
     @Test
-    fun lowSpeedApproach_delayedEscalation_afterFix() {
+    fun noisySlowApproach_warningStreakSurvivesGentleDips() {
         val service = BleServiceTestHarness.newService()
         BleServiceTestHarness.resetBetweenTests(service)
-        val actual = runLowSpeedScenario(service, LOWSPEED_DEVICE_ID, LOWSPEED_RSSI)
-
-        assertEquals("저속접근 프레임 수 불일치", FRAMES, actual.first.size)
-        assertLowSpeedScenario(actual, LOWSPEED_GOLDEN, LOWSPEED_KFVEL)
+        val actual = runGoldenScenario(service, LOWSPEED_DEVICE_ID, LOWSPEED_RSSI, T0_MS, FRAME_DT_MS) { f, r ->
+            renderFrame(service, LOWSPEED_DEVICE_ID, f, r)
+        }
+        assertGoldenScenario("lowSpeedApproach", actual, LOWSPEED_GOLDEN, LOWSPEED_KFVEL)
     }
 }
 
@@ -76,99 +79,17 @@ private val LOWSPEED_RSSI = IntArray(FRAMES) { i ->
 }
 
 /**
- * BleService's private trackingStateMap (alias of
- * AlertStateMachine.trackingStateMap), read by reflection; values are used only
- * through toString().
+ * The shared golden line (BleServiceTestHarness.renderGoldenFrame) plus two columns:
+ * pending = the device is in pendingDisplayMap. AlertStateMachine.processAlert adds every detected device that is not in
+ *   alertState, so Y means listed but not alerting; a held first alert is only one of the reasons.
+ * kfAppr = an approach streak is open in approachStreakStartMap. Entries are added only when evalTimeGate runs, which is
+ *   not every frame, and survive non-approach evaluations within the 300 ms grace (APPROACH_STREAK_GRACE_MS), so Y
+ *   reflects the last Time-Gate evaluation, not whether kfApproaching was true on this frame.
  */
-@Suppress("UNCHECKED_CAST")
-private fun trackingStateOf(service: BleService, deviceId: String): String {
-    val map = ReflectionHelpers.getField(service, "trackingStateMap") as Map<String, *>
-    return map[deviceId]?.toString() ?: "NONE"
-}
-
-/** Shared reader for dangerContactStreakMap/warningContactStreakMap/fastApproachStreakMap. */
-@Suppress("UNCHECKED_CAST")
-private fun streakOf(service: BleService, fieldName: String, deviceId: String): Int {
-    val map = ReflectionHelpers.getField(service, fieldName) as Map<String, Int>
-    return map[deviceId] ?: 0
-}
-
-/** Private kalmanFilters map, read by reflection; KalmanFilter.estimatedVel is public, so it is read directly. */
-@Suppress("UNCHECKED_CAST")
-private fun kfVelOf(service: BleService, deviceId: String): Double {
-    val map = ReflectionHelpers.getField(service, "kalmanFilters") as Map<String, KalmanFilter>
-    return map[deviceId]?.estimatedVel ?: 0.0
-}
-
-/**
- * BleService's private pendingDisplayMap (alias of the AlertStateMachine map): display membership (pending column).
- * AlertStateMachine.processAlert adds every detected device that is not in alertState, so Y means listed but not
- * alerting; a held first alert is only one of the reasons.
- */
-@Suppress("UNCHECKED_CAST")
-private fun pendingOf(service: BleService, deviceId: String): Boolean {
-    val map = ReflectionHelpers.getField(service, "pendingDisplayMap") as Map<String, Long>
-    return map.containsKey(deviceId)
-}
-
-/**
- * BleService's private approachStreakStartMap (alias of the AlertStateMachine map): whether an approach streak is open
- * (kfAppr column). Entries are added only when evalTimeGate runs, which is not every frame, and survive non-approach
- * evaluations within the 300 ms grace (APPROACH_STREAK_GRACE_MS), so Y reflects the last Time-Gate evaluation, not
- * whether kfApproaching was true on this frame.
- */
-@Suppress("UNCHECKED_CAST")
-private fun kfApproachingOf(service: BleService, deviceId: String): Boolean {
-    val map = ReflectionHelpers.getField(service, "approachStreakStartMap") as Map<String, Long>
-    return map.containsKey(deviceId)
-}
-
-/** Serializes one frame into one fixed-width line: AlertCascadeGoldenTest.renderFrame plus two columns, pending and kfAppr. */
 private fun renderFrame(service: BleService, deviceId: String, frameIdx: Int, rssi: Int): String {
-    val level = BleServiceTestHarness.alertLevelOf(service, deviceId)
-    val entryRel = BleServiceTestHarness.alertEntryMsOf(service, deviceId)?.minus(T0_MS)
-    val track = trackingStateOf(service, deviceId)
-    val dangerStreak = streakOf(service, "dangerContactStreakMap", deviceId)
-    val warnStreak = streakOf(service, "warningContactStreakMap", deviceId)
-    val fastStreak = streakOf(service, "fastApproachStreakMap", deviceId)
-    val bcast = BleServiceTestHarness.alertBroadcasts().size
-    val pending = if (pendingOf(service, deviceId)) "Y" else "N"
-    val kfAppr = if (kfApproachingOf(service, deviceId)) "Y" else "N"
-    return ("frame=%03d rssi=%4d level=%s entry=%s track=%-11s dangerStreak=%d warnStreak=%d " +
-        "fastStreak=%d bcast=%d pending=%s kfAppr=%s")
-        .format(
-            frameIdx, rssi, level?.toString() ?: "null", entryRel?.toString() ?: "null", track,
-            dangerStreak, warnStreak, fastStreak, bcast, pending, kfAppr
-        )
-}
-
-/** Like AlertCascadeGoldenTest.runScenario (without startFrame): advances nowMs by FRAME_DT_MS on every frame. */
-private fun runLowSpeedScenario(
-    service: BleService,
-    deviceId: String,
-    rssiSeq: IntArray,
-): Pair<Array<String>, DoubleArray> {
-    val frames = Array(rssiSeq.size) { "" }
-    val kfVel = DoubleArray(rssiSeq.size)
-    for (i in rssiSeq.indices) {
-        val nowMs = T0_MS + i * FRAME_DT_MS
-        BleServiceTestHarness.callProcessAlert(service, deviceId, rssiSeq[i], nowMs = nowMs)
-        frames[i] = renderFrame(service, deviceId, i, rssiSeq[i])
-        kfVel[i] = kfVelOf(service, deviceId)
-    }
-    return frames to kfVel
-}
-
-private fun assertLowSpeedScenario(
-    actual: Pair<Array<String>, DoubleArray>,
-    expectedFrames: Array<String>,
-    expectedKfVel: DoubleArray,
-) {
-    val (frames, kfVel) = actual
-    for (i in expectedFrames.indices) {
-        assertEquals("lowSpeedApproach frame=$i stage=render", expectedFrames[i], frames[i])
-        assertEquals("lowSpeedApproach frame=$i stage=kfVel", expectedKfVel[i], kfVel[i], 1e-9)
-    }
+    val pending = if (fieldOf<Map<String, Long>>(service, "pendingDisplayMap").containsKey(deviceId)) "Y" else "N"
+    val kfAppr = if (fieldOf<Map<String, Long>>(service, "approachStreakStartMap").containsKey(deviceId)) "Y" else "N"
+    return renderGoldenFrame(service, deviceId, frameIdx, rssi, T0_MS) + " pending=$pending kfAppr=$kfAppr"
 }
 
 // The two arrays below are captured from one real run — never hand-calculated; re-freeze only by editing this file by hand.

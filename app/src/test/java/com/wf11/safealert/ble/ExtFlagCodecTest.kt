@@ -6,8 +6,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * ext byte (ServiceData byte[1]) bit1 = SOS. Proves that older readers (a bit0-only reader, a
- * byte0-only reader) are unaffected by this bit.
+ * ext byte (ServiceData byte[1]) bit1 = SOS, and the frozen 1-byte payload layout (byte[0]).
+ * That the SOS advert keeps byte[0] untouched is SosAdvertTest's job (it builds the real service data).
  */
 class ExtFlagCodecTest {
 
@@ -42,25 +42,16 @@ class ExtFlagCodecTest {
         assertEquals(2, BleConstants.decodeState(0xA6))
         assertEquals(1, BleConstants.decodeTurn(0xA6))
         assertEquals(2, BleConstants.decodeRisk(0xA6))
-    }
 
-    @Test
-    fun byte0OnlyReader_unaffectedBySos() {
+        // 0xA6 has CAT, STATE and RISK all equal to 2, so it cannot tell a decoder reading the wrong field.
+        // A full encode→decode round trip over every combination can; the fixed hex values above catch swapped fields.
         for (cat in 0..2) for (state in 0..3) for (turn in 0..2) for (risk in 0..2) {
-            for (inZone in listOf(false, true)) {
-                val expected = BleConstants.encodePayload(cat, state, turn, risk)
-                val off = byteArrayOf(expected, BleConstants.encodeExt(inZone, false).toByte())
-                val on = byteArrayOf(expected, BleConstants.encodeExt(inZone, true).toByte())
-                assertEquals(2, off.size)
-                assertEquals(2, on.size)
-                assertEquals(off[0], on[0])
-                assertEquals(expected, on[0])
-                val p = on[0].toInt() and 0xFF
-                assertEquals(cat, BleConstants.decodeCategory(p))
-                assertEquals(state, BleConstants.decodeState(p))
-                assertEquals(turn, BleConstants.decodeTurn(p))
-                assertEquals(risk, BleConstants.decodeRisk(p))
-            }
+            val p = BleConstants.encodePayload(cat, state, turn, risk).toInt() and 0xFF
+            val where = "cat=$cat state=$state turn=$turn risk=$risk"
+            assertEquals(where, cat, BleConstants.decodeCategory(p))
+            assertEquals(where, state, BleConstants.decodeState(p))
+            assertEquals(where, turn, BleConstants.decodeTurn(p))
+            assertEquals(where, risk, BleConstants.decodeRisk(p))
         }
     }
 }

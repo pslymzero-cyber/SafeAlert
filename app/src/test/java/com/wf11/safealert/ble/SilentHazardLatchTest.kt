@@ -9,6 +9,7 @@ import android.os.SystemClock
 import com.wf11.safealert.service.AlertStateMachine
 import com.wf11.safealert.service.BleService
 import com.wf11.safealert.support.BleServiceTestHarness
+import com.wf11.safealert.support.BleServiceTestHarness.asmOf
 import com.wf11.safealert.utils.DevSettings
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -36,7 +37,6 @@ class SilentHazardLatchTest {
 
     private fun level(s: BleService) = BleServiceTestHarness.alertLevelOf(s, ID)
     private fun soundLevel(s: BleService) = ReflectionHelpers.getField<Int>(s, "activeSoundLevel")
-    private fun asmOf(s: BleService) = ReflectionHelpers.getField<AlertStateMachine>(s, "asm")
     private fun idle(seconds: Long) = shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(seconds))
 
     // The collision pre-alert (TTC) must break through a driver's 30 s acknowledge on that device: the acknowledge is for a

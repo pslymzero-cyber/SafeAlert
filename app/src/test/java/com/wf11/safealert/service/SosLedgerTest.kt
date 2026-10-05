@@ -11,41 +11,17 @@ import org.junit.Test
 /** SosLedger: own SOS storage and retry state machine. In-memory kv and a capturing transport. */
 class SosLedgerTest {
 
-    private class Call<T>(val path: String, val key: String, val cb: (T) -> Unit)
-
-    private class Tr : SosTransport {
-        var uid: String? = "u1"
-        var site: String? = "root/site"
-        var keyN = 0
-        val creates = ArrayList<Call<Boolean>>()
-        val recs = ArrayList<SosLedger.Record>()
-        val resolves = ArrayList<Call<Boolean>>()
-        val autos = ArrayList<Boolean>()
-        val reads = ArrayList<Call<Remote>>()
-        override fun uid() = uid
-        override fun sitePath() = site
-        override fun newKey(path: String) = "k" + (++keyN)
-        override fun create(path: String, key: String, rec: SosLedger.Record, uid: String, done: (Boolean) -> Unit) {
-            recs.add(rec)
-            creates.add(Call(path, key, done))
-        }
-        override fun resolve(path: String, key: String, auto: Boolean, done: (Boolean) -> Unit) {
-            resolves.add(Call(path, key, done))
-            autos.add(auto)
-        }
-        override fun read(path: String, key: String, done: (Remote) -> Unit) {
-            reads.add(Call(path, key, done))
-        }
-    }
-
     private var now = 0L
-    private fun ledger(kv: Kv, tr: Tr) = SosLedger(kv, tr, { now })
+    private fun ledger(kv: Kv, tr: FakeSosTransport) = SosLedger(kv, tr, { now })
+    /** Ledger whose mail-queue hook appends "event:key" to [seen]. */
+    private fun recording(kv: Kv, tr: FakeSosTransport, seen: MutableList<String>) =
+        SosLedger(kv, tr, { now }, { e, _, k -> seen.add("$e:$k") })
     private fun rec(sid: Int = 0) = SosLedger.Record("BLE_ME", "n", "WALKER", "still", null, null, sid)
 
     // An SOS released by the one-hour limit is recorded on the server as automatic, and no resolve mail is reported:
     //   that mail tells the site the worker pressed "괜찮아요".
     @Test fun automatic_release_is_recorded_as_auto_without_a_resolve_mail() {
-        val kv = Kv(); val tr = Tr(); val seen = ArrayList<String>()
+        val kv = Kv(); val tr = FakeSosTransport(); val seen = ArrayList<String>()
         val l = recording(kv, tr, seen)
         l.begin(rec())
         tr.creates[0].cb(true)
@@ -57,7 +33,7 @@ class SosLedgerTest {
 
     // The automatic mark of a resolve still waiting for the server survives a late create confirmation and a restart.
     @Test fun pending_automatic_release_stays_automatic_after_restart() {
-        val kv = Kv(); val tr = Tr()
+        val kv = Kv(); val tr = FakeSosTransport()
         val l = ledger(kv, tr)
         l.begin(rec())
         l.resolve(auto = true)
@@ -71,7 +47,7 @@ class SosLedgerTest {
     // A confirmed automatic release waiting for the server is stored the way a version without automatic release reads a
     //   confirmed resolve (three fields, the third not "0"), so rolling back still resends it.
     @Test fun confirmed_automatic_release_stays_readable_by_an_older_version() {
-        val kv = Kv(); val tr = Tr()
+        val kv = Kv(); val tr = FakeSosTransport()
         val l = ledger(kv, tr)
         l.begin(rec())
         tr.creates[0].cb(true)
@@ -84,7 +60,7 @@ class SosLedgerTest {
     // My SOS's age counts from the server's confirmation (one nobody was told about never ages), on the elapsed clock
     //   while running (a wall-clock jump changes nothing) and on the wall clock across a restart.
     @Test fun sos_age_counts_from_server_confirmation() {
-        val kv = Kv(); val tr = Tr(); var wall = 1_000L
+        val kv = Kv(); val tr = FakeSosTransport(); var wall = 1_000L
         val l = SosLedger(kv, tr, { now }, wallClock = { wall })
         l.begin(rec())
         now += SosLedger.AUTO_RELEASE_MS
@@ -100,7 +76,7 @@ class SosLedgerTest {
     }
 
     @Test fun create_record_carries_episode() {
-        val kv = Kv(); val tr = Tr(); val l = ledger(kv, tr)
+        val kv = Kv(); val tr = FakeSosTransport(); val l = ledger(kv, tr)
         l.begin(rec())
         assertEquals(1, tr.recs[0].ep)
         l.resolve()
@@ -109,7 +85,7 @@ class SosLedgerTest {
     }
 
     @Test fun offline_ok_then_new_sos_starts_at_once_and_late_acks_touch_only_their_slot() {
-        val kv = Kv(); val tr = Tr(); val l = ledger(kv, tr)
+        val kv = Kv(); val tr = FakeSosTransport(); val l = ledger(kv, tr)
         l.begin(rec())
         assertEquals(1, tr.creates.size)
         val a = tr.creates[0]
@@ -137,12 +113,12 @@ class SosLedgerTest {
         assertEquals(SosLedger.STATUS_SENT, l.statusText())
     }
 
-    @Test fun restored_sos_is_resent_with_same_key_and_begin_is_noop() {
-        val kv = Kv(); val tr = Tr()
+    @Test fun restored_sos_keeps_trigger_episode_hint_and_is_resent_with_same_key_and_begin_is_noop() {
+        val kv = Kv(); val tr = FakeSosTransport()
         ledger(kv, tr).begin(rec(77))
         val first = tr.creates[0]
 
-        val tr2 = Tr(); val l2 = ledger(kv, tr2)
+        val tr2 = FakeSosTransport(); val l2 = ledger(kv, tr2)
         assertEquals("still", l2.restoredTrigger())
         assertEquals(1, l2.episode())
         assertEquals(77, l2.hint())
@@ -152,15 +128,17 @@ class SosLedgerTest {
         assertEquals(1, tr2.creates.size)
         assertEquals(first.key, tr2.creates[0].key)
         assertEquals(first.path, tr2.creates[0].path)
+    }
 
-        val kv3 = Kv(); kv3.m["ep.last"] = "255"
-        val l3 = ledger(kv3, Tr())
-        l3.begin(rec())
-        assertEquals(1, l3.episode())
+    @Test fun episode_after_255_wraps_to_1() {
+        val kv = Kv(); kv.m["ep.last"] = "255"
+        val l = ledger(kv, FakeSosTransport())
+        l.begin(rec())
+        assertEquals(1, l.episode())
     }
 
     @Test fun denied_create_then_read_mine_marks_sent_without_second_create() {
-        val kv = Kv(); val tr = Tr(); val l = ledger(kv, tr)
+        val kv = Kv(); val tr = FakeSosTransport(); val l = ledger(kv, tr)
         l.begin(rec())
         tr.creates[0].cb(false)
         assertEquals(1, tr.reads.size)
@@ -173,7 +151,7 @@ class SosLedgerTest {
     }
 
     @Test fun create_retry_backs_off_exponentially() {
-        val kv = Kv(); val tr = Tr(); val l = ledger(kv, tr)
+        val kv = Kv(); val tr = FakeSosTransport(); val l = ledger(kv, tr)
         l.begin(rec())
         tr.creates[0].cb(false); tr.reads[0].cb(Remote.ABSENT)
         assertEquals(SosLedger.STATUS_FAILED, l.statusText())
@@ -199,7 +177,7 @@ class SosLedgerTest {
     }
 
     @Test fun rejected_resolve_keeps_slot_retries_and_reports_failure() {
-        val kv = Kv(); val tr = Tr(); val l = ledger(kv, tr)
+        val kv = Kv(); val tr = FakeSosTransport(); val l = ledger(kv, tr)
         l.begin(rec())
         tr.creates[0].cb(true)
         l.resolve()
@@ -218,7 +196,7 @@ class SosLedgerTest {
     }
 
     @Test fun resolve_of_never_created_record_is_dropped_after_read_absent() {
-        val kv = Kv(); val tr = Tr(); val l = ledger(kv, tr)
+        val kv = Kv(); val tr = FakeSosTransport(); val l = ledger(kv, tr)
         l.begin(rec())
         tr.creates[0].cb(false); tr.reads[0].cb(Remote.ABSENT)
         l.resolve()
@@ -230,13 +208,13 @@ class SosLedgerTest {
     }
 
     @Test fun pending_resolves_survive_restart() {
-        val kv = Kv(); val tr = Tr(); val l = ledger(kv, tr)
+        val kv = Kv(); val tr = FakeSosTransport(); val l = ledger(kv, tr)
         l.begin(rec())
         tr.creates[0].cb(true)
         l.resolve()
         kv.m["r.list"] = "junk\n" + kv.m.getValue("r.list")
 
-        val tr2 = Tr(); val l2 = ledger(kv, tr2)
+        val tr2 = FakeSosTransport(); val l2 = ledger(kv, tr2)
         assertFalse(l2.hasActive())
         l2.tick()
         assertEquals(1, tr2.resolves.size)
@@ -245,7 +223,7 @@ class SosLedgerTest {
 
     // Mail queue is written before a.sent / pending removal, so a death in between is recovered by the re-check
     @Test fun on_saved_runs_before_sent_mark_and_pending_drop() {
-        val kv = Kv(); val tr = Tr()
+        val kv = Kv(); val tr = FakeSosTransport()
         val seen = ArrayList<String>()
         val l = SosLedger(kv, tr, { now }, { e, _, k ->
             seen.add(e + ":" + (kv.m["a.sent"] ?: "-") + ":" + (kv.m["r.list"]?.contains(k) == true))
@@ -265,49 +243,40 @@ class SosLedgerTest {
         assertEquals(listOf("sos:-:false", "resolved:-:true", "sos:-:false", "resolved:-:true"), seen)
     }
 
-    private fun recording(kv: Kv, tr: Tr, seen: MutableList<String>) =
-        SosLedger(kv, tr, { now }, { e, _, k -> seen.add("$e:$k") })
-
     // A resolve confirmed before the create was confirmed queues the SOS first, then the resolve, once each
     @Test fun unconfirmed_resolve_queues_sos_then_resolved_once_in_any_order() {
         val both = listOf("sos:k1", "resolved:k1")
-        fun case(steps: (Kv, Tr, SosLedger, MutableList<String>) -> Unit): List<String> {
-            val kv = Kv(); val tr = Tr(); val seen = ArrayList<String>()
+        fun case(steps: (Kv, FakeSosTransport, SosLedger, MutableList<String>) -> Unit): List<String> {
+            val kv = Kv(); val tr = FakeSosTransport(); val seen = ArrayList<String>()
             val l = recording(kv, tr, seen)
             l.begin(rec())
             steps(kv, tr, l, seen)
             return seen
         }
-        // (1) create ack after resolve(), before the resolve ack
-        assertEquals(both, case { _, tr, l, _ ->
+        assertEquals("create ack after resolve, before resolve ack", both, case { _, tr, l, _ ->
             l.resolve(); tr.creates[0].cb(true); tr.resolves[0].cb(true)
         })
-        // (2) A: no create answer, restart, resolve ok
-        assertEquals(both, case { kv, _, l, seen ->
+        assertEquals("no create answer, restart, resolve ok", both, case { kv, _, l, seen ->
             l.resolve()
             assertEquals("root/site\tk1\t0", kv.m["r.list"])
-            val tr2 = Tr(); val l2 = recording(kv, tr2, seen)
+            val tr2 = FakeSosTransport(); val l2 = recording(kv, tr2, seen)
             l2.tick(); tr2.resolves[0].cb(true)
             assertNull(kv.m["r.list"])
         })
-        // (3) A': as (2), resolve rejected and read back as resolved
-        assertEquals(both, case { kv, _, l, seen ->
+        assertEquals("no create answer, restart, resolve rejected then read resolved", both, case { kv, _, l, seen ->
             l.resolve()
-            val tr2 = Tr(); val l2 = recording(kv, tr2, seen)
+            val tr2 = FakeSosTransport(); val l2 = recording(kv, tr2, seen)
             l2.tick(); tr2.resolves[0].cb(false); tr2.reads[0].cb(Remote.MINE_RESOLVED)
         })
-        // (4) B: create rejected, read error, then resolve ok
-        assertEquals(both, case { _, tr, l, _ ->
+        assertEquals("create rejected, read error, then resolve ok", both, case { _, tr, l, _ ->
             tr.creates[0].cb(false); tr.reads[0].cb(Remote.ERROR)
             l.resolve(); tr.resolves[0].cb(true)
         })
-        // (5) create rejected, resolve(), create read resolved, then resolve ok
-        assertEquals(both, case { _, tr, l, _ ->
+        assertEquals("create rejected, resolve, create read resolved, then resolve ok", both, case { _, tr, l, _ ->
             tr.creates[0].cb(false); l.resolve()
             tr.reads[0].cb(Remote.MINE_RESOLVED); tr.resolves[0].cb(true)
         })
-        // (6) as (5) in the other order: resolve ok first, then the late create read
-        assertEquals(both, case { _, tr, l, _ ->
+        assertEquals("create rejected, resolve, resolve ok, then late create read", both, case { _, tr, l, _ ->
             tr.creates[0].cb(false); l.resolve()
             tr.resolves[0].cb(true); tr.reads[0].cb(Remote.MINE_RESOLVED)
         })
@@ -315,18 +284,18 @@ class SosLedgerTest {
 
     // A confirmed record, or an old two-field pending line, queues only the resolve
     @Test fun confirmed_or_old_format_pending_queues_only_resolved() {
-        val kv = Kv(); val tr = Tr()
+        val kv = Kv(); val tr = FakeSosTransport()
         val l = recording(kv, tr, ArrayList())
         l.begin(rec())
         tr.creates[0].cb(true)
         l.resolve()
         assertEquals("root/site\tk1", kv.m["r.list"])
         val seen = ArrayList<String>()
-        val tr2 = Tr(); val l2 = recording(kv, tr2, seen)
+        val tr2 = FakeSosTransport(); val l2 = recording(kv, tr2, seen)
         l2.tick(); tr2.resolves[0].cb(true)
         assertEquals(listOf("resolved:k1"), seen)
 
-        val kv3 = Kv(); val tr3 = Tr(); val seen3 = ArrayList<String>()
+        val kv3 = Kv(); val tr3 = FakeSosTransport(); val seen3 = ArrayList<String>()
         kv3.m["r.list"] = "root/site\tk9"
         val l3 = recording(kv3, tr3, seen3)
         l3.tick(); tr3.resolves[0].cb(false); tr3.reads[0].cb(Remote.MINE_RESOLVED)

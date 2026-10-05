@@ -10,11 +10,13 @@ import org.junit.Test
 /**
  * Walking-shaped steps: a step counts only when the closed 1 s accelerometer window covering its
  * time (end - 1000 <= t < end) is walking-shaped and the app was not vibrating at that time.
+ * floor = the time after which steps or windows count (a start, an unplug edge, a check opening); a step exactly
+ * at the floor does not count. steps_ tests call WalkingSteps directly, logic_ tests go through LoneWorkerLogic.
  */
 class WalkingStepsTest {
 
-    /** Distinct motion counts only steps after the floor time (the floor step itself does not count). */
-    @Test fun distinct_motion_counts_only_steps_after_the_floor() {
+    /** within / firstWithin count only steps after the floor time (the floor step itself does not count). */
+    @Test fun steps_within_counts_only_steps_after_the_floor() {
         val w = WalkingSteps()
         for (t in listOf(1_100L, 1_300L, 1_500L, 1_700L, 1_900L)) w.onStep(t, false)
         w.onWindow(2_000, true)
@@ -89,7 +91,7 @@ class WalkingStepsTest {
         assertEquals(2, w.stepsIn(1_000, 10_999))
     }
 
-    @Test fun distinct_motion_counts_steps_after_the_floor_within_10s_inclusive() {
+    @Test fun logic_distinct_motion_needs_5_steps_after_the_floor_within_10s_inclusive() {
         // start floor = 0: a step at exactly 0 does not count; 5 steps spanning exactly 10 s do
         val l = newLogic()
         for (t in listOf(0L, 2_500L, 5_000L, 7_500L, 10_000L)) l.step(t)
@@ -112,23 +114,10 @@ class WalkingStepsTest {
         assertEquals(8, w.strongIn(31_000 - 30_000, 31_000))
     }
 
-    @Test fun first_run_end_counts_only_windows_from_the_floor_and_breaks_on_gaps_and_still_windows() {
-        val w = WalkingSteps()
-        w.onWindow(1_000, true)
-        w.onWindow(2_000, false)
-        w.onWindow(3_000, true)
-        w.onWindow(4_000, true)
-        w.onWindow(5_000, true)
-        assertEquals(5_000L, w.firstRunEnd(0, 3_000))
-        assertEquals(5_000L, w.firstRunEnd(2_500, 2_000))
-        assertNull(w.firstRunEnd(2_500, 3_000))
-        w.onWindow(7_000, true) // 5-6 s had no samples: the run breaks
-        assertNull(w.firstRunEnd(4_000, 2_000))
-        w.onWindow(8_000, false)
-        assertEquals(7_000L, w.firstRunEnd(6_000, 1_000))
-        assertNull(w.firstRunEnd(7_000, 1_000))
-    }
-
+    /**
+     * firstRunEnd(floor, length): the end of the first window where a run of walking-shaped windows, each starting at or
+     * after the floor, reaches the length; a still window or a second with no samples breaks the run.
+     */
     @Test fun first_run_end_is_where_a_run_from_the_floor_reaches_the_length() {
         val w = WalkingSteps()
         w.onWindow(1_000, true)
@@ -141,6 +130,22 @@ class WalkingStepsTest {
         assertEquals(7_000L, w.firstRunEnd(0, 4_000))
         assertNull(w.firstRunEnd(5_000, 3_000))
         assertEquals(1_000L, w.firstRunEnd(0, 1_000))
+
+        // windows from the floor only; a run that ended before the latest (still) window is still found
+        val v = WalkingSteps()
+        v.onWindow(1_000, true)
+        v.onWindow(2_000, false)
+        v.onWindow(3_000, true)
+        v.onWindow(4_000, true)
+        v.onWindow(5_000, true)
+        assertEquals(5_000L, v.firstRunEnd(0, 3_000))
+        assertEquals(5_000L, v.firstRunEnd(2_500, 2_000))
+        assertNull(v.firstRunEnd(2_500, 3_000))
+        v.onWindow(7_000, true) // 5-6 s had no samples: the run breaks
+        assertNull(v.firstRunEnd(4_000, 2_000))
+        v.onWindow(8_000, false)
+        assertEquals(7_000L, v.firstRunEnd(6_000, 1_000))
+        assertNull(v.firstRunEnd(7_000, 1_000))
     }
 
     @Test fun delivered_times_follow_windows_steps_and_flushes() {

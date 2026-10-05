@@ -10,6 +10,7 @@ import org.junit.Test
 /** The screen confirm silences only the rows it last drew, and ignores a tap right after the active item set changed. */
 class PeerAckGateTest {
 
+    // A row's epId is "<peer>#<episode>" ("A#1" = peer A, SOS episode 1); times are in ms.
     private fun row(epId: String, active: Boolean = true, key: String? = null) =
         PeerRow(if (key != null) "k:$key" else "b:$epId", epId, "", active)
 
@@ -42,7 +43,7 @@ class PeerAckGateTest {
         assertEquals(listOf("A#1", "B#2"), ids(g.onTap(1_700L)))
     }
 
-    @Test fun never_returns_empty_means_all() {
+    @Test fun tap_with_no_rows_drawn_silences_no_one() {
         val g = PeerAckGate()
         assertEquals(emptyList<String>(), ids(g.onTap(0L)))
         assertEquals(emptyList<String>(), ids(g.onTap(Long.MAX_VALUE)))

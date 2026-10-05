@@ -169,7 +169,7 @@ class ZoneStateMachineSimTest {
     // ── Tests ────────────────────────────────────────────────────────────────
 
     @Test
-    fun `01 교차검증 - 미러가 실제 BleService 와 표본단위로 일치한다`() {
+    fun mirror_matches_the_real_ble_service_sample_by_sample() {
         val svc = BleServiceTestHarness.newService()
         var n = 0
         scenarios.forEach { s ->
@@ -191,7 +191,7 @@ class ZoneStateMachineSimTest {
     }
 
     @Test
-    fun `02 실제 코드 - 존 밖 신호로는 억제가 지속되지 않는다`() {
+    fun signals_outside_the_zone_cannot_keep_suppression() {
         // With entry on a single sample (MIN_SAMPLES = 1), "never enters" no longer holds:
         // mean -92 / s5, rounded to whole dBm, reaches the -80 threshold on about 1.1% of samples (P(N(-92,5) >= -80.5)),
         // and that one sample causes entry.
@@ -230,8 +230,12 @@ class ZoneStateMachineSimTest {
                 .format(spikePct, pct, cap))
     }
 
+    /**
+     * Source check. The real-code run above already catches a changed entry/exit count, hysteresis or dead-band branch;
+     * this is the only check on ZONE_LOST_GRACE_MS (10 s) and ZONE_SIGNAL_STALE_MS (30 s).
+     */
     @Test
-    fun `04 소스 가드 - 존 상수와 데드밴드 분기가 미러와 같은지`() {
+    fun source_zone_constants_and_dead_band_branch_match_the_mirror() {
         val src = serviceSource("BleService.kt")
         fun has(re: String, what: String) =
             assertTrue("BleService.kt 가 미러와 어긋남 — ${what}", Regex(re).containsMatchIn(src))

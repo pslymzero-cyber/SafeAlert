@@ -12,10 +12,11 @@ import org.junit.Test
  * stillMs per vibration (a device without a vibrator never pauses), is not kept
  * inside a settled safe zone, and the still check opens on sensor time like the accident deadline.
  * A suspect device (accident suspicion running) does not vibrate for a peer siren.
- * A deadline also waits while a power change that started at or before it is pending (at most about 2 s), then is
- * judged with the reported power, or with the power before it if the change drops.
+ * A deadline waiting for a power change: LoneWorkerPowerWaitTest.
  */
 class LoneWorkerStillCountTest {
+
+    private val stillMs = 180_000L
 
     @Test fun peer_siren_pauses_still_count_and_resumes_after() {
         val l = newLogic(carried = true)
@@ -198,82 +199,27 @@ class LoneWorkerStillCountTest {
         assertEquals("still", l.trigger)
     }
 
-    /**
-     * A plug started 1 s before the SOS deadline holds it until confirmed and closes the check; an unplug only delays the SOS.
-     */
-    @Test fun sos_deadline_waits_for_a_power_change_started_before_it() {
-        val l = newLogic(carried = true)
-        assertEquals(Mode.CHECKING, l.seenAt(180_000))
-        assertEquals("still", l.trigger)
-        val sos = 180_000 + l.responseMs
-        l.powerRaw(true, sos - 1_000)
-        assertEquals(Mode.CHECKING, l.seenAt(sos))
-        assertEquals(sos - 1_000 + PowerDebounce.CONFIRM_MS, l.nextCheckAt(sos))
-        assertEquals(Mode.WATCHING, l.seenAt(sos - 1_000 + PowerDebounce.DEBOUNCE_MS))
-        assertEquals(LoneWorkerLogic.Rest.DOCKED, l.rest)
-        assertEquals(Mode.WATCHING, l.seenAt(sos + LoneWorkerLogic.LATE_MS))
-        // unplug: the check stays open, the SOS comes when the unplug is confirmed
-        val u = carriedWhileCharging()
-        assertEquals(Mode.CHECKING, u.seenAt(190_000))
-        val s2 = 190_000 + u.responseMs
-        u.powerRaw(false, s2 - 1_000)
-        assertEquals(Mode.CHECKING, u.seenAt(s2))
-        assertEquals(Mode.SOS, u.seenAt(s2 - 1_000 + PowerDebounce.DEBOUNCE_MS))
-    }
+    /** A still check closes on [OK] or on distinct motion (5 steps), not on a MOVED signal. */
+    @Test fun still_check_closed_by_ok_or_distinct_motion_not_by_moved() {
+        val moved = newLogic()
+        moved.sensorSilent(0)
+        moved.seenAt(stillMs)
+        moved.onMoved(stillMs + 1_000)
+        moved.walk(stillMs + 5_000, 4)
+        assertEquals(Mode.CHECKING, moved.modeAt(stillMs + 6_000))
 
-    /** A plug started at or before a still or fall deadline holds it; a plug started after it does not. */
-    @Test fun window_deadlines_wait_for_a_plug_started_at_or_before_them() {
-        for (at in listOf(179_000L, 180_000L)) {
-            val m = "at=$at"
-            val l = newLogic(carried = true)
-            l.powerRaw(true, at)
-            assertEquals(m, Mode.WATCHING, l.seenAt(180_000))
-            assertEquals(m, Mode.WATCHING, l.seenAt(at + PowerDebounce.DEBOUNCE_MS))
-            assertEquals(m, LoneWorkerLogic.Rest.DOCKED, l.rest)
-            assertEquals(m, Mode.WATCHING, l.seenAt(400_000))
-        }
-        val f = newLogic(carried = true)
-        f.onAccident(1_000)
-        f.powerRaw(true, 30_000)
-        assertEquals(Mode.WATCHING, f.seenAt(31_000))
-        assertEquals(Mode.WATCHING, f.seenAt(32_000))
-        assertNull(f.snapshot(32_000).accidentUntil)
-        // a plug started after the deadline does not hold it; the confirmed plug then withdraws the check
-        val c = newLogic(carried = true)
-        assertEquals(Mode.WATCHING, c.modeAt(180_000))
-        c.powerRaw(true, 180_500)
-        assertEquals(Mode.CHECKING, c.seenAt(180_500))
-        assertEquals("still", c.trigger)
-        assertEquals(Mode.WATCHING, c.seenAt(180_500 + PowerDebounce.DEBOUNCE_MS))
-    }
+        val walked = newLogic()
+        walked.sensorSilent(0)
+        walked.seenAt(stillMs)
+        walked.walk(stillMs + 5_000, 5)
+        assertEquals(Mode.WATCHING, walked.mode)
+        assertEquals(Mode.WATCHING, walked.seenAt(stillMs + 5_000 + stillMs - 1))
+        assertEquals(Mode.CHECKING, walked.seenAt(stillMs + 5_000 + stillMs))
 
-    /** A dropped power wait lets the deadline be judged with the power before it, the response counted from the opening. */
-    @Test fun dropped_power_wait_judges_in_the_power_state_before_it() {
-        val l = newLogic(carried = true)
-        l.powerRaw(true, 179_500)
-        assertEquals(Mode.WATCHING, l.seenAt(180_000))
-        assertTrue(l.powerRaw(false, 180_400))
-        assertEquals(Mode.CHECKING, l.seenAt(180_400))
-        assertEquals("still", l.trigger)
-        assertEquals(l.responseMs, l.responseLeftMs(180_400))
-        assertEquals(LoneWorkerLogic.Rest.NONE, l.rest)
-    }
-
-    /** A power wait keeps the CPU awake but asks for a flush only when data up to the deadline is missing. */
-    @Test fun power_wait_keeps_the_cpu_awake_but_flushes_only_for_missing_data() {
-        val l = newLogic(carried = true)
-        l.powerRaw(true, 179_500)
-        assertEquals(Mode.WATCHING, l.seenAt(180_000))
-        assertTrue(l.waitingToJudge(180_000))
-        assertFalse(l.waitingOnSensors(180_000))
-        assertEquals(179_500 + PowerDebounce.CONFIRM_MS, l.nextCheckAt(180_000))
-        assertEquals(Mode.WATCHING, l.seenAt(179_500 + PowerDebounce.DEBOUNCE_MS))
-        assertFalse(l.waitingToJudge(179_500 + PowerDebounce.DEBOUNCE_MS))
-        val d = newLogic(carried = true)
-        d.sensed(178_000)
-        d.powerRaw(true, 179_500)
-        assertEquals(Mode.WATCHING, d.modeAt(180_000))
-        assertTrue(d.waitingToJudge(180_000))
-        assertTrue(d.waitingOnSensors(180_000))
+        val ok = newLogic()
+        ok.sensorSilent(0)
+        ok.seenAt(stillMs)
+        assertTrue(ok.ackWorking(stillMs + 1_000))
+        assertEquals(Mode.WATCHING, ok.mode)
     }
 }

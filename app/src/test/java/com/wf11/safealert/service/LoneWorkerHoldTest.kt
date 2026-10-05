@@ -17,6 +17,8 @@ import org.junit.Test
  * power. A zone report after the zone hold limit first leaves the zone at the limit. The held check opens
  * only after sensor data up to the hold end has arrived (at most LATE_MS later), counting steps from the
  * hold end.
+ * held = restored and kept hidden until the restart power is confirmed; bounce = the charger contact flips back
+ * and forth around the restart (LoneWorkerTestKit lists these words and the timing constants).
  */
 class LoneWorkerHoldTest : RestartKit() {
 
@@ -25,7 +27,7 @@ class LoneWorkerHoldTest : RestartKit() {
         val old = carriedWhileCharging()
         assertEquals(Mode.CHECKING, old.seenAt(190_000))
         assertEquals("still", old.trigger)
-        return restart(old, 200_000, 5_000, 20_000)
+        return restart(old, savedAt = 200_000, now = 5_000, wallGap = 20_000)
     }
 
     @Test fun held_check_dropped_when_zone_settles() {
@@ -33,7 +35,7 @@ class LoneWorkerHoldTest : RestartKit() {
         old.onZone(true, 150_000)
         assertEquals(Mode.CHECKING, old.seenAt(190_000))
         assertFalse(old.zoneSettled)
-        val l = restart(old, 200_000, 5_000, 600_000, zoneInside = true)
+        val l = restart(old, savedAt = 200_000, now = 5_000, wallGap = 600_000, zoneInside = true)
         assertEquals(Mode.WATCHING, l.modeAt(5_000))
         assertTrue(l.zoneSettled)
         assertEquals("", l.snapshot(5_000).check)
@@ -55,7 +57,7 @@ class LoneWorkerHoldTest : RestartKit() {
         old.onAccident(1_000)
         assertEquals(Mode.CHECKING, old.seenAt(31_000))
         assertEquals("fall", old.trigger)
-        val l = restart(old, 41_000, 5_000, 20_000)
+        val l = restart(old, savedAt = 41_000, now = 5_000, wallGap = 20_000)
         l.walk(7_500, 5)
         assertEquals(Mode.WATCHING, l.seenAt(7_600))
         assertEquals(7_500L, l.snapshot(7_600).accidentHold)
@@ -93,25 +95,25 @@ class LoneWorkerHoldTest : RestartKit() {
 
     @Test fun fall_after_restart_power_uses_confirmed_power_in_zone() {
         // a fall is reported 12 s after the impact: docked in the zone, restarted unplugged, the fall counts
-        val l = reboot(newLogic(charging = true, zoneInside = true), 20_000, 5_000, 20_000, zoneInside = true)
+        val l = reboot(newLogic(charging = true, zoneInside = true), savedAt = 20_000, now = 5_000, wallGap = 20_000, zoneInside = true)
         l.seenAt(17_500)
         l.onAccident(5_500)
         assertEquals(Mode.WATCHING, l.seenAt(35_499))
         assertEquals(Mode.CHECKING, l.seenAt(35_500))
         assertEquals("fall", l.trigger)
         // carried in the zone, restarted on the dock: a docked fall in the zone is ignored
-        val p = reboot(newLogic(zoneInside = true, carried = true), 20_000, 5_000, 20_000, charging = true, zoneInside = true)
+        val p = reboot(newLogic(zoneInside = true, carried = true), savedAt = 20_000, now = 5_000, wallGap = 20_000, charging = true, zoneInside = true)
         p.seenAt(17_500)
         p.onAccident(5_500)
         assertEquals(Mode.WATCHING, p.seenAt(35_500))
         assertNull(p.snapshot(35_500).accidentUntil)
     }
 
-    @Test fun restart_unplug_rebounce_shows_check_at_the_report() {
+    @Test fun restart_unplug_bounce_shows_check_at_the_report() {
         for (gapTick in listOf(false, true)) {
             val m = "gapTick=$gapTick"
             val l = heldStill()
-            l.rebounce(now = false, gapTick = gapTick, m = m)
+            l.bounceRestartPower(now = false, gapTick = gapTick, m = m)
             assertEquals(m, Mode.WATCHING, l.seenAt(5_800 + PowerDebounce.DEBOUNCE_MS - 1))
             assertEquals(m, Mode.CHECKING, l.seenAt(5_800 + PowerDebounce.DEBOUNCE_MS))
             assertEquals(m, "still", l.trigger)
@@ -125,7 +127,7 @@ class LoneWorkerHoldTest : RestartKit() {
         val end = 5_000 + RestartHold.POWER_HOLD_MS
         for (gapTick in listOf(false, true)) {
             val m = "gapTick=$gapTick"
-            val l = restart(accidentCheck(), 41_000, 5_000, 20_000, charging = true)
+            val l = restart(accidentCheck(), savedAt = 41_000, now = 5_000, wallGap = 20_000, charging = true)
             // the first wait starts at the restart time
             assertEquals(m, 5_000 + PowerDebounce.CONFIRM_MS, l.nextCheckAt(5_000))
             assertEquals(m, Mode.WATCHING, l.modeAt(5_000))
@@ -150,7 +152,7 @@ class LoneWorkerHoldTest : RestartKit() {
     /** The window wait drops after the window end: the hold ends there, and a later wait does not hold again. */
     @Test fun restart_power_wait_dropped_after_the_window_ends_the_hold() {
         val end = 5_000 + RestartHold.POWER_HOLD_MS
-        val l = restart(accidentCheck(), 41_000, 5_000, 20_000, charging = true)
+        val l = restart(accidentCheck(), savedAt = 41_000, now = 5_000, wallGap = 20_000, charging = true)
         l.modeAt(5_000)
         l.powerRaw(false, 5_500)
         l.powerRaw(true, 7_000)
@@ -176,7 +178,7 @@ class LoneWorkerHoldTest : RestartKit() {
     @Test fun restart_power_changes_after_the_first_report_are_real() {
         for (plugAt in listOf(7_500L, 8_100L)) {
             val m = "plugAt=$plugAt"
-            val l = reboot(newLogic(charging = true), 20_000, 5_000, 20_000)
+            val l = reboot(newLogic(charging = true), savedAt = 20_000, now = 5_000, wallGap = 20_000)
             l.powerRaw(true, plugAt)
             l.seenAt(plugAt + PowerDebounce.DEBOUNCE_MS)
             // a docking motion drops the fall
@@ -187,7 +189,7 @@ class LoneWorkerHoldTest : RestartKit() {
     }
 
     @Test fun restart_plug_is_not_a_docking_motion() {
-        val l = reboot(newLogic(carried = true), 20_000, 5_000, 20_000, charging = true)
+        val l = reboot(newLogic(carried = true), savedAt = 20_000, now = 5_000, wallGap = 20_000, charging = true)
         assertEquals(Rest.DOCKED, l.rest)
         l.onAccident(9_000)
         assertEquals(Mode.WATCHING, l.seenAt(38_999))
@@ -246,7 +248,7 @@ class LoneWorkerHoldTest : RestartKit() {
     /** Steps after the restart arriving late still count from the restart: they drop the held check. */
     @Test fun restart_bounce_late_steps_drop_the_held_check() {
         val l = heldStill()
-        l.rebounce(now = false, gapTick = false, m = "late steps")
+        l.bounceRestartPower(now = false, gapTick = false, m = "late steps")
         for (t in listOf(5_200L, 5_500L, 5_700L, 6_000L, 6_400L)) l.onStep(t)
         assertEquals(Mode.WATCHING, l.modeAt(5_800 + PowerDebounce.DEBOUNCE_MS))
         assertEquals("still", l.snapshot(5_800 + PowerDebounce.DEBOUNCE_MS).check)
@@ -263,7 +265,7 @@ class LoneWorkerHoldTest : RestartKit() {
         assertEquals(Mode.WATCHING, old.seenAt(150_000))
         assertFalse(old.zoneSettled)
         // zone hold until 210 s; the first report comes at 230 s with no tick in between
-        val l = reboot(old, 150_000, 200_000, 50_000, bootNow = boot)
+        val l = reboot(old, savedAt = 150_000, now = 200_000, wallGap = 50_000, bootNow = boot)
         l.onZone(true, 230_000)
         assertFalse(l.zoneSettled)
         l.tick(290_000)

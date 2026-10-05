@@ -9,7 +9,7 @@ from collections import Counter, defaultdict
 
 BIN_M = 0.5          # distance bin width
 MIN_BIN_N = 3        # don't trust the median of a bin with fewer samples than this
-# App defaults (DevSettings DEFAULT_*); ScriptRulesParityTest pins every number below to the app.
+# App defaults (DevSettings DEFAULT_*); DigestScriptParityTest pins every number below to the app.
 THRESHOLDS = (("경고", -78), ("위험", -65))
 # Role-pair offset per probe pairKey (AlertStateMachine.computePayloadRiskOffset). A positive offset lowers the
 #   threshold by that many dB (effective = threshold - offset), so the alert fires at a weaker signal, farther away.

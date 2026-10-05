@@ -68,7 +68,7 @@ var DEFAULT_CAP = 50;
 var MAX_CAP = 60;
 var SENT = 'S|';
 var TAIL = '이 메일은 SafeAlert가 자동으로 보냈습니다. 회신하지 마십시오.';
-// Equipment code → English name. Must match the app's PitType.kt (ScriptRulesParityTest compares them).
+// Equipment code → English name. Must match the app's PitType.kt (SosMailScriptParityTest compares them).
 var PIT_NAMES = { CB: 'Counterbalance', RT: 'Reach Truck', HR: 'High Reach', OP: 'Order Picker',
   ST: 'Stacker', TT: 'Tow Tractor', EP: 'Electric Pallet Jack', WK: 'Walkie Stacker' };
 

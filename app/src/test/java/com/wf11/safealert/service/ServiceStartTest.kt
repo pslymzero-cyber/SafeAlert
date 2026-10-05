@@ -43,7 +43,7 @@ class ServiceStartTest {
         BootRestoreReceiver.userStopped(sdk, exits, since, updatedAt)
 
     @Test
-    fun exit_before_start_is_ignored_and_below_api30_never_stops() {
+    fun non_user_exit_or_exit_before_start_is_ignored_and_below_api30_never_stops() {
         assertFalse(stopped(29, listOf(user to 2_000L)))
         assertTrue(stopped(30, listOf(user to 2_000L)))
         assertFalse(stopped(30, listOf(user to 500L)))
@@ -105,23 +105,14 @@ class ServiceStartTest {
         assertEquals(0L, BootRestoreReceiver.startedAt(0L, 0L, 34))
     }
 
-    private fun limited(sdk: Int, fine: Boolean, background: Boolean, bgStarted: Boolean) =
-        ServiceStartGate.bgLocationLimited(sdk, fine, bgStarted) { background }
-
+    // Limited only on API 30 with fine location, started from the background, without "always allow"; API 29 and 31+
+    //   are never limited. The "always allow" probe is asked only when every other condition holds.
     @Test
-    fun bg_location_limit_only_for_background_started_api30() {
-        assertTrue(limited(30, fine = true, background = false, bgStarted = true))
-        assertFalse(limited(30, fine = true, background = false, bgStarted = false))
-        assertFalse(limited(30, fine = true, background = true, bgStarted = true))
-        assertFalse(limited(29, fine = true, background = false, bgStarted = true))
-        assertFalse(limited(31, fine = true, background = false, bgStarted = true))
-    }
-
-    @Test
-    fun bg_limit_does_not_query_permission_unless_needed() {
+    fun bg_location_limit_only_for_background_started_api30_and_asks_permission_only_then() {
         var asked = 0
         val probe = { asked++; false }
         assertFalse(ServiceStartGate.bgLocationLimited(31, true, true, probe))
+        assertFalse(ServiceStartGate.bgLocationLimited(29, true, true, probe))
         assertFalse(ServiceStartGate.bgLocationLimited(30, true, false, probe))
         assertFalse(ServiceStartGate.bgLocationLimited(30, false, true, probe))
         assertEquals(0, asked)

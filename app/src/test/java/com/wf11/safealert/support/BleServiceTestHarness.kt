@@ -4,8 +4,10 @@ import android.content.Intent
 import com.wf11.safealert.ble.BleConstants
 import com.wf11.safealert.ble.BleScanner
 import com.wf11.safealert.ble.KalmanFilter
+import com.wf11.safealert.service.AlertStateMachine
 import com.wf11.safealert.service.BleService
 import com.wf11.safealert.utils.DevSettings
+import org.junit.Assert.assertEquals
 import org.robolectric.Robolectric
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
@@ -18,8 +20,9 @@ import org.robolectric.util.ReflectionHelpers.ClassParameter
  * logic, but BleService keeps a few private alias fields of AlertStateMachine and UwbDistanceManager state (e.g.
  * dangerContactStreakMap, trackingStateMap, uwbSafeStreakMap) that only reflection tests read.
  *
- * Scenario repetition (multi-device, multi-frame loops) does not live here; that belongs to the golden tests using it.
- * This file is only responsible for "how to drive and observe a single processAlert call".
+ * Scenarios (input sequences and expectations) do not live here; they stay visible in the tests using them.
+ * This file holds how to drive processAlert, how to read the private state the tests observe, and the per-frame
+ * golden rendering shared by AlertCascadeGoldenTest and LowSpeedApproachRegressionTest.
  */
 object BleServiceTestHarness {
 
@@ -55,7 +58,8 @@ object BleServiceTestHarness {
      * emaWarmupPushes) are not pinned either; they ride on the shipped defaults. The four side-effect flags
      * (vibrationEnabled, soundEnabled, autoSaveAlerts, uwbProbeUploadEnabled) are pinned to false to block vibration,
      * sound and Firebase writes (both alerts and UWB samples); the overlay is already harmless because canDrawOverlays()
-     * defaults to false. When uwbProbeUploadEnabled is on, processAlert calls FirebaseManager.saveUwbProbe.
+     * defaults to false. When uwbProbeUploadEnabled is on, processAlert calls FirebaseManager.saveUwbProbe; it already
+     * ships off, so GoldenProfileDefaultsTest lists only the other three flags as deviations.
      */
     fun applyGoldenDevSettings() {
         DevSettings.autoSaveAlerts = false                 // side effect off — blocks FirebaseManager.saveAlert
@@ -207,5 +211,106 @@ object BleServiceTestHarness {
     fun resetBetweenTests(service: BleService) {
         shadowOf(RuntimeEnvironment.getApplication()).clearBroadcastIntents()
         alertStateFieldOf(service).clear()
+    }
+
+    // ── Reading private decision state ───────────────────────────────────────────────────
+
+    /** The AlertStateMachine behind the service (BleService's private field asm). */
+    fun asmOf(service: BleService): AlertStateMachine = ReflectionHelpers.getField(service, "asm")
+
+    /**
+     * Reads a private field by name, cast to the caller's type. A missing or renamed field fails the test at once
+     * (no fallback), so a failure here means the field moved, not that the decision changed.
+     */
+    @Suppress("UNCHECKED_CAST")
+    fun <T> fieldOf(owner: Any, name: String): T = ReflectionHelpers.getField<Any>(owner, name) as T
+
+    /** trackingStateMap entry as text, "NONE" when the device has none. */
+    fun trackingStateOf(service: BleService, deviceId: String): String =
+        fieldOf<Map<String, *>>(service, "trackingStateMap")[deviceId]?.toString() ?: "NONE"
+
+    /** A per-device counter map (dangerContactStreakMap, warningContactStreakMap, fastApproachStreakMap), 0 when absent. */
+    fun streakOf(service: BleService, fieldName: String, deviceId: String): Int =
+        fieldOf<Map<String, Int>>(service, fieldName)[deviceId] ?: 0
+
+    /** Kalman velocity estimate (dBm/s, positive = approaching), 0.0 before the device has a filter. */
+    fun kfVelOf(service: BleService, deviceId: String): Double =
+        fieldOf<Map<String, KalmanFilter>>(service, "kalmanFilters")[deviceId]?.estimatedVel ?: 0.0
+
+    /** remoteState byte of a forklift advertising [state] (a BleConstants.PSTATE_* value), as processAlert receives it. */
+    fun forkliftPayload(state: Int): Int = BleConstants.encodePayload(BleConstants.CAT_FORKLIFT, state).toInt() and 0xFF
+
+    /** ±3 dB noise with a 6-frame period, added to synthetic approach ramps. */
+    val NOISE_6 = intArrayOf(0, -3, 2, -1, 3, -2)
+
+    /** ±1 dB noise with a 4-frame period, added to synthetic slow ramps. */
+    val NOISE_4 = intArrayOf(0, -1, 1, 0)
+
+    // ── Per-frame goldens (AlertCascadeGoldenTest, LowSpeedApproachRegressionTest) ────────
+
+    /**
+     * One frame as one fixed-width line: alert level, entry time relative to [t0Ms] ("null" when absent), tracking state,
+     * the three streak counters and the cumulative BROADCAST_ALERT count. Kalman velocity is kept apart (a double).
+     */
+    fun renderGoldenFrame(service: BleService, deviceId: String, frameIdx: Int, rssi: Int, t0Ms: Long): String {
+        val level = alertLevelOf(service, deviceId)
+        val entryRel = alertEntryMsOf(service, deviceId)?.minus(t0Ms)
+        return "frame=%03d rssi=%4d level=%s entry=%s track=%-11s dangerStreak=%d warnStreak=%d fastStreak=%d bcast=%d".format(
+            frameIdx, rssi, level?.toString() ?: "null", entryRel?.toString() ?: "null", trackingStateOf(service, deviceId),
+            streakOf(service, "dangerContactStreakMap", deviceId), streakOf(service, "warningContactStreakMap", deviceId),
+            streakOf(service, "fastApproachStreakMap", deviceId), alertBroadcasts().size,
+        )
+    }
+
+    /**
+     * Feeds [rssiSeq] one frame every [frameDtMs] and returns each frame's [render] line with its Kalman velocity.
+     * Frame numbers (and nowMs = t0Ms + frame * frameDtMs) continue from [startFrame], so a second run can carry on
+     * from the end state of the first.
+     */
+    fun runGoldenScenario(
+        service: BleService,
+        deviceId: String,
+        rssiSeq: IntArray,
+        t0Ms: Long,
+        frameDtMs: Long,
+        startFrame: Int = 0,
+        render: (frameIdx: Int, rssi: Int) -> String = { f, r -> renderGoldenFrame(service, deviceId, f, r, t0Ms) },
+    ): Pair<Array<String>, DoubleArray> {
+        val frames = Array(rssiSeq.size) { "" }
+        val kfVel = DoubleArray(rssiSeq.size)
+        for (i in rssiSeq.indices) {
+            val frameIdx = startFrame + i
+            callProcessAlert(service, deviceId, rssiSeq[i], nowMs = t0Ms + frameIdx * frameDtMs)
+            frames[i] = render(frameIdx, rssiSeq[i])
+            kfVel[i] = kfVelOf(service, deviceId)
+        }
+        return frames to kfVel
+    }
+
+    /**
+     * Compares a run with its golden. The frame count and the readable milestones (first WARNING, first DANGER, first
+     * release) are asserted first, so a timing change reads as "first DANGER frame=032 → frame=035" before the per-frame
+     * diff; then two assertions per frame: the render line, and kfVel within 1e-9.
+     */
+    fun assertGoldenScenario(
+        scenario: String,
+        actual: Pair<Array<String>, DoubleArray>,
+        expectedFrames: Array<String>,
+        expectedKfVel: DoubleArray,
+    ) {
+        val (frames, kfVel) = actual
+        assertEquals("$scenario frame count", expectedFrames.size, frames.size)
+        assertEquals("$scenario milestones", milestones(expectedFrames), milestones(frames))
+        for (i in expectedFrames.indices) {
+            assertEquals("$scenario frame=$i stage=render", expectedFrames[i], frames[i])
+            assertEquals("$scenario frame=$i stage=kfVel", expectedKfVel[i], kfVel[i], 1e-9)
+        }
+    }
+
+    private fun milestones(frames: Array<String>): String {
+        val levels = frames.map { Regex("""level=(\S+)""").find(it)?.groupValues?.get(1) }
+        fun at(i: Int?) = if (i == null || i < 0) "never" else frames[i].substringBefore(' ')
+        val release = (1 until levels.size).firstOrNull { levels[it] == "null" && levels[it - 1] != "null" }
+        return "first WARNING ${at(levels.indexOf("1"))}, first DANGER ${at(levels.indexOf("2"))}, first release ${at(release)}"
     }
 }

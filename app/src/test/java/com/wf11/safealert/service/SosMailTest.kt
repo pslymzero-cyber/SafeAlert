@@ -11,27 +11,6 @@ import org.junit.Test
 /** SosMail: rescue mail queue fed by the ledger's server-confirmed points. No network. */
 class SosMailTest {
 
-    private class Call<T>(val path: String, val key: String, val cb: (T) -> Unit)
-
-    private class Tr : SosTransport {
-        var keyN = 0
-        val creates = ArrayList<Call<Boolean>>()
-        val resolves = ArrayList<Call<Boolean>>()
-        val reads = ArrayList<Call<Remote>>()
-        override fun uid() = "u1"
-        override fun sitePath() = "root/sos/WF11"
-        override fun newKey(path: String) = "k" + (++keyN)
-        override fun create(path: String, key: String, rec: SosLedger.Record, uid: String, done: (Boolean) -> Unit) {
-            creates.add(Call(path, key, done))
-        }
-        override fun resolve(path: String, key: String, auto: Boolean, done: (Boolean) -> Unit) {
-            resolves.add(Call(path, key, done))
-        }
-        override fun read(path: String, key: String, done: (Remote) -> Unit) {
-            reads.add(Call(path, key, done))
-        }
-    }
-
     private class Post(val form: String, val done: (String?) -> Unit)
 
     private var now = 1_000_000_000L
@@ -43,7 +22,7 @@ class SosMailTest {
     private fun mail(kv: Kv) =
         SosMail(kv, { f, d -> posts.add(Post(f, d)) }, { now }, { queue.add(it) }) { sc -> asked.add(sc); to }
 
-    private fun pair(kv: Kv, tr: Tr): Pair<SosLedger, SosMail> {
+    private fun pair(kv: Kv, tr: FakeSosTransport): Pair<SosLedger, SosMail> {
         val m = mail(kv)
         val l = SosLedger(kv, tr, { now }, { e, p, k -> m.enqueue(e, p, k, 3) })
         return l to m
@@ -54,8 +33,8 @@ class SosMailTest {
     private val sent = "{\"ok\":true,\"code\":\"sent\"}"
     private val form1 = "site=root&sc=WF11&id=k1&event=sos&to=wfspt%40coupangfs.com&stillMin=3"
 
-    @Test fun tracer_server_confirm_to_post_sos_then_resolved_in_order() {
-        val kv = Kv(); val tr = Tr(); val (l, m) = pair(kv, tr)
+    @Test fun server_confirm_posts_sos_then_resolved_in_order_to_the_address_of_the_site_code() {
+        val kv = Kv(); val tr = FakeSosTransport(site = "root/sos/WF11"); val (l, m) = pair(kv, tr)
         l.begin(rec())
         assertEquals(0, posts.size)
         tr.creates[0].cb(true)
@@ -76,7 +55,7 @@ class SosMailTest {
     }
 
     @Test fun nothing_before_server_confirm_and_read_fallbacks() {
-        val kv = Kv(); val tr = Tr(); val (l, _) = pair(kv, tr)
+        val kv = Kv(); val tr = FakeSosTransport(site = "root/sos/WF11"); val (l, _) = pair(kv, tr)
         l.begin(rec())
         assertEquals(0, posts.size)
         tr.creates[0].cb(false)
@@ -116,7 +95,7 @@ class SosMailTest {
         assertFalse(SosMail.validAddress("a".repeat(246) + "@x.com.kr"))
     }
 
-    @Test fun enqueue_ignores_blank_or_bad_address_bad_path_and_duplicates() {
+    @Test fun enqueue_ignores_blank_or_bad_address_bad_path_and_unknown_event() {
         val kv = Kv(); val m = mail(kv)
         to = ""
         m.enqueue(SosMail.EVENT_SOS, "root/sos/WF11", "k1", 3)
@@ -128,7 +107,10 @@ class SosMailTest {
         m.enqueue("other", "root/sos/WF11", "k1", 3)
         assertEquals(0, posts.size)
         assertNull(kv.m[SosMail.K_LIST])
+    }
 
+    @Test fun enqueue_ignores_a_duplicate_key_and_caps_still_minutes_at_30() {
+        val kv = Kv(); val m = mail(kv)
         m.enqueue(SosMail.EVENT_SOS, "root/sos/WF11", "k1", 99)
         m.enqueue(SosMail.EVENT_SOS, "root/sos/WF11", "k1", 3)
         assertEquals(1, posts.size)
@@ -294,16 +276,19 @@ class SosMailTest {
         assertTrue(posts[1].form.contains("event=resolved&to=a%40coupangfs.com&"))
         assertNull(kv.m[SosMail.K_ADDR])
         assertEquals(1, asked.size)
-        posts[1].done(sent)
+    }
 
-        // no sos mail queued on this device for k9: no resolved mail
+    @Test fun resolved_without_a_sos_mail_queued_on_this_device_is_not_sent() {
+        val kv = Kv(); val m = mail(kv)
         m.enqueue(SosMail.EVENT_RESOLVED, "root/sos/WF11", "k9", 3)
-        assertEquals(2, posts.size)
+        assertEquals(0, posts.size)
         assertNull(kv.m[SosMail.K_LIST])
+    }
 
-        // address rows older than 7 days are dropped when a new sos is queued
+    @Test fun address_rows_older_than_7_days_are_dropped_when_a_new_sos_is_queued() {
+        val kv = Kv(); val m = mail(kv)
         m.enqueue(SosMail.EVENT_SOS, "root/sos/WF11", "k2", 3)
-        posts[2].done(sent)
+        posts[0].done(sent)
         now += SosMail.KEEP_ADDR_MS + 1
         m.enqueue(SosMail.EVENT_SOS, "root/sos/WF11", "k3", 3)
         assertEquals(listOf("k3"), kv.m[SosMail.K_ADDR]!!.split('\n').map { it.substringBefore('\t') })
@@ -344,7 +329,7 @@ class SosMailTest {
         assertNull(kv.m[SosMail.K_LIST])
     }
 
-    @Test fun sos_drop_forgets_address_and_waiting_resolve_but_give_up_keeps_it() {
+    @Test fun dropped_sos_also_drops_its_waiting_resolve_and_address() {
         val kv = Kv(); val m = mail(kv)
         m.enqueue(SosMail.EVENT_SOS, "root/sos/WF11", "k1", 3)
         m.enqueue(SosMail.EVENT_RESOLVED, "root/sos/WF11", "k1", 3)
@@ -353,25 +338,30 @@ class SosMailTest {
         assertEquals(1, posts.size)
         assertNull(kv.m[SosMail.K_LIST])
         assertNull(kv.m[SosMail.K_ADDR])
+    }
 
-        // refused sos with no resolve waiting: its address row goes, a later resolve is not queued
+    @Test fun dropped_sos_forgets_its_address_so_a_later_resolve_is_not_queued() {
+        val kv = Kv(); val m = mail(kv)
         m.enqueue(SosMail.EVENT_SOS, "root/sos/WF11", "k3", 3)
-        posts[1].done("{\"code\":\"not_allowed\"}")
+        posts[0].done("{\"code\":\"not_allowed\"}")
         assertNull(kv.m[SosMail.K_LIST])
         assertNull(kv.m[SosMail.K_ADDR])
         m.enqueue(SosMail.EVENT_RESOLVED, "root/sos/WF11", "k3", 3)
-        assertEquals(2, posts.size)
+        assertEquals(1, posts.size)
+    }
 
-        // gave up after 2 hours: the mail may have gone out, so the address row stays
+    // Giving up after 2 hours keeps the address row: the mail may have gone out, so its resolve must follow.
+    @Test fun given_up_sos_keeps_its_address_so_a_later_resolve_is_sent() {
+        val kv = Kv(); val m = mail(kv)
         val t0 = now
         m.enqueue(SosMail.EVENT_SOS, "root/sos/WF11", "k2", 3)
-        posts[2].done(null)
+        posts[0].done(null)
         now = t0 + SosMail.GIVE_UP_MS + 1; m.tick()
-        assertEquals(3, posts.size)
+        assertEquals(1, posts.size)
         assertNull(kv.m[SosMail.K_LIST])
         assertTrue(kv.m[SosMail.K_ADDR]!!.startsWith("k2\t"))
         m.enqueue(SosMail.EVENT_RESOLVED, "root/sos/WF11", "k2", 3)
-        assertEquals(4, posts.size)
-        assertTrue(posts[3].form.contains("id=k2&event=resolved&"))
+        assertEquals(2, posts.size)
+        assertTrue(posts[1].form.contains("id=k2&event=resolved&"))
     }
 }

@@ -159,7 +159,7 @@ class AlertStateMachine(
     internal val warningContactStreakMap = mutableMapOf<String, Int>()
 
     // Previous medianValue/time — tells single noise from a real departure when the WARNING streak falls short.
-    //   Decided by rate (dBm/s) — release_goldenTimeline (120ms, -1dBm/frame ≈ -8.3dBm/s) is far steeper than
+    //   Decided by rate (dBm/s) — escalationThenRelease_goldenTimeline (120ms, -1dBm/frame ≈ -8.3dBm/s) is far steeper than
     //   the threshold and resets immediately; slow noisy approaches (1000ms interval, at most ±1dBm/s) stay
     //   below it and keep the streak (for the measured basis see the WARNING_DEPART_RATE_DBM_PER_SEC declaration).
     internal val warningMissRefMap = mutableMapOf<String, Pair<Int, Long>>()
@@ -185,7 +185,7 @@ class AlertStateMachine(
     internal val CPA_VEL_THRESHOLD             = 0.5   // CPA velocity threshold (dBm/s)
 
     // Fall-rate threshold (dBm/s): single noise vs real departure when the WARNING streak falls short.
-    //   3.0 sits between the measured fall rate of release_goldenTimeline (120ms interval, -1dBm/frame ≈
+    //   3.0 sits between the measured fall rate of escalationThenRelease_goldenTimeline (120ms interval, -1dBm/frame ≈
     //   -8.3dBm/s) and the maximum measured noise fall rate in LowSpeedApproachRegressionTest (1000ms interval,
     //   after median-of-3, at most -1dBm/frame = -1.0dBm/s), with over 3x margin — release exceeds it and resets
     //   immediately (golden unchanged); slow noise stays below it and keeps the streak.
@@ -965,7 +965,7 @@ class AlertStateMachine(
         //   On a slow, noisy approach medianValue hovers around the proximity threshold; zeroing on every miss frame
         //   keeps delaying the 2-consecutive-frame confirmation (root cause of field misses). Measured noise falls
         //   slower than WARNING_DEPART_RATE_DBM_PER_SEC, so gentle misses keep the streak (absorb noise). The
-        //   continuous fall in release_goldenTimeline far exceeds the threshold, so it still resets to 0 on every
+        //   continuous fall in escalationThenRelease_goldenTimeline far exceeds the threshold, so it still resets to 0 on every
         //   miss frame — golden unchanged.
         //   The DANGER streak (above) still resets on every miss: since effDanger ⊂ effWarning, relaxing only WARNING
         //   achieves the first confirmation (warning level) on slow approaches while keeping immediate DANGER

@@ -4,10 +4,11 @@ import android.bluetooth.BluetoothAdapter
 import android.content.BroadcastReceiver
 import android.content.Intent
 import android.os.Looper
-import com.wf11.safealert.service.AlertStateMachine
 import com.wf11.safealert.service.BleService
 import com.wf11.safealert.service.UwbDistanceManager
 import com.wf11.safealert.support.BleServiceTestHarness
+import com.wf11.safealert.support.BleServiceTestHarness.asmOf
+import com.wf11.safealert.support.BleServiceTestHarness.fieldOf
 import com.wf11.safealert.utils.BeaconRegistry
 import com.wf11.safealert.utils.DevSettings
 import com.wf11.safealert.utils.UwbRanger
@@ -38,13 +39,15 @@ import java.time.Duration
  * via uwbDist), and the UwbRanger constructor (06_utils/UwbRanger.kt). BleService.processAlert is private, so it is
  * driven only through BleServiceTestHarness.
  *
+ * Case A = UWB-exclusive judging (judgeUwbOnly decides, RSSI never takes part); Case B = the regular RSSI path.
+ *
  * ── Two-clock rule ──────────────────────────────────────────────────────────
  * processAlert's nowMs is a seam (an explicit argument of BleServiceTestHarness.callProcessAlert),
  * but freshUwbDistM reads System.currentTimeMillis() directly (no seam; Robolectric may replace this clock).
  * Sample times are chosen against nowMs: T0_MS is the test start time (arbitrary constant), fresh samples
  * use T0_MS+FRESH_OFFSET_MS (future offset), stale samples use T0_MS-STALE_OFFSET_MS (past offset). These offsets
- * decide uwbJudgeModeExclusive, which compares against nowMs, but not freshUwbDistM, so behavior 10, which depends on
- * freshUwbDistM, uses extreme sample times that are stale/fresh under either clock. Millisecond boundary checks
+ * decide uwbJudgeModeExclusive, which compares against nowMs, but not freshUwbDistM, so staleNearDistance_neverRaisesZombieDanger,
+ * which depends on freshUwbDistM, uses extreme sample times that are stale/fresh under either clock. Millisecond boundary checks
  * (window-1/window/window+1) bypass both clocks through judgeMode()/callJudgeUwbOnly() and pass now directly.
  *
  * ── Role pair / device ID design (minimal seams) ────────────────────────────
@@ -107,14 +110,6 @@ class UwbSessionGoldenTest {
     private fun uwbSampleAtMsMapOf(service: BleService): MutableMap<String, Long> =
         ReflectionHelpers.getField(service, "uwbSampleAtMsMap") as MutableMap<String, Long>
 
-    @Suppress("UNCHECKED_CAST")
-    private fun dangerContactStreakMapOf(service: BleService): MutableMap<String, Int> =
-        ReflectionHelpers.getField(service, "dangerContactStreakMap") as MutableMap<String, Int>
-
-    @Suppress("UNCHECKED_CAST")
-    private fun warningContactStreakMapOf(service: BleService): MutableMap<String, Int> =
-        ReflectionHelpers.getField(service, "warningContactStreakMap") as MutableMap<String, Int>
-
     /**
      * uwbDistances is a public UwbRanger property, so it is assigned directly;
      * uwbSampleAtMsMap is a private field, so it is set via reflection.
@@ -155,8 +150,6 @@ class UwbSessionGoldenTest {
     private fun peerUwbSeenMapOf(service: BleService): MutableMap<String, Long> =
         ReflectionHelpers.getField(service, "peerUwbSeenMap") as MutableMap<String, Long>
 
-    private fun asmOf(service: BleService): AlertStateMachine = ReflectionHelpers.getField(service, "asm")
-
     @Suppress("UNCHECKED_CAST")
     private fun oneSecBufferOf(service: BleService): Map<String, *> =
         ReflectionHelpers.getField<Any>(service, "oneSecBuffer") as Map<String, *>
@@ -177,17 +170,17 @@ class UwbSessionGoldenTest {
         BleServiceTestHarness.alertBroadcasts().lastOrNull { it.getStringExtra(BleService.EXTRA_ID) == id }
             ?.getIntExtra(BleService.EXTRA_ALERT_LEVEL, -1)
 
-    // ── Behavior 2: uwbRanger == null → Case B(judgeMode false) ─────────────────────────
+    // ── No UWB ranger → RSSI judging (uwbJudgeModeExclusive false) ──
     @Test
-    fun behavior2_nullRanger_fallsBackToCaseB() {
+    fun noRanger_judgesByRssi() {
         val service = BleServiceTestHarness.newService()
         injectRanger(service, null)
         assertFalse(judgeMode(service, DEVICE_ID, T0_MS))
     }
 
-    // ── Behavior 3+4: injected ranger + fresh sample → processAlert takes the Case A early branch ──
+    // ── Ranger + fresh sample → processAlert takes the UWB-only early branch (Case A) ──
     @Test
-    fun behavior3and4_freshSample_triggersCaseAEarlyReturnInProcessAlert() {
+    fun freshUwbSample_takesJudgingAwayFromRssi() {
         val service = BleServiceTestHarness.newService()
         val ranger = newRanger()
         injectRanger(service, ranger)
@@ -200,19 +193,19 @@ class UwbSessionGoldenTest {
         // never reaches the RSSI-based alertState writes — RSSI never takes part (alertState also stays
         // empty unless judgeUwbOnly is called separately).
         BleServiceTestHarness.callProcessAlert(service, DEVICE_ID, rssi = -50, nowMs = T0_MS)
-        assertEquals(0, dangerContactStreakMapOf(service)[DEVICE_ID] ?: -1)
-        assertEquals(0, warningContactStreakMapOf(service)[DEVICE_ID] ?: -1)
+        assertEquals(0, fieldOf<Map<String, Int>>(service, "dangerContactStreakMap")[DEVICE_ID] ?: -1)
+        assertEquals(0, fieldOf<Map<String, Int>>(service, "warningContactStreakMap")[DEVICE_ID] ?: -1)
         assertNull(BleServiceTestHarness.alertLevelOf(service, DEVICE_ID))
     }
 
-    // ── Behavior 5: judgeUwbOnly over 4 frames — immediate escalation, then a demotion confirmed by 3 samples ──
+    // ── judgeUwbOnly over 4 frames — immediate escalation, then a demotion confirmed by 3 samples ──
     // 2.0m (≤dangM 3.0) → DANGER at once. 6.0m (>warnM+hyst 5.5) ×3 in a row: streak 1 and 2 hold
     // (DANGER kept), streak 3 confirms the demotion (SAFE). Golden DevSettings radii: uwbPairWarnMeters=5.0f,
     // uwbPairDangerMeters=3.0f (BleServiceTestHarness.applyGoldenDevSettings), hyst=UWB_RELEASE_HYST_M=0.5f,
     // demoteStreak=UWB_DEMOTE_STREAK=3 (both internal vals of AlertStateMachine — plain arithmetic, so computed by hand,
     // no record-then-freeze needed).
     @Test
-    fun behavior5_escalateImmediately_demoteAfterConfirmStreak() {
+    fun uwbOnly_escalatesAtOnce_demotesAfterThreeFarSamples() {
         val service = BleServiceTestHarness.newService()
 
         val l1 = callJudgeUwbOnly(service, DEVICE_ID, 2.0f, T0_MS)
@@ -228,12 +221,12 @@ class UwbSessionGoldenTest {
         assertEquals(BleConstants.LEVEL_SAFE, l4)
     }
 
-    // ── Behavior 6: freshness window boundary at 3 points — window-1/window/window+1
+    // ── Freshness window boundary at 3 points — window-1/window/window+1
     // (inclusive `<=` comparison in UwbDistanceManager.uwbJudgeModeExclusive) ──
     // FRESH_WINDOW_MS must be kept in sync by hand with production UwbDistanceManager.UWB_MEAS_FRESH_MS (1_000L) —
     // it is not followed by reflection; this comment only pins down that the two values must be equal.
     @Test
-    fun behavior6_freshnessBoundary_threePoints() {
+    fun uwbSample_staysFreshForExactlyOneSecond() {
         val service = BleServiceTestHarness.newService()
         val ranger = newRanger()
         injectRanger(service, ranger)
@@ -245,9 +238,9 @@ class UwbSessionGoldenTest {
         assertFalse(judgeMode(service, DEVICE_ID, sampleAt + FRESH_WINDOW_MS + 1))
     }
 
-    // ── Behavior 7: no uwbSampleAtMsMap entry → Case B even with a uwbDistances entry ──────
+    // ── No uwbSampleAtMsMap entry → RSSI judging (Case B) even with a uwbDistances entry ──
     @Test
-    fun behavior7_missingSampleTimestamp_fallsBackToCaseB() {
+    fun missingSampleTime_judgesByRssi() {
         val service = BleServiceTestHarness.newService()
         val ranger = newRanger()
         injectRanger(service, ranger)
@@ -256,11 +249,11 @@ class UwbSessionGoldenTest {
         assertFalse(judgeMode(service, DEVICE_ID, T0_MS))
     }
 
-    // ── Behavior 8: uwbDistances entry removed → Case B at once, even with a fresh sample time ──────
+    // ── uwbDistances entry removed → RSSI judging (Case B) at once, even with a fresh sample time ──
     // (Design reason in UwbDistanceManager.uwbJudgeModeExclusive: prevents misjudging on a stale timestamp left behind
     //  alone after an end event removed the pair's entry — uwbJudgeModeExclusive checks containsKey before comparing times.)
     @Test
-    fun behavior8_missingDistanceEntry_fallsBackToCaseBEvenWithFreshTimestamp() {
+    fun missingDistance_judgesByRssiEvenWithFreshSampleTime() {
         val service = BleServiceTestHarness.newService()
         val ranger = newRanger()
         injectRanger(service, ranger)
@@ -270,11 +263,13 @@ class UwbSessionGoldenTest {
         assertFalse(judgeMode(service, DEVICE_ID, T0_MS))
     }
 
-    // ── Behavior 9: stale sample → processAlert does not take the Case A early branch, and the RSSI path
+    // ── Stale sample → processAlert does not take the Case A early branch, and the RSSI path
     //    actually decides the level. Under Case A both streaks would be forced to 0 forever and
-    //    alertLevelOf would stay null forever (contrast with behavior3and4). A stale sample escapes that forcing.
+    //    alertLevelOf would stay null forever (contrast with freshUwbSample_takesJudgingAwayFromRssi). A stale sample escapes
+    //    that forcing. The sample is only 1.5 s old, so this is also the only test that catches processAlert judging
+    //    freshness against the wrong clock (sample times are wall-clock).
     @Test
-    fun behavior9_staleSample_rssiPathDecidesLevel() {
+    fun staleUwbSample_handsJudgingBackToRssi() {
         val service = BleServiceTestHarness.newService()
         val ranger = newRanger()
         injectRanger(service, ranger)
@@ -292,7 +287,7 @@ class UwbSessionGoldenTest {
         assertTrue(BleServiceTestHarness.alertLevelOf(service, DEVICE_ID) != null)
     }
 
-    // ── Behavior 10 (the most important case — blocking zombie DANGER): 1.5m, inside the danger radius, stays in
+    // ── The most important case — blocking zombie DANGER: 1.5m, inside the danger radius, stays in
     //    uwbDistances with only its sample time stale, and RSSI is replayed strong enough to pass the weak-signal early return
     //    (taken below the warning threshold) but weaker than the danger threshold — an input that really reaches processAlert's
     //    UWB escalation block (uwbPrimaryAuthorityEnabled, golden true). With the stale sample no frame may be DANGER; with the
@@ -300,7 +295,7 @@ class UwbSessionGoldenTest {
     //    (Robolectric may replace this clock), so the sample times are extremes that are surely stale/fresh
     //    under either clock. The control turns the kill switch off so Case A (UWB-exclusive judging) does not take the frames.
     @Test
-    fun behavior10_staleNearDangerDistance_neverProducesZombieDanger() {
+    fun staleNearDistance_neverRaisesZombieDanger() {
         val rssi = BleConstants.rssiDanger - 5   // 5dB weaker than the danger threshold, stronger than the warning threshold (-78)
         assertTrue(rssi > BleConstants.rssiWarning)
 
@@ -324,13 +319,13 @@ class UwbSessionGoldenTest {
         assertTrue("신선한 1.5m 표본은 DANGER 로 올려야 한다(대조군) $fresh", fresh.any { it == BleConstants.LEVEL_DANGER })
     }
 
-    // ── Behavior 12: device lost with no RSSI snapshot (cold) — calls BleService's real signal-lost handler
+    // ── Device lost with no RSSI snapshot (cold) — calls BleService's real signal-lost handler
     //    (handleDeviceLost, which the scan callback delegates to). It must call uwbRanger.onDeviceLost (the measured distance goes) and
     //    asm.registry.purge(cold = true): that device's UWB state (sample time, 0x9ABC sighting, demotion streak), its 1 s
     //    average buffer and, being cold, its Kalman, median, EMA and P-EMA state are cleared and SAFE is broadcast for it;
     //    the other device is untouched. Once a fresh sample arrives again, Case A returns at once in that same frame.
     @Test
-    fun behavior12_deviceLost_coldPurgeClearsOnlyThatDevicesState() {
+    fun coldDeviceLoss_clearsOnlyThatDevicesState() {
         val service = BleServiceTestHarness.newService()
         val ranger = newRanger()
         injectRanger(service, ranger)
@@ -369,14 +364,14 @@ class UwbSessionGoldenTest {
         assertTrue(judgeMode(service, DEVICE_ID, resumeAt))
     }
 
-    // ── Behavior 13: device lost with an RSSI snapshot (warm), then rediscovered — the real handler keeps the last RSSI in
+    // ── Device lost with an RSSI snapshot (warm), then rediscovered — the real handler keeps the last RSSI in
     //    filterPreserveMap and purges with cold = false: the per-device judgment state and the 1 s average buffer go, the
     //    Kalman, median, EMA and P-EMA state stays. The first processAlert frame of a rediscovery within 30 s and within
     //    ±filterPreserveBandDb of that RSSI consumes the snapshot, carries on with the kept filters (same Kalman, median
     //    window now holding the old sample and the new one) and grants the one-time Time-Gate waiver. That frame is still
     //    in the median warm-up and returns before the first-detection gate, so the waiver is still pending afterwards.
     @Test
-    fun behavior13_deviceLost_warmSnapshotKeepsFiltersForRediscovery() {
+    fun warmDeviceLoss_keepsFiltersForRediscovery() {
         val service = BleServiceTestHarness.newService()
         val asm = asmOf(service)
         BleServiceTestHarness.callProcessAlert(service, DEVICE_ID, rssi = -50, nowMs = T0_MS)
@@ -437,14 +432,14 @@ class UwbSessionGoldenTest {
         return Triple(scanner, detected, shadowOf(hw))
     }
 
-    // ── Behavior 14: Bluetooth off. Nothing is forgotten on the spot and the radio stays off (no rescan, not even for a
+    // ── Bluetooth off. Nothing is forgotten on the spot and the radio stays off (no rescan, not even for a
     //    beacon change). The scanner's loss sweep keeps retiring devices the normal way: once the BLE timeout passes, a
     //    device without fresh UWB goes (alert cleared, SAFE broadcast); one still UWB-ranged stays, and so does the ranger,
     //    because the session also protects the other phone. It goes when its UWB goes stale, and the status then shows the
     //    fault, not "기기 이탈". So no alert outlives its device; such an alert would keep the siren, overlay and RISK
     //    broadcast going until monitoring stops.
     @Test
-    fun behavior14_bluetoothOff_devicesStillLeaveTheNormalWay() {
+    fun bluetoothOff_devicesStillLeaveTheNormalWay() {
         val service = BleServiceTestHarness.newService()
         val ranger = newRanger()
         val (scanner, detected, hw) = startBtScene(service, ranger)
@@ -479,11 +474,11 @@ class UwbSessionGoldenTest {
         }
     }
 
-    // ── Behavior 15: Bluetooth back on. STATE_ON's restart runs stopBle before applyMode: UWB stops first, so no late sample
+    // ── Bluetooth back on. STATE_ON's restart runs stopBle before applyMode: UWB stops first, so no late sample
     //    can bring a device back, then every device still held (here also the UWB-kept one) is reported lost before the
     //    scanner is dropped. None keeps its alert past the restart.
     @Test
-    fun behavior15_bluetoothBackOn_stopBleLosesEveryHeldDevice() {
+    fun bluetoothBackOn_stopBleLosesEveryHeldDevice() {
         val service = BleServiceTestHarness.newService()
         val (scanner, _, _) = startBtScene(service, newRanger())
         try {
@@ -499,10 +494,10 @@ class UwbSessionGoldenTest {
         }
     }
 
-    // ── Behavior 16: a UWB sample counts only for a device the scanner still tracks. A controller drops a lost peer a moment
+    // ── A UWB sample counts only for a device the scanner still tracks. A controller drops a lost peer a moment
     //    late; without this gate one more sample would bring the device back as a first detection that no loss can end.
     @Test
-    fun behavior16_uwbSample_judgedOnlyWhileTheScannerTracksTheDevice() {
+    fun uwbSample_judgedOnlyWhileTheScannerTracksTheDevice() {
         val service = BleServiceTestHarness.newService()
         val ranger = newRanger()
         injectRanger(service, ranger)

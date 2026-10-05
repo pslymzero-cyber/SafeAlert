@@ -2,6 +2,10 @@ package com.wf11.safealert.ble
 
 import com.wf11.safealert.service.BleService
 import com.wf11.safealert.support.BleServiceTestHarness
+import com.wf11.safealert.support.BleServiceTestHarness.NOISE_4
+import com.wf11.safealert.support.BleServiceTestHarness.kfVelOf
+import com.wf11.safealert.support.BleServiceTestHarness.streakOf
+import com.wf11.safealert.support.BleServiceTestHarness.trackingStateOf
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -12,7 +16,9 @@ import java.io.File
 
 /**
  * [Regression] Stop and slow-departure scenarios — pins the alert release timing to a baseline.
- * The baseline is recorded from actual runs; the test fails here if the decision timing changes.
+ * They guard against the self-lock where the alert of a departed device never clears: s2, s4 and s5b stop just above the
+ * warning line, then drift away slowly and must be released; s1 is the control, a device that stays and keeps its alert.
+ * The baseline (release frame, lock frames) is recorded from actual runs; the test fails here if the decision timing changes.
  * Output: app/build/sim_passby_<name>.log (tab-separated frame table + 1 SUMMARY line),
  *         app/build/sim_passby_SUMMARY.txt (1 SUMMARY line appended).
  */
@@ -105,9 +111,9 @@ class PassByStopSimulationTest {
             val now = T0_MS + i * dtMs
             BleServiceTestHarness.callProcessAlert(service, SIM_DEVICE_ID, rssi[i], nowMs = now)
             level = BleServiceTestHarness.alertLevelOf(service, SIM_DEVICE_ID)
-            val track = simTrackOf(service)
-            wStreak = simStreakOf(service, "warningContactStreakMap")
-            val kfVel = simKfVelOf(service)
+            val track = trackingStateOf(service, SIM_DEVICE_ID)
+            wStreak = streakOf(service, "warningContactStreakMap", SIM_DEVICE_ID)
+            val kfVel = kfVelOf(service, SIM_DEVICE_ID)
             val kfRssi = simKfRssiOf(service)
             val pEma = simPEmaOf(service)
             val receding = simRecedingOf(service)
@@ -158,25 +164,7 @@ class PassByStopSimulationTest {
 private const val T0_MS = 1_000_000L
 private const val FRAME_DT_MS = 1000L
 private const val SIM_DEVICE_ID = "AA:BB:CC:DD:EE:5B"
-private val NOISE = intArrayOf(0, -1, 1, 0)
-private fun n(i: Int) = NOISE[i % 4]
-
-private fun simTrackOf(service: BleService): String {
-    val map = ReflectionHelpers.getField(service, "trackingStateMap") as Map<String, *>
-    return map[SIM_DEVICE_ID]?.toString() ?: "NONE"
-}
-
-@Suppress("UNCHECKED_CAST")
-private fun simStreakOf(service: BleService, fieldName: String): Int {
-    val map = ReflectionHelpers.getField(service, fieldName) as Map<String, Int>
-    return map[SIM_DEVICE_ID] ?: 0
-}
-
-@Suppress("UNCHECKED_CAST")
-private fun simKfVelOf(service: BleService): Double {
-    val map = ReflectionHelpers.getField(service, "kalmanFilters") as Map<String, KalmanFilter>
-    return map[SIM_DEVICE_ID]?.estimatedVel ?: 0.0
-}
+private fun n(i: Int) = NOISE_4[i % 4]
 
 /** Kalman-estimated RSSI (dBm). null if the field is unreachable or the device is not registered -> logged as "-". */
 @Suppress("UNCHECKED_CAST")

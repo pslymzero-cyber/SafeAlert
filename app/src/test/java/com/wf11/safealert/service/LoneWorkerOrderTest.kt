@@ -10,12 +10,13 @@ import org.junit.Test
 
 /*
  * Judgment order (JudgeOrder): the same sensor values and raw power values with their times give the same result
- * whenever the sensor batches arrive and whenever the power confirm tick runs.
+ * whenever the sensor batches arrive and whenever the power confirm tick runs. The power wait rule itself:
+ * LoneWorkerPowerWaitTest. Words (held, sticky, floor): LoneWorkerTestKit.
  */
 class LoneWorkerOrderTest : RestartKit() {
 
     /** Charging, carried by walking-shaped windows (no step sensor), still check open at 200.95 s: SOS due 320.95 s. */
-    private fun heldUnplug(): LoneWorkerLogic = newLogic(charging = true).apply {
+    private fun chargingStillCheckOpen(): LoneWorkerLogic = newLogic(charging = true).apply {
         stepsAvailable = false
         strongWindows(4_000, 8_000, 12_000, 16_000, 20_000)
         sensed(200_000)
@@ -39,8 +40,8 @@ class LoneWorkerOrderTest : RestartKit() {
             Triple(confirm, 320_000L..322_950L, listOf("SOS still @322950", "end SOS still WAIT")),
             Triple(drop, 320_000L..322_500L, listOf("SOS still @322500", "end SOS still NONE")))) {
             val feeds = (sensors + power).sortedBy { it.at }
-            val live = heldUnplug().drive(200_950, feeds, 324_000)
-            val later = heldUnplug().drive(200_950, feeds, 324_000, late, late.last)
+            val live = chargingStillCheckOpen().drive(200_950, feeds, 324_000)
+            val later = chargingStillCheckOpen().drive(200_950, feeds, 324_000, late, late.last)
             assertEquals(listOf("CHECKING still @200950") + want, live)
             assertEquals(live, later)
         }
@@ -51,9 +52,9 @@ class LoneWorkerOrderTest : RestartKit() {
         for (plugged in listOf(true, false)) {
             val m = "plugged=$plugged"
             val old = if (plugged) newLogic(carried = true) else carriedWhileCharging()
-            val s = saved(old, 100_000, 5_000, 300_000)
+            val s = saved(old, savedAt = 100_000, now = 5_000, wallGap = 300_000)
             assertTrue(m, s.carried && s.stillBase + old.stillMs < 5_000)
-            val l = restart(old, 100_000, 5_000, 300_000, charging = plugged)
+            val l = restart(old, savedAt = 100_000, now = 5_000, wallGap = 300_000, charging = plugged)
             assertEquals(m, Mode.WATCHING, l.seenAt(5_000 + RestartHold.POWER_HOLD_MS + 1_000))
             assertEquals(m, if (plugged) Rest.DOCKED else Rest.WAIT, l.rest)
         }
@@ -120,8 +121,8 @@ class LoneWorkerOrderTest : RestartKit() {
         assertEquals(180_000L, l.nextCheckAt(5_000))
     }
 
-    /** A sticky check that only confirms a stable change still asks the monitor for a tick. */
-    @Test fun sticky_call_that_only_confirms_asks_for_a_tick() {
+    /** The 10 s power poll (sticky) that only confirms a stable change still asks the monitor for a tick. */
+    @Test fun power_poll_that_only_confirms_a_change_asks_for_a_tick() {
         val l = newLogic(carried = true)
         l.powerRaw(true, 10_000)
         assertTrue(l.powerRaw(true, 12_000, sticky = true))
@@ -156,11 +157,11 @@ class LoneWorkerOrderTest : RestartKit() {
     }
 
     /**
-     * Held check rows (restart at 5 s with the other power, the saved still check held): before = the restart raw value
+     * Restored check rows (restart at 5 s with the other power, the saved still check held): before = the restart raw value
      * is the change (confirmed: D = 7 s, dropped at 6.2 s: D = 8.05 s); after = the restart value bounces back at 6.2 s
      * (D = 8.05 s) and a real change starts at 8.55 s (dropped at 9.25 s).
      */
-    private fun held(plug: Boolean, after: Boolean, drop: Boolean): Row {
+    private fun restoredRow(plug: Boolean, after: Boolean, drop: Boolean): Row {
         val old = if (plug) newLogic(carried = true).apply { seenAt(180_000) } else carriedWhileCharging().apply { seenAt(190_000) }
         val savedAt = if (plug) 181_000L else 191_000L
         val power = when {
@@ -171,7 +172,7 @@ class LoneWorkerOrderTest : RestartKit() {
         }
         val d = if (!after && !drop) 7_000L else 8_050L
         val resolve = when { !after && !drop -> 7_050L; !after -> 6_200L; !drop -> 10_600L; else -> 9_250L }
-        return Row({ restart(old, savedAt, 5_000, 20_000, charging = plug) }, 5_000, d, power, resolve)
+        return Row({ restart(old, savedAt = savedAt, now = 5_000, wallGap = 20_000, charging = plug) }, 5_000, d, power, resolve)
     }
 
     /**
@@ -197,14 +198,15 @@ class LoneWorkerOrderTest : RestartKit() {
     /**
      * Runs the 16 rows of kind live and late (sensor data from D - 1.5 s held back until the power wait resolves).
      * P <= D rows give the same record with times, P > D rows the same final state. want = plug then unplug, each
-     * "before confirm|before drop|after confirm|after drop" with "no steps/steps" per cell.
+     * "before confirm|before drop|after confirm|after drop" with "no steps/steps" per cell. A cell is the end state:
+     * W = WATCHING, C = CHECKING, S = SOS, then the trigger, then the Rest (NONE = carried, DOCKED, WAIT).
      */
     private fun table(kind: String, want: List<String>) {
         for ((i, plug) in listOf(true, false).withIndex()) {
             val cells = want[i].split("|")
             for ((j, side) in listOf(false to false, false to true, true to false, true to true).withIndex()) {
                 val (after, drop) = side
-                val r = if (kind == "held") held(plug, after, drop) else row(kind, plug, after, drop)
+                val r = if (kind == "restored") restoredRow(plug, after, drop) else row(kind, plug, after, drop)
                 for ((k, walk) in listOf(false, true).withIndex()) {
                     val name = "$kind/${if (plug) "plug" else "unplug"}/${if (after) "after" else "before"}/" +
                         "${if (drop) "drop" else "confirm"}/${if (walk) "walk" else "no"}"
@@ -228,7 +230,7 @@ class LoneWorkerOrderTest : RestartKit() {
         "W DOCKED/W DOCKED|C fall NONE/W NONE|W DOCKED/W DOCKED|C fall NONE/W NONE",
         "C fall WAIT/W NONE|C fall DOCKED/W DOCKED|C fall WAIT/W NONE|C fall DOCKED/W DOCKED"))
 
-    @Test fun held_check_is_the_same_for_every_delivery() = table("held", listOf(
+    @Test fun restored_check_held_at_restart_is_the_same_for_every_delivery() = table("restored", listOf(
         "W DOCKED/W DOCKED|C still NONE/W NONE|W DOCKED/W DOCKED|C still NONE/W NONE",
         "C still WAIT/W NONE|C still NONE/W NONE|C still WAIT/W NONE|C still NONE/W NONE"))
 

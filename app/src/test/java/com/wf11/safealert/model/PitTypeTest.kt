@@ -22,18 +22,12 @@ class PitTypeTest {
     }
 
     /**
-     * the picked equipment decides the role, so every type must map to a real alert category.
-     * An unmapped type would start the service with a radius that does not match the machine.
+     * The picked equipment decides the role, so every type is a forklift or an EPJ, never anything else (an unmapped
+     * or reserved category would start the service with a radius that does not match the machine). The EPJ class
+     * (EP, WK) keeps the legacy EPJ category: payload, EPJ biases and radii all key off this int.
      */
     @Test
-    fun everyTypeMapsToAnAlertCategory() {
-        val valid = setOf(BleConstants.CAT_FORKLIFT, BleConstants.CAT_EPJ)
-        PitType.values().forEach { assertTrue(it.name, it.category in valid) }
-    }
-
-    /** The EPJ class (EP, WK) keeps the legacy EPJ category: payload, EPJ biases and radii all key off this int. */
-    @Test
-    fun categoryAssignment() {
+    fun everyTypeIsAForkliftOrAnEpj() {
         assertEquals(
             listOf("CB", "RT", "HR", "OP", "ST", "TT"),
             PitType.values().filter { it.category == BleConstants.CAT_FORKLIFT }.map { it.code }
@@ -44,6 +38,11 @@ class PitTypeTest {
         )
         // walkers carry no equipment - they never reach the picker
         assertTrue(PitType.values().none { it.category == BleConstants.CAT_WALKER })
+        assertEquals(
+            emptyList<String>(),
+            PitType.values().filter { it.category != BleConstants.CAT_FORKLIFT && it.category != BleConstants.CAT_EPJ }
+                .map { it.code }
+        )
     }
 
     @Test

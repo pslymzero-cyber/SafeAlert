@@ -10,6 +10,20 @@ import java.io.File
  * Shared helpers for the lone worker logic tests. Times are ms on one clock. Accelerometer windows
  * are 1 s long and end on whole seconds; a step at t is covered by the window that ends at the next
  * whole second after t.
+ *
+ * Words used across these tests:
+ *  - rule 1 / rule 2: the fall rule / the no-motion (still) rule.
+ *  - Rest NONE / DOCKED / WAIT: carried (the still count runs) / lying on a charger (no still count) /
+ *    waiting for the first distinct motion after a start or an unplug.
+ *  - distinct motion: 5 walking-shaped steps within 10 s (no step sensor: a 3 s run of walking-shaped windows).
+ *  - floor: the time after which steps or windows count toward a distinct motion (a start, an unplug edge, the
+ *    opening of a check); a step exactly at the floor does not count.
+ *  - power wait: a deadline waits while a raw power change that started at or before it is not confirmed yet.
+ *  - held check: a check restored after a service restart, kept hidden until the restart power is confirmed.
+ *  - bounce: the charger contact flips back and forth around a restart.
+ *  - sticky: the 10 s power poll (powerRaw(sticky = true)), as opposed to a power broadcast.
+ * Timing constants: PowerDebounce.DEBOUNCE_MS = 2 s, PowerDebounce.CONFIRM_MS = 2.05 s,
+ * RestartHold.POWER_HOLD_MS = 3.05 s, LoneWorkerLogic.LATE_MS = 6 s, LoneWorkerLogic.UNPLUG_FALL_MS = 10 s.
  */
 
 /** carried = not charging and already past the first-motion wait. */
@@ -18,6 +32,10 @@ internal fun newLogic(charging: Boolean = false, zoneInside: Boolean = false, ca
         start(0L, zoneInside, charging)
         if (carried) sensorSilent(0L)
     }
+
+/** Carried, with the still count pushed out to 1 h so only the fall rule acts. */
+internal fun fallRuleOnly(charging: Boolean = false, zoneInside: Boolean = false) =
+    newLogic(charging, zoneInside, carried = true).apply { stillMs = 3_600_000L }
 
 /**
  * The raw power changes to on at `at` and stays for the debounce; the monitor's confirm tick (CONFIRM_MS later)
@@ -129,9 +147,35 @@ internal fun bothOrders(body: (late: Boolean, m: String) -> Unit) {
 /** Acknowledge every peer entry (the [OK] button on all of them). */
 internal fun LoneWorkerLogic.ackAll(now: Long) = silencePeers(now, peers.associate { it.id to it.epId })
 
+/** Acknowledge the listed peer items (item id to episode id). */
+internal fun LoneWorkerLogic.ack(now: Long, vararg targets: Pair<String, String>) = silencePeers(now, mapOf(*targets))
+
+/** The one peer entry of bleId id (and episode ep when given). */
+internal fun LoneWorkerLogic.peer(id: String, ep: Int? = null) =
+    peers.single { it.bleId == id && (ep == null || it.episode == ep) }
+
+/**
+ * One server SOS record (role WALKER, trigger still) received at now. resolvedAt and created are server times,
+ * converted with serverNow (or the wall clock wall when serverNow is unknown) like the monitor does.
+ */
+internal fun LoneWorkerLogic.srv(
+    key: String, id: String, ep: Int, active: Boolean, created: Long, now: Long,
+    name: String = "n", beacon: String = "",
+    resolvedAt: Long = 0L, serverNow: Long? = null, wall: Long = 0L, auto: Boolean = false
+) = onPeerServer(
+    LoneWorkerPeers.ServerRec(key, id, name, "WALKER", "still", beacon, created, active, ep,
+        LoneWorkerPeers.resolvedLocalMs(resolvedAt, serverNow, wall, now),
+        LoneWorkerPeers.startLocalMs(created, serverNow, now), auto),
+    now
+)
+
+/**
+ * A monitor tick at t with no new sensor data: a deadline at or before t that the data does not cover yet waits
+ * (at most LATE_MS).
+ */
 internal fun LoneWorkerLogic.modeAt(t: Long): Mode { tick(t); return mode }
 
-/** Sensor data covers t, then tick at t. */
+/** Sensor data up to t has arrived (sensed), then a tick at t: every deadline up to t is judged now. */
 internal fun LoneWorkerLogic.seenAt(t: Long): Mode { sensed(t); return modeAt(t) }
 
 /** Charging, then carried by 10 steps ending at 10 s. */
@@ -143,6 +187,29 @@ internal fun LoneWorkerLogic.peerSiren(from: Long, to: Long, id: String = "P") {
         onPeerBle(id, true, t)
         assertEquals(Mode.WATCHING, seenAt(t))
     }
+}
+
+// -- 50 Hz accelerometer traces: m/s^2 with gravity, one sample every 20 ms --
+
+internal val UPRIGHT_STILL = floatArrayOf(0f, 0f, 9.81f)
+internal val LYING_STILL = floatArrayOf(9.81f, 0f, 0f)
+/** The low G of a free fall. */
+internal val FREE_FALL_SAMPLE = floatArrayOf(0f, 0f, 1.5f)
+/** About 3 G: an impact. */
+internal val IMPACT_SAMPLE = floatArrayOf(0f, 0f, 30f)
+
+/** Feeds f(t) every 20 ms for from <= t < to; returns every signal other than NONE with its time. */
+internal fun MotionAnalyzer.feed(from: Long, to: Long, masked: Boolean = false,
+                                 f: (Long) -> FloatArray): List<Pair<Long, MotionAnalyzer.Signal>> {
+    val out = ArrayList<Pair<Long, MotionAnalyzer.Signal>>()
+    var t = from
+    while (t < to) {
+        val v = f(t)
+        val s = add(t, v[0], v[1], v[2], masked)
+        if (s != MotionAnalyzer.Signal.NONE) out += t to s
+        t += 20
+    }
+    return out
 }
 
 /** In-memory SosKv for tests. puts counts put() calls. */
@@ -225,7 +292,7 @@ abstract class RestartKit {
      * The raw power at the restart (now) bounces back to the saved value at 5.5 s and to now again at 5.8 s;
      * with gapTick the logic ticks at 5.6 s in between. Watching throughout.
      */
-    protected fun LoneWorkerLogic.rebounce(now: Boolean, gapTick: Boolean, m: String) {
+    protected fun LoneWorkerLogic.bounceRestartPower(now: Boolean, gapTick: Boolean, m: String) {
         assertEquals(m, Mode.WATCHING, modeAt(5_000))
         powerRaw(!now, 5_500)
         if (gapTick) assertEquals(m, Mode.WATCHING, modeAt(5_600))

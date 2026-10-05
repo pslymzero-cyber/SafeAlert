@@ -57,12 +57,15 @@ class MountedStillTest {
         l.opensAt(2_480_000)
     }
 
-    @Test fun turn_closes_mounted_still_check() {
+    /** A mounted still window closes on a turn or on [OK] (a 3 s shake: strong_run_closes_mounted_still_check). */
+    @Test fun turn_or_ack_closes_mounted_still_check() {
         val l = mounted()
         l.opensAt(180_000)
         l.onTurn(200_000)
         assertEquals(Mode.WATCHING, l.mode)
         l.opensAt(380_000)
+        assertTrue(l.ackWorking(390_000))
+        assertEquals(Mode.WATCHING, l.mode)
     }
 
     @Test fun strong_run_closes_mounted_still_check() {
@@ -91,13 +94,6 @@ class MountedStillTest {
         c.opensAt(180_000)
         c.stepsWithoutRun()
         assertEquals(Mode.WATCHING, c.mode)
-    }
-
-    @Test fun ack_closes_mounted_still_check() {
-        val l = mounted()
-        l.opensAt(180_000)
-        assertTrue(l.ackWorking(190_000))
-        assertEquals(Mode.WATCHING, l.mode)
     }
 
     @Test fun settled_zone_counts_nothing_when_mounted() {

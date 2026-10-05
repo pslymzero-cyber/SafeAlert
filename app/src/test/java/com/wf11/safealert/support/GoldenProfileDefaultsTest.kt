@@ -17,7 +17,10 @@ import org.robolectric.RuntimeEnvironment
 @RunWith(RobolectricTestRunner::class)
 class GoldenProfileDefaultsTest {
 
-    /** Side-effect flags the profile switches off on purpose: no vibration, sound or Firebase alert writes in tests. */
+    /**
+     * Side-effect flags the profile switches off on purpose: no vibration, sound or Firebase alert writes in tests.
+     * The profile pins a fourth flag off, uwbProbeUploadEnabled, but its shipped default is already off, so it is no deviation.
+     */
     private val deliberateDeviations = setOf("autoSaveAlerts", "soundEnabled", "vibrationEnabled")
 
     private val valueTypes: Set<Class<*>> = listOf(Int::class, Long::class, Float::class, Double::class, Boolean::class)

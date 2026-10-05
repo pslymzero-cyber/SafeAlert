@@ -38,14 +38,16 @@ class LoneWorkerHeartbeatTest {
     }
 
     private val min = 60_000L
-    private var t = 100_000L
-    private val r = Fake()
-    private val kv = Kv()
-    private val hb = LoneWorkerHeartbeat(r, kv) { t }
-    private val s0 = r.server
 
-    private fun adv(ms: Long) { t += ms; r.server += ms }
-    private fun gaps() = r.writes.filter { w -> w.fields.keys.any { it.startsWith("g/") } }
+    // The single-process tests use one rig and one heartbeat; restart tests make their own Rig and call hb() again.
+    private val rig = Rig()
+    private val r = rig.r
+    private val kv = rig.kv
+    private val s0 = rig.s0
+    private val hb = rig.hb()
+
+    private fun adv(ms: Long) = rig.adv(ms)
+    private fun gaps() = rig.gaps()
 
     @Test fun session_start_refresh_gap_end() {
         hb.tick(true, "WALKER")

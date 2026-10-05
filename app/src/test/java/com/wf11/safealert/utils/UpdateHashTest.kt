@@ -1,6 +1,5 @@
-package com.wf11.safealert.support
+package com.wf11.safealert.utils
 
-import com.wf11.safealert.utils.UpdateManager
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue

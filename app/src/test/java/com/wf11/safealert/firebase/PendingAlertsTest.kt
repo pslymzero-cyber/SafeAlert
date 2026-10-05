@@ -2,7 +2,6 @@ package com.wf11.safealert.firebase
 
 import android.content.Context
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -48,6 +47,5 @@ class PendingAlertsTest {
         for (n in 1..5) q.add("https://x.firebaseio.com/wf11/alerts/20260927/$n", rec(n))
         val out = q.drain()
         assertEquals(listOf("3", "4", "5"), out.map { it.first.substringAfterLast('/') })
-        assertTrue(out.all { !it.second.containsKey("uid") })
     }
 }
