@@ -5,7 +5,6 @@ import com.wf11.safealert.model.BeaconProfile
 import com.wf11.safealert.utils.BeaconRegistry
 import com.wf11.safealert.utils.DevSettings
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -49,30 +48,36 @@ class BeaconFullIdTest {
     // BleScanner MAC path: colons removed, 12 hex
     private fun macFullId(m: String) = BleConstants.WALKER_PREFIX + "BEA_" + m.replace(":", "")
 
+    /**
+     * Every lookup goes through the exact full-key match: on each of BleScanner's three paths the visitor flag, profile
+     * type, label and RSSI offset come from the exactly matching profile, a visitor beacon sharing the equipment beacon's
+     * first 8 characters is told apart, and an unregistered beacon is equipment labelled with its short key.
+     * Each row starts from a freshly built registry; a null column is not checked for that row.
+     */
     @Test
-    fun iBeacon_samePrefix_equipAndVisitorJudgedSeparately() {
-        assertFalse(BeaconRegistry.isVisitorBeacon(iBeaconFullId(equipUuid)))
-        assertTrue(BeaconRegistry.isVisitorBeacon(iBeaconFullId(visitorUuid)))
-    }
-
-    @Test
-    fun mac_judgedByExactMatch() {
-        assertFalse(BeaconRegistry.isVisitorBeacon(macFullId(mac)))
-        assertEquals("MAC", BeaconRegistry.findProfileByFullId(macFullId(mac))?.type)
-    }
-
-    @Test
-    fun label_shownOnAllThreePaths() {
-        assertEquals("지게차비콘", BeaconRegistry.labelForFullId(iBeaconFullId(equipUuid)))
-        assertEquals("방문자비콘", BeaconRegistry.labelForFullId(serviceFullId(visitorUuid)))
-        assertEquals("MAC비콘", BeaconRegistry.labelForFullId(macFullId(mac)))
-    }
-
-    @Test
-    fun rssiOffset_fromExactProfile() {
-        assertEquals(-7, BeaconRegistry.getRssiOffsetForFullId(iBeaconFullId(equipUuid)))
-        assertEquals(3, BeaconRegistry.getRssiOffsetForFullId(serviceFullId(visitorUuid)))
-        assertEquals(5, BeaconRegistry.getRssiOffsetForFullId(macFullId(mac)))
+    fun fullId_resolvesItsExactProfile_onEveryScanPath() {
+        class Row(
+            val label: String, val fullId: String,
+            val unregistered: Boolean = false, val type: String? = null, val visitor: Boolean? = null,
+            val shownLabel: String? = null, val rssiOffset: Int? = null,
+        )
+        val rows = listOf(
+            Row("row 1 iBeacon equipment (shares the visitor's 8-char prefix)", iBeaconFullId(equipUuid),
+                visitor = false, shownLabel = "지게차비콘", rssiOffset = -7),
+            Row("row 2 iBeacon visitor (same prefix)", iBeaconFullId(visitorUuid), visitor = true),
+            Row("row 3 Service UUID visitor", serviceFullId(visitorUuid), shownLabel = "방문자비콘", rssiOffset = 3),
+            Row("row 4 MAC by exact match", macFullId(mac), type = "MAC", visitor = false, shownLabel = "MAC비콘", rssiOffset = 5),
+            Row("row 5 unregistered iBeacon treated as equipment", iBeaconFullId("FDA50693-FFFF-FFFF-FFFF-FFFFFFFFFFFF"),
+                unregistered = true, visitor = false, shownLabel = "BEA_FDA50693"),
+        )
+        for (r in rows) {
+            setUp()
+            if (r.unregistered) assertNull("${r.label}: profile", BeaconRegistry.findProfileByFullId(r.fullId))
+            r.type?.let { assertEquals("${r.label}: type", it, BeaconRegistry.findProfileByFullId(r.fullId)?.type) }
+            r.visitor?.let { assertEquals("${r.label}: visitor", it, BeaconRegistry.isVisitorBeacon(r.fullId)) }
+            r.shownLabel?.let { assertEquals("${r.label}: label", it, BeaconRegistry.labelForFullId(r.fullId)) }
+            r.rssiOffset?.let { assertEquals("${r.label}: rssiOffset", it, BeaconRegistry.getRssiOffsetForFullId(r.fullId)) }
+        }
     }
 
     @Test
@@ -81,14 +86,6 @@ class BeaconFullIdTest {
         assertEquals(macFullId(mac), BeaconRegistry.shortFullId(macFullId(mac)))
         val walker = BleConstants.WALKER_PREFIX + "1234"
         assertEquals(walker, BeaconRegistry.shortFullId(walker))
-    }
-
-    @Test
-    fun unregistered_treatedAsEquipment() {
-        val unknown = iBeaconFullId("FDA50693-FFFF-FFFF-FFFF-FFFFFFFFFFFF")
-        assertNull(BeaconRegistry.findProfileByFullId(unknown))
-        assertFalse(BeaconRegistry.isVisitorBeacon(unknown))
-        assertEquals("BEA_FDA50693", BeaconRegistry.labelForFullId(unknown))
     }
 
     // One corrupt entry (missing label) does not take the others down (zone beacons included)

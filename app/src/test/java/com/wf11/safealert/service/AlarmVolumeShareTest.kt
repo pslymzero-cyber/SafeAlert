@@ -13,27 +13,40 @@ class AlarmVolumeShareTest {
         assertEquals(7, AlarmVolumeShare.collisionTarget(7, 3, true))
     }
 
-    @Test
-    fun restore_when_still_ours_and_collision_old() {
-        assertEquals(Restore.RESTORE, AlarmVolumeShare.restoreAction(cur = 7, orig = 3, ours = 7, nowMs = 100_000, collisionAtMs = 89_000))
-    }
+    /** One restoreAction case. isFinal = null calls without the argument, so its default stays exercised. */
+    private class RestoreRow(
+        val label: String, val cur: Int?, val orig: Int, val ours: Int, val nowMs: Long, val collisionAtMs: Long,
+        val isFinal: Boolean?, val want: Restore
+    )
 
+    /**
+     * Restore only while the volume is still the one we set and both the original and ours are known; within the
+     * collision hold wait, unless this is the final stop.
+     */
     @Test
-    fun drop_when_not_ours_or_unknown() {
-        assertEquals(Restore.DROP, AlarmVolumeShare.restoreAction(cur = 6, orig = 3, ours = 7, nowMs = 100_000, collisionAtMs = 0))
-        assertEquals(Restore.DROP, AlarmVolumeShare.restoreAction(cur = 3, orig = 3, ours = 3, nowMs = 100_000, collisionAtMs = 0))
-        assertEquals(Restore.DROP, AlarmVolumeShare.restoreAction(cur = null, orig = 3, ours = 7, nowMs = 100_000, collisionAtMs = 0))
-        assertEquals(Restore.DROP, AlarmVolumeShare.restoreAction(cur = 7, orig = 3, ours = -1, nowMs = 100_000, collisionAtMs = 0))
-        assertEquals(Restore.DROP, AlarmVolumeShare.restoreAction(cur = 7, orig = -1, ours = 7, nowMs = 100_000, collisionAtMs = 0))
-        // someone else changed it during a recent collision: drop, never wait
-        assertEquals(Restore.DROP, AlarmVolumeShare.restoreAction(cur = 5, orig = 3, ours = 7, nowMs = 100_000, collisionAtMs = 99_000))
-    }
-
-    @Test
-    fun final_stop_restores_even_within_collision_hold() {
-        assertEquals(Restore.RESTORE, AlarmVolumeShare.restoreAction(cur = 7, orig = 3, ours = 7, nowMs = 100_000, collisionAtMs = 99_000, final = true))
-        assertEquals(Restore.WAIT, AlarmVolumeShare.restoreAction(cur = 7, orig = 3, ours = 7, nowMs = 100_000, collisionAtMs = 99_000, final = false))
-        assertEquals(Restore.WAIT, AlarmVolumeShare.restoreAction(cur = 7, orig = 3, ours = 7, nowMs = 100_000, collisionAtMs = 97_000))
-        assertEquals(Restore.DROP, AlarmVolumeShare.restoreAction(cur = 5, orig = 3, ours = 7, nowMs = 100_000, collisionAtMs = 99_000, final = true))
+    fun restore_only_while_still_ours_and_after_the_collision_hold_unless_final() {
+        val rows = listOf(
+            RestoreRow("still ours, collision 11 s ago", 7, 3, 7, 100_000, 89_000, null, Restore.RESTORE),
+            RestoreRow("changed by someone else", 6, 3, 7, 100_000, 0, null, Restore.DROP),
+            RestoreRow("volume back at the original", 3, 3, 3, 100_000, 0, null, Restore.DROP),
+            RestoreRow("current volume unknown", null, 3, 7, 100_000, 0, null, Restore.DROP),
+            RestoreRow("our volume unknown", 7, 3, -1, 100_000, 0, null, Restore.DROP),
+            RestoreRow("original volume unknown", 7, -1, 7, 100_000, 0, null, Restore.DROP),
+            // someone else changed it during a recent collision: drop, never wait
+            RestoreRow("changed by someone else 1 s after a collision", 5, 3, 7, 100_000, 99_000, null, Restore.DROP),
+            RestoreRow("final stop 1 s after a collision", 7, 3, 7, 100_000, 99_000, true, Restore.RESTORE),
+            RestoreRow("non-final stop 1 s after a collision", 7, 3, 7, 100_000, 99_000, false, Restore.WAIT),
+            RestoreRow("stop 3 s after a collision", 7, 3, 7, 100_000, 97_000, null, Restore.WAIT),
+            RestoreRow("final stop, changed by someone else", 5, 3, 7, 100_000, 99_000, true, Restore.DROP)
+        )
+        for ((i, r) in rows.withIndex()) {
+            val got = when (val f = r.isFinal) {
+                null -> AlarmVolumeShare.restoreAction(
+                    cur = r.cur, orig = r.orig, ours = r.ours, nowMs = r.nowMs, collisionAtMs = r.collisionAtMs)
+                else -> AlarmVolumeShare.restoreAction(
+                    cur = r.cur, orig = r.orig, ours = r.ours, nowMs = r.nowMs, collisionAtMs = r.collisionAtMs, final = f)
+            }
+            assertEquals("row $i ${r.label}", r.want, got)
+        }
     }
 }

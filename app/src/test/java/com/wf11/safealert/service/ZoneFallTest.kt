@@ -55,13 +55,15 @@ class ZoneFallTest {
         return l
     }
 
-    private fun assertDiscarded(l: LoneWorkerLogic) {
-        for (t in 130_000L..400_000L step 10_000L) assertEquals(Mode.WATCHING, l.seenAt(t))
+    /** No check for the fall at 100 s up to 400 s; m (a row label) prefixes the assertion messages. */
+    private fun assertDiscarded(l: LoneWorkerLogic, m: String? = null) {
+        for (t in 130_000L..400_000L step 10_000L) assertEquals(m, Mode.WATCHING, l.seenAt(t))
     }
 
-    private fun assertChecking(l: LoneWorkerLogic) {
-        assertEquals(Mode.CHECKING, l.seenAt(130_000))
-        assertEquals("fall", l.trigger)
+    /** The fall at 100 s opens its check at 130 s; m (a row label) prefixes the assertion messages. */
+    private fun assertChecking(l: LoneWorkerLogic, m: String? = null) {
+        assertEquals(m, Mode.CHECKING, l.seenAt(130_000))
+        assertEquals(m, "fall", l.trigger)
     }
 
     // -- analyzer shape --
@@ -96,22 +98,28 @@ class ZoneFallTest {
 
     // -- logic inside / outside the zone --
 
-    @Test fun zone_short_free_fall_discarded() = assertDiscarded(zoneFall(FallShape(60, 3.0, 90.0)))
+    /**
+     * Inside a settled zone a fall counts only when its drop, impact and tilt reach the zone settings; an unknown tilt
+     * counts as reached. Rows: the fall shape, the zone settings, whether the fall counts.
+     */
+    @Test fun zone_fall_counts_only_past_the_drop_impact_and_tilt_settings() {
+        class Row(val name: String, val shape: FallShape, val zone: ZoneFall, val counts: Boolean)
+        for (r in listOf(
+            Row("drop 60 ms", FallShape(60, 3.0, 90.0), ZoneFall(), false),
+            Row("tilt 50 deg", FallShape(250, 3.0, 50.0), ZoneFall(), false),
+            Row("tilt unknown", FallShape(250, 3.0, null), ZoneFall(), true),
+            Row("impact 3.0 G, setting 4.0 G", FallShape(300, 3.0, 90.0), ZoneFall(impactG = 4.0), false),
+            Row("impact 4.2 G, setting 4.0 G", FallShape(300, 4.2, 90.0), ZoneFall(impactG = 4.0), true))) {
+            val l = zoneFall(r.shape, r.zone)
+            if (r.counts) assertChecking(l, r.name) else assertDiscarded(l, r.name)
+        }
+    }
 
     @Test fun zone_full_fall_counts() {
         val l = zoneFall(FallShape(250, 3.0, 70.0))
         assertTrue(l.zoneSettled)
         assertChecking(l)
         assertEquals(Mode.SOS, l.seenAt(190_000))
-    }
-
-    @Test fun zone_small_tilt_discarded() = assertDiscarded(zoneFall(FallShape(250, 3.0, 50.0)))
-
-    @Test fun zone_unknown_posture_counts() = assertChecking(zoneFall(FallShape(250, 3.0, null)))
-
-    @Test fun zone_impact_threshold_from_settings() {
-        assertDiscarded(zoneFall(FallShape(300, 3.0, 90.0), ZoneFall(impactG = 4.0)))
-        assertChecking(zoneFall(FallShape(300, 4.2, 90.0), ZoneFall(impactG = 4.0)))
     }
 
     // -- drop length, posture, zone state at the impact, zone impact threshold --
@@ -144,13 +152,24 @@ class ZoneFallTest {
         assertEquals("fall", l.trigger)
     }
 
-    @Test fun charging_in_zone_at_impact_ignored_after_leaving() {
-        val l = fallRuleOnly(charging = true)
-        l.onZone(true, 5_000)
-        // inside at the impact; the exit is confirmed 15 s after it, so the inside rule still applies
-        l.onZone(false, 21_000)
-        l.onAccident(6_000, FallShape(400, 5.0, 90.0))
-        for (t in 40_000L..400_000L step 10_000L) assertEquals(Mode.WATCHING, l.seenAt(t))
+    /**
+     * Charging and inside the zone at the impact (6 s) ignores the fall, also when the exit is confirmed 15 s after it;
+     * an exit confirmed within 12 s uses the outside rule, so the fall counts.
+     */
+    @Test fun charging_in_zone_at_the_impact_is_ignored_unless_the_exit_is_within_12s() {
+        for ((exit, counts) in listOf(8_000L to true, 21_000L to false)) {
+            val m = "exit at $exit"
+            val l = fallRuleOnly(charging = true)
+            l.onZone(true, 5_000)
+            l.onZone(false, exit)
+            l.onAccident(6_000, FallShape(400, 5.0, 90.0))
+            if (counts) {
+                assertEquals(m, Mode.CHECKING, l.seenAt(36_000))
+                assertEquals(m, "fall", l.trigger)
+            } else {
+                for (t in 40_000L..400_000L step 10_000L) assertEquals(m, Mode.WATCHING, l.seenAt(t))
+            }
+        }
     }
 
     @Test fun zone_history_keeps_state_in_effect() {
@@ -190,33 +209,21 @@ class ZoneFallTest {
 
     private val short = FallShape(60, 2.6, 46.0)
 
-    @Test fun zone_exit_confirmed_within_12s_uses_outside_rule() {
+    /**
+     * A zone exit confirmed within EXIT_LAG_MS (12 s) after the impact uses the outside rule, so the short fall counts;
+     * an exit confirmed later keeps the inside rule.
+     */
+    @Test fun zone_exit_within_12s_of_the_impact_uses_the_outside_rule() {
         assertEquals(12_000L, ZoneHistory.EXIT_LAG_MS)
         assertTrue(ZoneHistory.EXIT_LAG_MS <= MotionAnalyzer.POST_END_MS)
-        for (exit in 108_000L..112_000L step 1_000L) {
+        for ((exit, outside) in (108_000L..112_000L step 1_000L).map { it to true } + (113_000L to false)) {
+            val m = "exit at $exit"
             val l = fallRuleOnly(zoneInside = true)
             l.tick(60_000)
             l.onZone(false, exit)
             l.onAccident(100_000, short)
-            assertChecking(l)
+            if (outside) assertChecking(l, m) else assertDiscarded(l, m)
         }
-    }
-
-    @Test fun zone_exit_confirmed_after_12s_keeps_inside_rule() {
-        val l = fallRuleOnly(zoneInside = true)
-        l.tick(60_000)
-        l.onZone(false, 113_000)
-        l.onAccident(100_000, short)
-        assertDiscarded(l)
-    }
-
-    @Test fun charging_in_zone_exit_within_12s_uses_outside_rule() {
-        val l = fallRuleOnly(charging = true)
-        l.onZone(true, 5_000)
-        l.onZone(false, 8_000)
-        l.onAccident(6_000, FallShape(400, 5.0, 90.0))
-        assertEquals(Mode.CHECKING, l.seenAt(36_000))
-        assertEquals("fall", l.trigger)
     }
 
     /** The restored zone is held until 10 s; the FALL (processed 12 s after the impact) sees that hold end as the exit. */

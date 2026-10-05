@@ -222,19 +222,22 @@ class LoneWorkerOrderTest : RestartKit() {
         }
     }
 
-    @Test fun still_deadline_is_the_same_for_every_delivery() = table("still", listOf(
-        "W DOCKED/W DOCKED|C still NONE/W NONE|W DOCKED/W DOCKED|C still NONE/W NONE",
-        "W WAIT/W NONE|C still NONE/W NONE|C still WAIT/W NONE|C still NONE/W NONE"))
-
-    @Test fun fall_deadline_is_the_same_for_every_delivery() = table("fall", listOf(
-        "W DOCKED/W DOCKED|C fall NONE/W NONE|W DOCKED/W DOCKED|C fall NONE/W NONE",
-        "C fall WAIT/W NONE|C fall DOCKED/W DOCKED|C fall WAIT/W NONE|C fall DOCKED/W DOCKED"))
-
-    @Test fun restored_check_held_at_restart_is_the_same_for_every_delivery() = table("restored", listOf(
-        "W DOCKED/W DOCKED|C still NONE/W NONE|W DOCKED/W DOCKED|C still NONE/W NONE",
-        "C still WAIT/W NONE|C still NONE/W NONE|C still WAIT/W NONE|C still NONE/W NONE"))
-
-    @Test fun sos_deadline_is_the_same_for_every_delivery() = table("sos", listOf(
-        "W DOCKED/W DOCKED|S still NONE/S still NONE|S still DOCKED/S still DOCKED|S still NONE/S still NONE",
-        "S still WAIT/S still NONE|S still NONE/S still NONE|S still WAIT/S still NONE|S still NONE/S still NONE"))
+    /** Still, fall, restored (held at the restart) and SOS deadlines: each gives the same result for every delivery. */
+    @Test fun every_deadline_is_the_same_for_every_delivery() {
+        for ((kind, want) in listOf(
+            "still" to listOf(
+                "W DOCKED/W DOCKED|C still NONE/W NONE|W DOCKED/W DOCKED|C still NONE/W NONE",
+                "W WAIT/W NONE|C still NONE/W NONE|C still WAIT/W NONE|C still NONE/W NONE"),
+            "fall" to listOf(
+                "W DOCKED/W DOCKED|C fall NONE/W NONE|W DOCKED/W DOCKED|C fall NONE/W NONE",
+                "C fall WAIT/W NONE|C fall DOCKED/W DOCKED|C fall WAIT/W NONE|C fall DOCKED/W DOCKED"),
+            "restored" to listOf(
+                "W DOCKED/W DOCKED|C still NONE/W NONE|W DOCKED/W DOCKED|C still NONE/W NONE",
+                "C still WAIT/W NONE|C still NONE/W NONE|C still WAIT/W NONE|C still NONE/W NONE"),
+            "sos" to listOf(
+                "W DOCKED/W DOCKED|S still NONE/S still NONE|S still DOCKED/S still DOCKED|S still NONE/S still NONE",
+                "S still WAIT/S still NONE|S still NONE/S still NONE|S still WAIT/S still NONE|S still NONE/S still NONE"))) {
+            table(kind, want)
+        }
+    }
 }

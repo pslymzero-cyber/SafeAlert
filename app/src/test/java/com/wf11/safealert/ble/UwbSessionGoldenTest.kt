@@ -170,12 +170,44 @@ class UwbSessionGoldenTest {
         BleServiceTestHarness.alertBroadcasts().lastOrNull { it.getStringExtra(BleService.EXTRA_ID) == id }
             ?.getIntExtra(BleService.EXTRA_ALERT_LEVEL, -1)
 
-    // ── No UWB ranger → RSSI judging (uwbJudgeModeExclusive false) ──
+    // ── UWB-exclusive judging (Case A) needs all of: a ranger, a uwbDistances entry, a uwbSampleAtMsMap entry, and a
+    //    sample no older than FRESH_WINDOW_MS (inclusive `<=` in UwbDistanceManager.uwbJudgeModeExclusive). Without any
+    //    one of them the device is judged by RSSI (Case B). The distance entry is checked before the time, so a fresh
+    //    timestamp left behind alone after an end event removed the pair's entry cannot keep Case A (row 3).
+    //    FRESH_WINDOW_MS must be kept in sync by hand with production UwbDistanceManager.UWB_MEAS_FRESH_MS (1_000L) —
+    //    it is not followed by reflection; this comment only pins down that the two values must be equal.
+    //    uwbJudgeModeExclusive only reads state; every row starts from a new service. ──
     @Test
-    fun noRanger_judgesByRssi() {
-        val service = BleServiceTestHarness.newService()
-        injectRanger(service, null)
-        assertFalse(judgeMode(service, DEVICE_ID, T0_MS))
+    fun uwbExclusiveJudging_needsRangerDistanceAndSampleAtMostOneSecondOld() {
+        class Row(
+            val label: String, val ranger: Boolean, val distM: Float?, val sampleAtMs: Long?,
+            val dropDistance: Boolean = false, val now: Long, val exclusive: Boolean,
+        )
+        val rows = listOf(
+            Row("row 1 no UWB ranger", ranger = false, distM = null, sampleAtMs = null, now = T0_MS, exclusive = false),
+            Row("row 2 distance but no sample time", ranger = true, distM = 4.0f, sampleAtMs = null, now = T0_MS, exclusive = false),
+            Row("row 3 fresh sample time but distance entry removed", ranger = true, distM = 4.0f, sampleAtMs = T0_MS,
+                dropDistance = true, now = T0_MS, exclusive = false),
+            Row("row 4 sample age ${FRESH_WINDOW_MS - 1} ms", ranger = true, distM = 4.0f, sampleAtMs = T0_MS,
+                now = T0_MS + FRESH_WINDOW_MS - 1, exclusive = true),
+            Row("row 5 sample age $FRESH_WINDOW_MS ms", ranger = true, distM = 4.0f, sampleAtMs = T0_MS,
+                now = T0_MS + FRESH_WINDOW_MS, exclusive = true),
+            Row("row 6 sample age ${FRESH_WINDOW_MS + 1} ms", ranger = true, distM = 4.0f, sampleAtMs = T0_MS,
+                now = T0_MS + FRESH_WINDOW_MS + 1, exclusive = false),
+        )
+        for (r in rows) {
+            val service = BleServiceTestHarness.newService()
+            if (!r.ranger) {
+                injectRanger(service, null)
+            } else {
+                val ranger = newRanger()
+                injectRanger(service, ranger)
+                r.distM?.let { ranger.uwbDistances[DEVICE_ID] = it }
+                r.sampleAtMs?.let { uwbSampleAtMsMapOf(service)[DEVICE_ID] = it }
+                if (r.dropDistance) ranger.uwbDistances.remove(DEVICE_ID)
+            }
+            assertEquals("${r.label}: UWB-exclusive judging", r.exclusive, judgeMode(service, DEVICE_ID, r.now))
+        }
     }
 
     // ── Ranger + fresh sample → processAlert takes the UWB-only early branch (Case A) ──
@@ -219,48 +251,6 @@ class UwbSessionGoldenTest {
 
         val l4 = callJudgeUwbOnly(service, DEVICE_ID, 6.0f, T0_MS + FRAME_DT_MS * 3)
         assertEquals(BleConstants.LEVEL_SAFE, l4)
-    }
-
-    // ── Freshness window boundary at 3 points — window-1/window/window+1
-    // (inclusive `<=` comparison in UwbDistanceManager.uwbJudgeModeExclusive) ──
-    // FRESH_WINDOW_MS must be kept in sync by hand with production UwbDistanceManager.UWB_MEAS_FRESH_MS (1_000L) —
-    // it is not followed by reflection; this comment only pins down that the two values must be equal.
-    @Test
-    fun uwbSample_staysFreshForExactlyOneSecond() {
-        val service = BleServiceTestHarness.newService()
-        val ranger = newRanger()
-        injectRanger(service, ranger)
-        val sampleAt = T0_MS
-        injectUwbSample(service, ranger, DEVICE_ID, 4.0f, sampleAt)
-
-        assertTrue(judgeMode(service, DEVICE_ID, sampleAt + FRESH_WINDOW_MS - 1))
-        assertTrue(judgeMode(service, DEVICE_ID, sampleAt + FRESH_WINDOW_MS))
-        assertFalse(judgeMode(service, DEVICE_ID, sampleAt + FRESH_WINDOW_MS + 1))
-    }
-
-    // ── No uwbSampleAtMsMap entry → RSSI judging (Case B) even with a uwbDistances entry ──
-    @Test
-    fun missingSampleTime_judgesByRssi() {
-        val service = BleServiceTestHarness.newService()
-        val ranger = newRanger()
-        injectRanger(service, ranger)
-        ranger.uwbDistances[DEVICE_ID] = 4.0f  // uwbSampleAtMsMap is deliberately left empty.
-
-        assertFalse(judgeMode(service, DEVICE_ID, T0_MS))
-    }
-
-    // ── uwbDistances entry removed → RSSI judging (Case B) at once, even with a fresh sample time ──
-    // (Design reason in UwbDistanceManager.uwbJudgeModeExclusive: prevents misjudging on a stale timestamp left behind
-    //  alone after an end event removed the pair's entry — uwbJudgeModeExclusive checks containsKey before comparing times.)
-    @Test
-    fun missingDistance_judgesByRssiEvenWithFreshSampleTime() {
-        val service = BleServiceTestHarness.newService()
-        val ranger = newRanger()
-        injectRanger(service, ranger)
-        injectUwbSample(service, ranger, DEVICE_ID, 4.0f, T0_MS)
-        ranger.uwbDistances.remove(DEVICE_ID)  // the fresh timestamp in uwbSampleAtMsMap is kept.
-
-        assertFalse(judgeMode(service, DEVICE_ID, T0_MS))
     }
 
     // ── Stale sample → processAlert does not take the Case A early branch, and the RSSI path

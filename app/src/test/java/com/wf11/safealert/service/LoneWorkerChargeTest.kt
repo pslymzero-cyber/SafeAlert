@@ -4,7 +4,6 @@ import com.wf11.safealert.service.LoneWorkerLogic.Mode
 import com.wf11.safealert.service.LoneWorkerLogic.Rest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -193,27 +192,34 @@ class LoneWorkerChargeTest {
         assertEquals("still", l.trigger)
     }
 
-    @Test fun ten_steps_within_30s_while_charging_carry() {
-        val l = newLogic(charging = true)
-        for (i in 0 until 10) l.step(1_000 + i * 3_000L)
-        assertEquals(Rest.NONE, l.rest)
-    }
+    /** One feed of a carry row and the Rest expected after it (null = not checked after this feed). */
+    private class Phase(val rest: Rest?, val feed: LoneWorkerLogic.() -> Unit)
 
-    @Test fun ten_steps_spread_over_more_than_30s_do_not_carry() {
-        val l = newLogic(charging = true)
-        for (i in 0 until 60) {
-            l.step(1_000 + i * 3_500L)
-            assertEquals(Rest.DOCKED, l.rest)
+    /** A carry row: the power at the start, whether a step sensor exists, then its feeds in order. */
+    private class CarryRow(val name: String, val charging: Boolean, val stepSensor: Boolean, val phases: List<Phase>)
+
+    private fun checkCarry(rows: List<CarryRow>) {
+        for (r in rows) {
+            val l = newLogic(charging = r.charging)
+            if (!r.stepSensor) l.stepsAvailable = false
+            for ((i, p) in r.phases.withIndex()) {
+                p.feed(l)
+                if (p.rest != null) assertEquals("${r.name}: after feed $i", p.rest, l.rest)
+            }
         }
     }
 
-    @Test fun steps_before_the_plug_do_not_count_toward_carrying() {
-        val l = newLogic()
-        l.walk(9_000, 9)
-        l.reportPower(true, 10_000)
-        l.step(11_000)
-        assertEquals(Rest.DOCKED, l.rest)
-    }
+    /** While charging, the device is carried only after 10 walking-shaped steps within 30 s, all after the plug. */
+    @Test fun charging_carry_needs_10_walking_steps_within_30s_after_the_plug() = checkCarry(listOf(
+        CarryRow("10 steps 3 s apart", charging = true, stepSensor = true,
+            phases = listOf(Phase(Rest.NONE) { for (i in 0 until 10) step(1_000 + i * 3_000L) })),
+        CarryRow("steps 3.5 s apart", charging = true, stepSensor = true,
+            phases = (0 until 60).map { i -> Phase(Rest.DOCKED) { step(1_000 + i * 3_500L) } }),
+        CarryRow("10, then 20 non-walking steps", charging = true, stepSensor = true,
+            phases = listOf(Phase(Rest.DOCKED) { shuffle(10_000, 10) }, Phase(Rest.DOCKED) { shuffle(20_000, 20) })),
+        CarryRow("9 steps before the plug, 1 after", charging = false, stepSensor = true,
+            phases = listOf(Phase(null) { walk(9_000, 9) }, Phase(null) { reportPower(true, 10_000) },
+                Phase(Rest.DOCKED) { step(11_000) }))))
 
     @Test fun replug_resets_step_carry() {
         val l = carriedWhileCharging()
@@ -223,62 +229,27 @@ class LoneWorkerChargeTest {
         assertEquals(Rest.DOCKED, l.rest)
     }
 
-    // No step sensor: carrying while charging = 5 walking-shaped windows within the last 30 s, not
-    // necessarily in a row, all started after the plug.
-
-    @Test fun fallback_five_walking_windows_within_30s_carry_while_charging() {
-        val l = newLogic(charging = true)
-        l.stepsAvailable = false
-        l.strongWindows(5_000, 11_000, 17_000, 23_000)
-        assertEquals(Rest.DOCKED, l.rest)
-        l.strongWindows(29_000)
-        assertEquals(Rest.NONE, l.rest)
-
-        val withSteps = newLogic(charging = true)
-        withSteps.strongWindows(5_000, 11_000, 17_000, 23_000, 29_000)
-        assertEquals(Rest.DOCKED, withSteps.rest)
-    }
-
-    @Test fun fallback_four_walking_windows_do_not_carry() {
-        val l = newLogic(charging = true)
-        l.stepsAvailable = false
-        l.strongWindows(5_000, 11_000, 17_000, 23_000)
-        for (t in 24_000L..60_000L step 1_000L) {
-            l.onWindow(MotionAnalyzer.Window(t, false))
-            assertEquals(Rest.DOCKED, l.rest)
-        }
-    }
-
-    @Test fun fallback_windows_spread_over_more_than_30s_do_not_carry() {
-        val l = newLogic(charging = true)
-        l.stepsAvailable = false
-        for (i in 0 until 20) {
-            l.strongWindows(5_000 + i * 8_000L)
-            assertEquals(Rest.DOCKED, l.rest)
-        }
-    }
-
-    @Test fun fallback_windows_before_the_plug_do_not_count() {
-        val l = newLogic()
-        l.stepsAvailable = false
-        l.strongWindows(2_000, 4_000, 6_000, 8_000, 10_500)
-        l.reportPower(true, 10_000)
-        assertEquals(Rest.DOCKED, l.rest)
-        l.strongWindows(11_000)
-        assertEquals(Rest.DOCKED, l.rest)
-        l.strongWindows(14_000, 16_000, 18_000)
-        assertEquals(Rest.DOCKED, l.rest)
-        l.strongWindows(20_000)
-        assertEquals(Rest.NONE, l.rest)
-    }
-
-    @Test fun charging_with_ten_non_walking_steps_stays_docked() {
-        val l = newLogic(charging = true)
-        l.shuffle(10_000, 10)
-        assertEquals(Rest.DOCKED, l.rest)
-        l.shuffle(20_000, 20)
-        assertEquals(Rest.DOCKED, l.rest)
-    }
+    /**
+     * No step sensor: carrying while charging = 5 walking-shaped windows within the last 30 s, not necessarily in a
+     * row, all started after the plug. With a step sensor, windows alone do not carry.
+     */
+    @Test fun fallback_charging_carry_needs_5_walking_windows_within_30s_after_the_plug() = checkCarry(listOf(
+        CarryRow("5 windows within 30 s", charging = true, stepSensor = false,
+            phases = listOf(Phase(Rest.DOCKED) { strongWindows(5_000, 11_000, 17_000, 23_000) },
+                Phase(Rest.NONE) { strongWindows(29_000) })),
+        CarryRow("the same 5 windows with a step sensor", charging = true, stepSensor = true,
+            phases = listOf(Phase(Rest.DOCKED) { strongWindows(5_000, 11_000, 17_000, 23_000, 29_000) })),
+        CarryRow("4 windows, then still windows", charging = true, stepSensor = false,
+            phases = listOf(Phase(null) { strongWindows(5_000, 11_000, 17_000, 23_000) }) +
+                (24_000L..60_000L step 1_000L).map { t -> Phase(Rest.DOCKED) { onWindow(MotionAnalyzer.Window(t, false)) } }),
+        CarryRow("windows 8 s apart", charging = true, stepSensor = false,
+            phases = (0 until 20).map { i -> Phase(Rest.DOCKED) { strongWindows(5_000 + i * 8_000L) } }),
+        CarryRow("windows before the plug", charging = false, stepSensor = false,
+            phases = listOf(Phase(null) { strongWindows(2_000, 4_000, 6_000, 8_000, 10_500) },
+                Phase(Rest.DOCKED) { reportPower(true, 10_000) },
+                Phase(Rest.DOCKED) { strongWindows(11_000) },
+                Phase(Rest.DOCKED) { strongWindows(14_000, 16_000, 18_000) },
+                Phase(Rest.NONE) { strongWindows(20_000) }))))
 
     @Test fun real_plug_withdraws_open_still_check() {
         val l = newLogic()
@@ -301,48 +272,38 @@ class LoneWorkerChargeTest {
 
     // -- PowerDebounce (2 s) --
 
-    @Test fun debounce_ignores_flaps_shorter_than_2s() {
-        val d = PowerDebounce()
-        d.seed(false)
-        d.raw(true, 0)
-        d.raw(false, 1_000)
-        assertNull(d.poll(2_050))
-        assertNull(d.poll(10_000))
-
-        val u = PowerDebounce()
-        u.seed(true)
-        u.raw(false, 0)
-        u.raw(true, 1_500)
-        assertNull(u.poll(3_550))
-        assertTrue(u.reported)
+    /**
+     * PowerDebounce reports a raw power change only once it has held for 2 s, with the time of its first raw value: a
+     * flap shorter than 2 s is dropped and a flap that comes back restarts the wait.
+     * Rows: the seeded power, the raw values, then each poll with the report expected (null = none), and the
+     * reported flag when checked.
+     */
+    @Test fun power_debounce_reports_only_a_change_stable_for_2s() {
+        class Row(val name: String, val seed: Boolean, val raws: List<Pair<Boolean, Long>>,
+                  val polls: List<Pair<Long, Pair<Boolean, Long>?>>, val reported: Boolean? = null)
+        for (r in listOf(
+            Row("on for 1 s", false, listOf(true to 0L, false to 1_000L), listOf(2_050L to null, 10_000L to null)),
+            Row("off for 1.5 s", true, listOf(false to 0L, true to 1_500L), listOf(3_550L to null), reported = true),
+            Row("on from 1 s", false, listOf(true to 1_000L, true to 1_500L),
+                listOf(2_999L to null, 3_000L to (true to 1_000L), 3_001L to null), reported = true),
+            Row("on, off, on again at 1 s", false, listOf(true to 0L, false to 500L, true to 1_000L),
+                listOf(2_050L to null, 3_050L to (true to 1_000L))))) {
+            val d = PowerDebounce()
+            d.seed(r.seed)
+            for ((on, t) in r.raws) d.raw(on, t)
+            for ((t, want) in r.polls) assertEquals("${r.name}: poll at $t", want, d.poll(t))
+            r.reported?.let { assertEquals("${r.name}: reported", it, d.reported) }
+        }
     }
 
-    @Test fun debounce_reports_stable_change_with_first_change_time() {
-        val d = PowerDebounce()
-        d.seed(false)
-        d.raw(true, 1_000)
-        d.raw(true, 1_500)
-        assertNull(d.poll(2_999))
-        assertEquals(true to 1_000L, d.poll(3_000))
-        assertNull(d.poll(3_001))
-        assertTrue(d.reported)
-        // the logic's settlePower tells whether it confirmed and applied a change, once
+    /** The logic's settlePower tells whether it confirmed and applied a change, once. */
+    @Test fun settle_power_applies_a_confirmed_change_once() {
         val l = newLogic(charging = true)
         l.powerRaw(false, 10_000)
         assertFalse(l.settlePower(10_000 + PowerDebounce.DEBOUNCE_MS - 1))
         assertTrue(l.settlePower(10_000 + PowerDebounce.DEBOUNCE_MS))
         assertEquals(Rest.WAIT, l.rest)
         assertFalse(l.settlePower(20_000))
-    }
-
-    @Test fun debounce_restarts_when_a_flap_returns() {
-        val d = PowerDebounce()
-        d.seed(false)
-        d.raw(true, 0)
-        d.raw(false, 500)
-        d.raw(true, 1_000)
-        assertNull(d.poll(2_050))
-        assertEquals(true to 1_000L, d.poll(3_050))
     }
 
     /** A change already stable for 2 s is reported before a later raw value, with or without a tick in between. */

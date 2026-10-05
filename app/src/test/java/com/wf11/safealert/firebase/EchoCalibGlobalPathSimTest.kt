@@ -40,32 +40,34 @@ class EchoCalibGlobalPathSimTest {
         assertEquals(100, global[PEER]!!.second)
     }
 
+    /** Old-path and new-path nodes merged, then aggregated. mergedSize = null: that row does not check the node count. */
+    private class MergeRow(
+        val label: String, val oldPath: List<EchoCalibNode>, val newPath: List<EchoCalibNode>, val mergedSize: Int?,
+        val mean: Double, val n: Int
+    )
+
     /**
-     * Old and new paths mixed during rollout — the same device exists on both the old path (fallback parsing) and the new path.
-     *  Old-path nodes are not deleted on upgrade, so unless they fold into one,
-     *  samples are counted twice and the old measurement drags the new value.
+     * Old and new paths mixed during rollout: old-path nodes (fallback parsing) are not deleted on upgrade. A device on
+     * both paths folds into one node with the new-path value, so its samples are not counted twice and the old
+     * measurement does not drag the result; a device only on the old path (a handset not yet upgraded) survives as is.
      */
     @Test
-    fun 구경로_스테일값이_현재값을_오염시키지_않는다() {
-        val 구경로_A = node("A", MY, "B" to stat(9.0, 100))   // old measurement (from when the error was large)
-        val 신경로_A = node("A", MY, "B" to stat(3.0, 100))   // current measurement
-        val B = node("B", PEER)
-
-        val merged = FirebaseManager.mergeEchoNodes(listOf(구경로_A), listOf(신경로_A, B))
-        assertEquals("같은 기기ID 노드는 하나로 접힌다", 2, merged.size)
-        val r = FirebaseManager.aggregateEchoPriors(merged, MY, IQR_GATE, CAP)
-        assertEquals("신 경로 현재값만 반영돼야 한다(오염되면 6.0)", 3.0, r[PEER]!!.first, 1e-9)
-        assertEquals("같은 기기 표본이 두 번 세어지면 안 된다", 100, r[PEER]!!.second)
-    }
-
-    /** A device only on the old path (a handset not yet upgraded) survives as is. */
-    @Test
-    fun 구경로_단독기기는_보존된다() {
-        val 구경로_A = node("A", MY, "B" to stat(3.0, 100))
-        val merged = FirebaseManager.mergeEchoNodes(listOf(구경로_A), listOf(node("B", PEER)))
-        val r = FirebaseManager.aggregateEchoPriors(merged, MY, IQR_GATE, CAP)
-        assertEquals(100, r[PEER]!!.second)
-        assertEquals(3.0, r[PEER]!!.first, 1e-9)
+    fun 구경로_노드는_기기ID로_신경로에_접히고_신경로_값이_이기며_구경로에만_있는_기기는_남는다() {
+        val rows = listOf(
+            // old measurement 9.0 (from when the error was large) vs current 3.0: 6.0 if the old value leaked in
+            MergeRow("같은 기기가 두 경로에 있다", listOf(node("A", MY, "B" to stat(9.0, 100))),
+                listOf(node("A", MY, "B" to stat(3.0, 100)), node("B", PEER)), mergedSize = 2, mean = 3.0, n = 100),
+            MergeRow("구경로에만 있는 기기", listOf(node("A", MY, "B" to stat(3.0, 100))), listOf(node("B", PEER)),
+                mergedSize = null, mean = 3.0, n = 100)
+        )
+        for ((i, r) in rows.withIndex()) {
+            val at = "row $i ${r.label}"
+            val merged = FirebaseManager.mergeEchoNodes(r.oldPath, r.newPath)
+            r.mergedSize?.let { assertEquals("$at: 같은 기기ID 노드는 하나로 접힌다", it, merged.size) }
+            val res = FirebaseManager.aggregateEchoPriors(merged, MY, IQR_GATE, CAP)
+            assertEquals("$at: 신경로 현재값만 반영된다", r.mean, res[PEER]!!.first, 1e-9)
+            assertEquals("$at: 같은 기기 표본은 한 번만 센다", r.n, res[PEER]!!.second)
+        }
     }
 
     /**

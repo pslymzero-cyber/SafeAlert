@@ -2,7 +2,6 @@ package com.wf11.safealert.service
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -35,44 +34,39 @@ class DeviceStateRegistryTest {
         flags.add(id)
     }
 
-    /** Warm loss = only immediate is cleared. deferred (filter warm-up) and teardown (preserved snapshot) survive. */
+    /** One per-device clearing path and the groups it must leave. flagsKept = null: that row does not check flags. */
+    private class PurgeRow(
+        val label: String, val purge: (DeviceStateRegistry) -> Unit,
+        val immediateKept: Boolean, val flagsKept: Boolean?, val deferredKept: Boolean
+    )
+
+    /**
+     * Warm loss clears only immediate, so deferred (filter warm-up) survives; cold loss clears immediate and deferred;
+     * the TTL-expiry prune clears deferred only. No per-device path touches teardown (the preserved snapshot): only
+     * clearAll does.
+     */
     @Test
-    fun purgeWarm_keepsDeferredAndTeardown() {
-        val reg = newRegistry()
-        seed("A")
+    fun purgePaths_clearOnlyTheirGroups_andNeverTeardown() {
+        val rows = listOf(
+            PurgeRow("warm loss", { it.purge("A", cold = false) }, immediateKept = false, flagsKept = false, deferredKept = true),
+            PurgeRow("cold loss", { it.purge("A", cold = true) }, immediateKept = false, flagsKept = null, deferredKept = false),
+            PurgeRow("TTL prune", { it.purgeDeferred("A") }, immediateKept = true, flagsKept = null, deferredKept = false)
+        )
+        for ((i, r) in rows.withIndex()) {
+            immediate.clear(); deferred.clear(); teardown.clear(); flags.clear()
+            val reg = newRegistry()
+            seed("A")
 
-        reg.purge("A", cold = false)
+            r.purge(reg)
 
-        assertNull("웜 소실은 immediate 를 지운다", immediate["A"])
-        assertTrue("웜 소실은 flags 를 지운다", "A" !in flags)
-        assertEquals("웜 소실은 deferred 를 보존한다(필터 워밍)", 1, deferred["A"])
-        assertEquals("기기별 purge 는 teardown 을 건드리지 않는다", 1, teardown["A"])
-    }
-
-    /** Cold loss = immediate + deferred cleared. teardown is cleared only by clearAll, so it stays. */
-    @Test
-    fun purgeCold_alsoClearsDeferred_butNotTeardown() {
-        val reg = newRegistry()
-        seed("A")
-
-        reg.purge("A", cold = true)
-
-        assertNull(immediate["A"])
-        assertNull("콜드 소실은 deferred 까지 지운다", deferred["A"])
-        assertEquals("콜드여도 teardown 은 기기별 purge 대상이 아니다", 1, teardown["A"])
-    }
-
-    /** TTL-expiry prune path = deferred only. */
-    @Test
-    fun purgeDeferred_touchesDeferredOnly() {
-        val reg = newRegistry()
-        seed("A")
-
-        reg.purgeDeferred("A")
-
-        assertEquals("immediate 는 그대로", 1, immediate["A"])
-        assertNull("deferred 만 지운다", deferred["A"])
-        assertEquals("teardown 은 그대로", 1, teardown["A"])
+            val at = "row $i ${r.label}"
+            if (r.immediateKept) assertEquals("$at: immediate kept", 1, immediate["A"])
+            else assertNull("$at: immediate cleared", immediate["A"])
+            r.flagsKept?.let { assertEquals("$at: A still in flags", it, "A" in flags) }
+            if (r.deferredKept) assertEquals("$at: deferred kept", 1, deferred["A"])
+            else assertNull("$at: deferred cleared", deferred["A"])
+            assertEquals("$at: teardown is left to clearAll", 1, teardown["A"])
+        }
     }
 
     /** Service stop = all three groups emptied. Zero entries left. */

@@ -1,5 +1,6 @@
 package com.wf11.safealert.service
 
+import android.content.Context
 import android.os.Vibrator
 import com.wf11.safealert.utils.DevSettings
 import org.junit.After
@@ -36,80 +37,48 @@ class VibrationSettingsWiringTest {
     private fun pattern(): LongArray? =
         shadowOf(app.getSystemService(Vibrator::class.java)).pattern
 
-    @Test
-    fun `danger default 3 pulses unchanged`() {
-        VibrationHelper.vibrateDanger(app)
-        assertArrayEquals(
-            "기본값(3)에서 위험 진동 파형은 변경 전과 같아야 한다",
-            longArrayOf(0, 150, 100, 150, 100, 150),
-            pattern()
-        )
+    /** Empties the settings file, so both vibration settings read their defaults as on a fresh install. */
+    private fun clearSettings() {
+        app.getSharedPreferences("dev_settings", Context.MODE_PRIVATE).edit().clear().commit()
     }
 
+    // In both tables each row starts from an empty settings file (null = leave the setting unset), and adjacent rows
+    //   expect different waveforms, so a row can only pass through its own vibration.
+
+    /** The warning pulse is vibrationWarningMs clamped to 100..1000 ms; unset, it is 500 ms. */
     @Test
-    fun `warning default pulse is 500ms`() {
-        VibrationHelper.vibrateWarning(app)
-        assertArrayEquals(
-            "기본값(500)에서 경고 진동 펄스는 500ms 여야 한다",
-            longArrayOf(0, 500, 200, 500),
-            pattern()
+    fun `warning pulse follows the setting within 100 to 1000 ms and defaults to 500`() {
+        val rows: List<Triple<String, Long?, LongArray>> = listOf(
+            Triple("기본값(500)에서 경고 진동 펄스는 500ms 여야 한다", null, longArrayOf(0, 500, 200, 500)),
+            Triple("vibrationWarningMs=1000 이면 펄스가 1000ms 여야 한다", 1000L, longArrayOf(0, 1000, 200, 1000)),
+            Triple("warningMs=10 은 100ms 로 제한돼야 한다", 10L, longArrayOf(0, 100, 200, 100)),
+            Triple("warningMs=5000 은 1000ms 로 제한돼야 한다", 5000L, longArrayOf(0, 1000, 200, 1000))
         )
+        for ((i, row) in rows.withIndex()) {
+            val (label, setting, want) = row
+            clearSettings()
+            if (setting != null) DevSettings.vibrationWarningMs = setting
+            VibrationHelper.vibrateWarning(app)
+            assertArrayEquals("row $i $label", want, pattern())
+        }
     }
 
+    /** The danger waveform repeats a 150 ms pulse vibrationDangerCount times, clamped to 1..5; unset, 3 times. */
     @Test
-    fun `warning pulse follows setting`() {
-        DevSettings.vibrationWarningMs = 1000L
-        VibrationHelper.vibrateWarning(app)
-        assertArrayEquals(
-            "vibrationWarningMs=1000 이면 펄스가 1000ms 여야 한다",
-            longArrayOf(0, 1000, 200, 1000),
-            pattern()
+    fun `danger pulse count follows the setting within 1 to 5 and defaults to 3`() {
+        val rows: List<Triple<String, Int?, LongArray>> = listOf(
+            Triple("기본값(3)에서 위험 진동 파형은 변경 전과 같아야 한다", null, longArrayOf(0, 150, 100, 150, 100, 150)),
+            Triple("vibrationDangerCount=5 이면 150ms 펄스가 5회여야 한다", 5,
+                longArrayOf(0, 150, 100, 150, 100, 150, 100, 150, 100, 150)),
+            Triple("dangerCount=0 은 1회로 제한돼야 한다", 0, longArrayOf(0, 150)),
+            Triple("dangerCount=9 는 5회로 제한돼야 한다", 9, longArrayOf(0, 150, 100, 150, 100, 150, 100, 150, 100, 150))
         )
-    }
-
-    @Test
-    fun `danger count follows setting`() {
-        DevSettings.vibrationDangerCount = 5
-        VibrationHelper.vibrateDanger(app)
-        assertArrayEquals(
-            "vibrationDangerCount=5 이면 150ms 펄스가 5회여야 한다",
-            longArrayOf(0, 150, 100, 150, 100, 150, 100, 150, 100, 150),
-            pattern()
-        )
-    }
-
-    @Test
-    fun `out of range settings are clamped`() {
-        DevSettings.vibrationWarningMs = 5000L
-        VibrationHelper.vibrateWarning(app)
-        assertArrayEquals(
-            "warningMs=5000 은 1000ms 로 제한돼야 한다",
-            longArrayOf(0, 1000, 200, 1000),
-            pattern()
-        )
-
-        DevSettings.vibrationWarningMs = 10L
-        VibrationHelper.vibrateWarning(app)
-        assertArrayEquals(
-            "warningMs=10 은 100ms 로 제한돼야 한다",
-            longArrayOf(0, 100, 200, 100),
-            pattern()
-        )
-
-        DevSettings.vibrationDangerCount = 9
-        VibrationHelper.vibrateDanger(app)
-        assertArrayEquals(
-            "dangerCount=9 는 5회로 제한돼야 한다",
-            longArrayOf(0, 150, 100, 150, 100, 150, 100, 150, 100, 150),
-            pattern()
-        )
-
-        DevSettings.vibrationDangerCount = 0
-        VibrationHelper.vibrateDanger(app)
-        assertArrayEquals(
-            "dangerCount=0 은 1회로 제한돼야 한다",
-            longArrayOf(0, 150),
-            pattern()
-        )
+        for ((i, row) in rows.withIndex()) {
+            val (label, setting, want) = row
+            clearSettings()
+            if (setting != null) DevSettings.vibrationDangerCount = setting
+            VibrationHelper.vibrateDanger(app)
+            assertArrayEquals("row $i $label", want, pattern())
+        }
     }
 }

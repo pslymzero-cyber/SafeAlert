@@ -170,20 +170,24 @@ class NormalApproachScenarioTest {
         assertEquals("WARNING↔해제 플래핑", 0, t.reAlerts)
     }
 
-    // Stopping 2-7 dB inside the warning zone at 1 s frames, approach ramp included: stays WARNING, never released.
-    @Test fun stoppingInsideWarningZoneStaysWarning() {
+    // A device that stops close by is never released: 2-7 dB inside the warning zone at 1 s frames (approach ramp
+    // included) it also stays WARNING; inside the danger zone (-60) it stays for 60 s at 120ms frames. Each row runs on
+    // a new service; a null finalLevel is not checked for that row.
+    @Test fun stoppingCloseIsNeverReleased() {
+        class Row(val name: String, val frames: Int, val dtMs: Long, val rssiAt: (Int) -> Int, val finalLevel: Int? = null)
         val hover = intArrayOf(-71, -74, -73, -76, -72, -75, -73, -74)
-        val t = run("hover1000", 100, dtMs = 1000L) { i, _ ->
-            when { i <= 22 -> -95 + i + NOISE_4[i % 4]; i <= 27 -> -73; else -> hover[(i - 28) % 8] }
+        val rows = listOf(
+            Row("hover1000", 100, 1000L, { i ->
+                when { i <= 22 -> -95 + i + NOISE_4[i % 4]; i <= 27 -> -73; else -> hover[(i - 28) % 8] }
+            }, finalLevel = BleConstants.LEVEL_WARNING),
+            Row("stop-60_120_60s", 520, DT, { f -> minOf(-90 + 2 * f, -60) + NOISE_4[f % 4] }),
+        )
+        for ((idx, r) in rows.withIndex()) {
+            val label = "row ${idx + 1} ${r.name}"
+            val t = run(r.name, r.frames, dtMs = r.dtMs) { f, _ -> r.rssiAt(f) }
+            assertNull("$label: 정지 중 해제", t.releaseMs)
+            r.finalLevel?.let { assertEquals("$label: 최종 WARNING", it, t.finalLevel) }
         }
-        assertNull("정지 중 해제", t.releaseMs)
-        assertEquals("최종 WARNING", BleConstants.LEVEL_WARNING, t.finalLevel)
-    }
-
-    // Stopping inside the danger zone (-60) and staying there for 60 s at 120ms frames: never released.
-    @Test fun stoppingInsideDangerZoneIsNeverReleased() {
-        val t = run("stop-60_120_60s", 520) { f, _ -> minOf(-90 + 2 * f, -60) + NOISE_4[f % 4] }
-        assertNull("정지 중 해제", t.releaseMs)
     }
 
     // Re-approach right after release — cooldown (WARNING 3000/DANGER 2000, ×2 while departing),

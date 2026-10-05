@@ -24,36 +24,38 @@ class SosAdvertTest {
         assertEquals(15, SosAdvert.idBytes(long, false).size)
     }
 
+    /**
+     * Service data layout (byte0, ext byte, episode, hint hi, hint lo): byte0 and the ext byte pass through unchanged,
+     * episode and hint decode unsigned, a packet without an episode stays 2 bytes (its hint is dropped), and absent or
+     * shorter data (older senders) decodes as 0. A null column is not checked for that row.
+     */
     @Test
-    fun service_data_keeps_byte0_and_byte1_and_appends_episode_and_hint() {
+    fun service_data_layout_round_trips_episode_and_hint() {
+        class Row(
+            val label: String, val svc: ByteArray?,
+            val size: Int? = null, val byte0: Byte? = null, val sos: Boolean? = null,
+            val episode: Int? = null, val hint: Int? = null,
+        )
         val b0 = BleConstants.encodePayload(1, 2, 1, 1)
-        val svc = SosAdvert.serviceData(b0, BleConstants.encodeExt(false, true), 7, 0xBEEF)
-        assertEquals(5, svc.size)
-        assertEquals(b0, svc[0])
-        assertTrue(BleConstants.decodeSos(svc[1].toInt() and 0xFF))
-        assertEquals(7, SosAdvert.decodeEpisode(svc))
-        assertEquals(0xBEEF, SosAdvert.decodeHint(svc))
-    }
-
-    @Test
-    fun no_episode_keeps_two_bytes_and_old_senders_decode_as_absent() {
-        val svc = SosAdvert.serviceData(5, BleConstants.encodeExt(true, false), 0, 0x1234)
-        assertEquals(2, svc.size)
-        assertEquals(0, SosAdvert.decodeEpisode(null))
-        assertEquals(0, SosAdvert.decodeHint(null))
-        assertEquals(0, SosAdvert.decodeEpisode(svc))
-        assertEquals(0, SosAdvert.decodeHint(svc))
-        val three = byteArrayOf(1, 2, 9)
-        assertEquals(9, SosAdvert.decodeEpisode(three))
-        assertEquals(0, SosAdvert.decodeHint(three))
-        assertEquals(0, SosAdvert.decodeHint(byteArrayOf(1, 2, 9, 7)))
-    }
-
-    @Test
-    fun episode_and_hint_bytes_are_unsigned() {
-        val svc = SosAdvert.serviceData(0, 2, 255, 0xFFFF)
-        assertEquals(255, SosAdvert.decodeEpisode(svc))
-        assertEquals(0xFFFF, SosAdvert.decodeHint(svc))
+        val rows = listOf(
+            Row("row 1 byte0 and byte1 kept, episode 7 and hint 0xBEEF appended",
+                SosAdvert.serviceData(b0, BleConstants.encodeExt(false, true), 7, 0xBEEF),
+                size = 5, byte0 = b0, sos = true, episode = 7, hint = 0xBEEF),
+            Row("row 2 episode and hint bytes are unsigned", SosAdvert.serviceData(0, 2, 255, 0xFFFF),
+                episode = 255, hint = 0xFFFF),
+            Row("row 3 no episode keeps two bytes", SosAdvert.serviceData(5, BleConstants.encodeExt(true, false), 0, 0x1234),
+                size = 2, episode = 0, hint = 0),
+            Row("row 4 absent service data", null, episode = 0, hint = 0),
+            Row("row 5 old sender with episode only", byteArrayOf(1, 2, 9), episode = 9, hint = 0),
+            Row("row 6 truncated hint", byteArrayOf(1, 2, 9, 7), hint = 0),
+        )
+        for (r in rows) {
+            r.size?.let { assertEquals("${r.label}: size", it, r.svc!!.size) }
+            r.byte0?.let { assertEquals("${r.label}: byte0", it, r.svc!![0]) }
+            r.sos?.let { assertEquals("${r.label}: SOS bit", it, BleConstants.decodeSos(r.svc!![1].toInt() and 0xFF)) }
+            r.episode?.let { assertEquals("${r.label}: episode", it, SosAdvert.decodeEpisode(r.svc)) }
+            r.hint?.let { assertEquals("${r.label}: hint", it, SosAdvert.decodeHint(r.svc)) }
+        }
     }
 
     @Test

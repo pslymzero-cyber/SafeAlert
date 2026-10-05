@@ -494,14 +494,20 @@ class LoneWorkerPeerTest {
 
     // -- server clock --
 
-    @Test fun resolved_local_uses_server_now_without_slack_when_known() {
-        assertEquals(10_000L, LoneWorkerPeers.resolvedLocalMs(970_000, 1_000_000, 5_000_000, 40_000))
-    }
-
-    @Test fun resolved_local_falls_back_to_wall_clock_with_10s_slack() {
-        assertEquals(10_000L - LoneWorkerPeers.CLOCK_SLACK_MS, LoneWorkerPeers.resolvedLocalMs(970_000, null, 1_000_000, 40_000))
-        assertNull(LoneWorkerPeers.resolvedLocalMs(0L, 1_000_000, 1_000_000, 40_000))
-        assertNull(LoneWorkerPeers.resolvedLocalMs(-5L, null, 1_000_000, 40_000))
+    /**
+     * A server resolve time in this phone's elapsed time: from the server clock when it is known, without slack; else
+     * from the wall clock, CLOCK_SLACK_MS later; no resolve time (0 or negative) gives none.
+     */
+    @Test fun resolved_local_time_uses_the_server_clock_or_the_wall_clock_with_slack() {
+        class Row(val name: String, val resolvedAt: Long, val serverNow: Long?, val wall: Long, val now: Long,
+                  val want: Long?)
+        for (r in listOf(
+            Row("server clock known", 970_000, 1_000_000, 5_000_000, 40_000, 10_000L),
+            Row("server clock unknown", 970_000, null, 1_000_000, 40_000, 10_000L - LoneWorkerPeers.CLOCK_SLACK_MS),
+            Row("resolve time 0", 0L, 1_000_000, 1_000_000, 40_000, null),
+            Row("negative resolve time", -5L, null, 1_000_000, 40_000, null))) {
+            assertEquals(r.name, r.want, LoneWorkerPeers.resolvedLocalMs(r.resolvedAt, r.serverNow, r.wall, r.now))
+        }
     }
 
     // -- refused resolve is re-judged on tick --

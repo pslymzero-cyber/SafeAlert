@@ -203,45 +203,43 @@ class LoneWorkerResumeTest : RestartKit() {
 
     // -- clock changes --
 
-    @Test fun clock_same_boot_ignores_wall_clock_jump_back() {
-        val old = newLogic(carried = true)
-        old.onMoved(50_000)
-        // restarted 10 s later on the same boot, the wall clock was set back 1 h
-        val l = reboot(old, savedAt = 100_000, now = 110_000, wallGap = 10_000 - 3_600_000, bootNow = boot)
-        assertEquals(Mode.WATCHING, l.seenAt(229_000))
-        assertEquals(Mode.CHECKING, l.seenAt(230_000))
-        assertEquals("still", l.trigger)
-    }
-
-    @Test fun clock_same_boot_ignores_wall_clock_jump_forward() {
-        val old = newLogic(carried = true)
-        old.onMoved(95_000)
-        old.onAccident(90_000)
-        // restarted 10 s later on the same boot, the wall clock was set forward 1 day
-        val l = reboot(old, savedAt = 100_000, now = 110_000, wallGap = 10_000 + 86_400_000, bootNow = boot)
-        assertEquals(390_000L, l.snapshot(110_000).accidentUntil)
-        assertEquals(Mode.WATCHING, l.seenAt(110_000))
-        assertEquals(Mode.CHECKING, l.seenAt(120_000))
-        assertEquals("fall", l.trigger)
-    }
-
-    @Test fun clock_other_boot_clamps_negative_wall_gap() {
-        val old = newLogic(carried = true)
-        old.onMoved(50_000)
-        // another boot and the wall clock went back: no time passed, 50 s were still, 130 s are left
-        val l = reboot(old, savedAt = 100_000, now = 5_000, wallGap = -60_000)
-        assertTrue(l.snapshot(5_000).stillBase <= 5_000)
-        assertEquals(Mode.WATCHING, l.seenAt(134_000))
-        assertEquals(Mode.CHECKING, l.seenAt(135_000))
-    }
-
-    @Test fun clock_unknown_boot_uses_wall_clock() {
-        val old = newLogic(carried = true)
-        old.onMoved(50_000)
-        // boot count unreadable on both sides: 20 s of wall time count although elapsed says 10 s
-        val l = reboot(old, savedAt = 100_000, now = 110_000, wallGap = 20_000, bootNow = -1, bootSaved = -1)
-        assertEquals(Mode.WATCHING, l.seenAt(219_000))
-        assertEquals(Mode.CHECKING, l.seenAt(220_000))
+    /**
+     * On the same boot saved times keep their elapsed values (a wall clock set back or forward does not move them); on
+     * another boot, or with the boot count unknown on both sides, they move by the wall clock gap, never negative.
+     * Every row is still from movedAt and saved at 100 s. Rows: the restart time, wall gap and boot counts, the modes
+     * around the deadline, then the trigger, the suspicion end and the still base bound where checked.
+     */
+    @Test fun clock_saved_times_move_by_elapsed_time_on_the_same_boot_else_by_the_wall_clock() {
+        class Row(val name: String, val movedAt: Long, val now: Long, val wallGap: Long, val bootNow: Int,
+                  val bootSaved: Int, val watchingAt: Long, val checkingAt: Long, val trigger: String? = null,
+                  val fallAt: Long? = null, val accidentUntil: Long? = null, val stillBaseAtMost: Long? = null)
+        for (r in listOf(
+            // restarted 10 s later on the same boot, the wall clock was set back 1 h
+            Row("same boot, wall clock set back 1 h", movedAt = 50_000, now = 110_000,
+                wallGap = 10_000 - 3_600_000, bootNow = boot, bootSaved = boot,
+                watchingAt = 229_000, checkingAt = 230_000, trigger = "still"),
+            // restarted 10 s later on the same boot, the wall clock was set forward 1 day
+            Row("same boot, wall clock set forward 1 day", movedAt = 95_000, now = 110_000,
+                wallGap = 10_000 + 86_400_000, bootNow = boot, bootSaved = boot,
+                watchingAt = 110_000, checkingAt = 120_000, trigger = "fall", fallAt = 90_000, accidentUntil = 390_000),
+            // another boot and the wall clock went back: no time passed, 50 s were still, 130 s are left
+            Row("other boot, wall clock went back", movedAt = 50_000, now = 5_000, wallGap = -60_000,
+                bootNow = boot + 1, bootSaved = boot, watchingAt = 134_000, checkingAt = 135_000,
+                stillBaseAtMost = 5_000),
+            // boot count unreadable on both sides: 20 s of wall time count although elapsed says 10 s
+            Row("boot count unknown", movedAt = 50_000, now = 110_000, wallGap = 20_000, bootNow = -1, bootSaved = -1,
+                watchingAt = 219_000, checkingAt = 220_000))) {
+            val old = newLogic(carried = true)
+            old.onMoved(r.movedAt)
+            r.fallAt?.let { old.onAccident(it) }
+            val l = reboot(old, savedAt = 100_000, now = r.now, wallGap = r.wallGap, bootNow = r.bootNow,
+                bootSaved = r.bootSaved)
+            r.accidentUntil?.let { assertEquals("${r.name}: suspicion end", it, l.snapshot(r.now).accidentUntil) }
+            r.stillBaseAtMost?.let { assertTrue("${r.name}: still base", l.snapshot(r.now).stillBase <= it) }
+            assertEquals("${r.name}: seen at ${r.watchingAt}", Mode.WATCHING, l.seenAt(r.watchingAt))
+            assertEquals("${r.name}: seen at ${r.checkingAt}", Mode.CHECKING, l.seenAt(r.checkingAt))
+            r.trigger?.let { assertEquals("${r.name}: trigger", it, l.trigger) }
+        }
     }
 
     // -- power at the restart --

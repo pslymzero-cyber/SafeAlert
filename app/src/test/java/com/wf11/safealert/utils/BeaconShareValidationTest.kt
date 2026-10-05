@@ -16,15 +16,17 @@ class BeaconShareValidationTest {
     private fun p(uuid: String, offset: Int = 0, zone: Boolean = false, enter: Int = -80, visitor: Boolean = false) =
         BeaconProfile(uuid, "b-$uuid", rssiOffset = offset, zoneMute = zone, zoneEnterRssi = enter, visitorBeacon = visitor)
 
+    /** Offsets 0..20 and entry strengths -100..-30 are accepted; one entry outside them rejects the whole set. */
     @Test
-    fun 경계값은_받는다() {
-        assertNull(BeaconRegistry.validateShared(listOf(p(U1, offset = 0, enter = -100), p(U2, offset = 20, enter = -30))))
-    }
-
-    @Test
-    fun 범위_밖_항목이_하나라도_있으면_세트_전체를_거부한다() {
-        for (bad in listOf(p(MAC, offset = 21), p(MAC, offset = -1), p(MAC, enter = -101), p(MAC, enter = -29))) {
-            assertNotNull("정상 항목과 섞여 있어도 거부: $bad", BeaconRegistry.validateShared(listOf(p(U1), bad, p(U2))))
+    fun 범위_안이면_받고_범위_밖_항목이_하나라도_있으면_세트_전체를_거부한다() {
+        val rows = listOf(Triple("경계값은 받는다", listOf(p(U1, offset = 0, enter = -100), p(U2, offset = 20, enter = -30)), true)) +
+            listOf(p(MAC, offset = 21), p(MAC, offset = -1), p(MAC, enter = -101), p(MAC, enter = -29)).map { bad ->
+                Triple("정상 항목과 섞여 있어도 거부: $bad", listOf(p(U1), bad, p(U2)), false)
+            }
+        for ((i, row) in rows.withIndex()) {
+            val (label, set, accepted) = row
+            val reason = BeaconRegistry.validateShared(set)
+            if (accepted) assertNull("row $i $label", reason) else assertNotNull("row $i $label", reason)
         }
     }
 

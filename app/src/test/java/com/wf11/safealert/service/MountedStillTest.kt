@@ -18,10 +18,11 @@ class MountedStillTest {
 
     private fun mounted() = newLogic(charging = true).apply { setEquipment(true, 0L) }
 
-    private fun LoneWorkerLogic.opensAt(t: Long) {
-        assertEquals(Mode.WATCHING, seenAt(t - 1))
-        assertEquals(Mode.CHECKING, seenAt(t))
-        assertEquals("still", trigger)
+    /** The still check opens exactly at t; m (a row label) prefixes the assertion messages. */
+    private fun LoneWorkerLogic.opensAt(t: Long, m: String? = null) {
+        assertEquals(m, Mode.WATCHING, seenAt(t - 1))
+        assertEquals(m, Mode.CHECKING, seenAt(t))
+        assertEquals(m, "still", trigger)
     }
 
     @Test fun mounted_still_check_opens_after_still_ms() {
@@ -31,16 +32,14 @@ class MountedStillTest {
         assertEquals(120_000L, l.responseLeftMs(180_000))
     }
 
-    @Test fun moved_restarts_mounted_count() {
-        val l = mounted()
-        l.onMoved(100_000)
-        l.opensAt(280_000)
-    }
-
-    @Test fun turn_restarts_mounted_count() {
-        val l = mounted()
-        l.onTurn(100_000)
-        l.opensAt(280_000)
+    /** MOVED and a turn both restart the mounted count: the check opens stillMs after them. */
+    @Test fun moved_or_turn_restarts_the_mounted_count() {
+        class Row(val name: String, val restart: LoneWorkerLogic.() -> Unit)
+        for (r in listOf(Row("MOVED at 100 s") { onMoved(100_000) }, Row("turn at 100 s") { onTurn(100_000) })) {
+            val l = mounted()
+            r.restart(l)
+            l.opensAt(280_000, r.name)
+        }
     }
 
     // A mount whose SOS ended by the one-hour limit waits as well: no new check while the equipment stands still, and a

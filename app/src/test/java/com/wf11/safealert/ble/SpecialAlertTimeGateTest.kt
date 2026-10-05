@@ -451,37 +451,43 @@ class SpecialAlertTimeGateTest {
 
     private fun streakMs(gate: Any) = ReflectionHelpers.getField<Long>(gate, "streakMs")
 
-    /** One non-approach frame shortly after an approach keeps the approach streak; a gap over 300 ms resets it. */
+    /**
+     * A non-approach evaluation within 300 ms of the last approach frame keeps the approach streak (its start and its
+     * running streakMs), up to and including 300 ms; past that the streak resets (streakMs 0). Rows 1-4 are the steps of
+     * one sequence (approach 1000, one non-approach frame at 1120, approach 1240, non-approach 1600 = 360 ms after 1240);
+     * rows 5-7 are the boundary; row 8 shows the 300 ms counts from the last approach frame, not the first. Each row
+     * replays its calls on a new service and checks the last call; a null column is not checked for that row.
+     */
     @Test
-    fun shortNonApproachFrameKeepsApproachStreak() {
-        val service = H.newService()
-        val asm = asmOf(service)
-        val streaks = fieldOf<Map<String, Long>>(service, "approachStreakStartMap")
-
-        evalGate(asm, 50.0, 1_000L)
-        assertEquals(1_000L, streaks[id])
-
-        val dip = evalGate(asm, 0.0, 1_120L)                // one non-approach frame (120ms) — within grace
-        assertEquals("짧은 끊김은 streak 유지", 1_000L, streaks[id])
-        assertEquals(120L, streakMs(dip))
-
-        assertEquals(240L, streakMs(evalGate(asm, 50.0, 1_240L)))
-
-        evalGate(asm, 0.0, 1_600L)                          // last approach 1240 → 360ms > 300ms
-        assertFalse("유예 초과는 streak 리셋", streaks.containsKey(id))
-    }
-
-    /** The grace is inclusive: up to 300 ms after the last approach frame keeps the streak; 301 ms resets it (streakMs 0). */
-    @Test
-    fun approachStreakGraceEndsAfter300Ms() {
-        for ((gap, kept) in listOf(299L to true, 300L to true, 301L to false)) {
-            val s = H.newService()
-            val asm = asmOf(s)
-            val streaks = fieldOf<Map<String, Long>>(s, "approachStreakStartMap")
-            evalGate(asm, 50.0, 1_000L)
-            val g = evalGate(asm, 0.0, 1_000L + gap)
-            assertEquals("gap=$gap", kept, streaks.containsKey(id))
-            assertEquals("gap=$gap", if (kept) gap else 0L, streakMs(g))
+    fun approachStreakGraceIs300MsFromTheLastApproachFrame() {
+        class Row(
+            val label: String, val calls: List<Pair<Double, Long>>,
+            val start: Long? = null, val kept: Boolean? = null, val streakMs: Long? = null,
+        )
+        val approach = 50.0
+        val none = 0.0
+        val rows = listOf(
+            Row("row 1 approach at 1000", listOf(approach to 1_000L), start = 1_000L),
+            Row("row 2 짧은 끊김은 streak 유지 (one non-approach frame, 120ms)", listOf(approach to 1_000L, none to 1_120L),
+                start = 1_000L, streakMs = 120L),
+            Row("row 3 approach again at 1240", listOf(approach to 1_000L, none to 1_120L, approach to 1_240L), streakMs = 240L),
+            Row("row 4 유예 초과는 streak 리셋 (last approach 1240 → 360ms > 300ms)",
+                listOf(approach to 1_000L, none to 1_120L, approach to 1_240L, none to 1_600L), kept = false),
+            Row("row 5 gap=299", listOf(approach to 1_000L, none to 1_299L), kept = true, streakMs = 299L),
+            Row("row 6 gap=300", listOf(approach to 1_000L, none to 1_300L), kept = true, streakMs = 300L),
+            Row("row 7 gap=301", listOf(approach to 1_000L, none to 1_301L), kept = false, streakMs = 0L),
+            Row("row 8 approach 1000 and 1200, none 1450 (250ms after the last approach)",
+                listOf(approach to 1_000L, approach to 1_200L, none to 1_450L), kept = true),
+        )
+        for (r in rows) {
+            val service = H.newService()
+            val asm = asmOf(service)
+            val streaks = fieldOf<Map<String, Long>>(service, "approachStreakStartMap")
+            var last: Any? = null
+            for ((vel, now) in r.calls) last = evalGate(asm, vel, now)
+            r.start?.let { assertEquals("${r.label}: streak start", it, streaks[id]) }
+            r.kept?.let { assertEquals("${r.label}: streak kept", it, streaks.containsKey(id)) }
+            r.streakMs?.let { assertEquals("${r.label}: streakMs", it, streakMs(last!!)) }
         }
     }
 

@@ -39,44 +39,54 @@ class ServiceStartTest {
         assertEquals(cd, ServiceStartGate.fgsType(34, true))
     }
 
-    private fun stopped(sdk: Int, exits: List<Pair<Int, Long>>, since: Long = 1_000L, updatedAt: Long = 10_000_000L) =
-        BootRestoreReceiver.userStopped(sdk, exits, since, updatedAt)
+    /** One userStopped case: exits are (reason, time ms); since = the last start (0 = no start key), updatedAt = the update time. */
+    private class StopRow(
+        val label: String, val sdk: Int, val exits: List<Pair<Int, Long>>,
+        val since: Long = 1_000L, val updatedAt: Long = 10_000_000L, val stopped: Boolean
+    )
 
+    /**
+     * From API 30 a user-requested exit after the last start means the user stopped the service. Below API 30, without
+     * a start key, for other exit reasons or for exits before the start it never does. On API 30-33 a user exit within
+     * 60 s of an update made after the last start is the update's own kill; API 34 needs no such slack.
+     */
     @Test
-    fun non_user_exit_or_exit_before_start_is_ignored_and_below_api30_never_stops() {
-        assertFalse(stopped(29, listOf(user to 2_000L)))
-        assertTrue(stopped(30, listOf(user to 2_000L)))
-        assertFalse(stopped(30, listOf(user to 500L)))
-        assertFalse(stopped(30, listOf(ApplicationExitInfo.REASON_LOW_MEMORY to 2_000L)))
-        assertFalse(stopped(30, emptyList()))
-    }
-
-    @Test
-    fun missing_start_key_skips_judgement_and_restores() {
-        assertFalse(stopped(34, listOf(user to 2_000L), since = 0L))
-        assertFalse(stopped(30, listOf(user to 2_000L), since = 0L))
-    }
-
-    @Test
-    fun api30_to_33_update_kill_within_60s_of_update_is_not_user_stop() {
+    fun user_exit_after_last_start_is_a_stop_except_below_api30_or_near_an_update_on_api30_33() {
+        val rows = ArrayList<StopRow>()
+        rows += StopRow("api29 user exit", 29, listOf(user to 2_000L), stopped = false)
+        rows += StopRow("api30 user exit after the start", 30, listOf(user to 2_000L), stopped = true)
+        rows += StopRow("api30 user exit before the start", 30, listOf(user to 500L), stopped = false)
+        rows += StopRow("api30 low-memory exit", 30, listOf(ApplicationExitInfo.REASON_LOW_MEMORY to 2_000L), stopped = false)
+        rows += StopRow("api30 no exit records", 30, emptyList(), stopped = false)
+        rows += StopRow("api34 no start key", 34, listOf(user to 2_000L), since = 0L, stopped = false)
+        rows += StopRow("api30 no start key", 30, listOf(user to 2_000L), since = 0L, stopped = false)
         for (sdk in listOf(30, 33)) {
-            assertFalse(stopped(sdk, listOf(user to 100_000L), updatedAt = 160_000L))
-            assertFalse(stopped(sdk, listOf(user to 100_000L), updatedAt = 40_000L))
-            assertFalse(stopped(sdk, listOf(update to 100_000L, user to 130_000L), updatedAt = 100_000L))
+            rows += StopRow("api$sdk user exit 60 s before an update", sdk, listOf(user to 100_000L),
+                updatedAt = 160_000L, stopped = false)
+            rows += StopRow("api$sdk user exit 60 s after an update", sdk, listOf(user to 100_000L),
+                updatedAt = 40_000L, stopped = false)
+            rows += StopRow("api$sdk update exit, then a user exit 30 s later", sdk,
+                listOf(update to 100_000L, user to 130_000L), updatedAt = 100_000L, stopped = false)
         }
-    }
-
-    @Test
-    fun api30_user_stop_61s_away_from_update_counts() {
-        assertTrue(stopped(30, listOf(user to 100_000L), updatedAt = 160_001L))
-        assertTrue(stopped(33, listOf(user to 100_000L), updatedAt = 39_999L))
-    }
-
-    @Test
-    fun api34_user_stop_after_start_counts() {
-        assertTrue(stopped(34, listOf(user to 100_000L), updatedAt = 100_000L))
-        assertTrue(stopped(34, listOf(update to 3_000L, user to 2_000L)))
-        assertFalse(stopped(34, listOf(update to 2_000L)))
+        rows += StopRow("api30 user exit 60.001 s before an update", 30, listOf(user to 100_000L),
+            updatedAt = 160_001L, stopped = true)
+        rows += StopRow("api33 user exit 60.001 s after an update", 33, listOf(user to 100_000L),
+            updatedAt = 39_999L, stopped = true)
+        rows += StopRow("api34 user exit at the update time", 34, listOf(user to 100_000L),
+            updatedAt = 100_000L, stopped = true)
+        rows += StopRow("api34 user exit and a later update exit", 34, listOf(update to 3_000L, user to 2_000L), stopped = true)
+        rows += StopRow("api34 update exit only", 34, listOf(update to 2_000L), stopped = false)
+        for (sdk in listOf(30, 33)) {
+            rows += StopRow("api$sdk update after the last start, user exit 10 s later", sdk, listOf(user to 100_000L),
+                since = 50_000L, updatedAt = 90_000L, stopped = false)
+            rows += StopRow("api$sdk update at the last start, user exit 10 s later", sdk, listOf(user to 100_000L),
+                since = 90_000L, updatedAt = 90_000L, stopped = true)
+            rows += StopRow("api$sdk update before the last start, user exit 10 s later", sdk, listOf(user to 100_000L),
+                since = 95_000L, updatedAt = 90_000L, stopped = true)
+        }
+        for ((i, r) in rows.withIndex()) {
+            assertEquals("row $i ${r.label}", r.stopped, BootRestoreReceiver.userStopped(r.sdk, r.exits, r.since, r.updatedAt))
+        }
     }
 
     @Test
@@ -85,15 +95,6 @@ class ServiceStartTest {
             val s = ServiceStartGate.screenPermissions(sdk).toSet()
             assertTrue(s.containsAll(ServiceStartGate.required(sdk).toList()))
             assertTrue(s.contains(Manifest.permission.ACCESS_FINE_LOCATION))
-        }
-    }
-
-    @Test
-    fun update_slack_applies_only_when_update_is_after_last_start() {
-        for (sdk in listOf(30, 33)) {
-            assertFalse(stopped(sdk, listOf(user to 100_000L), since = 50_000L, updatedAt = 90_000L))
-            assertTrue(stopped(sdk, listOf(user to 100_000L), since = 90_000L, updatedAt = 90_000L))
-            assertTrue(stopped(sdk, listOf(user to 100_000L), since = 95_000L, updatedAt = 90_000L))
         }
     }
 

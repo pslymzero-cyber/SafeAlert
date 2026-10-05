@@ -17,7 +17,7 @@ import org.junit.Test
  * this file even though their values match the sequences in RssiCascadeTest.kt (redeclared on purpose; the two
  * files are not coupled).
  *
- * Failure message format: `"isolation/<state> frame=<i> stage=<median|prefilter>"`.
+ * Failure message format: `"isolation/<state> frame=<i> stage=<median|prefilter>"`, prefixed with `"row <n> "` in the table test.
  */
 class RssiCascadeIsolationTest {
 
@@ -48,58 +48,38 @@ class RssiCascadeIsolationTest {
     }
 
     /**
-     * (1) Interleaving invariance — even when device01 is pushed alternately with device02 (a different kind of
-     * sequence), device01's per-frame output must exactly match the solo baseline.
+     * (1) Another device never changes device01: even when device01 is pushed alternately with device02 (a different
+     * kind of sequence), device01's per-frame output must exactly match the solo baseline — whether device02 is never
+     * cleared (row 1; commenting out its two push lines must leave the row passing, a manual check that there is no
+     * cross-contamination) or cleared alone (`clear()`) mid-interleave after frame 10 (row 2).
+     * Each row starts from new filters.
      */
     @Test
-    fun interleavedPush_deviceOneMatchesSoloBaseline() {
+    fun otherDevice_pushesAndClears_leaveDeviceOneUnchanged() {
         val (baseMedian, basePrefilter) = soloBaseline()
 
-        val medianFilter = MedianFilter()
-        val rssiPreFilter = RssiPreFilter()
-        for (i in INPUT_A.indices) {
-            val m1 = medianFilter.push(DEVICE_01, INPUT_A[i])
-            val p1 = rssiPreFilter.push(DEVICE_01, m1, prevVel = 0.0, fallBoost = false)
-            // Push device02 every frame as well — commenting out the two lines below must leave the device01 assertions
-            // passing (manual check that there is no cross-contamination).
-            val m2 = medianFilter.push(DEVICE_02, INPUT_B[i])
-            rssiPreFilter.push(DEVICE_02, m2, prevVel = 0.0, fallBoost = false)
+        for ((label, clearAtIndex) in listOf("row 1 isolation/interleaved" to null, "row 2 isolation/afterClear" to 10)) {
+            val medianFilter = MedianFilter()
+            val rssiPreFilter = RssiPreFilter()
+            for (i in INPUT_A.indices) {
+                val m1 = medianFilter.push(DEVICE_01, INPUT_A[i])
+                val p1 = rssiPreFilter.push(DEVICE_01, m1, prevVel = 0.0, fallBoost = false)
+                val m2 = medianFilter.push(DEVICE_02, INPUT_B[i])
+                rssiPreFilter.push(DEVICE_02, m2, prevVel = 0.0, fallBoost = false)
 
-            assertEquals("isolation/interleaved frame=$i stage=median", baseMedian[i], m1)
-            assertEquals("isolation/interleaved frame=$i stage=prefilter", basePrefilter[i], p1)
-        }
-    }
+                if (i == clearAtIndex) {
+                    medianFilter.clear(DEVICE_02)
+                    rssiPreFilter.clear(DEVICE_02)
+                }
 
-    /**
-     * (2) Selective clear — clearing only device02 (`clear()`) mid-interleave leaves device01's output
-     * unaffected.
-     */
-    @Test
-    fun selectiveClear_onlyAffectsTargetDevice() {
-        val (baseMedian, basePrefilter) = soloBaseline()
-
-        val medianFilter = MedianFilter()
-        val rssiPreFilter = RssiPreFilter()
-        val clearAtIndex = 10
-
-        for (i in INPUT_A.indices) {
-            val m1 = medianFilter.push(DEVICE_01, INPUT_A[i])
-            val p1 = rssiPreFilter.push(DEVICE_01, m1, prevVel = 0.0, fallBoost = false)
-            val m2 = medianFilter.push(DEVICE_02, INPUT_B[i])
-            rssiPreFilter.push(DEVICE_02, m2, prevVel = 0.0, fallBoost = false)
-
-            if (i == clearAtIndex) {
-                medianFilter.clear(DEVICE_02)
-                rssiPreFilter.clear(DEVICE_02)
+                assertEquals("$label frame=$i stage=median", baseMedian[i], m1)
+                assertEquals("$label frame=$i stage=prefilter", basePrefilter[i], p1)
             }
-
-            assertEquals("isolation/afterClear frame=$i stage=median", baseMedian[i], m1)
-            assertEquals("isolation/afterClear frame=$i stage=prefilter", basePrefilter[i], p1)
         }
     }
 
     /**
-     * (3) `clearAll()` — returns every device to cold start. Right after it, `MedianFilter.isFull(device01)`
+     * (2) `clearAll()` — returns every device to cold start. Right after it, `MedianFilter.isFull(device01)`
      * must be false, and pushing device01 again from the start must reproduce the solo baseline exactly.
      */
     @Test

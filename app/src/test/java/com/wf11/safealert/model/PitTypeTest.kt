@@ -3,7 +3,6 @@ package com.wf11.safealert.model
 import com.wf11.safealert.ble.BleConstants
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -77,21 +76,22 @@ class PitTypeTest {
         }
     }
 
+    /** A registered type code, a dash and a two-digit number, ignoring case and outer spaces; anything else is null. */
     @Test
-    fun parseAcceptsLowercaseAndPadding() {
-        assertEquals(PitType.COUNTER_BALANCE to 1, PitType.parse(" cb-01 "))
-        assertEquals(PitType.REACH to 7, PitType.parse("Rt-07"))
-    }
-
-    @Test
-    fun parseRejectsUnknownAndMalformed() {
-        listOf(
-            "ZZ-01",            // well formed but not a registered type
-            "CB-00",            // number below NO_MIN
-            "CB01", "CB-1", "CB-001", "C-01", "CBX-01",
-            "8FB25-40604",      // raw equipment number
-            "SA-1A2B3C4D",      // auto id
-            KIM, "KIM", "", "   "
-        ).forEach { assertNull(it, PitType.parse(it)) }
+    fun parseAcceptsOnlyARegisteredTypeAndATwoDigitNumberIgnoringCaseAndPadding() {
+        val rows: List<Pair<String, Pair<PitType, Int>?>> = listOf(
+            " cb-01 " to (PitType.COUNTER_BALANCE to 1),
+            "Rt-07" to (PitType.REACH to 7),
+            "ZZ-01" to null,            // well formed but not a registered type
+            "CB-00" to null,            // number below NO_MIN
+            "CB01" to null, "CB-1" to null, "CB-001" to null, "C-01" to null, "CBX-01" to null,
+            "8FB25-40604" to null,      // raw equipment number
+            "SA-1A2B3C4D" to null,      // auto id
+            KIM to null, "KIM" to null, "" to null, "   " to null
+        )
+        for ((i, row) in rows.withIndex()) {
+            val (input, want) = row
+            assertEquals("row $i '$input'", want, PitType.parse(input))
+        }
     }
 }

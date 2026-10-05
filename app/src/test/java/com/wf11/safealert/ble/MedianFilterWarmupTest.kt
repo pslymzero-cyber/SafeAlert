@@ -1,7 +1,6 @@
 package com.wf11.safealert.ble
 
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
+import org.junit.Assert.assertEquals
 import org.junit.Test
 
 /**
@@ -20,7 +19,7 @@ import org.junit.Test
  *   Production only builds MedianFilter() with DEFAULT_WINDOW, so only the default window is tested here; the default's
  *   value is pinned by RssiCascadeTest's frozen median arrays (the tests here count against DEFAULT_WINDOW itself).
  *
- * Failure message format: `"warmup/<case> n=<samples> stage=median"`.
+ * Failure message format: `"row <i> warmup/<case> n=<samples> stage=median"`.
  */
 class MedianFilterWarmupTest {
 
@@ -32,52 +31,34 @@ class MedianFilterWarmupTest {
         val SAMPLES = intArrayOf(-92, -88, -85, -83, -80, -77, -75, -72, -70, -68)
     }
 
-    /** FIFO pushes old samples out, but the size stays at windowSize, so it stays true. */
+    /**
+     * isFull(device) is true exactly while that device's own window holds DEFAULT_WINDOW samples: it turns true at the
+     * DEFAULT_WINDOW-th sample and stays true as the FIFO pushes old samples out (the size stays at the window),
+     * `clear(deviceId)` returns that device to cold start, device02's samples do not count for device01 and the other
+     * way round, and a device that never received a sample counts as warming up (null-buffer path).
+     * Each row starts from a new filter: device01 gets its samples, then device02, then device01 is cleared if asked.
+     */
     @Test
-    fun isFull_staysTrue_afterWindowOverflows() {
-        val medianFilter = MedianFilter()
-
-        for (i in SAMPLES.indices) {
-            medianFilter.push(DEVICE_01, SAMPLES[i])
-            val n = i + 1
-            if (n < MedianFilter.DEFAULT_WINDOW) {
-                assertFalse("warmup/overflow n=$n stage=median", medianFilter.isFull(DEVICE_01))
-            } else {
-                assertTrue("warmup/overflow n=$n stage=median", medianFilter.isFull(DEVICE_01))
-            }
+    fun isFull_onlyWhileThatDeviceHoldsAFullWindow() {
+        class Row(
+            val label: String, val device01: Int, val device02: Int = 0, val clear01: Boolean = false,
+            val query: String = DEVICE_01, val full: Boolean,
+        )
+        val window = MedianFilter.DEFAULT_WINDOW
+        val rows = (1..SAMPLES.size).map { n -> Row("warmup/overflow n=$n stage=median", device01 = n, full = n >= window) } +
+            listOf(
+                Row("warmup/clear n=3 before stage=median", device01 = window, full = true),
+                Row("warmup/clear n=0 after stage=median", device01 = window, clear01 = true, full = false),
+                Row("warmup/perDevice device01 n=3 stage=median", device01 = window, device02 = 1, full = true),
+                Row("warmup/perDevice device02 n=1 stage=median", device01 = window, device02 = 1, query = DEVICE_02, full = false),
+                Row("warmup/unknownDevice n=0 stage=median", device01 = 1, query = "FF:FF:FF:FF:FF:FF", full = false),
+            )
+        for ((i, r) in rows.withIndex()) {
+            val medianFilter = MedianFilter()
+            for (k in 0 until r.device01) medianFilter.push(DEVICE_01, SAMPLES[k])
+            for (k in 0 until r.device02) medianFilter.push(DEVICE_02, SAMPLES[k])
+            if (r.clear01) medianFilter.clear(DEVICE_01)
+            assertEquals("row ${i + 1} ${r.label}", r.full, medianFilter.isFull(r.query))
         }
-    }
-
-    /** `clear(deviceId)` returns only that device to cold start. */
-    @Test
-    fun clear_returnsDeviceToNotFull() {
-        val medianFilter = MedianFilter()
-
-        for (i in 0 until MedianFilter.DEFAULT_WINDOW) medianFilter.push(DEVICE_01, SAMPLES[i])
-        assertTrue("warmup/clear n=3 before stage=median", medianFilter.isFull(DEVICE_01))
-
-        medianFilter.clear(DEVICE_01)
-        assertFalse("warmup/clear n=0 after stage=median", medianFilter.isFull(DEVICE_01))
-    }
-
-    /** Fill state is per device — device01 being full leaves device02 still warming up. */
-    @Test
-    fun isFull_isPerDevice() {
-        val medianFilter = MedianFilter()
-
-        for (i in 0 until MedianFilter.DEFAULT_WINDOW) medianFilter.push(DEVICE_01, SAMPLES[i])
-        medianFilter.push(DEVICE_02, SAMPLES[0])
-
-        assertTrue("warmup/perDevice device01 n=3 stage=median", medianFilter.isFull(DEVICE_01))
-        assertFalse("warmup/perDevice device02 n=1 stage=median", medianFilter.isFull(DEVICE_02))
-    }
-
-    /** A device that has never received a sample counts as warming up (null-buffer path). */
-    @Test
-    fun isFull_falseForUnknownDevice() {
-        val medianFilter = MedianFilter()
-        medianFilter.push(DEVICE_01, SAMPLES[0])
-
-        assertFalse("warmup/unknownDevice n=0 stage=median", medianFilter.isFull("FF:FF:FF:FF:FF:FF"))
     }
 }

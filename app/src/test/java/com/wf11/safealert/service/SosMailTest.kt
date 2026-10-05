@@ -107,6 +107,20 @@ class SosMailTest {
         m.enqueue("other", "root/sos/WF11", "k1", 3)
         assertEquals(0, posts.size)
         assertNull(kv.m[SosMail.K_LIST])
+        // An unknown event is refused up front, even for a key whose SOS mail was queued
+        m.enqueue(SosMail.EVENT_SOS, "root/sos/WF11", "k2", 3)
+        m.enqueue("other", "root/sos/WF11", "k2", 3)
+        assertEquals(1, posts.size)
+    }
+
+    // Calls are never answered, so the second post also shows that another key is sent while the first is in flight.
+    @Test fun site_root_slashes_trimmed_and_slash_only_root_ignored() {
+        val kv = Kv(); val m = mail(kv)
+        m.enqueue(SosMail.EVENT_SOS, "/wf11/sos/WF11", "k1", 3)
+        m.enqueue(SosMail.EVENT_SOS, "wf11//sos/WF11", "k2", 3)
+        m.enqueue(SosMail.EVENT_SOS, "//sos/WF11", "k3", 3)
+        assertEquals(2, posts.size)
+        assertTrue(posts.all { it.form.startsWith("site=wf11&sc=WF11&") })
     }
 
     @Test fun enqueue_ignores_a_duplicate_key_and_caps_still_minutes_at_30() {
@@ -178,15 +192,6 @@ class SosMailTest {
         now = t0 - 120_000; m.tick()
         assertEquals(3, posts.size)
         assertNull(kv.m[SosMail.K_LIST])
-    }
-
-    @Test fun site_root_slashes_trimmed_and_slash_only_root_ignored() {
-        val kv = Kv(); val m = mail(kv)
-        m.enqueue(SosMail.EVENT_SOS, "/wf11/sos/WF11", "k1", 3)
-        m.enqueue(SosMail.EVENT_SOS, "wf11//sos/WF11", "k2", 3)
-        m.enqueue(SosMail.EVENT_SOS, "//sos/WF11", "k3", 3)
-        assertEquals(2, posts.size)
-        assertTrue(posts.all { it.form.startsWith("site=wf11&sc=WF11&") })
     }
 
     @Test fun storage_written_only_when_queue_changes() {
@@ -278,11 +283,49 @@ class SosMailTest {
         assertEquals(1, asked.size)
     }
 
-    @Test fun resolved_without_a_sos_mail_queued_on_this_device_is_not_sent() {
-        val kv = Kv(); val m = mail(kv)
-        m.enqueue(SosMail.EVENT_RESOLVED, "root/sos/WF11", "k9", 3)
-        assertEquals(0, posts.size)
-        assertNull(kv.m[SosMail.K_LIST])
+    /**
+     * One resolved enqueue on a fresh queue. sosAgeMs = how long before it this device's SOS mail for the key was
+     * posted and answered "sent" (null = no SOS mail for the key); resolvedForm = text the last posted form must
+     * contain (null = not checked); queueChecked = that row also checks nothing is left stored; sosKey = the key of
+     * that SOS mail (the resolved key unless a row sets another one).
+     */
+    private class ResolvedRow(
+        val label: String, val key: String, val sosAgeMs: Long?, val wantPosts: Int, val resolvedForm: String?,
+        val queueChecked: Boolean, val sosKey: String = key
+    )
+
+    /**
+     * A resolved mail is queued only when this device queued the SOS mail for the same key and that address row is
+     * at most 7 days old.
+     */
+    @Test fun resolved_mail_goes_only_to_an_address_row_of_the_same_key_at_most_7_days_old() {
+        val clock0 = now
+        val rows = listOf(
+            ResolvedRow("no sos mail queued on this device for the key", "k9", null, wantPosts = 0, resolvedForm = null,
+                queueChecked = true),
+            ResolvedRow("address row exactly 7 days old", "k1", SosMail.KEEP_ADDR_MS, wantPosts = 2,
+                resolvedForm = "id=k1&event=resolved&", queueChecked = false),
+            ResolvedRow("address row 7 days and 1 ms old", "k2", SosMail.KEEP_ADDR_MS + 1, wantPosts = 1, resolvedForm = null,
+                queueChecked = true),
+            ResolvedRow("only another key's address row", "k9", 0L, wantPosts = 1, resolvedForm = null, queueChecked = true,
+                sosKey = "k1")
+        )
+        for ((i, r) in rows.withIndex()) {
+            now = clock0
+            posts.clear(); asked.clear(); queue.clear()
+            val kv = Kv(); val m = mail(kv)
+            r.sosAgeMs?.let { age ->
+                val t = now
+                m.enqueue(SosMail.EVENT_SOS, "root/sos/WF11", r.sosKey, 3)
+                posts[0].done(sent)
+                now = t + age
+            }
+            m.enqueue(SosMail.EVENT_RESOLVED, "root/sos/WF11", r.key, 3)
+            val at = "row $i ${r.label}"
+            assertEquals("$at: posts", r.wantPosts, posts.size)
+            r.resolvedForm?.let { assertTrue("$at: ${posts.last().form}", posts.last().form.contains(it)) }
+            if (r.queueChecked) assertNull("$at: nothing left stored", kv.m[SosMail.K_LIST])
+        }
     }
 
     @Test fun address_rows_older_than_7_days_are_dropped_when_a_new_sos_is_queued() {
@@ -307,26 +350,6 @@ class SosMailTest {
             "https://script.google.com/",
             ""
         )) assertEquals(bad, "", SosMail.scriptUrl(bad))
-    }
-
-    @Test fun resolve_lookup_skips_address_rows_older_than_7_days() {
-        val kv = Kv(); val m = mail(kv)
-        val t0 = now
-        m.enqueue(SosMail.EVENT_SOS, "root/sos/WF11", "k1", 3)
-        posts[0].done(sent)
-        now = t0 + SosMail.KEEP_ADDR_MS
-        m.enqueue(SosMail.EVENT_RESOLVED, "root/sos/WF11", "k1", 3)
-        assertEquals(2, posts.size)
-        assertTrue(posts[1].form.contains("id=k1&event=resolved&"))
-        posts[1].done(sent)
-
-        val t1 = now
-        m.enqueue(SosMail.EVENT_SOS, "root/sos/WF11", "k2", 3)
-        posts[2].done(sent)
-        now = t1 + SosMail.KEEP_ADDR_MS + 1
-        m.enqueue(SosMail.EVENT_RESOLVED, "root/sos/WF11", "k2", 3)
-        assertEquals(3, posts.size)
-        assertNull(kv.m[SosMail.K_LIST])
     }
 
     @Test fun dropped_sos_also_drops_its_waiting_resolve_and_address() {

@@ -62,27 +62,30 @@ class PinLockoutTest {
         assertEquals("초기화 뒤에는 4번 틀려도 잠기지 않는다", Result.Wrong(1), failTimes(4, t0))
     }
 
-    @Test
-    fun 같은_부팅에서_기기_시계를_앞으로_돌려도_풀리지_않는다() {
-        failTimes(5, t0)
-        val clockForward = t0.copy(wallMs = t0.wallMs + 24 * 3_600_000L, elapsedMs = t0.elapsedMs + 1_000L)
-        assertEquals(LOCK_MS - 1_000L, lockout.remainingLockMs(clockForward))
-    }
+    /** Five wrong entries at [lockAt], then the remaining lock time read at [at]. */
+    private class RemainRow(val label: String, val lockAt: Now, val at: Now, val want: Long)
 
+    /**
+     * Within the same boot the remaining time runs on the elapsed clock, so moving the device clock does not shorten
+     * it; after a reboot it runs on the wall clock and never exceeds 10 minutes. With an unreadable boot count (0), an
+     * elapsed clock that went backwards means a reboot.
+     */
     @Test
-    fun 재부팅_뒤에는_벽시계로_재고_10분을_넘기지_않는다() {
-        failTimes(5, t0)
+    fun 잠금_남은_시간은_같은_부팅이면_경과_시간_재부팅_뒤면_벽시계로_재고_10분을_넘지_않는다() {
         val rebooted = Now(wallMs = t0.wallMs + 120_000L, elapsedMs = 30_000L, bootCount = 8)
-        assertEquals(LOCK_MS - 120_000L, lockout.remainingLockMs(rebooted))
-        val clockBack = rebooted.copy(wallMs = t0.wallMs - 3_600_000L)
-        assertEquals("시계를 뒤로 돌려도 10분을 넘지 않는다", LOCK_MS, lockout.remainingLockMs(clockBack))
-    }
-
-    @Test
-    fun 부팅_횟수를_못_읽어도_경과_시간이_줄면_재부팅으로_본다() {
-        val noBoot = t0.copy(bootCount = 0)
-        repeat(5) { lockout.submit(false, noBoot) }
-        val rebooted = Now(wallMs = t0.wallMs + 60_000L, elapsedMs = 5_000L, bootCount = 0)
-        assertEquals(LOCK_MS - 60_000L, lockout.remainingLockMs(rebooted))
+        val rows = listOf(
+            RemainRow("같은 부팅에서 기기 시계를 하루 앞으로 돌려도 풀리지 않는다", t0,
+                t0.copy(wallMs = t0.wallMs + 24 * 3_600_000L, elapsedMs = t0.elapsedMs + 1_000L), LOCK_MS - 1_000L),
+            RemainRow("2분 뒤 재부팅하면 벽시계로 잰다", t0, rebooted, LOCK_MS - 120_000L),
+            RemainRow("재부팅 뒤 시계를 뒤로 돌려도 10분을 넘지 않는다", t0,
+                rebooted.copy(wallMs = t0.wallMs - 3_600_000L), LOCK_MS),
+            RemainRow("부팅 횟수를 못 읽어도 경과 시간이 줄면 재부팅으로 본다", t0.copy(bootCount = 0),
+                Now(wallMs = t0.wallMs + 60_000L, elapsedMs = 5_000L, bootCount = 0), LOCK_MS - 60_000L)
+        )
+        for ((i, r) in rows.withIndex()) {
+            val fresh = PinLockout(MemStore())
+            repeat(5) { fresh.submit(false, r.lockAt) }
+            assertEquals("row $i ${r.label}", r.want, fresh.remainingLockMs(r.at))
+        }
     }
 }

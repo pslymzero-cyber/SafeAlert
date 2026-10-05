@@ -1,30 +1,31 @@
 package com.wf11.safealert.ble
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * ext byte (ServiceData byte[1]) bit1 = SOS, and the frozen 1-byte payload layout (byte[0]).
+ * ext byte (ServiceData byte[1]) bit0 = IN_ZONE, bit1 = SOS, and the frozen 1-byte payload layout (byte[0]).
  * That the SOS advert keeps byte[0] untouched is SosAdvertTest's job (it builds the real service data).
  */
 class ExtFlagCodecTest {
 
+    /**
+     * The ext byte carries IN_ZONE in bit0 and SOS in bit1: each row is encoded and its SOS bit read back.
+     * A byte of 0 is also what a missing ext byte parses as.
+     */
     @Test
-    fun encodeExt_fourCombinations() {
-        assertEquals(0x00, BleConstants.encodeExt(inZone = false, sos = false))
-        assertEquals(0x01, BleConstants.encodeExt(inZone = true, sos = false))
-        assertEquals(0x02, BleConstants.encodeExt(inZone = false, sos = true))
-        assertEquals(0x03, BleConstants.encodeExt(inZone = true, sos = true))
-    }
-
-    @Test
-    fun decodeSos_bits() {
-        assertFalse(BleConstants.decodeSos(0x01))
-        assertTrue(BleConstants.decodeSos(0x02))
-        assertTrue(BleConstants.decodeSos(0x03))
-        assertFalse(BleConstants.decodeSos(0))   // missing byte is parsed as 0
+    fun extByte_inZoneInBit0_sosInBit1() {
+        class Row(val label: String, val inZone: Boolean, val sos: Boolean, val byte: Int)
+        val rows = listOf(
+            Row("row 1 neither (a missing byte is parsed as 0)", inZone = false, sos = false, byte = 0x00),
+            Row("row 2 inZone", inZone = true, sos = false, byte = 0x01),
+            Row("row 3 sos", inZone = false, sos = true, byte = 0x02),
+            Row("row 4 inZone+sos", inZone = true, sos = true, byte = 0x03),
+        )
+        for (r in rows) {
+            assertEquals("${r.label}: encodeExt", r.byte, BleConstants.encodeExt(inZone = r.inZone, sos = r.sos))
+            assertEquals("${r.label}: decodeSos", r.sos, BleConstants.decodeSos(r.byte))
+        }
     }
 
     /** Deployed devices decode this 1-byte layout (CAT 7:6, STATE 5:4, TURN 3:2, RISK 1:0); it must never change. */
