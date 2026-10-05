@@ -1,11 +1,13 @@
 package com.wf11.safealert.ui
 
 import android.Manifest
+import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.view.View
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
@@ -30,7 +32,7 @@ class DevSettingsActivity : AppCompatActivity() {
     // Deferred EditText commits (there is no save button) — committed in bulk on focus loss/onPause
     private val editCommitters = mutableListOf<() -> Unit>()
 
-    // Counter for revealing hidden advanced options with 7 quick taps on "앱 정보"
+    // Counter for revealing the hidden advanced options with 7 taps on the version in "앱 정보"
     private var appInfoTapCount = 0
     private var lastAppInfoTapMs = 0L
 
@@ -77,17 +79,11 @@ class DevSettingsActivity : AppCompatActivity() {
         binding.etDevEchoMinTicks.setText(DevSettings.echoCalMinTicks.toString())
         binding.etDevEchoMaxIqr.setText(DevSettings.echoCalMaxIqrDb.toString())
         binding.etDevEchoClamp.setText(DevSettings.echoCalClampDb.toString())
-        // Firebase
-        binding.etFirebaseRoot.setText(DevSettings.firebaseRoot)
         binding.etDevSiteCode.setText(DevSettings.siteCode)   // Site code change path
         binding.etSosMailTo.setText(LoneWorkerSosSync.mailTo(this, DevSettings.siteCode))
         binding.etSosMailTo.isEnabled = DevSettings.siteCode.isNotEmpty()
         binding.tvSosMailOff.visibility = if (LoneWorkerSosSync.mailEnabled) View.GONE else View.VISIBLE
         binding.switchAutoSave.isChecked = DevSettings.autoSaveAlerts
-        // Debug
-        binding.switchDebug.isChecked = DevSettings.debugMode
-        binding.seekSimRssi.progress = DevSettings.simulatedRssi + 100
-        binding.tvSimRssiVal.text = "${DevSettings.simulatedRssi} dBm"
         binding.switchVerbose.isChecked = DevSettings.logVerbose
         // Judging parameters (advanced) — show stored values (defaults when unset)
         //   Decimal items use a sensitivity-preset Spinner (9 steps; EMA fall 10): the preset closest to the stored value is selected
@@ -102,9 +98,6 @@ class DevSettingsActivity : AppCompatActivity() {
         binding.etDepartingHysteresis.setText(DevSettings.departingHysteresisDbm.toString())
         binding.etRecedingClearMs.setText(DevSettings.recedingClearMs.toString())
         binding.etRecedingDrop.setText(DevSettings.recedingDbmDrop.toString())
-        binding.spClosingFactor.setSelection(presetIndex(closingPresets, DevSettings.closingKmhToDbms))
-        binding.spHeadonRatio.setSelection(presetIndex(headOnPresets, DevSettings.collisionHeadOnRatio))
-        binding.spSideRatio.setSelection(presetIndex(sidePresets, DevSettings.collisionSideRatio))
         binding.spEmaRise.setSelection(presetIndex(emaRisePresets, DevSettings.emaAlphaRise))
         binding.spEmaFall.setSelection(presetIndex(emaFallPresets, DevSettings.emaAlphaFall))
         binding.spEmaDboost.setSelection(presetIndex(emaDBoostPresets, DevSettings.emaAlphaDBoost))
@@ -131,8 +124,6 @@ class DevSettingsActivity : AppCompatActivity() {
         binding.tvReverseStabletolVal.text       = "${DevSettings.reverseStableTolDb} dB"
         binding.seekReverseHold.progress         = ((DevSettings.reversePrepHoldMs - 1000L) / 1000L).toInt()
         binding.tvReverseHoldVal.text            = "${DevSettings.reversePrepHoldMs} ms"
-        updateDebugBadge()
-        updateSimRssiEnabled()
         updateReversePrepEnabled()
         // Restore the UWB force switch state + initial refresh of the diagnostic line
         binding.swUwbForce.isChecked = DevSettings.uwbForce
@@ -181,10 +172,6 @@ class DevSettingsActivity : AppCompatActivity() {
         //   the screen). Leave the screen with the device back button.
 
         // ── SeekBar: refresh label + write immediately ──────────────────────────────
-        binding.seekSimRssi.setOnSeekBarChangeListener(seekListener { v ->
-            binding.tvSimRssiVal.text = "${v - 100} dBm"
-            DevSettings.simulatedRssi = v - 100
-        })
         // Reverse (forward) prep sliders — convert progress↔actual value, then refresh label + write
         binding.seekReverseRise.setOnSeekBarChangeListener(seekListener { v ->
             binding.tvReverseRiseVal.text = "${v + 2} dB"
@@ -221,7 +208,17 @@ class DevSettingsActivity : AppCompatActivity() {
 
         // ── Switch: write immediately (+ refresh dependent UI) ─────────────────────────
         binding.switchWalkerDetectsWalker.setOnCheckedChangeListener { _, c -> DevSettings.walkerDetectsWalker = c }
-        binding.switchLoneWorker.setOnCheckedChangeListener { _, c -> DevSettings.lwEnabled = c }
+        // Turning lone-worker checks off asks first: off, a fall or a long stillness raises no SOS, and nothing else shows it
+        binding.switchLoneWorker.setOnCheckedChangeListener { sw, c ->
+            if (c || !DevSettings.lwEnabled) { DevSettings.lwEnabled = c; updateSectionSummaries(); return@setOnCheckedChangeListener }
+            AlertDialog.Builder(this)
+                .setTitle("무동작·넘어짐 확인 끄기")
+                .setMessage("끄면 넘어지거나 오래 움직이지 않아도 확인 창과 구조 요청이 나가지 않습니다. 동료의 구조 요청은 계속 받습니다. 끌까요?")
+                .setPositiveButton("끄기") { _, _ -> DevSettings.lwEnabled = false; updateSectionSummaries() }
+                .setNegativeButton("취소") { _, _ -> sw.isChecked = true }
+                .setOnCancelListener { sw.isChecked = true }
+                .show()
+        }
         bindIntField(binding.etLwStillMin,     { DevSettings.lwStillMin },     { DevSettings.lwStillMin = it })
         bindIntField(binding.etLwResponseMin,  { DevSettings.lwResponseMin },  { DevSettings.lwResponseMin = it })
         bindIntField(binding.etLwZoneFallCm,   { DevSettings.lwZoneFallCm },   { DevSettings.lwZoneFallCm = it })
@@ -235,7 +232,7 @@ class DevSettingsActivity : AppCompatActivity() {
         binding.switchSound.setOnCheckedChangeListener { _, c -> DevSettings.soundEnabled = c; updateSectionSummaries() }
         // Source items — BLE detection settings only shows these values, locked
         binding.seekDevAlarmVolume.setOnSeekBarChangeListener(seekListener { v ->
-            DevSettings.alarmVolume = v.coerceIn(50, 100); updateDevAlarmLabels()
+            DevSettings.alarmVolume = v.coerceIn(50, 100); updateDevAlarmLabels(); updateSectionSummaries()
         })
         binding.seekDevWarnRssi.setOnSeekBarChangeListener(seekListener { v ->
             DevSettings.rssiWarning = -v.coerceIn(30, 100); updateDevAlarmLabels()
@@ -256,9 +253,6 @@ class DevSettingsActivity : AppCompatActivity() {
         }
         binding.switchAutoSave.setOnCheckedChangeListener { _, c -> DevSettings.autoSaveAlerts = c }
         binding.switchVerbose.setOnCheckedChangeListener { _, c -> DevSettings.logVerbose = c }
-        binding.switchDebug.setOnCheckedChangeListener { _, c ->
-            DevSettings.debugMode = c; updateDebugBadge(); updateSimRssiEnabled()
-        }
         binding.switchReversePrep.setOnCheckedChangeListener { _, c ->
             DevSettings.reversePrepEnabled = c; updateReversePrepEnabled()
         }
@@ -280,33 +274,13 @@ class DevSettingsActivity : AppCompatActivity() {
         bindSpinner(binding.spTtcThreshold)    { DevSettings.ttcThresholdSec = ttcPresets[it]; updateSectionSummaries() }
         bindSpinner(binding.spMinApproachVel)  { DevSettings.minApproachVelDbm = approachVelPresets[it] }
         bindSpinner(binding.spTimegateVel)     { DevSettings.timeGateVelDbm = gateVelPresets[it] }
-        bindSpinner(binding.spClosingFactor)   { DevSettings.closingKmhToDbms = closingPresets[it] }
-        bindSpinner(binding.spHeadonRatio)     { DevSettings.collisionHeadOnRatio = headOnPresets[it] }
-        bindSpinner(binding.spSideRatio)       { DevSettings.collisionSideRatio = sidePresets[it] }
         bindSpinner(binding.spEmaRise)         { DevSettings.emaAlphaRise = emaRisePresets[it] }
         bindSpinner(binding.spEmaFall)         { DevSettings.emaAlphaFall = emaFallPresets[it] }
         bindSpinner(binding.spEmaDboost)       { DevSettings.emaAlphaDBoost = emaDBoostPresets[it] }
 
         // ── EditText: commit on focus loss (+clamp applied) · onPause safety net (editCommitters) ──
-        run {
-            val et = binding.etFirebaseRoot
-            val commit = { DevSettings.firebaseRoot = et.text.toString().trim().ifEmpty { "wf11" } }
-            editCommitters += commit
-            et.setOnFocusChangeListener { _, hasFocus -> if (!hasFocus) { commit(); et.setText(DevSettings.firebaseRoot) } }
-        }
-        // Site code — saving switches the UwbCalibrator profile. The alert log path alerts/<site>/<date>/ stays the same
-        run {
-            val et = binding.etDevSiteCode
-            val commit: () -> Unit = {
-                val before = DevSettings.siteCode
-                DevSettings.siteCode = et.text.toString(); UwbCalibrator.applySite()
-                // When the site changes, refill the mail field with that site's value (if unchanged, don't wipe what is being typed)
-                if (DevSettings.siteCode != before) binding.etSosMailTo.setText(LoneWorkerSosSync.mailTo(this, DevSettings.siteCode))
-                binding.etSosMailTo.isEnabled = DevSettings.siteCode.isNotEmpty()
-            }
-            editCommitters += commit
-            et.setOnFocusChangeListener { _, hasFocus -> if (!hasFocus) { commit(); et.setText(DevSettings.siteCode) } }
-        }
+        // Site code — committed on focus loss only after a confirmation (not by the onPause safety net, which cannot ask)
+        binding.etDevSiteCode.setOnFocusChangeListener { _, hasFocus -> if (!hasFocus) commitSiteCode() }
         // SOS mail recipient address — per site. Empty = don't send; an invalid format is not saved
         run {
             val et = binding.etSosMailTo
@@ -387,17 +361,26 @@ class DevSettingsActivity : AppCompatActivity() {
             updateDevUwbRadiusLabels(); updateSectionSummaries()
         })
 
-        binding.btnReset.setOnClickListener { resetValues() }
+        binding.btnReset.setOnClickListener {
+            AlertDialog.Builder(this)
+                .setTitle("기본값으로 초기화")
+                .setMessage("이 화면과 BLE 감지 설정의 값(UWB 사용·비콘 감도·필터 강도 포함)을 모두 처음 값으로 되돌립니다. " +
+                    "사업장은 감시 시작 때 넣은 ${DevSettings.homeSiteCode.ifEmpty { "값" }}(으)로 돌아갑니다. 초기화할까요?")
+                .setPositiveButton("초기화") { _, _ -> resetValues() }
+                .setNegativeButton("취소", null)
+                .show()
+        }
 
         // App info — version display + link to open-source licenses
         binding.tvAppVersion.text = "SafeAlert v${BuildConfig.VERSION_NAME}"
         binding.btnOpenSourceLicenses.setOnClickListener {
             startActivity(Intent(this, OpenSourceLicensesActivity::class.java))
         }
-        // Tapping the app version 7 times quickly reveals the hidden advanced options (Firebase, debug, reverse prep, reset)
+        // Tapping the app version 7 times, each tap within 3 s of the previous one (slow taps are fine), reveals the hidden
+        //   advanced options (every tuning section, Firebase, debug, reverse prep, reset); a longer pause starts the count again
         binding.tvAppVersion.setOnClickListener {
-            val now = System.currentTimeMillis()
-            appInfoTapCount = if (now - lastAppInfoTapMs <= 2000L) appInfoTapCount + 1 else 1
+            val now = SystemClock.elapsedRealtime()
+            appInfoTapCount = if (now - lastAppInfoTapMs <= 3_000L) appInfoTapCount + 1 else 1
             lastAppInfoTapMs = now
             if (appInfoTapCount >= 7) {
                 appInfoTapCount = 0
@@ -410,21 +393,51 @@ class DevSettingsActivity : AppCompatActivity() {
         // Beacon management is on the main screen
     }
 
+    /**
+     * Commits the site code field. Cleared, it returns to the site entered when monitoring started; text with no letter or
+     * digit is refused; a real change asks first, since the site picks the alert log, the SOS records, the beacon list and
+     * the mail address.
+     */
+    private fun commitSiteCode() {
+        val et = binding.etDevSiteCode
+        val raw = et.text.toString()
+        val cur = DevSettings.siteCode
+        val next = if (raw.isBlank()) DevSettings.homeSiteCode else DevSettings.normalizeSite(raw)
+        if (next == cur) { et.setText(cur); return }
+        if (next.isEmpty()) {
+            et.setText(cur)
+            Toast.makeText(this, "사업장 코드는 영문·숫자로 입력하세요", Toast.LENGTH_LONG).show()
+            return
+        }
+        siteDialog = AlertDialog.Builder(this)
+            .setTitle("사업장 바꾸기")
+            .setMessage("사업장을 ${cur.ifEmpty { "(없음)" }}에서 ${next}(으)로 바꿉니다. 경보 기록·구조 요청·비콘 목록·메일 주소가 " +
+                "${next} 사업장 것으로 바뀝니다. 바꿀까요?")
+            .setPositiveButton("바꾸기") { _, _ -> applySiteCode(next) }
+            .setNegativeButton("취소") { _, _ -> et.setText(DevSettings.siteCode) }
+            .setOnCancelListener { et.setText(DevSettings.siteCode) }
+            .show()
+    }
+
+    /** The open site-change confirmation; while it is up the edit is still pending, so onPause leaves it alone. */
+    private var siteDialog: AlertDialog? = null
+
+    /** Switches the site: the UwbCalibrator profile, and the mail field refilled with that site's address. */
+    private fun applySiteCode(code: String) {
+        DevSettings.siteCode = code
+        UwbCalibrator.applySite()
+        binding.etDevSiteCode.setText(DevSettings.siteCode)
+        binding.etSosMailTo.setText(LoneWorkerSosSync.mailTo(this, DevSettings.siteCode))
+        binding.etSosMailTo.isEnabled = DevSettings.siteCode.isNotEmpty()
+        updateSectionSummaries()
+    }
+
     private fun resetValues() {
         DevSettings.resetToDefault()
+        UwbCalibrator.applySite()   // The site may have gone back to the one entered at monitoring start
         loadValues()
         updateSectionSummaries()   // Also redraw the section header summaries with the defaults
         Toast.makeText(this, "기본값으로 초기화되었습니다", Toast.LENGTH_SHORT).show()
-    }
-
-    private fun updateDebugBadge() {
-        supportActionBar?.subtitle = if (binding.switchDebug.isChecked) "[ DEBUG ]" else null
-    }
-
-    private fun updateSimRssiEnabled() {
-        val enabled = binding.switchDebug.isChecked
-        binding.seekSimRssi.isEnabled = enabled
-        binding.seekSimRssi.alpha = if (enabled) 1f else 0.4f
     }
 
     // Reverse-prep switch OFF → disable and dim its 4 sub-sliders
@@ -515,8 +528,9 @@ class DevSettingsActivity : AppCompatActivity() {
         binding.tvCoopSlack.text = if (v == 0) "0 dB (완화 없음)" else "+${v} dB"
     }
 
-    // ── Accordion — all 7 sections collapsed by default (layout SA.SectionBody visibility=gone); header tap toggles ──
+    // ── Accordion — [현장 설정] open, the other 7 sections collapsed (layout SA.SectionBody visibility=gone); header tap toggles ──
     private fun setupAccordion() {
+        bindSection(binding.secSiteHeader,    binding.secSiteBody,    binding.secSiteChevron)
         bindSection(binding.secTxrxHeader,    binding.secTxrxBody,    binding.secTxrxChevron)
         bindSection(binding.secSoundHeader,   binding.secSoundBody,   binding.secSoundChevron)
         bindSection(binding.secParamHeader,   binding.secParamBody,   binding.secParamChevron)
@@ -540,6 +554,11 @@ class DevSettingsActivity : AppCompatActivity() {
     //   Spinner's selectedItemPosition can lag right after setSelection, so read DevSettings directly.
     private fun updateSectionSummaries() {
         fun onOff(b: Boolean) = if (b) "ON" else "OFF"
+        // A safety switch turned off in the hidden sections still shows here, where the site settings are
+        binding.secSiteSummary.text = listOfNotNull(
+            DevSettings.siteCode.ifEmpty { "사업장 없음" }, "볼륨 ${DevSettings.alarmVolume}%",
+            DevSettings.safetyOff().takeIf { it.isNotEmpty() }?.joinToString(" · ", prefix = "꺼짐: ")
+        ).joinToString(" · ")
         binding.secTxrxSummary.text =
             "스캔 ${DevSettings.scanPeriodMs}ms · 광고 ${DevSettings.advertiseInterval}ms"
         binding.secSoundSummary.text =
@@ -581,6 +600,11 @@ class DevSettingsActivity : AppCompatActivity() {
     override fun onPause() {
         super.onPause()
         editCommitters.forEach { it() }
+        val typed = binding.etDevSiteCode.text.toString()
+        if (siteDialog?.isShowing != true && typed.isNotBlank() && DevSettings.normalizeSite(typed) != DevSettings.siteCode) {
+            binding.etDevSiteCode.setText(DevSettings.siteCode)
+            Toast.makeText(this, "사업장 코드는 바꾸지 않았습니다 (입력 칸을 벗어나 확인해야 바뀝니다)", Toast.LENGTH_LONG).show()
+        }
         uwbDiagHandler.removeCallbacks(uwbDiagPoller)   // Stop diagnostic polling
     }
 
@@ -602,9 +626,6 @@ class DevSettingsActivity : AppCompatActivity() {
     private val ttcPresets         = doubleArrayOf(5.0, 4.5, 4.0, 3.5, 3.0, 2.5, 2.0, 1.5, 1.0)
     private val approachVelPresets = doubleArrayOf(0.2, 0.25, 0.3, 0.4, 0.5, 0.7, 1.0, 1.25, 1.5)
     private val gateVelPresets     = doubleArrayOf(0.2, 0.25, 0.3, 0.4, 0.5, 0.7, 1.0, 1.25, 1.5)
-    private val closingPresets     = doubleArrayOf(0.2, 0.3, 0.35, 0.42, 0.5, 0.65, 0.8, 1.0, 1.2)
-    private val headOnPresets      = doubleArrayOf(0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8)
-    private val sidePresets        = doubleArrayOf(0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5)
     private val emaRisePresets     = doubleArrayOf(0.6, 0.52, 0.45, 0.37, 0.3, 0.25, 0.2, 0.15, 0.1)
     private val emaFallPresets     = doubleArrayOf(0.2, 0.15, 0.12, 0.1, 0.07, 0.05, 0.04, 0.03, 0.02, 0.01)   // 0.12 at index2 (default); 10 steps, 1:1 with ema_fall_labels
     private val emaDBoostPresets   = doubleArrayOf(0.7, 0.62, 0.55, 0.47, 0.4, 0.32, 0.25, 0.17, 0.1)

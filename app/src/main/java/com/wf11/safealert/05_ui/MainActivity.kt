@@ -960,6 +960,7 @@ class MainActivity : AppCompatActivity() {
         // Don't save a locked field (has a value) — prevents a stale displayed value from overwriting one changed in developer settings
         if (!binding.etSiteCode.isEnabled) return
         DevSettings.siteCode = binding.etSiteCode.text?.toString() ?: ""
+        DevSettings.homeSiteCode = DevSettings.siteCode   // The site entered at monitoring start is the site code's default
         UwbCalibrator.applySite()
         refreshSiteCodeField()
     }

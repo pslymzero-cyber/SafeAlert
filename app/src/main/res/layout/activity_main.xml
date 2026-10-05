@@ -252,8 +252,9 @@
                         android:foreground="?attr/selectableItemBackground"
                         android:visibility="gone"/>
 
-                    <!-- Lone-worker notice line (LoneWorkerMonitor.banner): the no-movement watch is paused while charging (PDA
-                         cradle) or until the first movement, or there is no accelerometer. Gone when there is no notice. -->
+                    <!-- Lone-worker notice line: safety switches turned off in developer settings (warning color), then
+                         LoneWorkerMonitor.banner (the no-movement watch is paused while charging (PDA cradle) or until the first
+                         movement, or there is no accelerometer). Gone when there is nothing to say. -->
                     <TextView
                         android:id="@+id/tv_lw_status"
                         android:layout_width="match_parent"

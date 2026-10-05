@@ -147,7 +147,7 @@ class LoneWorkerSosSync(
 
         override fun sitePath(): String? {
             val site = DevSettings.siteCode
-            return if (site.isEmpty()) null else SosRemote.nodePath(DevSettings.firebaseRoot, site)
+            return if (site.isEmpty()) null else SosRemote.nodePath(DevSettings.FIREBASE_ROOT, site)
         }
 
         override fun newKey(path: String): String = SosRemote.newKey(path)
@@ -192,7 +192,7 @@ class LoneWorkerSosSync(
             override fun uid(): String? = transport.uid()
             override fun path(): String? {
                 val site = DevSettings.siteCode
-                return if (site.isEmpty()) null else SosRemote.hbPath(DevSettings.firebaseRoot, site)
+                return if (site.isEmpty()) null else SosRemote.hbPath(DevSettings.FIREBASE_ROOT, site)
             }
             override fun newKey(path: String): String = SosRemote.newKey(path)
             override fun serverNow(): Long = SosRemote.serverNowMs() ?: System.currentTimeMillis()
@@ -273,7 +273,7 @@ class LoneWorkerSosSync(
 
     private fun attachIfNeeded() {
         val site = DevSettings.siteCode
-        val path = if (site.isEmpty()) "" else SosRemote.nodePath(DevSettings.firebaseRoot, site)
+        val path = if (site.isEmpty()) "" else SosRemote.nodePath(DevSettings.FIREBASE_ROOT, site)
         if (remover != null && path != listenPath) detach()
         if (remover != null || path.isEmpty()) return
         if (SosRemote.currentUid() == null) {

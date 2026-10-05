@@ -19,7 +19,7 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.shadows.ShadowDialog
 
-/** When the BLE settings screen opens, beacon reception strength and UWB use are locked (until the PIN is confirmed). */
+/** When the BLE settings screen opens, beacon reception strength, UWB use and the filter strength are locked (until the PIN is confirmed). */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class BleSettingsPinGateTest {
@@ -43,34 +43,36 @@ class BleSettingsPinGateTest {
         return activity
     }
 
+    private val locked = listOf(R.id.seek_beacon_gain, R.id.sw_uwb, R.id.rb_kf_fast, R.id.rb_kf_normal, R.id.rb_kf_smooth)
+
     @Test
-    fun `수신 강도와 UWB 스위치는 처음에 잠겨 있다`() {
+    fun `수신 강도와 UWB 스위치와 필터 강도는 처음에 잠겨 있다`() {
         val activity = Robolectric.buildActivity(BleSettingsActivity::class.java).setup().get()
-        for (id in listOf(R.id.seek_beacon_gain, R.id.sw_uwb)) {
+        for (id in locked) {
             val v = activity.findViewById<View>(id)
             assertFalse("잠금 전에는 조작할 수 없다", v.isEnabled)
             assertEquals(0.4f, v.alpha, 0.001f)
         }
-        assertFalse("잠긴 스위치는 터치를 행으로 넘긴다", activity.findViewById<View>(R.id.sw_uwb).isClickable)
+        for (id in locked.drop(1)) assertFalse("잠긴 스위치·선택지는 터치를 행으로 넘긴다", activity.findViewById<View>(id).isClickable)
         // A locked control must not consume touches, so its parent (group/row) gets them and opens the PIN dialog
         val down = MotionEvent.obtain(0L, 0L, MotionEvent.ACTION_DOWN, 1f, 1f, 0)
-        for (id in listOf(R.id.seek_beacon_gain, R.id.sw_uwb)) {
+        for (id in locked) {
             assertFalse("잠긴 컨트롤은 터치를 부모로 넘긴다", activity.findViewById<View>(id).onTouchEvent(down))
         }
         down.recycle()
     }
 
     @Test
-    fun `잠긴 동안 수신 강도 묶음이나 UWB 행을 누르면 PIN 창이 뜬다`() {
+    fun `잠긴 동안 수신 강도 묶음이나 UWB 행이나 필터 강도를 누르면 PIN 창이 뜬다`() {
         val activity = Robolectric.buildActivity(BleSettingsActivity::class.java).setup().get()
-        for (id in listOf(R.id.group_beacon_gain, R.id.row_uwb)) {
+        for (id in listOf(R.id.group_beacon_gain, R.id.row_uwb, R.id.rg_kalman_preset)) {
             ShadowDialog.reset()
             activity.findViewById<View>(id).performClick()
             assertTrue("PIN 창이 떠야 한다", ShadowDialog.getLatestDialog()?.isShowing == true)
         }
     }
 
-    /** The correct PIN unlocks both controls (enabled, clickable, full alpha) and makes both rows non-clickable. */
+    /** The correct PIN unlocks every locked control (enabled, clickable, full alpha) and makes the rows non-clickable. */
     @Test
     fun `PIN 을 맞히면 풀리고 행은 더 이상 클릭 대상이 아니다`() {
         val activity = unlockedActivity()
@@ -80,8 +82,14 @@ class BleSettingsPinGateTest {
         assertTrue("UWB 스위치가 풀린다", sw.isEnabled)
         assertTrue("풀린 스위치는 직접 누를 수 있다", sw.isClickable)
         for (v in listOf(gain, sw)) assertEquals(1f, v.alpha, 0.001f)
-        assertFalse(activity.findViewById<View>(R.id.group_beacon_gain).isClickable)
-        assertFalse(activity.findViewById<View>(R.id.row_uwb).isClickable)
+        for (id in locked.drop(2)) {
+            val rb = activity.findViewById<View>(id)
+            assertTrue("필터 강도가 풀린다", rb.isEnabled && rb.isClickable)
+            assertEquals(1f, rb.alpha, 0.001f)
+        }
+        for (id in listOf(R.id.group_beacon_gain, R.id.row_uwb, R.id.rg_kalman_preset)) {
+            assertFalse(activity.findViewById<View>(id).isClickable)
+        }
     }
 
     @Test

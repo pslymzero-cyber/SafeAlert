@@ -18,7 +18,6 @@ object DevSettings {
     private const val KEY_VIBRATION_WARNING_MS  = "vibration_warning_ms"
     private const val KEY_VIBRATION_DANGER_COUNT= "vibration_danger_count"
     private const val KEY_SOUND_ENABLED         = "sound_enabled"
-    private const val KEY_FIREBASE_ROOT         = "firebase_root"
     private const val KEY_AUTO_SAVE_ALERTS      = "auto_save_alerts"
 
     // ── Kalman filter strength presets ──────────────────────────────────────
@@ -57,8 +56,6 @@ object DevSettings {
     private const val KEY_DEVICE_RX  = "device_rx"   // Equipment operator RX on/off
     private const val KEY_WALKER_TX  = "walker_tx"   // Walker TX on/off
     private const val KEY_WALKER_RX  = "walker_rx"   // Walker RX on/off
-    private const val KEY_DEBUG_MODE            = "debug_mode"
-    private const val KEY_SIMULATED_RSSI        = "simulated_rssi"
     private const val KEY_LOG_VERBOSE           = "log_verbose"
 
     private lateinit var prefs: SharedPreferences
@@ -67,6 +64,8 @@ object DevSettings {
     fun init(context: Context) {
         appCtx = context.applicationContext
         prefs = context.applicationContext.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+        // A site set before homeSiteCode existed becomes it, so a later change in developer settings can still go back
+        if (!prefs.contains(KEY_HOME_SITE_CODE) && siteCode.isNotEmpty()) homeSiteCode = siteCode
         // One-time migration of the EMA fall alpha default 0.05→0.12 — the spinner's initial programmatic
         //   selection is also saved via putFloat, so changing DEFAULT alone would not reach existing installs. Once per marker,
         //   the stored value is overwritten with the new default (a value the user picked in
@@ -157,34 +156,30 @@ object DevSettings {
         set(v) = prefs.edit().putBoolean(KEY_SOUND_ENABLED, v).apply()
 
     // Firebase settings
-    /** Firebase child() throws DatabaseException on . # $ [ ] → guards against a service start crash loop. */
-    private fun normalizeFirebaseRoot(raw: String?): String =
-        if (raw == null || raw.isBlank() || raw.any { it in ".#\$[]" }) "wf11" else raw.trim()
-
-    var firebaseRoot: String
-        get() = normalizeFirebaseRoot(prefs.getString(KEY_FIREBASE_ROOT, "wf11"))
-        set(v) = prefs.edit().putString(KEY_FIREBASE_ROOT, normalizeFirebaseRoot(v)).apply()
+    /** Root of every server path. Fixed: sites are told apart by their site code; a root left in prefs by an older build is ignored. */
+    const val FIREBASE_ROOT = "wf11"
 
     var autoSaveAlerts: Boolean
         get() = prefs.getBoolean(KEY_AUTO_SAVE_ALERTS, true)
         set(v) = prefs.edit().putBoolean(KEY_AUTO_SAVE_ALERTS, v).apply()
 
     // Debug settings
-    var debugMode: Boolean
-        get() = prefs.getBoolean(KEY_DEBUG_MODE, false)
-        set(v) = prefs.edit().putBoolean(KEY_DEBUG_MODE, v).apply()
-
-    var simulatedRssi: Int
-        get() = prefs.getInt(KEY_SIMULATED_RSSI, -75)
-        set(v) = prefs.edit().putInt(KEY_SIMULATED_RSSI, v).apply()
-
     var logVerbose: Boolean
         get() = prefs.getBoolean(KEY_LOG_VERBOSE, false)
         set(v) = prefs.edit().putBoolean(KEY_LOG_VERBOSE, v).apply()
 
+    /** Back to every default, except that the site returns to the one entered when monitoring started (homeSiteCode). */
     fun resetToDefault() {
+        val home = homeSiteCode
         prefs.edit().clear().apply()
+        homeSiteCode = home
+        siteCode = home   // Through the setter, so a site without its own beacon file still gets the common one
     }
+
+    /** Safety switches turned off (lone-worker checks, alarm sound, vibration), named for the screens that warn about them. */
+    fun safetyOff(): List<String> = listOfNotNull(
+        "무동작·넘어짐 확인".takeIf { !lwEnabled }, "경보음".takeIf { !soundEnabled }, "진동".takeIf { !vibrationEnabled }
+    )
 
     // No calibRssiAt1m / pathLossExp / resetCalibration() / DEFAULT_CALIB:
     //   alert decisions use no RSSI→distance formula; the only path-loss model is UwbCalibrator's fixed one, used
@@ -339,30 +334,6 @@ object DevSettings {
     var recedingDbmDrop: Int
         get() = prefs.getInt(KEY_RECEDING_DBM_DROP, DEFAULT_RECEDING_DBM_DROP).coerceIn(1, 20)
         set(v) = prefs.edit().putInt(KEY_RECEDING_DBM_DROP, v.coerceIn(1, 20)).apply()
-
-    // [Collision geometry] Conversion factor from combined speed (km/h) to expected approach speed (dBm/s)
-    private const val KEY_CLOSING_KMH_TO_DBMS = "closing_kmh_to_dbms"
-    const val DEFAULT_CLOSING_KMH_TO_DBMS = 0.5
-    var closingKmhToDbms: Double
-        get() = prefs.getFloat(KEY_CLOSING_KMH_TO_DBMS, DEFAULT_CLOSING_KMH_TO_DBMS.toFloat())
-                    .toDouble().coerceIn(0.1, 2.0)
-        set(v) = prefs.edit().putFloat(KEY_CLOSING_KMH_TO_DBMS, v.coerceIn(0.1, 2.0).toFloat()).apply()
-
-    // Actual/expected approach ratio — at or above: head-on (Time-Gate passes immediately)
-    private const val KEY_COLLISION_HEAD_ON_RATIO = "collision_head_on_ratio"
-    const val DEFAULT_COLLISION_HEAD_ON_RATIO = 0.6
-    var collisionHeadOnRatio: Double
-        get() = prefs.getFloat(KEY_COLLISION_HEAD_ON_RATIO, DEFAULT_COLLISION_HEAD_ON_RATIO.toFloat())
-                    .toDouble().coerceIn(0.1, 1.0)
-        set(v) = prefs.edit().putFloat(KEY_COLLISION_HEAD_ON_RATIO, v.coerceIn(0.1, 1.0).toFloat()).apply()
-
-    // Actual/expected approach ratio — at or below: side/parallel (hold candidate)
-    private const val KEY_COLLISION_SIDE_RATIO = "collision_side_ratio"
-    const val DEFAULT_COLLISION_SIDE_RATIO = 0.3
-    var collisionSideRatio: Double
-        get() = prefs.getFloat(KEY_COLLISION_SIDE_RATIO, DEFAULT_COLLISION_SIDE_RATIO.toFloat())
-                    .toDouble().coerceIn(0.0, 0.9)
-        set(v) = prefs.edit().putFloat(KEY_COLLISION_SIDE_RATIO, v.coerceIn(0.0, 0.9).toFloat()).apply()
 
     // [Pre-filter] Front-stage EMA asymmetric alphas (rise/fall/D-Boost) — only for the RssiPreFilter front-stage instance
     private const val KEY_EMA_ALPHA_RISE = "ema_alpha_rise"
@@ -774,7 +745,16 @@ object DevSettings {
     //   hands the common file's contents over to that site once. Echo calibration is a device property, so it
     //   uses one global, site-independent file (CalibrationEngine.ECHO_PREFS).
     private const val KEY_UWB_SITE_CODE = "uwb_site_code"   // legacy key name kept (no migration needed)
+    private const val KEY_HOME_SITE_CODE = "home_site_code"
     const val SITE_CODE_MAX_LEN = 12
+
+    /**
+     * The site entered on the main screen when monitoring starts — the site code's default: clearing the code in developer
+     * settings, or resetting them, returns to it. A phone set up before it existed takes its current site.
+     */
+    var homeSiteCode: String
+        get() = normalizeSite(prefs.getString(KEY_HOME_SITE_CODE, null) ?: siteCode)
+        set(v) = prefs.edit().putString(KEY_HOME_SITE_CODE, normalizeSite(v)).apply()
     var siteCode: String
         get() = normalizeSite(prefs.getString(KEY_UWB_SITE_CODE, "") ?: "")
         set(v) {
@@ -883,8 +863,4 @@ object DevSettings {
         get() = prefs.getInt(KEY_ECHO_CAL_CLAMP, DEFAULT_ECHO_CAL_CLAMP).coerceIn(1, 12)
         set(v) = prefs.edit().putInt(KEY_ECHO_CAL_CLAMP, v.coerceIn(1, 12)).apply()
 
-    fun toDebugString(): String =
-        "rssiWarning=$rssiWarning | rssiDanger=$rssiDanger | scanPeriod=${scanPeriodMs}ms | " +
-        "advertise=${advertiseInterval}ms | vib=$vibrationEnabled | sound=$soundEnabled | " +
-        "fbRoot=$firebaseRoot | debug=$debugMode | simRssi=$simulatedRssi"
 }

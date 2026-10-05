@@ -14,6 +14,7 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import com.wf11.safealert.R
 import com.wf11.safealert.service.BleService
 import com.wf11.safealert.service.LoneWorkerLogic
 import com.wf11.safealert.service.LoneWorkerMonitor
@@ -184,6 +185,8 @@ object LoneWorkerUi {
      * If both background location and physical activity warnings apply, they show together on two lines.
      * stopped means the main screen cleared the running state (currentMode == null). But if the service ignored the stop
      * because of an SOS, the service restored running_mode, so go back to the running card.
+     * The status line names the safety switches turned off in developer settings (warning color) above the lone-worker
+     * banner, so a phone with checks, sound or vibration off never looks normal.
      */
     fun onPoll(
         activity: Activity, status: TextView, warnBox: View, warnMsg: TextView,
@@ -205,9 +208,12 @@ object LoneWorkerUi {
         if (stopped && LoneWorkerMonitor.current?.sosActive == true) {
             if (runningMode(activity) != null) restore()
         }
-        val text = if (DevSettings.lwEnabled) LoneWorkerMonitor.current?.banner else null
+        val off = DevSettings.safetyOff().takeIf { it.isNotEmpty() }?.joinToString(" · ", prefix = "꺼짐: ", postfix = " (개발자 설정)")
+        val banner = if (DevSettings.lwEnabled) LoneWorkerMonitor.current?.banner else null
+        val text = listOfNotNull(off, banner).joinToString("\n").ifEmpty { null }
         val vis = if (text != null) View.VISIBLE else View.GONE
         if (status.visibility != vis) status.visibility = vis
         if (text != null && status.text.toString() != text) status.text = text
+        status.setTextColor(ContextCompat.getColor(activity, if (off != null) R.color.sa_warning else R.color.sa_text_tertiary))
     }
 }

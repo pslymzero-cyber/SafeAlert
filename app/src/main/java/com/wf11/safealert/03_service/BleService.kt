@@ -397,7 +397,7 @@ class BleService : LifecycleService() {
     private val SLEEP_RSSI_DBM   = -90          // doc-only, unused: real sleep = no fresh signal ≥ WAKE_RSSI_DBM (evaluateAdvertiserPower)
     private val SIGNAL_STALE_MS: Long get() = DevSettings.signalStaleMs  // RSSI samples older than this count as 'no signal'
     private val ADV_POWER_EVAL_MS = 2_500L      // TX power evaluation interval
-    // deviceId → (latest effectiveRssi, record time ms). Single source for wake decisions and sleep evaluation.
+    // deviceId → (latest RSSI, record time ms). Single source for wake decisions and sleep evaluation.
     private val wakeRssiMap = mutableMapOf<String, Pair<Int, Long>>()
     private val advPowerHandler = android.os.Handler(android.os.Looper.getMainLooper())
 
@@ -921,17 +921,16 @@ class BleService : LifecycleService() {
                             //   Devices left over at entry were already cleared by refreshMyZoneInside's forceLoseAll.
                             if (myZoneInside) return
 
-                            val effectiveRssi = if (DevSettings.debugMode) DevSettings.simulatedRssi else rssi
-                            noteRssiForWake(deviceId, effectiveRssi)   // near signal → immediate wake decision
-                            acquireDetectionWakeLock(effectiveRssi)   // screen off + near (>=WAKE) → brief CPU hold so the chain completes
+                            noteRssiForWake(deviceId, rssi)   // near signal → immediate wake decision
+                            acquireDetectionWakeLock(rssi)   // screen off + near (>=WAKE) → brief CPU hold so the chain completes
                             // The same gate also switches scan batching to 0ms immediate delivery — even with the CPU awake on a wakelock,
                             //   500ms batching makes the BLE chip hold results for 0.5s and halves the benefit, so drop it to 0ms too
                             //   (going back to false is aggregated per evaluation cycle).
-                            if (effectiveRssi >= WAKE_RSSI_DBM) bleScanner?.setHazardNear(true)
+                            if (rssi >= WAKE_RSSI_DBM) bleScanner?.setHazardNear(true)
                             // Peer IN_ZONE declaration cache — must be updated before processAlert so this sample's judgment sees it
                             peerInZoneMap[deviceId] = peerInZone
                             try {
-                                processAlert(deviceId, effectiveRssi, remoteState, remoteTurn, payloadPresent, peerEchoRssi)
+                                processAlert(deviceId, rssi, remoteState, remoteTurn, payloadPresent, peerEchoRssi)
                                 // However processAlert changed alertState (add, escalate, SAFE removal, TTC early alert), send the full snapshot
                                 // right after in one go → the bottom list never disagrees with the floating overlay and alarms.
                                 broadcastDeviceList()

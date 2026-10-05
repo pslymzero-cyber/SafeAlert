@@ -346,15 +346,15 @@ class AlertStateMachine(
     //   compare it with kfVel, but the payload carries no speed: closingSpeedKmh is fixed at 0, so the filter
     //   disables itself and the plain Time-Gate applies (see evalTimeGate). The conversion factor approximates
     //   the danger range (~6m) and path-loss exponent (n≈2.5).
-    //   Decision parameters: conversion factor and the two approach ratios — read live from DevSettings
-    //   (defaults 0.5/0.6/0.3).
-    internal val CLOSING_KMH_TO_DBMS: Double get() = DevSettings.closingKmhToDbms  // Combined speed (km/h) → expected approach (dBm/s) factor
+    //   Decision parameters: conversion factor and the two approach ratios — fixed (with no speed in the payload they
+    //   cannot change an alert).
+    internal val CLOSING_KMH_TO_DBMS = 0.5   // Combined speed (km/h) → expected approach (dBm/s) factor
 
     internal val COLLISION_MIN_CLOSING_KMH  = 1.0   // Below this combined speed geometry is undecidable (no hold)
 
-    internal val COLLISION_HEAD_ON_RATIO: Double get() = DevSettings.collisionHeadOnRatio  // Actual/expected ratio ≥ this → head-on (passes Time-Gate at once)
+    internal val COLLISION_HEAD_ON_RATIO = 0.6   // Actual/expected ratio ≥ this → head-on (passes Time-Gate at once)
 
-    internal val COLLISION_SIDE_RATIO:    Double get() = DevSettings.collisionSideRatio    // Actual/expected ratio ≤ this → side/parallel (hold candidate)
+    internal val COLLISION_SIDE_RATIO    = 0.3   // Actual/expected ratio ≤ this → side/parallel (hold candidate)
 
     internal val COLLISION_ABS_SAFE_VEL_DBM = 2.0   // Approach faster than this ignores the side verdict (no false negatives)
 
@@ -1248,8 +1248,7 @@ class AlertStateMachine(
         //   Only accumulates this tick's difference (my avgRssi ↔ the peer's measurement of me, peerEchoRssi)
         //   into the histogram. Recorded before and regardless of the 25dB gate (hasReciprocal); extreme
         //   asymmetry outside the gate is also observed.
-        //   Excluded in debugMode (simulated RSSI is assigned to avgRssi and would pollute real statistics).
-        if (!DevSettings.debugMode) CalibrationEngine.recordEchoDiff(fx.myId, deviceId, avgRssi, peerEchoRssi)
+        CalibrationEngine.recordEchoDiff(fx.myId, deviceId, avgRssi, peerEchoRssi)
 
         val coopFloor = effWarning - DevSettings.coopSlackDb
         val hasReciprocal = DevSettings.reciprocalRssiEnabled &&

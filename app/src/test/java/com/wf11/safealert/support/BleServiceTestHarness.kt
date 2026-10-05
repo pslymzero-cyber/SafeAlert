@@ -61,13 +61,9 @@ object BleServiceTestHarness {
         DevSettings.autoSaveAlerts = false                 // side effect off — blocks FirebaseManager.saveAlert
         DevSettings.beaconGainPercent = 100                // sets beaconGainDbm (val) indirectly — shipped default (+0 dB)
         DevSettings.categoryBiasEnabled = true
-        DevSettings.closingKmhToDbms = 0.5
-        DevSettings.collisionHeadOnRatio = 0.6
-        DevSettings.collisionSideRatio = 0.3
         DevSettings.coopSlackDb = 8
         DevSettings.corneringTimeGateMs = 1000L
         DevSettings.dangerCooldownMs = 2000L
-        DevSettings.debugMode = false
         DevSettings.departingHysteresisDbm = 8
         DevSettings.echoAutoCalibEnabled = true
         DevSettings.echoCalClampDb = 6

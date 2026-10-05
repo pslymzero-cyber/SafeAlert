@@ -24,15 +24,6 @@
     <string-array name="timegate_vel_labels">
         <item>초민감 (0.2)</item><item>매우 민감 (0.25)</item><item>민감 (0.3)</item><item>약간 민감 (0.4)</item><item>보통 (0.5 · 기본)</item><item>약간 둔감 (0.7)</item><item>둔감 (1.0)</item><item>매우 둔감 (1.25)</item><item>초둔감 (1.5)</item>
     </string-array>
-    <string-array name="closing_factor_labels">
-        <item>초민감 (0.2)</item><item>매우 민감 (0.3)</item><item>민감 (0.35)</item><item>약간 민감 (0.42)</item><item>보통 (0.5 · 기본)</item><item>약간 둔감 (0.65)</item><item>둔감 (0.8)</item><item>매우 둔감 (1.0)</item><item>초둔감 (1.2)</item>
-    </string-array>
-    <string-array name="headon_ratio_labels">
-        <item>초민감 (0.4)</item><item>매우 민감 (0.45)</item><item>민감 (0.5)</item><item>약간 민감 (0.55)</item><item>보통 (0.6 · 기본)</item><item>약간 둔감 (0.65)</item><item>둔감 (0.7)</item><item>매우 둔감 (0.75)</item><item>초둔감 (0.8)</item>
-    </string-array>
-    <string-array name="side_ratio_labels">
-        <item>초민감 (0.1)</item><item>매우 민감 (0.15)</item><item>민감 (0.2)</item><item>약간 민감 (0.25)</item><item>보통 (0.3 · 기본)</item><item>약간 둔감 (0.35)</item><item>둔감 (0.4)</item><item>매우 둔감 (0.45)</item><item>초둔감 (0.5)</item>
-    </string-array>
     <string-array name="ema_rise_labels">
         <item>초민감 (0.6)</item><item>매우 민감 (0.52)</item><item>민감 (0.45)</item><item>약간 민감 (0.37)</item><item>보통 (0.3 · 기본)</item><item>약간 둔감 (0.25)</item><item>둔감 (0.2)</item><item>매우 둔감 (0.15)</item><item>초둔감 (0.1)</item>
     </string-array>

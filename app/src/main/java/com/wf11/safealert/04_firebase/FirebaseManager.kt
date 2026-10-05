@@ -16,7 +16,7 @@ import java.util.UUID
 object FirebaseManager {
 
     private const val TAG = "FirebaseManager"
-    private val db get() = FirebaseDatabase.getInstance().reference.child(DevSettings.firebaseRoot)
+    private val db get() = FirebaseDatabase.getInstance().reference.child(DevSettings.FIREBASE_ROOT)
 
     /**
      * Per-site node — only the alert log (alerts) is split per site via siteNode.

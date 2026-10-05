@@ -153,8 +153,7 @@ object CalibrationEngine {
     //   Extreme asymmetry outside the gate is exactly what we want to observe; censoring it would make the 25dB
     //   threshold impossible to evaluate.
     //   Also independent of the kill switch (reciprocalRssiEnabled) — myEchoHash is always injected, so peer echoes
-    //   keep being parsed even with that decision OFF (observe-only operation is possible). But debugMode
-    //   (simulated RSSI) ticks are excluded by the caller — fake RSSI must not pollute the accumulated histogram.
+    //   keep being parsed even with that decision OFF (observe-only operation is possible).
 
     // Echo calibration is a device/model property (a two-way difference over the same path at the same moment,
     //   so path loss cancels out) — one global file regardless of site. Same principle as the global Firebase

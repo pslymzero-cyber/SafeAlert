@@ -32,8 +32,7 @@ object UpdateManager {
 
     fun checkForUpdate(context: Context, onResult: (UpdateInfo?) -> Unit) {
         // The APK is shared by all sites, so version is a single /version node outside the site roots.
-        //   Under per-site roots, a device whose firebaseRoot isn't wf11 couldn't read where CI writes,
-        //   and auto-update would stop permanently. Alerts, beacon sharing and calibration stay per site.
+        //   Alerts, beacon sharing and calibration stay per site under the root.
         FirebaseDatabase.getInstance().reference
             .child("version")
             .get()

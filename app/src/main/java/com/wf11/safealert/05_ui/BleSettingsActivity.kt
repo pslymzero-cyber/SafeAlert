@@ -72,7 +72,7 @@ class BleSettingsActivity : AppCompatActivity() {
         setupAccordion()
         updateSectionSummaries()
         lockDevManaged()   // Lock after wiring listeners; order doesn't change the result, but shows intent
-        listOf(binding.groupBeaconGain, binding.rowUwb).forEach { row ->
+        listOf(binding.groupBeaconGain, binding.rowUwb, binding.rgKalmanPreset).forEach { row ->
             row.setOnClickListener {
                 if (!pinUnlocked) showDevPinDialog { pinUnlocked = true; applyPinGate() }
             }
@@ -80,7 +80,7 @@ class BleSettingsActivity : AppCompatActivity() {
         applyPinGate()   // After listeners: match clickable (set by setOnClickListener) to the lock state
     }
 
-    // Beacon gain and UWB use are locked by default — tapping the row or a locked control and passing the PIN unlocks
+    // Beacon gain, UWB use and the filter strength are locked by default — tapping the row or a locked control and passing the PIN unlocks
     //   them only while this screen stays open (locked again on recreate/re-entry). Shown the same way as lockDevManaged.
     //   A locked slider does not handle touches, so its group (groupBeaconGain) gets them. A locked switch still eats
     //   touches if clickable even when disabled, so clickable is turned off while locked to pass touches to the row (rowUwb).
@@ -93,9 +93,15 @@ class BleSettingsActivity : AppCompatActivity() {
         // Once unlocked, the row is not announced as a tappable item (screen reader)
         binding.groupBeaconGain.isClickable = !pinUnlocked
         binding.rowUwb.isClickable = !pinUnlocked
+        binding.rgKalmanPreset.isClickable = !pinUnlocked   // While locked the group takes the tap and asks for the PIN
         val a = if (pinUnlocked) 1f else 0.4f
         binding.seekBeaconGain.alpha = a
         binding.swUwb.alpha = a
+        for (rb in listOf(binding.rbKfFast, binding.rbKfNormal, binding.rbKfSmooth)) {
+            rb.isEnabled = pinUnlocked
+            rb.isClickable = pinUnlocked
+            rb.alpha = a
+        }
     }
 
     private fun loadValues() {
@@ -187,8 +193,8 @@ class BleSettingsActivity : AppCompatActivity() {
      * Locks developer-settings-only items — values are shown but cannot be changed on this screen.
      * The only controls left in the UWB section are the use switch (swUwb) and the permission entry point (btnUwbPermission).
      * The permission button is a system permission entry point, not an option; locking it would make the switch itself pointless.
-     * The filter strength (rgKalmanPreset) stays editable. Beacon gain and the UWB
-     * switch go through applyPinGate (unlocked after the PIN check).
+     * Beacon gain, the UWB switch and the filter strength (rgKalmanPreset) go through applyPinGate (unlocked after the
+     * PIN check).
      * The echo detail expand row (rowEchoAutoCalib) is not locked — the diagnostics must stay viewable.
      * RadioGroup.isEnabled does not propagate to its children, so the 3 radios are locked individually.
      */

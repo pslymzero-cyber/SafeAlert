@@ -80,7 +80,7 @@
                             style="@style/SA.Label"
                             android:layout_marginTop="10dp"
                             android:layout_marginBottom="6dp"
-                            android:text="필터 강도" />
+                            android:text="필터 강도 · 바꾸려면 눌러서 PIN 확인" />
 
                         <RadioGroup
                             android:id="@+id/rg_kalman_preset"
