@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Developer settings — [현장 설정] (open) and [앱 정보] are shown; the tuning sections [송수신·통신] [소리·진동 세부]
-     [판정 파라미터] [협력·교환] [UWB 고급] [기기 상태 계기] (collapsed) sit in hidden_advanced_group with Firebase, debug,
-     reverse prep and reset.
+<!-- Developer settings — shown: [현장 설정] (open) and the per-site tuning [송수신·통신] [소리·진동 세부] [경보 기준],
+     then [앱 정보]; the internals [판정 파라미터] [협력·교환] [UWB 고급] [기기 상태 계기] (collapsed) sit in
+     hidden_advanced_group with Firebase, debug, reverse prep and reset.
      Shared SA.* styles (values/themes.xml). Tapping a section header toggles it;
      DevSettingsActivity.updateSectionSummaries() updates the header summaries.
      The alert volume (50~100%, in [현장 설정]) and the echo-deviation auto-calibration switch and tunables are edited
@@ -35,8 +35,8 @@
             android:padding="@dimen/sa_space_lg">
 
             <!-- ═══════════ [현장 설정] (site setup) — what a site manager sets on a phone: the site, the SOS mail
-                 address, lone-worker monitoring and the alarm volume. Open by default; every tuning section is in
-                 hidden_advanced_group. ═══════════ -->
+                 address, lone-worker monitoring and the alarm volume. Open by default; per-site tuning follows in the
+                 next three cards, judgment internals are in hidden_advanced_group. ═══════════ -->
             <androidx.cardview.widget.CardView style="@style/SA.Card">
                 <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical">
 
@@ -367,7 +367,7 @@
                         <LinearLayout android:id="@+id/sec_param_header" style="@style/SA.SectionHeader">
                             <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
                                 <TextView style="@style/SA.SectionTitle" android:text="판정 파라미터" />
-                                <TextView android:id="@+id/sec_param_summary" style="@style/SA.SectionSummary" android:text="TTC · 오프셋 6/2/8 dB" />
+                                <TextView android:id="@+id/sec_param_summary" style="@style/SA.SectionSummary" android:text="TTC · 쿨다운 · 필터 · 에코" />
                             </LinearLayout>
                             <ImageView android:id="@+id/sec_param_chevron" style="@style/SA.Chevron" android:contentDescription="펼침/접힘" />
                         </LinearLayout>
