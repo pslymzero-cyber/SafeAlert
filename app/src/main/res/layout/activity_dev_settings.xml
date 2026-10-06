@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Developer settings — shown: [현장 설정] (open) and the per-site tuning [송수신·통신] [소리·진동 세부] [경보 기준],
      then [앱 정보]; the internals [판정 파라미터] [협력·교환] [UWB 고급] [기기 상태 계기] (collapsed) sit in
-     hidden_advanced_group with Firebase, debug, reverse prep and reset.
+     hidden_advanced_group with Firebase, debug and reverse prep; the reset button is below it, always shown.
      Shared SA.* styles (values/themes.xml). Tapping a section header toggles it;
      DevSettingsActivity.updateSectionSummaries() updates the header summaries.
      The alert volume (50~100%, in [현장 설정]) and the echo-deviation auto-calibration switch and tunables are edited
@@ -9,7 +9,7 @@
      The two cooperation settings (mutual RSSI, relaxation) and the three UWB
      escalation settings are here. The open-source licenses button is in [앱 정보].
      hidden_advanced_group is revealed by tapping the version in [앱 정보] 7 times, each tap within 3 s of the previous;
-     btn_reset is inside it. -->
+     btn_reset sits after it. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
@@ -59,10 +59,10 @@
                             android:layout_height="wrap_content" android:inputType="textCapCharacters" android:maxLength="12"
                             android:textSize="@dimen/sa_type_body" android:textColor="@color/sa_text_primary" />
                         <!-- SOS mail — stored per site code -->
-                        <TextView style="@style/SA.Label" android:layout_marginTop="10dp" android:text="구조 요청 메일 받는 주소 (이 사업장, 최대 5개)" />
+                        <TextView style="@style/SA.Label" android:layout_marginTop="10dp" android:text="구조 요청 메일 받는 주소 (이 사업장, 최대 2개)" />
                         <TextView style="@style/SA.Hint" android:layout_marginTop="1dp" android:text="단독 작업 중 구조 요청·해제를 이 주소들로 메일로 알립니다. 여러 주소는 쉼표(,)로 구분합니다. 회사 메일 주소(스크립트 허용 목록에 있는 주소)만 받을 수 있습니다. 비우면 보내지 않습니다. 사업장 코드가 있어야 입력할 수 있습니다." />
                         <EditText android:id="@+id/et_sos_mail_to" android:layout_width="match_parent"
-                            android:layout_height="wrap_content" android:inputType="textEmailAddress" android:maxLength="1280"
+                            android:layout_height="wrap_content" android:inputType="textEmailAddress" android:maxLength="510"
                             android:textSize="@dimen/sa_type_body" android:textColor="@color/sa_text_primary" />
                         <TextView android:id="@+id/tv_sos_mail_off" style="@style/SA.Hint" android:visibility="gone"
                             android:text="이 빌드는 메일 기능이 꺼져 있습니다 (배포 설정의 스크립트 주소가 없거나 웹 앱 배포 주소(…/macros/s/…/exec) 형식이 아님)." />
@@ -814,15 +814,16 @@
                     </LinearLayout>
                 </androidx.cardview.widget.CardView>
 
-                <!-- Buttons — no save button (changes apply live); only reset to defaults -->
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:layout_marginTop="@dimen/sa_space_md">
-                    <Button android:id="@+id/btn_reset" style="@style/SA.Button"
-                        android:text="기본값으로 초기화" android:backgroundTint="@color/sa_tint_gray" android:textColor="@color/sa_text_secondary" />
-                </LinearLayout>
 
             </LinearLayout>
             <!-- /hidden_advanced_group -->
+
+            <!-- Buttons — no save button (changes apply live); only reset to defaults, outside the hidden group so the visible tuning can be undone -->
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="horizontal" android:layout_marginTop="@dimen/sa_space_md">
+                <Button android:id="@+id/btn_reset" style="@style/SA.Button"
+                    android:text="기본값으로 초기화" android:backgroundTint="@color/sa_tint_gray" android:textColor="@color/sa_text_secondary" />
+            </LinearLayout>
 
         </LinearLayout>
     </ScrollView>

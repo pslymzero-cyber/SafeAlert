@@ -36,7 +36,7 @@ class SosMail(
         const val K_LIST = "m.list"
         const val K_ADDR = "m.to"
         const val KEEP_ADDR_MS = 7 * 86_400_000L
-        const val MAX_TO = 5
+        const val MAX_TO = 2
 
         private val SCRIPT_URL = Regex("https://script\\.google\\.com/macros/s/[A-Za-z0-9_-]+/exec")
         private val ADDRESS = Regex("[A-Za-z0-9%+_-]+(\\.[A-Za-z0-9%+_-]+)*@[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)+")
