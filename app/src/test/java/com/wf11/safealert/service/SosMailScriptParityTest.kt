@@ -28,7 +28,8 @@ class SosMailScriptParityTest {
         assertTrue(app.contains(true) && app.contains(false))
     }
 
-    // The address field on the developer settings screen, the app and the script all stop at the same length.
+    // The app and the script stop one address at the same length; the field on the developer settings screen holds
+    //   SosMail.MAX_TO such addresses with ", " between them.
     @Test fun keep_fresh_and_address_length_match_script_and_address_field() {
         val gs = script()
         assertTrue(gs.contains("var DAY_MS = 24 * 3600 * 1000;"))
@@ -43,7 +44,8 @@ class SosMailScriptParityTest {
         val id = "android:id=\"@+id/et_sos_mail_to\""
         assertTrue(layout.contains(id))
         val field = layout.substringAfter(id).substringBefore("/>")
-        assertEquals(max, Regex("""android:maxLength="(\d+)"""").find(field)!!.groupValues[1].toInt())
+        val fieldMax = Regex("""android:maxLength="(\d+)"""").find(field)!!.groupValues[1].toInt()
+        assertTrue(fieldMax >= SosMail.MAX_TO * max + (SosMail.MAX_TO - 1) * 2)
     }
 
     @Test fun pit_names_match_pit_type() {

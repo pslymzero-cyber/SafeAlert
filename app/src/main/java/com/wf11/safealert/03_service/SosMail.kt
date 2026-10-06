@@ -36,12 +36,23 @@ class SosMail(
         const val K_LIST = "m.list"
         const val K_ADDR = "m.to"
         const val KEEP_ADDR_MS = 7 * 86_400_000L
+        const val MAX_TO = 5
 
         private val SCRIPT_URL = Regex("https://script\\.google\\.com/macros/s/[A-Za-z0-9_-]+/exec")
         private val ADDRESS = Regex("[A-Za-z0-9%+_-]+(\\.[A-Za-z0-9%+_-]+)*@[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)+")
         private val CODE = Regex("\"code\"\\s*:\\s*\"([a-z_]+)\"")
 
         fun validAddress(s: String): Boolean = s.length in 1..254 && ADDRESS.matches(s)
+
+        // Separators of the stored recipient text. Not whitespace: 'a b@x.com' must stay one bad address, not become 'b@x.com'.
+        private val SPLIT = Regex("[,;\r\n]+")
+
+        /** Entries of the recipient text as typed: trimmed, empty ones and case-insensitive repeats dropped. */
+        fun entries(raw: String): List<String> =
+            raw.split(SPLIT).map { it.trim() }.filter { it.isNotEmpty() }.distinctBy { it.lowercase() }
+
+        /** Addresses the mail goes to: the valid entries, at most MAX_TO. */
+        fun addresses(raw: String): List<String> = entries(raw).filter(::validAddress).take(MAX_TO)
 
         /**
          * Normalized value if it matches the web app deployment URL format
@@ -68,7 +79,7 @@ class SosMail(
         val event: String, val site: String, val sc: String, val id: String,
         val to: String, val stillMin: Int, val at: Long
     ) {
-        val tag get() = "$event/$id"
+        val tag get() = "$event/$id/$to"
     }
 
     // In-flight state, failure count and next-allowed time live in memory only (a restart retries immediately).
@@ -93,15 +104,16 @@ class SosMail(
         if (sc.isEmpty() || key.isEmpty()) return
         val t = now()
         val addr = loadAddr().filter { t - it[2].toLong() <= KEEP_ADDR_MS }
-        // A resolve doesn't re-read settings; it uses the address of the same record's SOS mail (not enqueued if missing or older than 7 days)
-        val to = if (event == EVENT_SOS) addressFor(sc).trim()
-            else addr.firstOrNull { it[0] == key }?.get(1) ?: return
-        if (!validAddress(to)) return
+        // An SOS goes to every address set now, one queue item each. A resolve doesn't re-read settings; it goes to the
+        //   addresses the same record's SOS mail was queued for (none if missing or older than 7 days)
+        val tos = if (event == EVENT_SOS) addresses(addressFor(sc))
+            else addr.filter { it[0] == key }.map { it[1] }.filter(::validAddress)
         val list = load()
-        if (list.any { it.event == event && it.id == key }) return
-        val kept = addr.filter { it[0] != key }
-        val rows = if (event == EVENT_SOS) kept + listOf(listOf(key, to, t.toString())) else kept
-        save(list + Item(event, site, sc, key, to, stillMin.coerceIn(1, 30), t), mapOf(K_ADDR to addrText(rows)))
+        val add = tos.filter { to -> list.none { it.event == event && it.id == key && it.to == to } }
+        if (add.isEmpty()) return
+        val rows = if (event == EVENT_SOS) addr.filter { it[0] != key } + tos.map { listOf(key, it, t.toString()) }
+            else addr.filterNot { it[0] == key && it[1] in add }
+        save(list + add.map { Item(event, site, sc, key, it, stillMin.coerceIn(1, 30), t) }, mapOf(K_ADDR to addrText(rows)))
         tick()
     }
 
@@ -112,7 +124,7 @@ class SosMail(
         if (live.size != all.size) save(live)
         for (e in live) {
             val tag = e.tag
-            if (e.event == EVENT_RESOLVED && live.any { it.event == EVENT_SOS && it.id == e.id }) continue
+            if (e.event == EVENT_RESOLVED && live.any { it.event == EVENT_SOS && it.id == e.id && it.to == e.to }) continue
             if (tag in busy || (next[tag] ?: 0L) > t) continue
             busy.add(tag)
             post(form(e.site, e.sc, e.id, e.event, e.to, e.stillMin)) { body ->
@@ -127,10 +139,11 @@ class SosMail(
                     next.remove(tag)
                     val list = load()
                     if (o == Outcome.DROP && e.event == EVENT_SOS) {
-                        // The SOS mail definitely did not go out, so also remove the same record's resolve and address row
-                        val rest = list.filterNot { it.id == e.id }
+                        // The SOS mail to this address definitely did not go out, so also remove the same record's resolve
+                        //   and address row for this address (the record's other addresses are untouched)
+                        val rest = list.filterNot { it.id == e.id && it.to == e.to }
                         val addr = loadAddr()
-                        val rows = addr.filter { it[0] != e.id }
+                        val rows = addr.filterNot { it[0] == e.id && it[1] == e.to }
                         if (rest.size != list.size || rows.size != addr.size) {
                             save(rest, if (rows.size != addr.size) mapOf(K_ADDR to addrText(rows)) else emptyMap())
                         }

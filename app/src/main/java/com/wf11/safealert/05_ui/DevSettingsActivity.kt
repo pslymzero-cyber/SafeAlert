@@ -281,16 +281,22 @@ class DevSettingsActivity : AppCompatActivity() {
         // ── EditText: commit on focus loss (+clamp applied) · onPause safety net (editCommitters) ──
         // Site code — committed on focus loss only after a confirmation (not by the onPause safety net, which cannot ask)
         binding.etDevSiteCode.setOnFocusChangeListener { _, hasFocus -> if (!hasFocus) commitSiteCode() }
-        // SOS mail recipient address — per site. Empty = don't send; an invalid format is not saved
+        // SOS mail recipient addresses — per site, several separated by commas (at most SosMail.MAX_TO). Empty = don't send;
+        //   a list with a bad address or too many addresses is not saved. Saved normalized ("a@x.com, b@x.com").
         run {
             val et = binding.etSosMailTo
             val commit: () -> Unit = {
                 val sc = DevSettings.siteCode
-                val v = et.text.toString().trim()
+                val list = SosMail.entries(et.text.toString())
+                val v = list.joinToString(", ")
                 // Don't save without a site code or when the value is unchanged (so just opening and leaving doesn't pin the default)
                 if (sc.isNotEmpty() && v != LoneWorkerSosSync.mailTo(this, sc)) {
-                    if (v.isEmpty() || SosMail.validAddress(v)) LoneWorkerSosSync.setMailTo(this, sc, v)
-                    else Toast.makeText(this, "이메일 주소 형식이 맞지 않아 저장하지 않았습니다.", Toast.LENGTH_LONG).show()
+                    val bad = list.filterNot(SosMail::validAddress)
+                    when {
+                        bad.isNotEmpty() -> Toast.makeText(this, "주소 형식이 맞지 않아 저장하지 않았습니다: ${bad.joinToString(", ")}", Toast.LENGTH_LONG).show()
+                        list.size > SosMail.MAX_TO -> Toast.makeText(this, "받는 주소는 ${SosMail.MAX_TO}개까지입니다. 저장하지 않았습니다.", Toast.LENGTH_LONG).show()
+                        else -> LoneWorkerSosSync.setMailTo(this, sc, v)
+                    }
                 }
             }
             editCommitters += commit

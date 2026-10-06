@@ -95,6 +95,34 @@ class SosMailTest {
         assertFalse(SosMail.validAddress("a".repeat(246) + "@x.com.kr"))
     }
 
+    // Several addresses: one mail each (case-insensitive repeats once); a resolve goes to each address its SOS went to,
+    //   and an address the script refuses drops only its own items
+    @Test fun several_addresses_each_get_sos_and_resolve_and_a_refused_one_drops_only_itself() {
+        val kv = Kv(); val m = mail(kv)
+        to = "a@coupangfs.com, B@coupangfs.com;b@coupangfs.com\nc@coupangfs.com"
+        m.enqueue(SosMail.EVENT_SOS, "root/sos/WF11", "k1", 3)
+        assertEquals(listOf("a%40coupangfs.com", "B%40coupangfs.com", "c%40coupangfs.com"),
+            posts.map { it.form.substringAfter("to=").substringBefore("&") })
+        m.enqueue(SosMail.EVENT_RESOLVED, "root/sos/WF11", "k1", 3)
+        assertEquals(3, posts.size)
+        posts[0].done(sent)
+        posts[1].done("{\"ok\":false,\"code\":\"not_allowed\"}")
+        m.tick()
+        assertEquals(4, posts.size)
+        assertTrue(posts[3].form.contains("event=resolved&to=a%40coupangfs.com"))
+        posts[2].done(sent)
+        assertEquals(5, posts.size)
+        assertTrue(posts[4].form.contains("event=resolved&to=c%40coupangfs.com"))
+    }
+
+    @Test fun at_most_five_addresses_and_bad_entries_are_skipped() {
+        val kv = Kv(); val m = mail(kv)
+        to = "x@a.com, not an address, " + (1..6).joinToString(", ") { "u$it@a.com" }
+        m.enqueue(SosMail.EVENT_SOS, "root/sos/WF11", "k1", 3)
+        assertEquals(SosMail.MAX_TO, posts.size)
+        assertTrue(posts.none { it.form.contains("not+an") })
+    }
+
     @Test fun enqueue_ignores_blank_or_bad_address_bad_path_and_unknown_event() {
         val kv = Kv(); val m = mail(kv)
         to = ""
