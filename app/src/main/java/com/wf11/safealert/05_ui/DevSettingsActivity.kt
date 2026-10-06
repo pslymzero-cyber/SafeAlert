@@ -235,10 +235,10 @@ class DevSettingsActivity : AppCompatActivity() {
             DevSettings.alarmVolume = v.coerceIn(50, 100); updateDevAlarmLabels(); updateSectionSummaries()
         })
         binding.seekDevWarnRssi.setOnSeekBarChangeListener(seekListener { v ->
-            DevSettings.rssiWarning = -v.coerceIn(30, 100); updateDevAlarmLabels()
+            DevSettings.rssiWarning = -v.coerceIn(30, 100); updateDevAlarmLabels(); updateSectionSummaries()
         })
         binding.seekDevDangRssi.setOnSeekBarChangeListener(seekListener { v ->
-            DevSettings.rssiDanger = -v.coerceIn(30, 100); updateDevAlarmLabels()
+            DevSettings.rssiDanger = -v.coerceIn(30, 100); updateDevAlarmLabels(); updateSectionSummaries()
         })
         binding.swDevEchoAutoCalib.setOnCheckedChangeListener { _, c -> DevSettings.echoAutoCalibEnabled = c }
         bindIntField(binding.etDevEchoMinTicks, { DevSettings.echoCalMinTicks }, { DevSettings.echoCalMinTicks = it })
@@ -528,11 +528,12 @@ class DevSettingsActivity : AppCompatActivity() {
         binding.tvCoopSlack.text = if (v == 0) "0 dB (완화 없음)" else "+${v} dB"
     }
 
-    // ── Accordion — [현장 설정] open, the other 7 sections collapsed (layout SA.SectionBody visibility=gone); header tap toggles ──
+    // ── Accordion — [현장 설정] open, the other 8 sections collapsed (layout SA.SectionBody visibility=gone); header tap toggles ──
     private fun setupAccordion() {
         bindSection(binding.secSiteHeader,    binding.secSiteBody,    binding.secSiteChevron)
         bindSection(binding.secTxrxHeader,    binding.secTxrxBody,    binding.secTxrxChevron)
         bindSection(binding.secSoundHeader,   binding.secSoundBody,   binding.secSoundChevron)
+        bindSection(binding.secAlertHeader,   binding.secAlertBody,   binding.secAlertChevron)
         bindSection(binding.secParamHeader,   binding.secParamBody,   binding.secParamChevron)
         bindSection(binding.secCoopHeader,    binding.secCoopBody,    binding.secCoopChevron)
         bindSection(binding.secUwbadvHeader,  binding.secUwbadvBody,  binding.secUwbadvChevron)
@@ -554,7 +555,7 @@ class DevSettingsActivity : AppCompatActivity() {
     //   Spinner's selectedItemPosition can lag right after setSelection, so read DevSettings directly.
     private fun updateSectionSummaries() {
         fun onOff(b: Boolean) = if (b) "ON" else "OFF"
-        // A safety switch turned off in the hidden sections still shows here, where the site settings are
+        // A safety switch turned off in another section still shows here, where the site settings are
         binding.secSiteSummary.text = listOfNotNull(
             DevSettings.siteCode.ifEmpty { "사업장 없음" }, "볼륨 ${DevSettings.alarmVolume}%",
             DevSettings.safetyOff().takeIf { it.isNotEmpty() }?.joinToString(" · ", prefix = "꺼짐: ")
@@ -563,9 +564,10 @@ class DevSettingsActivity : AppCompatActivity() {
             "스캔 ${DevSettings.scanPeriodMs}ms · 광고 ${DevSettings.advertiseInterval}ms"
         binding.secSoundSummary.text =
             "진동 ${onOff(binding.switchVibration.isChecked)} · 소리 ${onOff(binding.switchSound.isChecked)}"
-        binding.secParamSummary.text =
-            "TTC ${DevSettings.ttcThresholdSec}s · 오프셋 ${binding.seekWalkerEquipBias.progress}/" +
+        binding.secAlertSummary.text =
+            "경고 ${DevSettings.rssiWarning} · 위험 ${DevSettings.rssiDanger} dBm · 오프셋 ${binding.seekWalkerEquipBias.progress}/" +
             "${binding.seekWalkerEpjBias.progress}/${binding.seekEquipEquipBias.progress} dB"
+        binding.secParamSummary.text = "TTC ${DevSettings.ttcThresholdSec}s · 쿨다운 · 필터 · 에코"
         binding.secCoopSummary.text =
             "상호 RSSI ${onOff(binding.swReciprocalRssi.isChecked)} · 완화 +${binding.seekCoopSlack.progress} dB"
         binding.secUwbadvSummary.text =

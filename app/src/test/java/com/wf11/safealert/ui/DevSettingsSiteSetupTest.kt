@@ -27,9 +27,10 @@ import org.robolectric.shadows.ShadowDialog
 import java.time.Duration
 
 /**
- * The developer settings screen as a site manager meets it: only the site settings are shown, the tuning sections open
- * with 7 taps on the version, the site code falls back to the site entered when monitoring started, and changing the site,
- * switching lone-worker checks off or resetting asks first.
+ * The developer settings screen as a site manager meets it: the site settings and the per-site tuning (TX/RX, sound,
+ * alert thresholds with role offsets) are shown, the internal judgment sections open with 7 taps on the version, the
+ * site code falls back to the site entered when monitoring started, and changing the site, switching lone-worker checks
+ * off or resetting asks first.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -68,16 +69,34 @@ class DevSettingsSiteSetupTest {
         idle()
     }
 
+    private fun View.isInside(group: View): Boolean {
+        var v: View? = parent as? View
+        while (v != null) {
+            if (v === group) return true
+            v = v.parent as? View
+        }
+        return false
+    }
+
     @Test
-    fun `현장 설정만 보이고 판정 숫자와 송수신 스위치는 숨김 옵션에 있다`() {
+    fun `사업장마다 맞추는 송수신·소리·경보 기준은 바로 보이고 판정 내부값은 숨김 옵션에 있다`() {
         val a = screen()
         for (id in listOf(R.id.et_dev_site_code, R.id.et_sos_mail_to, R.id.switch_lone_worker, R.id.et_lw_still_min,
                           R.id.et_lw_response_min, R.id.seek_dev_alarm_volume)) {
             assertTrue("현장 설정은 바로 보인다", a.findViewById<View>(id).isShown)
         }
-        for (id in listOf(R.id.sec_txrx_header, R.id.sec_sound_header, R.id.sec_param_header, R.id.sec_coop_header,
-                          R.id.sec_uwbadv_header, R.id.sec_state_header)) {
-            assertFalse("판정·송수신 구역은 숨김", a.findViewById<View>(id).isShown)
+        for (id in listOf(R.id.sec_txrx_header, R.id.sec_sound_header, R.id.sec_alert_header)) {
+            assertTrue("사업장 조정 구역은 바로 보인다", a.findViewById<View>(id).isShown)
+        }
+        // The sections start collapsed, so what matters is that these controls sit outside the hidden group
+        val hidden = a.findViewById<View>(R.id.hidden_advanced_group)
+        for (id in listOf(R.id.seek_dev_warn_rssi, R.id.seek_dev_dang_rssi, R.id.seek_walker_equip_bias,
+                          R.id.seek_walker_epj_bias, R.id.seek_equip_equip_bias, R.id.et_wake_rssi,
+                          R.id.spinner_scan_period, R.id.switch_vibration)) {
+            assertFalse("사업장 조정 항목은 숨김 묶음 밖", a.findViewById<View>(id).isInside(hidden))
+        }
+        for (id in listOf(R.id.sec_param_header, R.id.sec_coop_header, R.id.sec_uwbadv_header, R.id.sec_state_header)) {
+            assertFalse("판정 내부값·협력·UWB 고급·상태는 숨김", a.findViewById<View>(id).isShown)
         }
         val version = a.findViewById<TextView>(R.id.tv_app_version)
         repeat(7) { version.performClick() }

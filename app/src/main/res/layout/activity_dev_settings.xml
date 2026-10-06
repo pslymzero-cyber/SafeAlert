@@ -107,6 +107,219 @@
                 </LinearLayout>
             </androidx.cardview.widget.CardView>
 
+            <!-- ═══════════ [송수신·통신] (TX/RX, comms) ═══════════ -->
+            <androidx.cardview.widget.CardView style="@style/SA.Card">
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical">
+
+                    <LinearLayout android:id="@+id/sec_txrx_header" style="@style/SA.SectionHeader">
+                        <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
+                            <TextView style="@style/SA.SectionTitle" android:text="송수신·통신" />
+                            <TextView android:id="@+id/sec_txrx_summary" style="@style/SA.SectionSummary" android:text="스캔 1000ms · 광고 200ms" />
+                        </LinearLayout>
+                        <ImageView android:id="@+id/sec_txrx_chevron" style="@style/SA.Chevron" android:contentDescription="펼침/접힘" />
+                    </LinearLayout>
+
+                    <LinearLayout android:id="@+id/sec_txrx_body" style="@style/SA.SectionBody">
+
+                        <TextView style="@style/SA.SubHeader" android:layout_marginTop="0dp" android:text="장비 작업자"
+                            android:drawableStart="@drawable/ic_forklift_sm"
+                            android:drawablePadding="@dimen/sa_space_sm" />
+
+                        <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
+                            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
+                                <TextView style="@style/SA.Label" android:text="신호 송신 (TX)" />
+                                <TextView style="@style/SA.Hint" android:layout_marginTop="1dp" android:text="BLE 신호를 주변에 송출" />
+                            </LinearLayout>
+                            <Switch android:id="@+id/switch_device_tx" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                        </LinearLayout>
+
+                        <LinearLayout style="@style/SA.Row">
+                            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
+                                <TextView style="@style/SA.Label" android:text="신호 수신 (RX)" />
+                                <TextView style="@style/SA.Hint" android:layout_marginTop="1dp" android:text="주변 장비·보행자 감지" />
+                            </LinearLayout>
+                            <Switch android:id="@+id/switch_device_rx" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                        </LinearLayout>
+
+                        <!-- Walker-to-walker alert -->
+                        <LinearLayout style="@style/SA.Row">
+                            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
+                                <TextView style="@style/SA.Label" android:text="보행자끼리 경보" />
+                                <TextView style="@style/SA.Hint" android:layout_marginTop="1dp" android:text="보행자가 다른 보행자를 감지해도 경보 (기본: OFF)" />
+                            </LinearLayout>
+                            <Switch android:id="@+id/switch_walker_detects_walker" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                        </LinearLayout>
+
+                        <!-- Lone-worker safe-zone fall thresholds -->
+                        <View style="@style/SA.Divider" />
+
+                        <TextView style="@style/SA.SubHeader" android:text="단독 작업자 · 세이프존 낙상" />
+
+                        <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
+                            <TextView style="@style/SA.RowLabel" android:text="세이프존 낙상 높이(cm)" />
+                            <EditText android:id="@+id/et_lw_zone_fall_cm" style="@style/SA.EditNumber" />
+                        </LinearLayout>
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="0dp" android:text="2~100, 기본 30. 세이프존 안 넘어짐은 높이·충격·각도를 모두 넘어야 확인 창" />
+
+                        <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
+                            <TextView style="@style/SA.RowLabel" android:text="세이프존 낙상 충격(G)" />
+                            <EditText android:id="@+id/et_lw_zone_fall_g" style="@style/SA.EditNumber" android:inputType="numberDecimal" />
+                        </LinearLayout>
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="0dp" android:text="2.5~8.0, 기본 2.5. 센서 범위의 90%보다 크면 90%로 적용" />
+
+                        <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
+                            <TextView style="@style/SA.RowLabel" android:text="세이프존 낙상 각도(°)" />
+                            <EditText android:id="@+id/et_lw_zone_fall_deg" style="@style/SA.EditNumber" />
+                        </LinearLayout>
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="0dp" android:text="45~90, 기본 60" />
+
+                        <View style="@style/SA.Divider" />
+
+                        <TextView style="@style/SA.SubHeader" android:text="보행자"
+                            android:drawableStart="@drawable/ic_walker_sm"
+                            android:drawablePadding="@dimen/sa_space_sm" />
+
+                        <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
+                            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
+                                <TextView style="@style/SA.Label" android:text="신호 송신 (TX)" />
+                                <TextView style="@style/SA.Hint" android:layout_marginTop="1dp" android:text="BLE 신호를 주변에 송출 (기본: ON) · 끄면 장비가 이 보행자를 못 봄" />
+                            </LinearLayout>
+                            <Switch android:id="@+id/switch_walker_tx" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                        </LinearLayout>
+
+                        <LinearLayout style="@style/SA.Row">
+                            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
+                                <TextView style="@style/SA.Label" android:text="신호 수신 (RX)" />
+                                <TextView style="@style/SA.Hint" android:layout_marginTop="1dp" android:text="주변 장비 감지" />
+                            </LinearLayout>
+                            <Switch android:id="@+id/switch_walker_rx" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                        </LinearLayout>
+
+                        <View style="@style/SA.Divider" />
+
+                        <TextView style="@style/SA.SubHeader" android:text="BLE 통신" />
+
+                        <TextView style="@style/SA.Label" android:layout_marginTop="10dp" android:text="스캔 주기" />
+                        <Spinner android:id="@+id/spinner_scan_period" android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:entries="@array/scan_period_labels" />
+                        <TextView style="@style/SA.Label" android:layout_marginTop="@dimen/sa_space_sm" android:text="광고 간격" />
+                        <Spinner android:id="@+id/spinner_advertise" android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:entries="@array/advertise_labels" />
+
+                        <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
+                            <TextView style="@style/SA.RowLabel" android:text="광고 웨이크 RSSI (dBm)" />
+                            <EditText android:id="@+id/et_wake_rssi" style="@style/SA.EditNumber" android:inputType="number|numberSigned" />
+                        </LinearLayout>
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="0dp"
+                            android:text="유효 -100~-60 dBm (기본 -95). 이 신호 이상이 잡히면 절전 해제. 0에 가깝게 하면 절전이 늘지만 감지가 늦고, -100 쪽이면 멀리서도 깨어납니다." />
+
+                    </LinearLayout>
+                </LinearLayout>
+            </androidx.cardview.widget.CardView>
+
+            <!-- ═══════════ [소리·진동 세부] (sound/vibration details) ═══════════ -->
+            <androidx.cardview.widget.CardView style="@style/SA.Card">
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical">
+
+                    <LinearLayout android:id="@+id/sec_sound_header" style="@style/SA.SectionHeader">
+                        <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
+                            <TextView style="@style/SA.SectionTitle" android:text="소리·진동 세부" />
+                            <TextView android:id="@+id/sec_sound_summary" style="@style/SA.SectionSummary" android:text="진동 ON · 소리 ON" />
+                        </LinearLayout>
+                        <ImageView android:id="@+id/sec_sound_chevron" style="@style/SA.Chevron" android:contentDescription="펼침/접힘" />
+                    </LinearLayout>
+
+                    <LinearLayout android:id="@+id/sec_sound_body" style="@style/SA.SectionBody">
+
+                        <LinearLayout style="@style/SA.Row">
+                            <TextView style="@style/SA.RowLabel" android:text="진동 사용" />
+                            <Switch android:id="@+id/switch_vibration" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                        </LinearLayout>
+                        <TextView style="@style/SA.Label" android:layout_marginTop="10dp" android:text="경고 진동 시간" />
+                        <Spinner android:id="@+id/spinner_vib_warning" android:layout_width="match_parent"
+                            android:layout_height="wrap_content" android:entries="@array/vib_warning_labels" />
+                        <TextView style="@style/SA.Label" android:layout_marginTop="@dimen/sa_space_sm" android:text="위험 진동 반복 횟수" />
+                        <Spinner android:id="@+id/spinner_vib_count" android:layout_width="match_parent"
+                            android:layout_height="wrap_content" android:entries="@array/vib_count_labels" />
+                        <LinearLayout style="@style/SA.Row">
+                            <TextView style="@style/SA.RowLabel" android:text="경보음 사용" />
+                            <Switch android:id="@+id/switch_sound" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                        </LinearLayout>
+
+                    </LinearLayout>
+                </LinearLayout>
+            </androidx.cardview.widget.CardView>
+
+            <!-- ═══════════ [경보 기준] (alert thresholds · role offsets) — edited per site here; BLE detection settings shows the thresholds locked ═══════════ -->
+            <androidx.cardview.widget.CardView style="@style/SA.Card">
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical">
+
+                    <LinearLayout android:id="@+id/sec_alert_header" style="@style/SA.SectionHeader">
+                        <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
+                            <TextView style="@style/SA.SectionTitle" android:text="경보 기준" />
+                            <TextView android:id="@+id/sec_alert_summary" style="@style/SA.SectionSummary" android:text="경고 -78 · 위험 -65 dBm" />
+                        </LinearLayout>
+                        <ImageView android:id="@+id/sec_alert_chevron" style="@style/SA.Chevron" android:contentDescription="펼침/접힘" />
+                    </LinearLayout>
+
+                    <LinearLayout android:id="@+id/sec_alert_body" style="@style/SA.SectionBody">
+
+                        <!-- Alert threshold signal strengths — edited here. BLE detection settings only shows the values, locked -->
+                        <TextView style="@style/SA.SubHeader" android:layout_marginTop="0dp" android:text="경보 임계 신호세기" />
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="@dimen/sa_space_hairline"
+                            android:text="값이 작을수록(예: -85) 먼 거리에서 경보합니다. 위험은 경고보다 커야(가까워야) 정상입니다." />
+
+                        <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
+                            <TextView style="@style/SA.RowLabel" android:text="경고 신호세기 (dBm)" />
+                            <TextView android:id="@+id/tv_dev_warn_rssi_val" style="@style/SA.Value" />
+                        </LinearLayout>
+                        <SeekBar android:id="@+id/seek_dev_warn_rssi" android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:layout_marginTop="@dimen/sa_space_xs" android:min="30" android:max="100" />
+
+                        <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
+                            <TextView style="@style/SA.RowLabel" android:text="위험 신호세기 (dBm)" />
+                            <TextView android:id="@+id/tv_dev_dang_rssi_val" style="@style/SA.Value" />
+                        </LinearLayout>
+                        <SeekBar android:id="@+id/seek_dev_dang_rssi" android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:layout_marginTop="@dimen/sa_space_xs" android:min="30" android:max="100" />
+
+                        <View style="@style/SA.Divider" />
+                        <!-- Per-role early-warning offsets — pull effWarning/effDanger out to a longer distance per role pair -->
+                        <TextView style="@style/SA.SubHeader" android:text="역할별 조기경보 오프셋" />
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="@dimen/sa_space_hairline"
+                            android:text="값이 클수록 더 먼 거리(약한 신호)에서 미리 경보합니다. 0=중립(일반 임계와 동일). 금속 캐빈 차폐로 신호가 약해지는 장비끼리도 놓치지 않도록 보정." />
+
+                        <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
+                            <TextView style="@style/SA.RowLabel" android:text="보행자 ↔ 지게차 (dB)" />
+                            <TextView android:id="@+id/tv_walker_equip_bias_val" style="@style/SA.Value" />
+                        </LinearLayout>
+                        <SeekBar android:id="@+id/seek_walker_equip_bias" android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:layout_marginTop="@dimen/sa_space_xs" android:max="15" />
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="0dp"
+                            android:text="유효 0~15 dB (기본 6). 보행자와 지게차 사이 조기경보 강도. 가장 강하게 보호." />
+
+                        <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
+                            <TextView style="@style/SA.RowLabel" android:text="보행자 ↔ EPJ (dB)" />
+                            <TextView android:id="@+id/tv_walker_epj_bias_val" style="@style/SA.Value" />
+                        </LinearLayout>
+                        <SeekBar android:id="@+id/seek_walker_epj_bias" android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:layout_marginTop="@dimen/sa_space_xs" android:max="15" />
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="0dp"
+                            android:text="유효 0~15 dB (기본 2). EPJ(전동 파레트 잭)는 저속·동일공간 작업이라 지게차보다 완화." />
+
+                        <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
+                            <TextView style="@style/SA.RowLabel" android:text="장비 ↔ 장비 (dB)" />
+                            <TextView android:id="@+id/tv_equip_equip_bias_val" style="@style/SA.Value" />
+                        </LinearLayout>
+                        <SeekBar android:id="@+id/seek_equip_equip_bias" android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:layout_marginTop="@dimen/sa_space_xs" android:max="15" />
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="0dp"
+                            android:text="유효 0~15 dB (기본 8). 지게차끼리·EPJ끼리·지게차↔EPJ. 금속 캐빈 차폐로 약해진 신호를 잡으려면 가장 큰 값 필요." />
+
+                    </LinearLayout>
+                </LinearLayout>
+            </androidx.cardview.widget.CardView>
+
             <!-- ═══════════ [앱 정보] (app info) — 7 taps on the version (each within 3 s of the previous) reveal the hidden advanced options ═══════════ -->
             <androidx.cardview.widget.CardView style="@style/SA.Card">
                 <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical">
@@ -140,148 +353,11 @@
             </androidx.cardview.widget.CardView>
 
             <!-- Developer advanced (hidden) — revealed by 7 taps on the version in '앱 정보' (each within 3 s of the previous):
-                 every tuning section, Firebase · debug · reverse prep · reset -->
+                 internal judgment values (TTC · gates · cooldowns · filters · echo · power/comms) · cooperation · UWB advanced · state, Firebase · debug · reverse prep · reset -->
             <LinearLayout android:id="@+id/hidden_advanced_group"
                 android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:orientation="vertical"
                 android:visibility="gone">
-
-                <!-- ═══════════ [송수신·통신] (TX/RX, comms) ═══════════ -->
-                <androidx.cardview.widget.CardView style="@style/SA.Card">
-                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical">
-
-                        <LinearLayout android:id="@+id/sec_txrx_header" style="@style/SA.SectionHeader">
-                            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
-                                <TextView style="@style/SA.SectionTitle" android:text="송수신·통신" />
-                                <TextView android:id="@+id/sec_txrx_summary" style="@style/SA.SectionSummary" android:text="스캔 1000ms · 광고 200ms" />
-                            </LinearLayout>
-                            <ImageView android:id="@+id/sec_txrx_chevron" style="@style/SA.Chevron" android:contentDescription="펼침/접힘" />
-                        </LinearLayout>
-
-                        <LinearLayout android:id="@+id/sec_txrx_body" style="@style/SA.SectionBody">
-
-                            <TextView style="@style/SA.SubHeader" android:layout_marginTop="0dp" android:text="장비 작업자"
-                                android:drawableStart="@drawable/ic_forklift_sm"
-                                android:drawablePadding="@dimen/sa_space_sm" />
-
-                            <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
-                                <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
-                                    <TextView style="@style/SA.Label" android:text="신호 송신 (TX)" />
-                                    <TextView style="@style/SA.Hint" android:layout_marginTop="1dp" android:text="BLE 신호를 주변에 송출" />
-                                </LinearLayout>
-                                <Switch android:id="@+id/switch_device_tx" android:layout_width="wrap_content" android:layout_height="wrap_content" />
-                            </LinearLayout>
-
-                            <LinearLayout style="@style/SA.Row">
-                                <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
-                                    <TextView style="@style/SA.Label" android:text="신호 수신 (RX)" />
-                                    <TextView style="@style/SA.Hint" android:layout_marginTop="1dp" android:text="주변 장비·보행자 감지" />
-                                </LinearLayout>
-                                <Switch android:id="@+id/switch_device_rx" android:layout_width="wrap_content" android:layout_height="wrap_content" />
-                            </LinearLayout>
-
-                            <!-- Walker-to-walker alert -->
-                            <LinearLayout style="@style/SA.Row">
-                                <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
-                                    <TextView style="@style/SA.Label" android:text="보행자끼리 경보" />
-                                    <TextView style="@style/SA.Hint" android:layout_marginTop="1dp" android:text="보행자가 다른 보행자를 감지해도 경보 (기본: OFF)" />
-                                </LinearLayout>
-                                <Switch android:id="@+id/switch_walker_detects_walker" android:layout_width="wrap_content" android:layout_height="wrap_content" />
-                            </LinearLayout>
-
-                            <!-- Lone-worker safe-zone fall thresholds -->
-                            <View style="@style/SA.Divider" />
-
-                            <TextView style="@style/SA.SubHeader" android:text="단독 작업자 · 세이프존 낙상" />
-
-                            <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
-                                <TextView style="@style/SA.RowLabel" android:text="세이프존 낙상 높이(cm)" />
-                                <EditText android:id="@+id/et_lw_zone_fall_cm" style="@style/SA.EditNumber" />
-                            </LinearLayout>
-                            <TextView style="@style/SA.Hint" android:layout_marginTop="0dp" android:text="2~100, 기본 30. 세이프존 안 넘어짐은 높이·충격·각도를 모두 넘어야 확인 창" />
-
-                            <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
-                                <TextView style="@style/SA.RowLabel" android:text="세이프존 낙상 충격(G)" />
-                                <EditText android:id="@+id/et_lw_zone_fall_g" style="@style/SA.EditNumber" android:inputType="numberDecimal" />
-                            </LinearLayout>
-                            <TextView style="@style/SA.Hint" android:layout_marginTop="0dp" android:text="2.5~8.0, 기본 2.5. 센서 범위의 90%보다 크면 90%로 적용" />
-
-                            <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
-                                <TextView style="@style/SA.RowLabel" android:text="세이프존 낙상 각도(°)" />
-                                <EditText android:id="@+id/et_lw_zone_fall_deg" style="@style/SA.EditNumber" />
-                            </LinearLayout>
-                            <TextView style="@style/SA.Hint" android:layout_marginTop="0dp" android:text="45~90, 기본 60" />
-
-                            <View style="@style/SA.Divider" />
-
-                            <TextView style="@style/SA.SubHeader" android:text="보행자"
-                                android:drawableStart="@drawable/ic_walker_sm"
-                                android:drawablePadding="@dimen/sa_space_sm" />
-
-                            <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
-                                <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
-                                    <TextView style="@style/SA.Label" android:text="신호 송신 (TX)" />
-                                    <TextView style="@style/SA.Hint" android:layout_marginTop="1dp" android:text="BLE 신호를 주변에 송출 (기본: ON) · 끄면 장비가 이 보행자를 못 봄" />
-                                </LinearLayout>
-                                <Switch android:id="@+id/switch_walker_tx" android:layout_width="wrap_content" android:layout_height="wrap_content" />
-                            </LinearLayout>
-
-                            <LinearLayout style="@style/SA.Row">
-                                <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
-                                    <TextView style="@style/SA.Label" android:text="신호 수신 (RX)" />
-                                    <TextView style="@style/SA.Hint" android:layout_marginTop="1dp" android:text="주변 장비 감지" />
-                                </LinearLayout>
-                                <Switch android:id="@+id/switch_walker_rx" android:layout_width="wrap_content" android:layout_height="wrap_content" />
-                            </LinearLayout>
-
-                            <View style="@style/SA.Divider" />
-
-                            <TextView style="@style/SA.SubHeader" android:text="BLE 통신" />
-
-                            <TextView style="@style/SA.Label" android:layout_marginTop="10dp" android:text="스캔 주기" />
-                            <Spinner android:id="@+id/spinner_scan_period" android:layout_width="match_parent" android:layout_height="wrap_content"
-                                android:entries="@array/scan_period_labels" />
-                            <TextView style="@style/SA.Label" android:layout_marginTop="@dimen/sa_space_sm" android:text="광고 간격" />
-                            <Spinner android:id="@+id/spinner_advertise" android:layout_width="match_parent" android:layout_height="wrap_content"
-                                android:entries="@array/advertise_labels" />
-
-
-                        </LinearLayout>
-                    </LinearLayout>
-                </androidx.cardview.widget.CardView>
-
-                <!-- ═══════════ [소리·진동 세부] (sound/vibration details) ═══════════ -->
-                <androidx.cardview.widget.CardView style="@style/SA.Card">
-                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical">
-
-                        <LinearLayout android:id="@+id/sec_sound_header" style="@style/SA.SectionHeader">
-                            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
-                                <TextView style="@style/SA.SectionTitle" android:text="소리·진동 세부" />
-                                <TextView android:id="@+id/sec_sound_summary" style="@style/SA.SectionSummary" android:text="진동 ON · 소리 ON" />
-                            </LinearLayout>
-                            <ImageView android:id="@+id/sec_sound_chevron" style="@style/SA.Chevron" android:contentDescription="펼침/접힘" />
-                        </LinearLayout>
-
-                        <LinearLayout android:id="@+id/sec_sound_body" style="@style/SA.SectionBody">
-
-                            <LinearLayout style="@style/SA.Row">
-                                <TextView style="@style/SA.RowLabel" android:text="진동 사용" />
-                                <Switch android:id="@+id/switch_vibration" android:layout_width="wrap_content" android:layout_height="wrap_content" />
-                            </LinearLayout>
-                            <TextView style="@style/SA.Label" android:layout_marginTop="10dp" android:text="경고 진동 시간" />
-                            <Spinner android:id="@+id/spinner_vib_warning" android:layout_width="match_parent"
-                                android:layout_height="wrap_content" android:entries="@array/vib_warning_labels" />
-                            <TextView style="@style/SA.Label" android:layout_marginTop="@dimen/sa_space_sm" android:text="위험 진동 반복 횟수" />
-                            <Spinner android:id="@+id/spinner_vib_count" android:layout_width="match_parent"
-                                android:layout_height="wrap_content" android:entries="@array/vib_count_labels" />
-                            <LinearLayout style="@style/SA.Row">
-                                <TextView style="@style/SA.RowLabel" android:text="경보음 사용" />
-                                <Switch android:id="@+id/switch_sound" android:layout_width="wrap_content" android:layout_height="wrap_content" />
-                            </LinearLayout>
-
-                        </LinearLayout>
-                    </LinearLayout>
-                </androidx.cardview.widget.CardView>
 
                 <!-- ═══════════ [판정 파라미터] (judgment parameters) — live tuning of the core alert-judgment constants.
                      Defaults are mostly the original hard-coded values (some retuned, e.g. EMA fall) ═══════════ -->
@@ -300,26 +376,6 @@
 
                             <TextView style="@style/SA.Hint" android:layout_marginTop="0dp"
                                 android:text="경보 판정·필터의 핵심 수치. 기본값은 현장 검증값이며 저장 즉시 서비스에 반영됩니다. '기본값으로 초기화'로 전체 복원." />
-
-                            <!-- Alert threshold signal strengths — edited here. BLE detection settings only shows the values, locked -->
-                            <View style="@style/SA.Divider" />
-                            <TextView style="@style/SA.SubHeader" android:text="경보 임계 신호세기" />
-                            <TextView style="@style/SA.Hint" android:layout_marginTop="@dimen/sa_space_hairline"
-                                android:text="값이 작을수록(예: -85) 먼 거리에서 경보합니다. 위험은 경고보다 커야(가까워야) 정상입니다." />
-
-                            <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
-                                <TextView style="@style/SA.RowLabel" android:text="경고 신호세기 (dBm)" />
-                                <TextView android:id="@+id/tv_dev_warn_rssi_val" style="@style/SA.Value" />
-                            </LinearLayout>
-                            <SeekBar android:id="@+id/seek_dev_warn_rssi" android:layout_width="match_parent" android:layout_height="wrap_content"
-                                android:layout_marginTop="@dimen/sa_space_xs" android:min="30" android:max="100" />
-
-                            <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
-                                <TextView style="@style/SA.RowLabel" android:text="위험 신호세기 (dBm)" />
-                                <TextView android:id="@+id/tv_dev_dang_rssi_val" style="@style/SA.Value" />
-                            </LinearLayout>
-                            <SeekBar android:id="@+id/seek_dev_dang_rssi" android:layout_width="match_parent" android:layout_height="wrap_content"
-                                android:layout_marginTop="@dimen/sa_space_xs" android:min="30" android:max="100" />
 
                             <View style="@style/SA.Divider" />
                             <TextView style="@style/SA.SubHeader" android:text="에코편차 자동보정" />
@@ -358,38 +414,6 @@
                                 android:text="에코편차 통계 초기화"
                                 style="@style/Widget.MaterialComponents.Button.OutlinedButton"
                                 android:textColor="@color/sa_text_secondary" android:textSize="@dimen/sa_type_body" />
-
-                            <!-- Per-role early-warning offsets — pull effWarning/effDanger out to a longer distance per role pair -->
-                            <TextView style="@style/SA.SubHeader" android:text="역할별 조기경보 오프셋" />
-                            <TextView style="@style/SA.Hint" android:layout_marginTop="@dimen/sa_space_hairline"
-                                android:text="값이 클수록 더 먼 거리(약한 신호)에서 미리 경보합니다. 0=중립(일반 임계와 동일). 금속 캐빈 차폐로 신호가 약해지는 장비끼리도 놓치지 않도록 보정." />
-
-                            <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
-                                <TextView style="@style/SA.RowLabel" android:text="보행자 ↔ 지게차 (dB)" />
-                                <TextView android:id="@+id/tv_walker_equip_bias_val" style="@style/SA.Value" />
-                            </LinearLayout>
-                            <SeekBar android:id="@+id/seek_walker_equip_bias" android:layout_width="match_parent" android:layout_height="wrap_content"
-                                android:layout_marginTop="@dimen/sa_space_xs" android:max="15" />
-                            <TextView style="@style/SA.Hint" android:layout_marginTop="0dp"
-                                android:text="유효 0~15 dB (기본 6). 보행자와 지게차 사이 조기경보 강도. 가장 강하게 보호." />
-
-                            <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
-                                <TextView style="@style/SA.RowLabel" android:text="보행자 ↔ EPJ (dB)" />
-                                <TextView android:id="@+id/tv_walker_epj_bias_val" style="@style/SA.Value" />
-                            </LinearLayout>
-                            <SeekBar android:id="@+id/seek_walker_epj_bias" android:layout_width="match_parent" android:layout_height="wrap_content"
-                                android:layout_marginTop="@dimen/sa_space_xs" android:max="15" />
-                            <TextView style="@style/SA.Hint" android:layout_marginTop="0dp"
-                                android:text="유효 0~15 dB (기본 2). EPJ(전동 파레트 잭)는 저속·동일공간 작업이라 지게차보다 완화." />
-
-                            <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
-                                <TextView style="@style/SA.RowLabel" android:text="장비 ↔ 장비 (dB)" />
-                                <TextView android:id="@+id/tv_equip_equip_bias_val" style="@style/SA.Value" />
-                            </LinearLayout>
-                            <SeekBar android:id="@+id/seek_equip_equip_bias" android:layout_width="match_parent" android:layout_height="wrap_content"
-                                android:layout_marginTop="@dimen/sa_space_xs" android:max="15" />
-                            <TextView style="@style/SA.Hint" android:layout_marginTop="0dp"
-                                android:text="유효 0~15 dB (기본 8). 지게차끼리·EPJ끼리·지게차↔EPJ. 금속 캐빈 차폐로 약해진 신호를 잡으려면 가장 큰 값 필요." />
 
                             <View style="@style/SA.Divider" />
 
@@ -512,13 +536,6 @@
                             <View style="@style/SA.Divider" />
 
                             <TextView style="@style/SA.SubHeader" android:layout_marginTop="@dimen/sa_space_sm" android:text="전력·통신" />
-
-                            <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
-                                <TextView style="@style/SA.RowLabel" android:text="광고 웨이크 RSSI (dBm)" />
-                                <EditText android:id="@+id/et_wake_rssi" style="@style/SA.EditNumber" android:inputType="number|numberSigned" />
-                            </LinearLayout>
-                            <TextView style="@style/SA.Hint" android:layout_marginTop="0dp"
-                                android:text="유효 -100~-60 dBm (기본 -95). 이 신호 이상이 잡히면 절전 해제. 0에 가깝게 하면 절전이 늘지만 감지가 늦고, -100 쪽이면 멀리서도 깨어납니다." />
 
                             <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
                                 <TextView style="@style/SA.RowLabel" android:text="신호 부재 간주 (ms)" />
