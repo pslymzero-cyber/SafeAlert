@@ -157,7 +157,8 @@ class LoneWorkerSosSync(
         // optional field ep; the beacon short ID stays out of the server record
         override fun create(path: String, key: String, rec: SosLedger.Record, uid: String, done: (Boolean) -> Unit) {
             val payload = SosRemote.recordPayload(
-                rec.bleId, rec.name, rec.role, rec.trigger, rec.beacon, rec.beaconRssi, uid, ServerValue.TIMESTAMP, rec.ep
+                rec.bleId, rec.name, rec.role, rec.trigger, rec.beacon, rec.beaconRssi, uid, ServerValue.TIMESTAMP, rec.ep,
+                rec.floor, rec.proc
             )
             SosRemote.create(path, key, payload) { ok -> handler.post { done(ok) } }
         }
@@ -197,6 +198,7 @@ class LoneWorkerSosSync(
             }
             override fun newKey(path: String): String = SosRemote.newKey(path)
             override fun serverNow(): Long = SosRemote.serverNowMs() ?: System.currentTimeMillis()
+            override fun scope(): Map<String, Any> = SiteScope.fields(DevSettings.floor, DevSettings.proc)
             override fun update(path: String, key: String, fields: Map<String, Any>, done: (Boolean) -> Unit) {
                 runCatching { SosRemote.update(path, key, fields) { ok -> handler.post { done(ok) } } }
                     .onFailure { done(false) }
@@ -230,7 +232,12 @@ class LoneWorkerSosSync(
     fun begin(
         bleId: String, name: String, role: String, trigger: String,
         beacon: String?, beaconRssi: Int?, beaconSid: Int
-    ) = ledger.begin(SosLedger.Record(bleId, name, role, trigger, beacon, beaconRssi, beaconSid))
+    ) = ledger.begin(
+        SosLedger.Record(
+            bleId, name, role, trigger, beacon, beaconRssi, beaconSid,
+            floor = DevSettings.floor, proc = DevSettings.proc
+        )
+    )
 
     /** Server upload status text; null without an own SOS. */
     fun statusText(): String? = ledger.statusText()
