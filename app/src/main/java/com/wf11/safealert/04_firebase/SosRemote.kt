@@ -10,6 +10,7 @@ import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.database.Query
 import com.google.firebase.database.ServerValue
 import com.google.firebase.database.ValueEventListener
+import com.wf11.safealert.utils.SiteScope
 import java.util.UUID
 
 /**
@@ -36,7 +37,9 @@ object SosRemote {
         val uid: String,          // Writer uid ("" if none); used to filter out my own records
         val ep: Int = 0,          // SOS episode 1..255 (0 = none); same value as the BLE advertised episode
         val resolvedAt: Long = 0L, // Resolve server time (0 if none)
-        val auto: Boolean = false // Released by the one-hour limit (reason auto), not by its worker
+        val auto: Boolean = false, // Released by the one-hour limit (reason auto), not by its worker
+        val floor: String = "",   // Writer's floor code ("" = none / 1.2.8 sender)
+        val proc: String = ""     // Writer's process code ("" = none / 1.2.8 sender)
     )
 
     private const val SOS_STR_MAX = 64
@@ -85,7 +88,9 @@ object SosRemote {
             uid = (m["uid"] as? String).orEmpty().take(SOS_STR_MAX),
             ep = (m["ep"] as? Number)?.toInt()?.takeIf { it in 1..255 } ?: 0,
             resolvedAt = (m["resolvedAt"] as? Number)?.toLong() ?: 0L,
-            auto = m["reason"] == "auto"
+            auto = m["reason"] == "auto",
+            floor = SiteScope.code(m["floor"] as? String),
+            proc = SiteScope.code(m["proc"] as? String)
         )
     }
 
