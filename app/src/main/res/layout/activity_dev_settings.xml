@@ -67,6 +67,15 @@
                         <TextView android:id="@+id/tv_sos_mail_off" style="@style/SA.Hint" android:visibility="gone"
                             android:text="이 빌드는 메일 기능이 꺼져 있습니다 (배포 설정의 스크립트 주소가 없거나 웹 앱 배포 주소(…/macros/s/…/exec) 형식이 아님)." />
 
+                        <!-- Whole-site SOS reception — a plain checkbox, shown (not in the hidden advanced group) -->
+                        <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
+                            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
+                                <TextView style="@style/SA.Label" android:text="사업장의 모든 구조 요청 받기" />
+                                <TextView style="@style/SA.Hint" android:layout_marginTop="1dp" android:text="켜면 층·공정과 상관없이 이 사업장의 구조 요청을 모두 받습니다(관리자·순찰용). 끄면 같은 층·공정 것과 층·공정이 없는 것만 받습니다. 블루투스로 가까이서 들은 구조 요청은 항상 받습니다." />
+                            </LinearLayout>
+                            <CheckBox android:id="@+id/cb_sos_all_site" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                        </LinearLayout>
+
                         <View style="@style/SA.Divider" />
 
                         <TextView style="@style/SA.SubHeader" android:text="단독 작업자 보호" />
@@ -74,7 +83,7 @@
                         <LinearLayout style="@style/SA.Row">
                             <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
                                 <TextView style="@style/SA.Label" android:text="무동작·넘어짐 확인" />
-                                <TextView style="@style/SA.Hint" android:layout_marginTop="1dp" android:text="움직임이 없거나 넘어지면 확인 창을 띄우고, 응답이 없으면 같은 사업장에 구조 요청 (기본: ON)" />
+                                <TextView style="@style/SA.Hint" android:layout_marginTop="1dp" android:text="움직임이 없거나 넘어지면 확인 창을 띄우고, 응답이 없으면 같은 사업장(층·공정을 정했으면 같은 층·공정)에 구조 요청 (기본: ON)" />
                             </LinearLayout>
                             <Switch android:id="@+id/switch_lone_worker" android:layout_width="wrap_content" android:layout_height="wrap_content" />
                         </LinearLayout>

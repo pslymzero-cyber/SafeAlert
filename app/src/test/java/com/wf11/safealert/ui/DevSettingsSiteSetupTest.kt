@@ -81,7 +81,7 @@ class DevSettingsSiteSetupTest {
     @Test
     fun `사업장마다 맞추는 송수신·소리·경보 기준은 바로 보이고 판정 내부값은 숨김 옵션에 있다`() {
         val a = screen()
-        for (id in listOf(R.id.et_dev_site_code, R.id.et_sos_mail_to, R.id.switch_lone_worker, R.id.et_lw_still_min,
+        for (id in listOf(R.id.et_dev_site_code, R.id.et_sos_mail_to, R.id.cb_sos_all_site, R.id.switch_lone_worker, R.id.et_lw_still_min,
                           R.id.et_lw_response_min, R.id.seek_dev_alarm_volume)) {
             assertTrue("현장 설정은 바로 보인다", a.findViewById<View>(id).isShown)
         }

@@ -380,6 +380,77 @@
 
                 </LinearLayout>
 
+                <!-- Floor + process pickers (lists come from the server per site; hidden when there is no list and nothing is set) -->
+                <LinearLayout
+                    android:id="@+id/row_site_scope"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:orientation="vertical"
+                    android:visibility="gone">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal">
+
+                        <com.google.android.material.textfield.TextInputLayout
+                            android:id="@+id/til_floor"
+                            android:layout_width="0dp"
+                            android:layout_weight="1"
+                            android:layout_height="wrap_content"
+                            android:hint="층"
+                            android:textColorHint="@color/sa_text_tertiary"
+                            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                            app:boxCornerRadiusTopStart="@dimen/sa_radius_sm" app:boxCornerRadiusTopEnd="@dimen/sa_radius_sm"
+                            app:boxCornerRadiusBottomStart="@dimen/sa_radius_sm" app:boxCornerRadiusBottomEnd="@dimen/sa_radius_sm"
+                            app:boxStrokeColor="@color/box_stroke_dark" app:hintTextColor="@color/sa_accent_soft">
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/et_floor"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:inputType="none"
+                                android:focusable="false"
+                                android:cursorVisible="false"
+                                android:textSize="@dimen/sa_type_section"
+                                android:textColor="@color/sa_text_primary"/>
+                        </com.google.android.material.textfield.TextInputLayout>
+
+                        <com.google.android.material.textfield.TextInputLayout
+                            android:id="@+id/til_proc"
+                            android:layout_width="0dp"
+                            android:layout_weight="1"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="@dimen/sa_space_sm"
+                            android:hint="공정"
+                            android:textColorHint="@color/sa_text_tertiary"
+                            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                            app:boxCornerRadiusTopStart="@dimen/sa_radius_sm" app:boxCornerRadiusTopEnd="@dimen/sa_radius_sm"
+                            app:boxCornerRadiusBottomStart="@dimen/sa_radius_sm" app:boxCornerRadiusBottomEnd="@dimen/sa_radius_sm"
+                            app:boxStrokeColor="@color/box_stroke_dark" app:hintTextColor="@color/sa_accent_soft">
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/et_proc"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:inputType="none"
+                                android:focusable="false"
+                                android:cursorVisible="false"
+                                android:textSize="@dimen/sa_type_section"
+                                android:textColor="@color/sa_text_primary"/>
+                        </com.google.android.material.textfield.TextInputLayout>
+
+                    </LinearLayout>
+
+                    <TextView
+                        android:id="@+id/tv_site_scope"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:textSize="@dimen/sa_type_caption"
+                        android:textColor="@color/sa_text_tertiary" />
+
+                </LinearLayout>
+
                 <!-- Walker role card -->
                 <androidx.cardview.widget.CardView
                     android:id="@+id/card_role_walker"

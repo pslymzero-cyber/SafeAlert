@@ -22,6 +22,7 @@ import com.wf11.safealert.service.DeviceStateRegistry
 import com.wf11.safealert.service.LoneWorkerSosSync
 import com.wf11.safealert.service.SosMail
 import com.wf11.safealert.utils.DevSettings
+import com.wf11.safealert.utils.SiteScope
 import com.wf11.safealert.utils.UwbCalibrator
 import com.wf11.safealert.utils.UwbRanger
 import com.wf11.safealert.databinding.ActivityDevSettingsBinding
@@ -82,6 +83,7 @@ class DevSettingsActivity : AppCompatActivity() {
         binding.etDevSiteCode.setText(DevSettings.siteCode)   // Site code change path
         binding.etSosMailTo.setText(LoneWorkerSosSync.mailTo(this, DevSettings.siteCode))
         binding.etSosMailTo.isEnabled = DevSettings.siteCode.isNotEmpty()
+        binding.cbSosAllSite.isChecked = DevSettings.sosAllSite
         binding.tvSosMailOff.visibility = if (LoneWorkerSosSync.mailEnabled) View.GONE else View.VISIBLE
         binding.switchAutoSave.isChecked = DevSettings.autoSaveAlerts
         binding.switchVerbose.isChecked = DevSettings.logVerbose
@@ -334,6 +336,7 @@ class DevSettingsActivity : AppCompatActivity() {
         })
         // "UWB 고급" (UWB advanced) section — its 4 switches (probe upload, promote, speed promote, separation release) are
         // written immediately; AlertStateMachine reads them live.
+        binding.cbSosAllSite.setOnCheckedChangeListener { _, c -> DevSettings.sosAllSite = c; updateSectionSummaries() }
         binding.swUwbProbeUpload.setOnCheckedChangeListener { _, c -> DevSettings.uwbProbeUploadEnabled = c; updateSectionSummaries() }
         binding.swUwbPromote.setOnCheckedChangeListener    { _, c -> DevSettings.uwbPromoteEnabled    = c; updateSectionSummaries() }
         binding.swUwbVelPromote.setOnCheckedChangeListener { _, c -> DevSettings.uwbVelPromoteEnabled = c; updateSectionSummaries() }
@@ -563,7 +566,10 @@ class DevSettingsActivity : AppCompatActivity() {
         fun onOff(b: Boolean) = if (b) "ON" else "OFF"
         // A safety switch turned off in another section still shows here, where the site settings are
         binding.secSiteSummary.text = listOfNotNull(
-            DevSettings.siteCode.ifEmpty { "사업장 없음" }, "볼륨 ${DevSettings.alarmVolume}%",
+            if (DevSettings.siteCode.isEmpty()) "사업장 없음"
+            else SiteScope.label(DevSettings.siteCode, DevSettings.floor, DevSettings.proc),
+            "모든 구조 요청".takeIf { DevSettings.sosAllSite },
+            "볼륨 ${DevSettings.alarmVolume}%",
             DevSettings.safetyOff().takeIf { it.isNotEmpty() }?.joinToString(" · ", prefix = "꺼짐: ")
         ).joinToString(" · ")
         binding.secTxrxSummary.text =

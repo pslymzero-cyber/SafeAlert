@@ -43,6 +43,8 @@ import com.wf11.safealert.model.PitType
 import com.wf11.safealert.utils.BeaconRegistry
 import com.wf11.safealert.utils.DevSettings
 import com.wf11.safealert.utils.OverlayManager
+import com.wf11.safealert.utils.SiteScope
+import com.wf11.safealert.firebase.SosRemote
 import com.wf11.safealert.databinding.ActivityMainBinding
 import com.wf11.safealert.databinding.DialogPitSelectBinding
 import com.wf11.safealert.firebase.FirebaseManager
@@ -280,6 +282,15 @@ class MainActivity : AppCompatActivity() {
             setOnClickListener { showPitSelectDialog { } }   // For picking in advance, before starting
         }
         renderDisplayName()
+        // Floor / process pickers — same no-typing pattern as the display name
+        for ((field, isFloor) in listOf(binding.etFloor to true, binding.etProc to false)) {
+            field.apply {
+                isFocusableInTouchMode = false
+                isCursorVisible = false
+                keyListener = null
+                setOnClickListener { pickScope(isFloor) }
+            }
+        }
         // Restore the saved site code — same value as the BLE settings UWB section (dev_settings.uwb_site_code).
         // Editable only while empty; once set it is locked and can be changed only in developer settings.
         refreshSiteCodeField()
@@ -971,6 +982,63 @@ class MainActivity : AppCompatActivity() {
         binding.etSiteCode.setText(DevSettings.siteCode)
         binding.etSiteCode.isEnabled = !locked
         binding.tilSiteCode.helperText = if (locked) "변경은 개발자 설정에서" else null
+        renderSiteScope()
+        fetchSiteScope()
+    }
+
+    /** Floor / process pickers and the "who receives my site's SOS" line, from the cached lists and the saved choice. */
+    private fun renderSiteScope() {
+        val site = DevSettings.siteCode
+        val floors = SiteScope.codes(DevSettings.siteFloors)
+        val procs = SiteScope.codes(DevSettings.siteProcs)
+        val floor = DevSettings.floor
+        val proc = DevSettings.proc
+        // Stay visible whenever a value is set, so a filter can never be active while hidden
+        val showFloor = floors.isNotEmpty() || floor.isNotEmpty()
+        val showProc = procs.isNotEmpty() || proc.isNotEmpty()
+        binding.rowSiteScope.visibility = if (site.isNotEmpty() && (showFloor || showProc)) View.VISIBLE else View.GONE
+        binding.tilFloor.visibility = if (showFloor) View.VISIBLE else View.GONE
+        binding.tilProc.visibility = if (showProc) View.VISIBLE else View.GONE
+        binding.etFloor.setText(floor.ifEmpty { "전체" })
+        binding.etProc.setText(proc.ifEmpty { "전체" })
+        binding.tvSiteScope.text = "구조 요청 받는 범위: " + when {
+            DevSettings.sosAllSite -> "$site 전체 (개발자 설정)"
+            floor.isEmpty() && proc.isEmpty() -> "$site 전체"
+            else -> SiteScope.label(site, floor, proc)
+        }
+    }
+
+    /** One-shot read of the site's floor / process list; offline keeps the cache. A stored choice the list no longer offers is dropped. */
+    private fun fetchSiteScope() {
+        val site = DevSettings.siteCode
+        if (site.isEmpty()) return
+        SosRemote.readSite(DevSettings.FIREBASE_ROOT, site) { ok, value ->
+            runOnUiThread {
+                if (!ok || isFinishing || isDestroyed || site != DevSettings.siteCode) return@runOnUiThread
+                val (floors, procs) = SiteScope.lists(value)
+                DevSettings.siteFloors = floors.joinToString(",")
+                DevSettings.siteProcs = procs.joinToString(",")
+                if (DevSettings.floor.isNotEmpty() && DevSettings.floor !in floors) DevSettings.floor = ""
+                if (DevSettings.proc.isNotEmpty() && DevSettings.proc !in procs) DevSettings.proc = ""
+                renderSiteScope()
+            }
+        }
+    }
+
+    private fun pickScope(isFloor: Boolean) {
+        if (BleService.isRunning) {
+            Toast.makeText(this, "감시 중에는 바꿀 수 없습니다. 중지한 뒤 바꾸세요", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val list = SiteScope.codes(if (isFloor) DevSettings.siteFloors else DevSettings.siteProcs)
+        AlertDialog.Builder(this)
+            .setTitle(if (isFloor) "층 선택" else "공정 선택")
+            .setItems((listOf("전체") + list).toTypedArray()) { _, i ->
+                val v = if (i == 0) "" else list[i - 1]
+                if (isFloor) DevSettings.floor = v else DevSettings.proc = v
+                renderSiteScope()
+            }
+            .show()
     }
 
     /**
