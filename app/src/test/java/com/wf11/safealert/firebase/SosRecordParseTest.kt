@@ -112,6 +112,29 @@ class SosRecordParseTest {
     }
 
     @Test
+    fun floorAndProc_parseWithAndWithout_invalidIsEmpty() {
+        val r = SosRemote.parseSosRecord("k", valid().apply { put("floor", "1F"); put("proc", "OB") })!!
+        assertEquals("1F", r.floor)
+        assertEquals("OB", r.proc)
+        val none = SosRemote.parseSosRecord("k", valid())!!
+        assertEquals("", none.floor)
+        assertEquals("", none.proc)
+        assertEquals("", SosRemote.parseSosRecord("k", valid().apply { put("floor", "toolong") })!!.floor)
+    }
+
+    @Test
+    fun payload_floorAndProc_onlyWhenSetAndValid() {
+        fun p(f: String, pr: String) = SosRemote.recordPayload("id", "n", "WALKER", "still", null, null, "u1", 1L, 0, f, pr)
+        val set = p("1F", "OB")
+        assertEquals("1F", set["floor"])
+        assertEquals("OB", set["proc"])
+        for (m in listOf(p("", ""), p("bad!", "toolong"))) {
+            assertFalse(m.containsKey("floor"))
+            assertFalse(m.containsKey("proc"))
+        }
+    }
+
+    @Test
     fun episode_round_trips_and_out_of_range_is_dropped() {
         assertEquals(7, SosRemote.recordPayload("id", "n", "WALKER", "still", null, null, "u1", 1L, 7)["ep"])
         assertFalse(SosRemote.recordPayload("id", "n", "WALKER", "still", null, null, "u1", 1L, 0).containsKey("ep"))

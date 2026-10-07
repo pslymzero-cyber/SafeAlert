@@ -8,6 +8,7 @@ import com.google.firebase.database.FirebaseDatabase
 import com.wf11.safealert.BuildConfig
 import com.wf11.safealert.utils.BeaconRegistry
 import com.wf11.safealert.utils.DevSettings
+import com.wf11.safealert.utils.SiteScope
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -76,7 +77,7 @@ object FirebaseManager {
             "myRole" to myRole,
             "peerRole" to peerRole,
             "site" to DevSettings.siteCode
-        )
+        ) + SiteScope.fields(DevSettings.floor, DevSettings.proc)
         val ref = siteNode("alerts").child(today).child(alertId)
         val uid = currentUid()
         if (uid == null) {

@@ -6,5 +6,5 @@
     <string name="channel_name">SafeAlert 실행 중</string>
     <!-- Shown once on the first launch after an update or a fresh install
          (last_seen_version_code defaults to 0). Rewrite this text with every version bump. -->
-    <string name="whats_new">- 움직임이 3분 없거나 넘어지면 \'괜찮으세요?\' 창이 뜹니다. [괜찮아요]를 누르거나 걸으면 닫힙니다.\n- 2분 동안 응답이 없으면 같은 사업장 휴대폰에 사이렌과 함께 구조 요청이 갑니다. 본인 폰의 [괜찮아요]로만 해제됩니다.\n- 세이프존 안에서는 확인 창이 뜨지 않습니다.\n- 폰은 몸에 지니고 다녀 주세요. 책상 위에 둔 폰도 움직임 없음으로 봅니다.</string>
+    <string name="whats_new">- 메인 화면에서 층·공정을 고르면 같은 층·공정의 구조 요청만 울립니다. 가까이서 블루투스로 들린 구조 요청은 늘 울립니다.\n- 움직임이 3분 없거나 넘어지면 \'괜찮으세요?\' 창이 뜹니다. [괜찮아요]를 누르거나 걸으면 닫힙니다.\n- 2분 동안 응답이 없으면 같은 층·공정 휴대폰(층·공정을 정하지 않았으면 사업장 전체)과 가까이 있는 휴대폰에 사이렌과 함께 구조 요청이 갑니다. 본인 폰의 [괜찮아요]로만 해제됩니다.\n- 세이프존 안에서는 확인 창이 뜨지 않습니다.\n- 폰은 몸에 지니고 다녀 주세요. 책상 위에 둔 폰도 움직임 없음으로 봅니다.</string>
 </resources>

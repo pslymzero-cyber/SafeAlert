@@ -196,7 +196,16 @@ function allowed(to, list) {
   });
 }
 
+/** Site code plus floor / process when the record has them (WF11-1F-OB). Only [A-Z0-9]{1,4} values are appended. */
+function siteLabel(sc, rec) {
+  ['floor', 'proc'].forEach(function (k) {
+    if (typeof rec[k] === 'string' && /^[A-Z0-9]{1,4}$/.test(rec[k])) sc += '-' + rec[k];
+  });
+  return sc;
+}
+
 function buildMail(event, sc, id, rec, stillMin) {
+  sc = siteLabel(sc, rec);   // Subject, header and site cell all show WF11-1F-OB
   var name = oneLine(rec.name);
   var role = roleName(rec.role, name);
   var no = id.slice(-6);

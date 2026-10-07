@@ -171,9 +171,13 @@ object DevSettings {
     /** Back to every default, except that the site returns to the one entered when monitoring started (homeSiteCode). */
     fun resetToDefault() {
         val home = homeSiteCode
+        val keepScope = siteCode == home   // Floor/process are main-screen values like the site
+        val f = floor
+        val p = proc
         prefs.edit().clear().apply()
         homeSiteCode = home
         siteCode = home   // Through the setter, so a site without its own beacon file still gets the common one
+        if (keepScope) { floor = f; proc = p }
     }
 
     /** Safety switches turned off (lone-worker checks, alarm sound, vibration), named for the screens that warn about them. */
@@ -760,9 +764,32 @@ object DevSettings {
         set(v) {
             val next = normalizeSite(v)
             if (next == siteCode) return
-            prefs.edit().putString(KEY_UWB_SITE_CODE, next).apply()
+            // A different site has its own floors/processes; a stale filter would silently drop SOS
+            prefs.edit().putString(KEY_UWB_SITE_CODE, next).remove(KEY_SITE_FLOOR).remove(KEY_SITE_PROC).apply()
             adoptCommonPrefs(next)
         }
+
+    // Floor / process inside the site (main-screen pickers) and the whole-site SOS reception switch.
+    private const val KEY_SITE_FLOOR = "site_floor"
+    private const val KEY_SITE_PROC = "site_proc"
+    private const val KEY_SOS_ALL_SITE = "sos_all_site"
+    var floor: String
+        get() = SiteScope.code(prefs.getString(KEY_SITE_FLOOR, ""))
+        set(v) = prefs.edit().putString(KEY_SITE_FLOOR, SiteScope.code(v)).apply()
+    var proc: String
+        get() = SiteScope.code(prefs.getString(KEY_SITE_PROC, ""))
+        set(v) = prefs.edit().putString(KEY_SITE_PROC, SiteScope.code(v)).apply()
+    /** On = receive every server SOS of the site regardless of floor/process. */
+    var sosAllSite: Boolean
+        get() = prefs.getBoolean(KEY_SOS_ALL_SITE, false)
+        set(v) = prefs.edit().putBoolean(KEY_SOS_ALL_SITE, v).apply()
+    /** Cached floor / process lists of the current site (comma separated), kept for offline use. */
+    var siteFloors: String
+        get() = prefs.getString("site_floors_" + siteCode, "") ?: ""
+        set(v) = prefs.edit().putString("site_floors_" + siteCode, v).apply()
+    var siteProcs: String
+        get() = prefs.getString("site_procs_" + siteCode, "") ?: ""
+        set(v) = prefs.edit().putString("site_procs_" + siteCode, v).apply()
 
     // Stores split per site (common file names). With a code they become base_CODE.
     private val SITE_PREF_BASES = listOf("beacon_registry")

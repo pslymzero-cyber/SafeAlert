@@ -77,6 +77,12 @@
               "uid": {
                 ".validate": "newData.isString() && newData.val() === auth.uid"
               },
+              "floor": {
+                ".validate": "newData.isString() && newData.val().matches(/^[A-Z0-9]{1,4}$/)"
+              },
+              "proc": {
+                ".validate": "newData.isString() && newData.val().matches(/^[A-Z0-9]{1,4}$/)"
+              },
               "$other": {
                 ".validate": false
               }
@@ -114,12 +120,17 @@
           }
         }
       },
+      "sites": {
+        "$sc": {
+          ".read": "auth != null"
+        }
+      },
       "sos": {
         "$sc": {
           ".read": "auth != null",
           ".indexOn": ["createdAt"],
           "$id": {
-            ".write": "auth != null && $site.matches(/^[A-Za-z0-9_-]{1,32}$/) && $sc.matches(/^[A-Z0-9_-]{1,12}$/) && newData.exists() && (!data.exists() ? (newData.child('uid').val() === auth.uid && newData.child('status').val() === 'active') : (data.child('status').val() === 'active' && newData.child('status').val() === 'resolved' && newData.child('uid').val() === data.child('uid').val() && newData.child('name').val() === data.child('name').val() && newData.child('role').val() === data.child('role').val() && newData.child('trigger').val() === data.child('trigger').val() && newData.child('beacon').val() === data.child('beacon').val() && newData.child('beaconRssi').val() === data.child('beaconRssi').val() && newData.child('ep').val() === data.child('ep').val() && (data.child('uid').val() === auth.uid || (newData.child('reason').val() === 'auto' && now >= data.child('createdAt').val() + 3600000))))",
+            ".write": "auth != null && $site.matches(/^[A-Za-z0-9_-]{1,32}$/) && $sc.matches(/^[A-Z0-9_-]{1,12}$/) && newData.exists() && (!data.exists() ? (newData.child('uid').val() === auth.uid && newData.child('status').val() === 'active') : (data.child('status').val() === 'active' && newData.child('status').val() === 'resolved' && newData.child('uid').val() === data.child('uid').val() && newData.child('name').val() === data.child('name').val() && newData.child('role').val() === data.child('role').val() && newData.child('trigger').val() === data.child('trigger').val() && newData.child('beacon').val() === data.child('beacon').val() && newData.child('beaconRssi').val() === data.child('beaconRssi').val() && newData.child('ep').val() === data.child('ep').val() && newData.child('floor').val() === data.child('floor').val() && newData.child('proc').val() === data.child('proc').val() && (data.child('uid').val() === auth.uid || (newData.child('reason').val() === 'auto' && now >= data.child('createdAt').val() + 3600000))))",
             ".validate": "newData.hasChildren(['bleId','name','role','trigger','createdAt','status','uid'])",
             "bleId": {
               ".validate": "newData.isString() && newData.val().length <= 64 && (!data.exists() || newData.val() === data.val())"
@@ -157,6 +168,12 @@
             "ep": {
               ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 255 && (!data.exists() || newData.val() === data.val())"
             },
+            "floor": {
+              ".validate": "newData.isString() && newData.val().matches(/^[A-Z0-9]{1,4}$/) && (!data.exists() || newData.val() === data.val())"
+            },
+            "proc": {
+              ".validate": "newData.isString() && newData.val().matches(/^[A-Z0-9]{1,4}$/) && (!data.exists() || newData.val() === data.val())"
+            },
             "$other": {
               ".validate": false
             }
@@ -182,6 +199,12 @@
             },
             "end": {
               ".validate": "newData.isNumber() && newData.val() <= now + 60000 && !data.exists()"
+            },
+            "floor": {
+              ".validate": "newData.isString() && newData.val().matches(/^[A-Z0-9]{1,4}$/) && (!data.exists() || newData.val() === data.val())"
+            },
+            "proc": {
+              ".validate": "newData.isString() && newData.val().matches(/^[A-Z0-9]{1,4}$/) && (!data.exists() || newData.val() === data.val())"
             },
             "g": {
               ".validate": "newData.hasChildren()",

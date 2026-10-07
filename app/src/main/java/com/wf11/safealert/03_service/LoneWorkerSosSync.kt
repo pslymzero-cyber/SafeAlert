@@ -11,6 +11,7 @@ import com.google.firebase.database.ServerValue
 import com.wf11.safealert.firebase.FirebaseConfig
 import com.wf11.safealert.firebase.SosRemote
 import com.wf11.safealert.utils.DevSettings
+import com.wf11.safealert.utils.SiteScope
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.ExecutorService
@@ -156,7 +157,8 @@ class LoneWorkerSosSync(
         // optional field ep; the beacon short ID stays out of the server record
         override fun create(path: String, key: String, rec: SosLedger.Record, uid: String, done: (Boolean) -> Unit) {
             val payload = SosRemote.recordPayload(
-                rec.bleId, rec.name, rec.role, rec.trigger, rec.beacon, rec.beaconRssi, uid, ServerValue.TIMESTAMP, rec.ep
+                rec.bleId, rec.name, rec.role, rec.trigger, rec.beacon, rec.beaconRssi, uid, ServerValue.TIMESTAMP, rec.ep,
+                rec.floor, rec.proc
             )
             SosRemote.create(path, key, payload) { ok -> handler.post { done(ok) } }
         }
@@ -196,6 +198,7 @@ class LoneWorkerSosSync(
             }
             override fun newKey(path: String): String = SosRemote.newKey(path)
             override fun serverNow(): Long = SosRemote.serverNowMs() ?: System.currentTimeMillis()
+            override fun scope(): Map<String, Any> = SiteScope.fields(DevSettings.floor, DevSettings.proc)
             override fun update(path: String, key: String, fields: Map<String, Any>, done: (Boolean) -> Unit) {
                 runCatching { SosRemote.update(path, key, fields) { ok -> handler.post { done(ok) } } }
                     .onFailure { done(false) }
@@ -212,7 +215,8 @@ class LoneWorkerSosSync(
     fun endHeartbeat() = hb.end()
 
     private var remover: (() -> Unit)? = null
-    private var listenPath = ""
+    /** Node plus the reception scope in effect; a change re-attaches so the replayed snapshot is filtered anew. */
+    private var listenKey = ""
     /** Node each peer record was received from (server key -> path), for its one-hour release. */
     private val peerPaths = HashMap<String, String>()
     private var generation = 0
@@ -228,7 +232,12 @@ class LoneWorkerSosSync(
     fun begin(
         bleId: String, name: String, role: String, trigger: String,
         beacon: String?, beaconRssi: Int?, beaconSid: Int
-    ) = ledger.begin(SosLedger.Record(bleId, name, role, trigger, beacon, beaconRssi, beaconSid))
+    ) = ledger.begin(
+        SosLedger.Record(
+            bleId, name, role, trigger, beacon, beaconRssi, beaconSid,
+            floor = DevSettings.floor, proc = DevSettings.proc
+        )
+    )
 
     /** Server upload status text; null without an own SOS. */
     fun statusText(): String? = ledger.statusText()
@@ -274,28 +283,36 @@ class LoneWorkerSosSync(
     private fun attachIfNeeded() {
         val site = DevSettings.siteCode
         val path = if (site.isEmpty()) "" else SosRemote.nodePath(DevSettings.FIREBASE_ROOT, site)
-        if (remover != null && path != listenPath) detach()
-        if (remover != null || path.isEmpty()) return
+        val all = DevSettings.sosAllSite
+        val f = DevSettings.floor
+        val p = DevSettings.proc
+        val key = if (path.isEmpty()) "" else "$path|$all|$f|$p"
+        if (remover != null && key != listenKey) detach()
+        if (remover != null || key.isEmpty()) return
         if (SosRemote.currentUid() == null) {
             FirebaseConfig.ensureSignedIn()
             return
         }
         val gen = ++generation
-        listenPath = path
+        listenKey = key
         remover = SosRemote.listen(
             path,
             { rec ->
                 handler.post {
                     // Skip my own records (including those under my bleId from before a role switch)
                     val mine = SosRemote.currentUid()
-                    if (gen == generation && !(rec.uid.isNotEmpty() && rec.uid == mine)) {
+                    // The scope filter is for the server path only (BLE-heard SOS bypasses it); resolved records
+                    // always pass, so a clear is never stranded after the scope narrows.
+                    if (gen == generation && !(rec.uid.isNotEmpty() && rec.uid == mine) &&
+                        SiteScope.receives(rec.active, rec.floor, rec.proc, f, p, all)
+                    ) {
                         peerPaths[rec.key] = path
                         onPeer(rec)
                     }
                 }
             },
             // The server time listener survives a cancel, so detach it before clearing
-            { handler.post { if (gen == generation) { remover?.invoke(); remover = null; listenPath = "" } } }
+            { handler.post { if (gen == generation) { remover?.invoke(); remover = null; listenKey = "" } } }
         )
     }
 
@@ -303,7 +320,7 @@ class LoneWorkerSosSync(
         generation++
         remover?.invoke()
         remover = null
-        listenPath = ""
+        listenKey = ""
     }
 
     /** Stops reception only. The saved own SOS and any pending clear are kept. */

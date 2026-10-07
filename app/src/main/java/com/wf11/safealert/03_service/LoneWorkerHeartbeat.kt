@@ -11,6 +11,8 @@ interface HbRemote {
      * Estimated server time (wall clock if unknown). Stamped when the event happens, so a late delivery does not change the time.
      */
     fun serverNow(): Long
+    /** floor / proc fields written once at session start (empty = none). */
+    fun scope(): Map<String, Any> = emptyMap()
     /** Partially updates the session node. done is called on the main thread with the server's confirmation result. */
     fun update(path: String, key: String, fields: Map<String, Any>, done: (Boolean) -> Unit)
 }
@@ -103,7 +105,7 @@ class LoneWorkerHeartbeat(private val remote: HbRemote, private val kv: SosKv, p
             carried = ok
         }
         keep()
-        remote.update(p, k, mapOf("uid" to u, "role" to r, "start" to s, "last" to s), answer(++gen, k))
+        remote.update(p, k, mapOf("uid" to u, "role" to r, "start" to s, "last" to s) + remote.scope(), answer(++gen, k))
     }
 
     private fun write(k: String, fields: Map<String, Any>) = remote.update(path, k, fields, answer(gen, k))

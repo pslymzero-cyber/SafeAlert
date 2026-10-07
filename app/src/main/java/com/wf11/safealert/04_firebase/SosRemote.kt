@@ -10,6 +10,7 @@ import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.database.Query
 import com.google.firebase.database.ServerValue
 import com.google.firebase.database.ValueEventListener
+import com.wf11.safealert.utils.SiteScope
 import java.util.UUID
 
 /**
@@ -36,7 +37,9 @@ object SosRemote {
         val uid: String,          // Writer uid ("" if none); used to filter out my own records
         val ep: Int = 0,          // SOS episode 1..255 (0 = none); same value as the BLE advertised episode
         val resolvedAt: Long = 0L, // Resolve server time (0 if none)
-        val auto: Boolean = false // Released by the one-hour limit (reason auto), not by its worker
+        val auto: Boolean = false, // Released by the one-hour limit (reason auto), not by its worker
+        val floor: String = "",   // Writer's floor code ("" = none / 1.2.8 sender)
+        val proc: String = ""     // Writer's process code ("" = none / 1.2.8 sender)
     )
 
     private const val SOS_STR_MAX = 64
@@ -85,14 +88,17 @@ object SosRemote {
             uid = (m["uid"] as? String).orEmpty().take(SOS_STR_MAX),
             ep = (m["ep"] as? Number)?.toInt()?.takeIf { it in 1..255 } ?: 0,
             resolvedAt = (m["resolvedAt"] as? Number)?.toLong() ?: 0L,
-            auto = m["reason"] == "auto"
+            auto = m["reason"] == "auto",
+            floor = SiteScope.code(m["floor"] as? String),
+            proc = SiteScope.code(m["proc"] as? String)
         )
     }
 
     /** Record body. beacon is included only when non-empty, beaconRssi only when within the rule range. */
     fun recordPayload(
         bleId: String, name: String, role: String, trigger: String,
-        beacon: String?, beaconRssi: Int?, uid: String, createdAt: Any, ep: Int = 0
+        beacon: String?, beaconRssi: Int?, uid: String, createdAt: Any, ep: Int = 0,
+        floor: String = "", proc: String = ""
     ): Map<String, Any> {
         val data = HashMap<String, Any>()
         data["bleId"] = bleId.take(SOS_STR_MAX)
@@ -105,6 +111,7 @@ object SosRemote {
         if (!beacon.isNullOrEmpty()) data["beacon"] = beacon.take(SOS_STR_MAX)
         if (beaconRssi != null && beaconRssi in BEACON_RSSI_MIN..BEACON_RSSI_MAX) data["beaconRssi"] = beaconRssi
         if (ep in 1..255) data["ep"] = ep
+        data.putAll(SiteScope.fields(floor, proc))
         return data
     }
 
@@ -112,6 +119,24 @@ object SosRemote {
     fun replayStartAt(t0WallMs: Long, serverOffsetMs: Long): Long = t0WallMs + serverOffsetMs - REPLAY_WINDOW_MS
 
     fun nodePath(root: String, site: String): String = "$root/sos/$site"
+
+    /** Path of the admin-managed floor / process list of a site (read-only for clients). */
+    fun sitesPath(root: String, site: String): String = "$root/sites/$site"
+
+    /**
+     * One-shot read of the site's floor / process list node. On success (true, the raw value or null if absent);
+     * on failure (false, null). Failure logs never include the path or uid.
+     */
+    fun readSite(root: String, site: String, onResult: (Boolean, Any?) -> Unit) {
+        FirebaseDatabase.getInstance().reference.child(sitesPath(root, site)).get()
+            .addOnCompleteListener {
+                if (it.isSuccessful) onResult(true, it.result?.value)
+                else {
+                    Log.w(TAG, "층·공정 목록 조회 실패")
+                    onResult(false, null)
+                }
+            }
+    }
 
     /** Path of the lone-worker liveness session node. */
     fun hbPath(root: String, site: String): String = "$root/hb/$site"

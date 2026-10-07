@@ -49,7 +49,8 @@ class SosLedger(
 ) {
     data class Record(
         val bleId: String, val name: String, val role: String, val trigger: String,
-        val beacon: String?, val beaconRssi: Int?, val sid: Int, val ep: Int = 0
+        val beacon: String?, val beaconRssi: Int?, val sid: Int, val ep: Int = 0,
+        val floor: String = "", val proc: String = ""   // Scope at SOS time, kept so a restored SOS uploads the same values
     )
 
     enum class Remote { ABSENT, MINE_ACTIVE, MINE_RESOLVED, OTHER, ERROR }
@@ -64,6 +65,8 @@ class SosLedger(
         private const val K_RSSI = "a.rssi"
         private const val K_SID = "a.sid"
         private const val K_EP = "a.ep"
+        private const val K_FLOOR = "a.floor"
+        private const val K_PROC = "a.proc"
         private const val K_KEY = "a.key"
         private const val K_PATH = "a.path"
         private const val K_SENT = "a.sent"
@@ -71,7 +74,7 @@ class SosLedger(
         private const val K_PENDING = "r.list"
         private const val K_EP_LAST = "ep.last"
         private val ACTIVE_KEYS = listOf(
-            K_TRIGGER, K_BLE, K_NAME, K_ROLE, K_BEACON, K_RSSI, K_SID, K_EP, K_KEY, K_PATH, K_SENT, K_AT
+            K_TRIGGER, K_BLE, K_NAME, K_ROLE, K_BEACON, K_RSSI, K_SID, K_EP, K_FLOOR, K_PROC, K_KEY, K_PATH, K_SENT, K_AT
         )
 
         /**
@@ -148,6 +151,8 @@ class SosLedger(
         ch[K_RSSI] = rec.beaconRssi?.toString()
         ch[K_SID] = rec.sid.toString()
         ch[K_EP] = ep.toString()
+        ch[K_FLOOR] = rec.floor.ifEmpty { null }
+        ch[K_PROC] = rec.proc.ifEmpty { null }
         ch[K_EP_LAST] = ep.toString()
         kv.put(ch)
         sentAt = null
@@ -259,7 +264,8 @@ class SosLedger(
     private fun currentRecord() = Record(
         kv.get(K_BLE).orEmpty(), kv.get(K_NAME).orEmpty(), kv.get(K_ROLE).orEmpty(),
         kv.get(K_TRIGGER).orEmpty(), kv.get(K_BEACON), kv.get(K_RSSI)?.toIntOrNull(),
-        kv.get(K_SID)?.toIntOrNull() ?: 0, kv.get(K_EP)?.toIntOrNull() ?: 0
+        kv.get(K_SID)?.toIntOrNull() ?: 0, kv.get(K_EP)?.toIntOrNull() ?: 0,
+        kv.get(K_FLOOR).orEmpty(), kv.get(K_PROC).orEmpty()
     )
 
     // ── Resolve ─────────────────────────────────────────────────
