@@ -19,6 +19,8 @@ class ControlPageParityTest {
 
     private fun quoted(list: String) = Regex("""'([^']*)'""").findAll(list).map { it.groupValues[1] }.toList()
 
+    private fun norm(s: String) = s.lines().map { it.trim() }.filter { it.isNotEmpty() }
+
     // Floor and process lists in the page's pickers are the app's built-in lists.
     @Test fun page_floor_and_process_lists_match_the_app() {
         val html = page()
@@ -38,7 +40,7 @@ class ControlPageParityTest {
         assertEquals(SosLedger.AUTO_RELEASE_MS, release[1].toLong() * release[2].toLong())
     }
 
-    // Role names: the page's server script and the mail name roles the same way, and the server sends the label (the page keeps no role map of its own).
+    // Role names: the page's server script, the page itself (it names live SOS) and the mail use the same rule; the equipment table lives in Code.gs only (the page gets it from doGet).
     @Test fun role_names_match_the_app_and_the_mail_script() {
         val g = gs()
         val m = mail()
@@ -50,7 +52,9 @@ class ControlPageParityTest {
 
         val html = page()
         assertEquals("알 수 없음", sosRoleLabel("X", ""))
-        assertFalse("역할 이름은 서버의 roleName_ 이 보냄", html.contains("var ROLE"))
+        val pageBody = html.substringAfter("function roleName(r, name) {").substringBefore("\n  }")
+        assertEquals("페이지의 역할 규칙 = Code.gs roleName_", norm(body), norm(pageBody))
+        assertFalse("장비 이름표는 Code.gs 하나(페이지는 doGet 에서 받음)", html.contains("Counterbalance"))
         assertFalse("옛 표기 '미상'", html.contains("미상"))
     }
 

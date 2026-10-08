@@ -32,7 +32,8 @@ import com.wf11.safealert.utils.SiteScope
  * - A server record outside this phone's floor/process scope is a quiet entry: hidden and silent, but it merges either way
  *   with its episode's BLE entry (which then rings with the name) and runs the one-hour release. It becomes a normal entry
  *   when heard over BLE or delivered again in scope, and stays hidden after it ends. An advert of an SOS that already ended
- *   on air does not count as being heard within PEER_RESOLVE_GUARD_MS of that end.
+ *   on air only refreshes when it was last heard within PEER_RESOLVE_GUARD_MS of that end: it wakes nothing and lifts
+ *   no acknowledgement.
  */
 
 /** One peer row used by the screen and the acknowledge gate. id = entry id, epId = episode ID. */

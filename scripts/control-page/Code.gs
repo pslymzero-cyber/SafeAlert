@@ -3,8 +3,9 @@
  * Shows the active SOS requests of every site in SITES (full-screen alarm + siren until acknowledged in the browser) and,
  * for the chosen site, SOS that ended in the last 24 hours, devices monitoring now (and lost contact), and collision
  * alerts by device ID, filtered by floor / process.
- * It only reads the Realtime Database with the database secret kept in Script Properties; it cannot change or switch
- * off anything.
+ * The SOS lists come live from Firebase: the page signs in anonymously, as the app does, and listens to them (the rules
+ * let any signed-in client read SOS). Devices and alerts are read by this script with the database secret kept in
+ * Script Properties. Nothing is written anywhere; the page cannot change or switch off anything.
  *
  * Setup (screen labels are written 'English' ('한국어'), as in the SOS mail script). Each step says why, what Google
  * may warn, and what you have after it.
@@ -31,7 +32,12 @@
  *                            otherwise the page refuses you too.
  *     - SITES              : site codes to show, comma separated (e.g. WF11). The first one opens by default.
  *     - FIREBASE_ROOT      : (optional) database root; empty means wf11.
- *     Why: the secret stays on Google's side and never reaches the page. After it: the page can read the database.
+ *     - FIREBASE_WEB_API_KEY : (recommended) Firebase console → gear 'Project settings' ('프로젝트 설정') → 'General'
+ *                            ('일반') → 'Web API Key' ('웹 API 키'). With it SOS reach the page within seconds; without
+ *                            it, or if Google refuses the key (for example a key restricted to Android apps), the page
+ *                            reads SOS through this script every 30 seconds and says why at the top.
+ *     Why: the secret stays on Google's side and never reaches the page (the web API key is not a secret: the app
+ *     carries it too). After it: the page can read the database.
  *  6. Deploy: this gives the page its web address.
  *     'Deploy' ('배포') at the top right > 'New deployment' ('새 배포') > gear beside 'Select type' ('유형 선택') > 'Web app'
  *     ('웹 앱').
@@ -59,28 +65,28 @@
  * Why: this keeps the same URL ('New deployment' would make a new one and the bookmark would stay on the old one), and a
  * tab opened before the update keeps running the old page against the new script.
  *
- * If the page says it used its daily read limit (quota), wait: it recovers within 24 hours. Every read is shared by all
- * open tabs and viewers through the script cache: the SOS list of each site for 20 seconds (longer with 4 sites or
- * more, so that all sites together stay under about 13,000 reads a day; with 10 sites an SOS can then show up to about
- * a minute late), and the sessions and alerts of a site for 2 minutes (yesterday's alerts for an hour). A hidden tab
- * reads the SOS lists only.
+ * Live SOS use none of the daily read limit (quota) of UrlFetch. If the page says the limit is used up, wait: it
+ * recovers within 24 hours. The reads of this script are shared by all open tabs and viewers through the script cache:
+ * devices and alerts of a site for 100 seconds (yesterday's alerts for 10 minutes) and, only while the live connection
+ * is down, the SOS list of each site for 20 seconds (longer with 4 sites or more, so that all sites together stay under
+ * about 13,000 reads a day).
  */
 
 var ALIVE_MS = 15 * 60 * 1000;        // A session writes 'last' every 5 min; 15 min without one = contact lost
 var WINDOW_MS = 24 * 3600 * 1000;     // SOS, sessions and alerts are read for the last 24 hours
 var HOUR_MS = 3600 * 1000;
 var SOS_RELEASE_MS = 3600 * 1000;     // The app releases an unanswered SOS one hour after the server got it
-var STALE_AFTER_MS = SOS_RELEASE_MS + 5 * 60 * 1000;   // still active this long after it began: the phone is probably off
-var SOS_MIN_TTL_S = 20;               // one read of a site's SOS list serves every tab and viewer this long (seconds)
+var SOS_MIN_TTL_S = 20;               // without live SOS: one read of a site's list serves every tab this long (seconds)
 var SOS_DAILY_READS = 13000;          // SOS reads of all sites together stay under this a day (UrlFetch quota: 20,000)
-var FIELD_TTL_S = 120;                // sessions + alerts of a site are shared this long
-var YDAY_TTL_S = 3600;                // yesterday's alerts no longer change: read once an hour
+var FIELD_TTL_S = 100;                // sessions + alerts of a site are shared this long: under the page's 2-minute poll
+var YDAY_TTL_S = 600;                 // yesterday's alerts: phones that were offline still upload into it after midnight
 var NO_INDEX_TTL_S = 1800;            // how long to remember that the rules lack an index (until a release deploys them)
 var MAX_ALERTS = 400;                 // newest alerts of the last 24 hours sent to the page (cut says there were more)
 var CACHE_MAX_BYTES = 90 * 1000;      // CacheService refuses a value over 100 KB
 var PUSH_CHARS = '-0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz';
 var DB_URL_RE = /^https:\/\/[A-Za-z0-9.-]+\/?$/;
 var SC_RE = /^[A-Z0-9_-]{1,12}$/;
+var API_KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 var ROOT_RE = /^[A-Za-z0-9_-]{1,32}$/;
 var CODE_RE = /^[A-Z0-9]{1,4}$/;      // Floor / process code; same as the app's SiteScope.CODE_PATTERN
 var TZ = 'Asia/Seoul';
@@ -90,21 +96,32 @@ var PIT_NAMES = { CB: 'Counterbalance', RT: 'Reach Truck', HR: 'High Reach', OP:
 
 function doGet(e) {
   var cfg = config_();
-  var sc = String((e && e.parameter && e.parameter.sc) || '').toUpperCase();
   var t = HtmlService.createTemplateFromFile('Index');
-  t.initialSc = SC_RE.test(sc) ? sc : '';   // only [A-Z0-9_-] reaches the page
   t.denied = !allowed_(cfg);
   t.viewer = viewer_();
+  var sites = sites_(cfg), sc = String((e && e.parameter && e.parameter.sc) || '').toUpperCase();
+  t.initialSc = sites.indexOf(sc) >= 0 ? sc : sites[0] || '';   // only a site in SITES reaches the page
+  // What the page needs to listen to the SOS lists itself. None of it is secret: the app carries the same values.
+  var key = cfg.get('FIREBASE_WEB_API_KEY'), dbUrl = cfg.get('FIREBASE_DB_URL'), root = cfg.get('FIREBASE_ROOT') || 'wf11';
+  t.fb = JSON.stringify({
+    apiKey: API_KEY_RE.test(key) ? key : '',
+    dbUrl: DB_URL_RE.test(dbUrl) ? dbUrl.replace(/\/$/, '') : '',
+    root: ROOT_RE.test(root) ? root : '',
+    sites: sites,
+    pit: PIT_NAMES,
+    code: CODE_RE.source,
+    releaseMs: SOS_RELEASE_MS
+  }).replace(/</g, '\\u003c');   // nothing in it can close the page's script tag
   return t.evaluate()
     .setTitle('SafeAlert 관제')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
 
 /**
- * SOS of every site in SITES, for the alarm. Called by the page every 30 seconds, also from a hidden tab. Returns plain
- * data only; nothing is written anywhere. Errors are fixed codes: the URLs hold the secret, so exception text is never
- * passed on. A site whose list could not be read is named in `failed` (the page keeps what it showed for it); only when
- * no site could be read is the whole answer an error.
+ * SOS of every site in SITES while the page's live connection is down (the page asks every 30 seconds then). Returns
+ * plain data only; nothing is written anywhere. Errors are fixed codes: the URLs hold the secret, so exception text is
+ * never passed on. lists[site] = { at: when it was read, recs: the records as the database holds them }; a site that
+ * could not be read is in `failed` with the reason; only when no site could be read is the whole answer an error.
  */
 function getSos() {
   var c = setup_();
@@ -112,29 +129,28 @@ function getSos() {
   var at = Date.now(), ttl = sosTtl_(c.sites.length), lists = {}, urls = {};
   c.sites.forEach(function (s) {
     var hit = cacheGet_(c.cache, 'sos|' + c.base + s);
-    if (hit) lists[s] = hit.list;
+    if (hit) lists[s] = hit;
     else urls[s] = c.read('sos/' + s, '&orderBy=' + q_('"createdAt"') + '&startAt=' + (at - WINDOW_MS));   // sos/$sc has ".indexOn": ["createdAt"]
   });
   var got = {}, thrown = '';
   try { got = fetchAll_(urls); } catch (err) { thrown = failure_(err); }
-  var failed = [], code = 0;
+  var failed = [];
   Object.keys(urls).forEach(function (s) {
     var node = ok_(got[s]);
     if (node === undefined) {
-      failed.push(s);
-      if (got[s]) code = got[s].getResponseCode();
+      var code = got[s] ? got[s].getResponseCode() : 0;
+      failed.push({ sc: s, why: thrown || (code && code !== 200 ? 'http' : 'fetch'), code: code });
       return;
     }
-    lists[s] = sos_(node);
-    putNewer_(c.cache, 'sos|' + c.base + s, { at: at, list: lists[s] }, ttl);
+    lists[s] = { at: at, recs: sosRecs_(node) };
+    putNewer_(c.cache, 'sos|' + c.base + s, lists[s], ttl);
   });
-  if (failed.length === c.sites.length) return { ok: false, error: thrown || (code && code !== 200 ? 'http' : 'fetch'), code: code };
-  var sos = [];
-  c.sites.forEach(function (s) {
-    (lists[s] || []).forEach(function (x) { x.sc = s; x.staleAt = x.createdAt + STALE_AFTER_MS; sos.push(x); });
-  });
-  return { ok: true, sites: c.sites, now: Date.now(), sos: sos, failed: failed };
+  if (failed.length === c.sites.length) return { ok: false, error: failed[0].why, code: failed[0].code };
+  return { ok: true, sites: c.sites, now: Date.now(), lists: lists, failed: failed };
 }
+
+/** The page's periodic check that its viewer is still in ADMIN_EMAILS (live SOS never pass through this script). */
+function ping() { return allowed_(config_()) ? { ok: true } : { ok: false, error: 'denied' }; }
 
 /**
  * Sessions and collision alerts of one site for the last 24 hours. Called by a visible page every 2 minutes and when the
@@ -195,15 +211,18 @@ function readField_(c, sc, now) {
   }
   // A query that returned MAX_ALERTS records may have left older ones of the 24 hours out
   var full = function (node) { return !whole && Object.keys(node || {}).length >= MAX_ALERTS; };
+  var inWindow = function (a) { return a.t >= now - WINDOW_MS && a.t <= now + HOUR_MS; };
+  var newestFirst = function (a, b) { return b.t - a.t; };
   if (!yday) {
-    yday = { list: alerts_(nodes.yday, sc), full: full(nodes.yday) };
+    var ys = alerts_(nodes.yday, sc).filter(inWindow).sort(newestFirst);
+    yday = { list: ys.slice(0, MAX_ALERTS), full: full(nodes.yday) || ys.length > MAX_ALERTS };
+    yday.oldest = yday.list.length ? yday.list[yday.list.length - 1].t : 0;
     cacheJson_(c.cache, ydayKey, yday, YDAY_TTL_S);
   }
-  var alerts = alerts_(nodes.today, sc).concat(yday.list)
-    .filter(function (a) { return a.t >= now - WINDOW_MS && a.t <= now + HOUR_MS; })   // yesterday's part was read up to an hour ago
-    .sort(function (a, b) { return b.t - a.t; });
+  var alerts = alerts_(nodes.today, sc).concat(yday.list).filter(inWindow).sort(newestFirst);   // yesterday's part may be minutes old
   var part = { at: now, sessions: sessions_(nodes.hb), alerts: alerts.slice(0, MAX_ALERTS),
-               cut: alerts.length > MAX_ALERTS || full(nodes.today) || yday.full };
+               // yesterday's left-out records only matter while the 24 hours still reach past the oldest one kept
+               cut: alerts.length > MAX_ALERTS || full(nodes.today) || (yday.full && now - WINDOW_MS < yday.oldest) };
   // ponytail: a site with hundreds of open sessions could pass the cache limit; the oldest alerts go first, flagged
   while (bytes_(JSON.stringify(part)) > CACHE_MAX_BYTES && part.alerts.length) {
     part.alerts = part.alerts.slice(0, Math.floor(part.alerts.length * 0.8));
@@ -223,26 +242,15 @@ function failure_(err) { return /too many times/i.test(String(err && err.message
 
 function noIndex_(r) { return !!r && r.getResponseCode() === 400 && /Index not defined/.test(r.getContentText() || ''); }
 
-/** SOS records, active first, newest first. */
-function sos_(node) {
-  var out = [];
+/** The SOS records of a site as the database holds them, cut to the fields the page reads (the page names them). */
+function sosRecs_(node) {
+  var out = {};
   each_(node, function (key, r) {
     if (typeof r.createdAt !== 'number') return;
-    out.push({
-      key: key,
-      name: str_(r.name),
-      who: roleName_(str_(r.role), str_(r.name)),
-      trigger: r.trigger === 'fall' ? '넘어짐' : r.trigger === 'still' ? '움직임 없음' : '알 수 없음',
-      beacon: str_(r.beacon),
-      floor: code_(r.floor),
-      proc: code_(r.proc),
-      createdAt: r.createdAt,
-      active: r.status === 'active',
-      resolvedAt: typeof r.resolvedAt === 'number' ? r.resolvedAt : 0,
-      auto: r.reason === 'auto'
-    });
+    out[key] = { name: str_(r.name), role: str_(r.role), trigger: str_(r.trigger), beacon: str_(r.beacon),
+                 floor: str_(r.floor), proc: str_(r.proc), createdAt: r.createdAt, status: str_(r.status),
+                 resolvedAt: typeof r.resolvedAt === 'number' ? r.resolvedAt : 0, reason: str_(r.reason) };
   });
-  out.sort(function (a, b) { return (b.active - a.active) || (b.createdAt - a.createdAt); });
   return out;
 }
 
@@ -303,12 +311,16 @@ function setup_() {
   var dbUrl = cfg.get('FIREBASE_DB_URL');
   var secret = cfg.get('FIREBASE_DB_SECRET');
   var root = cfg.get('FIREBASE_ROOT') || 'wf11';
-  var sites = list_(cfg.get('SITES').toUpperCase())
-    .filter(function (s, i, all) { return SC_RE.test(s) && all.indexOf(s) === i; });   // a site listed twice counts once
+  var sites = sites_(cfg);
   if (!DB_URL_RE.test(dbUrl) || !secret || !ROOT_RE.test(root) || !sites.length) return { error: 'setup' };
   var base = dbUrl.replace(/\/$/, '') + '/' + root + '/';   // holds no secret: also the cache namespace
   var auth = 'auth=' + encodeURIComponent(secret);
   return { sites: sites, base: base, cache: cache_(), read: function (path, query) { return base + path + '.json?' + auth + (query || ''); } };
+}
+
+/** SITES as valid site codes; a site listed twice counts once. */
+function sites_(cfg) {
+  return list_(cfg.get('SITES').toUpperCase()).filter(function (s, i, all) { return SC_RE.test(s) && all.indexOf(s) === i; });
 }
 
 function viewer_() {
@@ -355,14 +367,16 @@ function cacheJson_(cache, key, obj, ttlSeconds) {
 }
 
 /**
- * Shares a part read at part.at unless a newer one is already there, or this one is already half its cache life old (a
- * slow call that finished late must not hide what a faster call read after it).
+ * Shares a part read at part.at for what is left of its cache life, unless a newer part is already there: a slow call
+ * that finished late never hides what a faster call read after it, and no part is served longer than its life after
+ * it was read.
  */
 function putNewer_(cache, key, part, ttlSeconds) {
-  if (Date.now() - part.at > ttlSeconds * 500) return;
+  var left = Math.floor(ttlSeconds - (Date.now() - part.at) / 1000);
+  if (left < 1) return;
   var cur = cacheGet_(cache, key);
   if (cur && cur.at >= part.at) return;
-  cacheJson_(cache, key, part, ttlSeconds);
+  cacheJson_(cache, key, part, left);
 }
 
 /** UTF-8 size of a string (Korean labels take 3 bytes each). */
