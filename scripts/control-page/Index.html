@@ -46,6 +46,7 @@
   .site-btn.none { border-color: var(--warn); color: var(--warn); }   /* nothing checked: no SOS reaches this screen */
   /* '사업장': a box per center, only the checked ones are watched */
   .site-panel { position: absolute; top: 100%; left: 20px; z-index: 1; width: min(560px, calc(100vw - 40px));
+                color: var(--text); font-size: 14px; text-align: left;
                 max-height: min(70vh, 560px); overflow: auto; margin-top: 6px; padding: 4px 12px 10px;
                 background: var(--surface); border: 1px solid var(--line-2); border-radius: 8px;
                 box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5); }
@@ -57,7 +58,8 @@
   .ck:hover { background: var(--surface-2); }
   .ck input { width: 16px; height: 16px; margin: 0; accent-color: #d5d9de; cursor: pointer; }
   .sp-empty { margin: 10px 8px; color: var(--text-3); }
-  .sp-foot { display: flex; justify-content: flex-end; padding-top: 8px; border-top: 1px solid var(--line); }
+  .sp-foot { display: flex; justify-content: flex-end; align-items: center; gap: 12px; padding-top: 8px; border-top: 1px solid var(--line); }
+  .sp-note { margin-right: auto; color: var(--text-3); font-size: 12px; }
   .sos-pill { height: 28px; padding: 0 12px; border: 0; border-radius: 6px; background: var(--crit-strong); color: #fff;
               font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; }
   .bar-end { margin-left: auto; display: flex; align-items: center; gap: 8px; }
@@ -218,7 +220,7 @@
     .bar-end { width: 100%; margin-left: 0; }
     .live { margin-right: auto; }
     .strip { padding: 9px 16px; }
-    #stripsCrit:not(:empty) { position: sticky; top: 0; z-index: 9; }   /* the bar scrolls away here: these warnings must not */
+    #stripsCrit:not(:empty) { position: sticky; top: 0; z-index: 11; }   /* the bar scrolls away here: these warnings must not, nor hide under its list */
     #sosSec { scroll-margin-top: calc(var(--crit-h, 0px) + 8px); }
     .layout { gap: 12px; padding: 12px 16px 8px; }
     .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -243,14 +245,20 @@
 <? if (denied) { ?>
 <main class="denied">
   <h1>관제 권한이 없는 계정입니다</h1>
-  <p>지금 계정: <span class="mono"><?= viewer || '확인되지 않음' ?></span></p>
-  <p>관리자가 스크립트 속성 <span class="mono">ADMIN_EMAILS</span>에 이 계정을 넣으면 열 수 있습니다.</p>
+<? if (viewer) { ?>
+  <p>지금 계정: <span class="mono"><?= viewer ?></span></p>
+  <p>관리자가 스크립트 속성 <span class="mono">ADMIN_EMAILS</span>에 이 계정을 넣으면 열 수 있습니다. 넣은 뒤 이 화면을 새로고침하세요.</p>
+<? } else { ?>
+  <p>이 주소는 구글이 접속한 계정을 알려 주지 않는 방식(실행: 나)으로 배포되어 있어, <span class="mono">ADMIN_EMAILS</span>에 적힌 계정과 맞춰 볼 수 없습니다.</p>
+  <p>관리자는 <span class="mono">ADMIN_EMAILS</span>를 비우거나(주소를 아는 누구나 봄), 배포의 실행을 '웹 앱에 액세스하는 사용자'로 바꾸세요. 그다음 이 화면을 새로고침하세요.</p>
+<? } ?>
 </main>
 <? } else { ?>
 <header class="bar">
   <div class="brand">SafeAlert<span>관제</span><b id="scope" class="scope"></b></div>
   <div class="pickers">
-    <div class="pick"><span id="siteLbl">사업장</span> <button id="siteBtn" class="site-btn" type="button" aria-expanded="false" aria-controls="sitePanel" aria-labelledby="siteLbl siteBtn"></button></div>
+    <div class="pick"><span id="siteLbl">사업장</span> <button id="siteBtn" class="site-btn" type="button" aria-expanded="false" aria-controls="sitePanel" aria-labelledby="siteLbl siteBtn"></button>
+      <div id="sitePanel" class="site-panel" role="group" aria-label="관제할 사업장" hidden></div></div>
     <label class="pick">층 <select id="floor"></select></label>
     <label class="pick">공정 <select id="proc"></select></label>
   </div>
@@ -260,7 +268,6 @@
     <button id="soundBtn" class="btn btn-sound off" type="button" data-sound aria-pressed="false">경보음 꺼짐</button>
     <button id="reloadBtn" class="btn btn-line" type="button">새로고침</button>
   </div>
-  <div id="sitePanel" class="site-panel" role="group" aria-label="관제할 사업장" hidden></div>
 </header>
 <div id="stripsCrit"></div>
 <div id="strips"></div>
@@ -332,7 +339,7 @@
 <div id="toasts" class="toasts" aria-live="polite"></div>
 
 <script>
-  var FB = <?!= fb ?>;                  // from doGet: { apiKey, dbUrl, root, why, sites, start, error, errCode, pit, code, releaseMs }
+  var FB = <?!= fb ?>;                  // from doGet: { apiKey, dbUrl, root, why, sites, start, error, errCode, pit, code, sc, open, anon, aliveMs, releaseMs }
   var FLOORS = ['1F', '2F', '3F', '4F', '5F', '6F', '7F', '8F', '9F', '10F'];
   var PROCS = ['OB', 'IB', 'ICQA', 'HUB', 'EHS', 'HR'];
   var SDK = 'https://www.gstatic.com/firebasejs/10.12.2/';
@@ -345,7 +352,7 @@
   var FIELD_MS = 120000;                // devices and alerts of the chosen site: every 2 minutes while the tab is visible
   var ALL_GAP_MS = 60000;               // several centers chosen: one center's devices and alerts at a time, every 60 s (daily read limit)
   var FIELD_RETRY_MS = 30000;           // after a failed read of devices and alerts
-  var PING_MS = 60000;                  // is this account still in ADMIN_EMAILS, and which centers it sees (live SOS never ask the script)
+  var PING_MS = 60000;                  // is this account still allowed, and which centers it sees, while no device answer says so
   var STALE_MS = 120000;                // no SOS for this long (live or from the server): the screen is not current
   var ACK_KEEP_MS = 25 * 3600 * 1000;   // longer than the 24-hour SOS window
   var HOUR_MS = 3600 * 1000;            // '최근 1시간' (the server sends 24 hours of alerts)
@@ -357,19 +364,24 @@
   var CAN_CALL = !!(window.matchMedia && matchMedia('(pointer: coarse)').matches);   // phones dial tel: links, PCs do not
   var PIT_NAMES = FB.pit || {};         // equipment code -> English name, from Code.gs (one table)
   var CODE_RE = new RegExp(FB.code || '^$');
+  var SC_RE = new RegExp(FB.sc);        // the site-code form (Code.gs SC_RE), for the codes read from the address
+  var ALIVE_MS = FB.aliveMs;            // a session silent this long has lost contact (Code.gs ALIVE_MS)
   var st = { pick: ['*'], floor: '', proc: '', tab: 'id',   // pick: the centers checked under '사업장' ('*': every center, new ones too)
              sites: {},                 // site -> { recs: { key: SOS }, at: server time up to which the list is known }
              fail: {},                  // site -> { why, code } while the server path cannot read it
              f: null,                   // what the field panel shows (mergeField): { now, at, sessions, alerts, cut, n, total }
              fs: {},                    // site -> its last devices-and-alerts answer
              fieldSc: '', fieldTimer: 0,   // the site the field call reads, the next read
-             asked: {}, fieldIdx: -1,   // centers whose devices were asked for, the turn among the chosen ones
+             asked: {},                 // center -> when its devices were last asked for (the least recent goes next)
              view: [], viewSet: {},     // the checked centers the page lists now (refreshView)
-             clk: null, resync: false,  // the last tick's two clocks; the computer clock jumped and the offset is not re-measured yet
+             clk: null, srv: null,      // the last tick's two clocks; server time as last measured (setServerTime)
+             fromUrl: false,            // the checks came from the address (?sc=): this tab's own, not saved for the browser
+             sitesAt: -Infinity,        // when the call whose center list was applied last was sent (older lists change nothing)
+             fieldOkAt: -Infinity, sideAt: 0,   // the last good device answer (the check waits while they come); last side render
              alarmKeys: [], alarmLast: {}, alarmNote: {}, alarmSig: '',
              live: { state: 'off', why: '', code: '', connected: false, offset: 0, got: {}, lostAt: null,
                      gen: 0, refs: [], loaded: {}, tries: 0, retry: 0, probing: false, goodAt: 0, listening: false, from: 0, qs: {} },
-             skew: 0, denied: false, deniedAt: 0, err: '', ffail: {}, current: stamp(),   // ffail: center -> why its devices and alerts could not be read
+             denied: false, deniedAt: 0, err: '', ffail: {}, current: stamp(),   // ffail: center -> why its devices and alerts could not be read
              ackOpenAt: -Infinity, resuming: false, audio: null, siren: null, sirenBuf: null };
   var mem = {};                         // fallback when localStorage is unavailable (sandboxed or partitioned frames)
   var ack = readAck();                  // SOS key -> time it was acknowledged in this browser
@@ -404,7 +416,10 @@
   function mono() { return performance.now(); }
   function stamp() { return { m: mono(), w: Date.now() }; }
   function age(t) { return Math.max(mono() - t.m, Date.now() - t.w); }
-  function nowMs() { return Date.now() + st.skew; }   // server time
+  // Server time as last measured (a Firebase (re)connect, a server answer), carried on the monotonic clock: a jump of the
+  // computer's clock never moves it. Before the first measurement: the computer's clock.
+  function nowMs() { return st.srv ? st.srv.at + (mono() - st.srv.m) : Date.now(); }
+  function setServerTime(at) { if (typeof at === 'number' && isFinite(at)) st.srv = { at: at, m: mono() }; }
   function scopeOf(r) { return [r.floor, r.proc].filter(Boolean).join('-'); }
   function placeOf(r) { var s = scopeOf(r); return s ? r.sc + '-' + s : r.sc + ' (층·공정 미지정)'; }
   function nameOf(s) { return s.name || '이름 없음'; }
@@ -455,8 +470,8 @@
 
   // A site's records from either path, merged record by record. The database only adds records and ends active ones
   // (its rules allow no delete and nothing after 'resolved'), so a record is never taken back here and an ended one never
-  // turns active again: neither the order of the answers nor the clocks of the two paths matter. Records leave by age
-  // only (dropOld). `at` serves the '기준' line only.
+  // turns active again. Records leave by age (dropOld) and, while live carries the SOS, when the database no longer has
+  // them (liveSite; server answers are not merged then). `at` serves the '기준' line only.
   function setSite(sc, node, at) {
     var cur = st.sites[sc] || { recs: {}, at: 0 }, recs = {}, notes = [];
     Object.keys(cur.recs).forEach(function (k) { recs[k] = cur.recs[k]; });
@@ -530,26 +545,27 @@
   function listen(q, cb, err) { q.on('value', cb, err); st.live.refs.push(q); return q; }   // liveStop drops every one
   function liveListen() {
     var L = st.live, db = firebase.database();
-    listen(db.ref('.info/serverTimeOffset'), function (snap) {   // measured at every (re)connect
+    // The offset is measured at every (re)connect; it gives the server time while connected (tick() connects anew when
+    // the computer's clock jumps, so a value kept from before the jump is soon replaced)
+    listen(db.ref('.info/serverTimeOffset'), function (snap) {
       L.offset = Number(snap.val()) || 0;
-      if (L.state === 'on') st.skew = L.offset;
-      st.resync = false;
+      if (L.connected) setServerTime(Date.now() + L.offset);
     });
     listen(db.ref('.info/connected'), function (snap) {
       L.connected = snap.val() === true;
       st.current = stamp();   // the SOS shown were current up to this moment either way
       if (L.connected) {
-        if (L.state === 'on') st.skew = L.offset;   // a (re)connect measures the offset first: the clock is right again
-        st.resync = false;
+        setServerTime(Date.now() + L.offset);
         L.goodAt = nowMs();
       } else { L.lostAt = st.current; liveStamp(); }
       renderStatus();
     });
     // A week back, not a day: the computer's clock may be off. The page keeps the last 24 hours itself (inWindow).
     // ponytail: the listened range grows while the tab stays open; SOS are few, re-listen daily if that ever matters
-    L.from = Date.now() - 7 * DAY_MS;
+    L.from = nowMs() - 7 * DAY_MS;
     L.listening = true;
     FB.sites.forEach(liveSite);
+    if (!FB.sites.length && !st.err) liveUp();   // no center yet and nothing wrong: there is nothing to wait for
   }
   function liveUp() {
     var L = st.live;
@@ -560,10 +576,9 @@
     L.qs[sc] = listen(firebase.database().ref(FB.root + '/sos/' + sc).orderByChild('createdAt').startAt(L.from), function (snap) {
       liveUp();
       L.got[sc] = true;
-      st.skew = L.offset;
       st.current = stamp();
       L.goodAt = nowMs();
-      var node = snap.val() || {}, notes = setSite(sc, node, Date.now() + L.offset);
+      var node = snap.val() || {}, notes = setSite(sc, node, nowMs());
       // While live carries the SOS, its list is the whole truth for the center: a record deleted in the database leaves
       if (liveOk()) {
         var recs = st.sites[sc].recs;
@@ -608,7 +623,7 @@
   }
   function liveOk() {
     var L = st.live;
-    return FB.sites.length > 0 && L.state === 'on' && FB.sites.every(function (sc) { return L.got[sc]; }) &&
+    return (FB.sites.length > 0 || !st.err) && L.state === 'on' && FB.sites.every(function (sc) { return L.got[sc]; }) &&
       (L.connected || !L.lostAt || age(L.lostAt) < LIVE_GRACE_MS);
   }
   // The lists live delivered were current up to the last moment the line was proven (connected, a list, an answered
@@ -672,12 +687,14 @@
   // ── server calls: one at a time per kind. A call with no answer for CALL_TIMEOUT_MS is counted failed once and no
   // longer blocks the next one; an answer is used whenever it is newer than the last one used, also when it comes after
   // its replacement left; an error counts only for the latest call. ──
-  function caller(send, data, fail) { return { send: send, data: data, fail: fail, seq: 0, used: 0, busy: false, at: null, timer: 0, again: false, fails: 0 }; }
-  var sosCall = caller(function (run) { run.getSosLists(allPicked() ? 'ALL' : st.view.join(',')); }, onSos, sosFailed);
+  function caller(send, data, fail, can) { return { send: send, data: data, fail: fail, can: can, seq: 0, used: 0, busy: false, at: null, timer: 0, again: false, fails: 0 }; }
+  // SOS from the server only while the live path is not usable, and only with something checked (null: every center)
+  var sosCall = caller(function (run) { run.getSosLists(allPicked() ? null : st.view.join(',')); }, onSos, sosFailed,
+    function () { return !liveOk() && !st.denied && (allPicked() || st.view.length > 0); });
   var fieldCall = caller(function (run) { fieldCall.sc = st.fieldSc; run.getField(st.fieldSc); }, onField, fieldFailed);   // sc: the center it asks for
   // Only an answer to a check sent after the refusal lifts it: an older one says nothing about now
   var pingCall = caller(function (run) { run.ping(); }, function (d, sent) {
-    checkSites(d.sites);
+    checkSites(d.sites, sent);
     if (st.denied && sent > st.deniedAt) undeny();
   }, function () {});
   function abandon(c) {   // the call in flight no longer counts: a late good answer is still used, a late error is not
@@ -686,6 +703,7 @@
     clearTimeout(c.timer);
   }
   function call(c) {
+    if (c.can && !c.can()) { c.again = false; return; }   // nothing to ask now (checked again for a queued re-send)
     if (c.busy && age(c.at) < CALL_TIMEOUT_MS) { c.again = true; return; }   // e.g. a site switch during a call
     if (c.busy) { abandon(c); c.fail('net'); }    // the previous call never answered
     var seq = ++c.seq, sent = mono();
@@ -710,16 +728,17 @@
       })
       .withFailureHandler(lost));
   }
-  // SOS from the server only while the live path is not usable (a request during a call goes out right after it)
-  function loadSos() { if (!liveOk() && !st.denied && (allPicked() || st.view.length)) call(sosCall); }
+  // A request during a call goes out right after it (sosCall says when there is nothing to ask)
+  function loadSos() { call(sosCall); }
   // Devices and alerts: one checked center at a time, in turn (centers not asked yet first, so the panel fills quickly).
   // The daily read limit holds however many centers are checked, and a failing one never holds the others back.
   function loadField() {
+    clearTimeout(st.fieldTimer);   // one schedule: a direct call replaces the pending read, never adds a second loop
     st.fieldTimer = 0;
     if (document.hidden || st.denied || !st.view.length) return;
-    var fresh = st.view.filter(function (sc) { return !st.asked[sc]; });
-    st.fieldSc = fresh.length ? fresh[0] : st.view[st.fieldIdx = (st.fieldIdx + 1) % st.view.length];
-    st.asked[st.fieldSc] = true;
+    // The center asked least recently goes next (never asked counts as oldest, in list order)
+    st.fieldSc = st.view.reduce(function (a, b) { return (st.asked[b] || 0) < (st.asked[a] || 0) ? b : a; });
+    st.asked[st.fieldSc] = mono();
     call(fieldCall);
   }
   function fieldGap() {
@@ -732,73 +751,92 @@
   function errText(why, code) {
     return why === 'setup' ? '스크립트 속성(FIREBASE_DB_URL, FIREBASE_DB_SECRET, SITES, FIREBASE_ROOT)을 확인하세요.'
       : why === 'quota' ? '오늘 조회 한도를 다 썼습니다. 24시간 안에 다시 읽을 수 있습니다.'
-      : why === 'nosite' ? '볼 수 있는 센터가 없습니다. 스크립트 속성 ADMIN_EMAILS(이메일 또는 이메일:센터)와 SITES 를 확인하세요. SITES 를 비워 두면 기록이 생긴 센터를 저절로 찾습니다.'
+      : why === 'nosite' ? '볼 수 있는 센터가 없습니다. 기록이 있는 센터가 아직 없거나, SITES 에 적힌 센터가 데이터베이스에 없거나, ADMIN_EMAILS 의 이메일:센터로 이 계정에 정해진 센터가 없습니다. SITES 를 비워 두면 기록이 생긴 센터를 저절로 찾습니다.'
       : why === 'http' ? '서버가 오류로 응답했습니다(' + code + '). 데이터베이스 비밀번호를 확인하세요.'
       : '서버 기록을 읽지 못했습니다.';
   }
 
   // The centers the server says this account sees now (ping, devices): a new one is listened to and listed at once, one no
-  // longer there (SITES or ADMIN_EMAILS changed) is dropped with everything shown for it
-  function checkSites(list) {
-    if (!list) return;
+  // longer there (SITES or ADMIN_EMAILS changed) is dropped with everything shown for it, and its open SOS are said. A list
+  // from a call sent before the one applied last is older news and changes nothing.
+  function checkSites(list, sent) {
+    if (!list || sent < st.sitesAt) return;
+    st.sitesAt = sent;
     var now = list.slice().sort();
     if (now.join(',') === FB.sites.join(',')) return;
-    var added = now.filter(function (sc) { return FB.sites.indexOf(sc) < 0; });
-    FB.sites.filter(function (sc) { return now.indexOf(sc) < 0; }).forEach(dropSite);
+    var added = now.filter(function (sc) { return FB.sites.indexOf(sc) < 0; }), notes = [];
+    FB.sites.filter(function (sc) { return now.indexOf(sc) < 0; }).forEach(function (sc) {
+      var open = activeSos().filter(function (s) { return s.sc === sc; }).length;
+      if (open) notes.push(sc + ' 사업장이 이 화면에서 볼 수 있는 목록에서 빠져, 진행 중이던 구조 요청 ' + open + '건도 화면에서 빠졌습니다.');
+      dropSite(sc);
+    });
     added.forEach(function (sc) { FB.sites.push(sc); if (st.live.listening) liveSite(sc); });
     FB.sites.sort();
     fillSites();
     mergeField();
     renderAll();
+    notes.forEach(toast);
     if (added.length && !st.fieldTimer && !fieldCall.busy) loadField();   // the first center of an empty page starts the reads
   }
   function dropSite(sc) {
     FB.sites.splice(FB.sites.indexOf(sc), 1);
     var q = st.live.qs[sc];
-    if (q) { try { q.off(); } catch (e) { /* already gone */ } delete st.live.qs[sc]; }
+    if (q) {
+      try { q.off(); } catch (e) { /* already gone */ }
+      delete st.live.qs[sc];
+      st.live.refs = st.live.refs.filter(function (r) { return r !== q; });
+    }
     delete st.live.got[sc];
+    delete st.asked[sc];   // back again later: read at once, like any new center
     delete st.sites[sc];
     delete st.fs[sc];
     delete st.fail[sc];
     delete st.ffail[sc];
   }
-  // '사업장': a box per center, '전체' first. Only the checked centers are watched; '전체' keeps every center checked, the
-  // ones that appear later too, while a center's own box is that center only
+  // '사업장': a box per center, '전체' first. Only the checked centers are watched. '전체' also takes the centers that
+  // appear later and shows checked only then: centers checked one by one, even all of them, are those centers only.
+  function noneChecked() { return FB.sites.length > 0 && !st.view.length; }
   function fillSites() {
     refreshView();
-    var panel = $('sitePanel'), key = FB.sites.join(',');
+    var panel = $('sitePanel'), key = FB.sites.join(',') + (st.fromUrl ? '|url' : '');
     var box = function (v, text) { return '<label class="ck"><input type="checkbox" data-pick="' + esc(v) + '">' + esc(text) + '</label>'; };
-    if (panel.__sites !== key) {   // rebuilt only when the centers change, so a box in use keeps its focus
+    if (panel.__sites !== key) {   // rebuilt only when the centers change; a box in use gets its focus back
+      var foc = panel.contains(document.activeElement) ? document.activeElement.getAttribute('data-pick') : null;
       panel.__sites = key;
-      panel.innerHTML = '<div class="sp-all">' + box('*', '전체') + '<span id="spCount"></span></div>' +
+      panel.innerHTML = '<div class="sp-all">' + box('*', '전체 (새로 생기는 사업장 포함)') + '<span id="spCount"></span></div>' +
         (FB.sites.length ? '<div class="sp-grid">' + FB.sites.map(function (sc) { return box(sc, sc); }).join('') + '</div>'
                          : '<p class="sp-empty">아직 기록이 있는 사업장이 없습니다.</p>') +
-        '<div class="sp-foot"><button class="btn btn-sm" type="button" data-act="sites-close">닫기</button></div>';
+        '<div class="sp-foot">' + (st.fromUrl ? '<span class="sp-note">주소(?sc=)로 연 화면이라 체크는 이 탭에만 적용됩니다</span>' : '') +
+        '<button class="btn btn-sm" type="button" data-act="sites-close">닫기</button></div>';
+      var back = foc && panel.querySelector('[data-pick="' + foc + '"]');
+      if (back) back.focus();
     }
     [].forEach.call(panel.querySelectorAll('input[data-pick]'), function (el) {
       var v = el.getAttribute('data-pick');
-      el.checked = v === '*' ? FB.sites.length > 0 && st.view.length === FB.sites.length : st.viewSet[v] === true;
-      el.indeterminate = v === '*' && st.view.length > 0 && st.view.length < FB.sites.length;
+      el.checked = v === '*' ? allPicked() : st.viewSet[v] === true;
+      el.indeterminate = v === '*' && !allPicked() && st.view.length > 0;
     });
     $('spCount').textContent = FB.sites.length + '곳 중 ' + st.view.length + '곳 관제';
     var label = pickLabel();
     $('siteBtn').textContent = label;
-    $('siteBtn').classList.toggle('none', FB.sites.length > 0 && !st.view.length);
-    $('scope').textContent = label;
+    $('siteBtn').classList.toggle('none', noneChecked());
     $('fieldTitle').textContent = (st.view.length ? label + ' ' : '') + '현장 상태';
     $('endedMeta').textContent = '최근 24시간' + (st.view.length ? ', ' + label : '');
   }
   function pickLabel() {
     var n = st.view.length;
-    if (!FB.sites.length) return allPicked() ? '전체' : '없음';
+    if (allPicked()) return '전체' + (FB.sites.length ? ' · ' + n + '곳' : '');
     if (!n) return '없음';
-    if (n === FB.sites.length) return '전체 · ' + n + '곳';
     return n === 1 ? st.view[0] : st.view[0] + ' 외 ' + (n - 1) + '곳';
   }
   function sitesOpen(on) {
-    $('sitePanel').hidden = !on;
+    var panel = $('sitePanel');
+    panel.hidden = !on;
     $('siteBtn').setAttribute('aria-expanded', on ? 'true' : 'false');
-    if (on) $('siteBtn').scrollIntoView({ block: 'nearest' });
+    if (!on) return;
+    $('siteBtn').scrollIntoView({ block: 'nearest' });
+    var first = panel.querySelector('input');
+    if (first) first.focus({ preventScroll: true });   // the keyboard lands in the list it opened
   }
 
   function onSos(d) {
@@ -806,7 +844,9 @@
     sosCall.fails = 0;
     st.err = '';
     st.current = stamp();
-    if (!liveOk()) { st.skew = d.now - Date.now(); st.resync = false; }
+    setServerTime(d.now);
+    // Live took over while this was on its way: its lists are the whole truth (a record it pruned must not come back)
+    if (liveOk()) { renderStatus(); return; }
     var notes = [];
     Object.keys(d.lists).forEach(function (sc) { notes = notes.concat(setSite(sc, d.lists[sc].recs, d.lists[sc].at)); });
     (d.failed || []).forEach(function (f) { st.fail[f.sc] = f; });   // the site keeps what it showed
@@ -822,7 +862,9 @@
 
   function onField(d, sent, latest) {
     if (st.denied) return;   // asked before the refusal
-    checkSites(d.sites);
+    st.fieldOkAt = mono();
+    setServerTime(d.now);
+    checkSites(d.sites, sent);
     if (FB.sites.indexOf(d.sc) >= 0) {   // not a center this page dropped meanwhile
       d.sessions.forEach(function (x) { x.sc = d.sc; });
       d.alerts.forEach(function (x) { x.sc = d.sc; });
@@ -893,12 +935,14 @@
       if (on) t.push(v);
       st.pick = t;
     }
-    sset('sa_site', st.pick.join(','));   // this browser keeps the checks: a center's PC checks its center once
+    // This browser keeps the checks (a center's PC checks its center once); a tab opened with ?sc= keeps its own
+    if (!st.fromUrl) sset('sa_site', st.pick.join(','));
     fillSites();
     abandon(fieldCall);    // the old choice's call: its errors no longer count (an answer is still kept for its site)
     mergeField();          // what is known of the new choice shows at once, with its own '기준' time
     renderAll();
-    loadField();
+    // A newly checked center is read at once; otherwise the turn goes on (and starts again after nothing was checked)
+    if (st.view.some(function (sc) { return !st.asked[sc]; }) || !st.fieldTimer) loadField();
     loadSos();
   }
 
@@ -915,7 +959,7 @@
   function renderAll() { renderStatus(); renderAlarm(); renderSos(); renderSide(); renderAlerts(); renderEnded(); }
 
   // Not current: neither path has delivered for STALE_MS (the live one counts as delivering while it is connected)
-  function lostConn() { return !st.denied && !liveOk() && (sosCall.fails >= 3 || age(st.current) > STALE_MS); }
+  function lostConn() { return !st.denied && !noneChecked() && !liveOk() && (sosCall.fails >= 3 || age(st.current) > STALE_MS); }
 
   // Sites the server path cannot read: said on the page and inside the alarm
   function failText() {
@@ -941,23 +985,25 @@
   // Runs every second: touches the DOM only when something changed
   function renderStatus() {
     var lost = lostConn(), run = soundRunning(), fail = failText(), live = liveOk(), at = oldestAt();
-    var cls = lost || st.denied ? 'live bad' : live || at ? 'live ok' : 'live';
-    var txt = st.denied ? '권한 없음' : lost ? '연결 끊김' : live ? '실시간' : at ? hms(at) + ' 기준' : '불러오는 중';
+    var none = noneChecked();
+    var cls = lost || st.denied ? 'live bad' : none ? 'live' : live || at ? 'live ok' : 'live';
+    var txt = st.denied ? '권한 없음' : none ? '관제 안 함' : lost ? '연결 끊김' : live ? '실시간' : at ? hms(at) + ' 기준' : '불러오는 중';
     if ($('live').className !== cls) $('live').className = cls;
     if ($('liveText').textContent !== txt) $('liveText').textContent = txt;
     var lostText = '연결 끊김. 화면이 최신이 아닙니다' + (at ? ' (구조 요청 ' + hms(at) + ' 기준)' : '');
 
     // What makes the SOS on screen unreliable: kept at the top on a phone (the bar scrolls away there)
     var crit = [];
-    if (st.denied) crit.push(['crit', '이 계정은 관제 권한이 없습니다. 관리자에게 ADMIN_EMAILS 등록을 요청하세요. 등록되면 이 화면이 저절로 다시 열립니다.', '', '']);
+    if (st.denied) crit.push(['crit', FB.anon ? '이 주소는 구글이 접속한 계정을 알려 주지 않는 방식(실행: 나)이라 ADMIN_EMAILS 와 맞춰 볼 수 없어 막혔습니다. 관리자가 ADMIN_EMAILS 를 비우면 이 화면이 저절로 다시 열립니다.'
+                                            : '이 계정은 관제 권한이 없습니다. 관리자에게 ADMIN_EMAILS 등록을 요청하세요. 등록되면 이 화면이 저절로 다시 열립니다.', '', '']);
     if (!FB.sites.length && !st.denied && !st.err) crit.push(['warn', errText('nosite'), '', '']);
-    if (FB.sites.length && !st.view.length && !st.denied) crit.push(['crit', '체크한 사업장이 없어 어느 구조 요청도 이 화면에 오지 않습니다.', 'sites', '사업장 고르기']);
+    if (none && !st.denied) crit.push(['crit', '체크한 사업장이 없어 어느 구조 요청도 이 화면에 오지 않습니다.', 'sites', '사업장 고르기']);
     if (lost) crit.push(['crit', lostText, 'retry', '다시 시도']);
     if (st.err && !live) crit.push(['warn', st.err, '', '']);
     if (fail) crit.push(['warn', fail, '', '']);
     setHtml($('stripsCrit'), crit.map(strip).join(''));
     var more = [];
-    if (!live && !st.denied && FB.sites.length && st.live.state !== 'starting' && st.live.state !== 'off') more.push(['warn', liveText(), '', '']);
+    if (!live && !st.denied && !none && FB.sites.length && st.live.state !== 'starting' && st.live.state !== 'off') more.push(['warn', liveText(), '', '']);
     var ff = st.view.filter(function (sc) { return st.ffail[sc]; });
     if (ff.length) more.push(['warn', '접근 경보와 기기 현황: ' + ff.map(function (sc) { return (st.view.length > 1 ? sc + ' ' : '') + st.ffail[sc]; }).join(' ') +
       (st.f ? ' ' + hms(st.f.at) + ' 기준 내용을 보여 줍니다.' : ''), '', '']);
@@ -1087,7 +1133,7 @@
     var act = activeSos(), cnt = act.length ? act.length + '건 진행 중' : '';
     sec.classList.toggle('hot', act.length > 0);
     if ($('sosCount').textContent !== cnt) $('sosCount').textContent = cnt;
-    var loading = !Object.keys(st.sites).length && !st.denied;
+    var loading = !Object.keys(st.sites).length && !st.denied && !noneChecked();
     setHtml(box, loading ? '<div class="sk-row"></div>' : act.length ? act.map(sosRow).join('') :
       '<div class="empty"><b>진행 중인 구조 요청이 없습니다</b>' +
       '<span>체크한 사업장에서 구조 요청이 오면 화면 전체에 경보가 뜨고, 대응 시작을 누를 때까지 경보음이 울립니다.</span></div>');
@@ -1104,7 +1150,7 @@
 
   function blank(msg) { return '<tbody><tr><td class="blank">' + msg + '</td></tr></tbody>'; }
   function skeleton() {   // still loading; with no center checked there is nothing to wait for
-    if (FB.sites.length && !st.view.length) return blank('체크한 사업장이 없습니다');
+    if (noneChecked()) return blank('체크한 사업장이 없습니다');
     return '<tbody>' + [0, 1, 2].map(function () { return '<tr><td><span class="sk"></span></td></tr>'; }).join('') + '</tbody>';
   }
   function stat(id, n, tone) {
@@ -1114,9 +1160,11 @@
   }
 
   function renderSide() {
+    st.sideAt = mono();
     var f = st.f, ready = !!f, all = st.view.length > 1;
     var ss = ready ? f.sessions.filter(inScope) : [];
-    var alive = ss.filter(function (s) { return s.alive; }), lost = ss.filter(function (s) { return !s.alive; });
+    var isAlive = function (s) { return nowMs() - s.last <= ALIVE_MS; };   // judged now, not when the center was last read
+    var alive = ss.filter(isAlive), lost = ss.filter(function (s) { return !isAlive(s); });
     var hour = ready ? hourAlerts(f) : [];
     var dn = hour.filter(function (a) { return a.level === 'DANGER'; }).length;
     stat('stAlive', ready ? alive.length : null, '');
@@ -1261,16 +1309,17 @@
 
   // One 1-second ticker: elapsed clocks, stale notes, the connection check and the sound state (the siren loops by itself)
   function tick() {
-    // A computer clock that jumps (time sync after a wrong start, a manual change) makes the measured offset wrong for the
-    // 24-hour window and the clocks: connect anew so it is measured again, and drop nothing by age until then
+    // Server time runs on the monotonic clock, so a jump of the computer's clock does not move it. The two clocks part after
+    // such a jump and after a sleep (the monotonic one stops there): measure the server time again, by connecting anew
+    // (the offset is measured at every connect) and by asking the server
     var m = mono(), w = Date.now(), c = st.clk;
     st.clk = { m: m, w: w };
     if (c && Math.abs((w - c.w) - (m - c.m)) > 60000) {
-      st.resync = true;
-      if (st.live.state === 'on') try { firebase.database().goOffline(); firebase.database().goOnline(); } catch (e) { /* the next server answer re-measures */ }
-      else loadSos();
+      try { if (window.firebase && firebase.apps.length) { firebase.database().goOffline(); firebase.database().goOnline(); } } catch (e) { /* the server answer below measures it */ }
+      loadSos();
     }
-    if (!st.resync) dropOld();
+    dropOld();
+    if (st.f && mono() - st.sideAt > 30000) renderSide();   // devices fall silent with time alone: '연락 끊김' moves on its own
     // A context the browser suspended may come back without a tap once the page has had one. One attempt at a time: a
     // resume the browser does not allow yet stays pending, and taps and keys try on their own meanwhile.
     if (soundPref() && st.audio && st.audio.state !== 'running') {
@@ -1294,11 +1343,14 @@
 
   fill($('floor'), FLOORS, '전체');
   fill($('proc'), PROCS, '전체');
-  // What the page watches: the address's ?sc= (WF11 or WF11,WF12), else this browser's last checks, else every center
+  // What the page watches: the address's ?sc= (WF11 or WF11,WF12; this tab only), else this browser's last checks, else
+  // every center
   FB.sites.sort();
-  var toks = function (v) { return String(v || '').split(',').filter(function (x) { return x === '*' || /^[A-Z0-9_-]{1,12}$/.test(x); }); };
-  var saved = sget('sa_site');
-  st.pick = toks(FB.start).length ? toks(FB.start) : saved === '' ? [] : toks(saved).length ? toks(saved) : ['*'];
+  var toks = function (v) { return String(v || '').split(',').filter(function (x) { return x === '*' || SC_RE.test(x); }); };
+  var fromUrl = toks(FB.start), saved = sget('sa_site');
+  st.fromUrl = fromUrl.length > 0;
+  st.pick = st.fromUrl ? fromUrl : saved === '' ? [] : toks(saved).length ? toks(saved) : ['*'];
+  if (FB.open) { $('scope').textContent = '주소 공개'; $('scope').title = 'ADMIN_EMAILS 가 비어 있어 이 주소를 아는 누구나 이 화면을 볼 수 있습니다'; }
   if (FB.error) st.err = errText(FB.error, FB.errCode);   // the server could not list the centers when the page opened
   fillSites();
   $('floor').onchange = function () { st.floor = this.value; renderAll(); };
@@ -1306,6 +1358,10 @@
   $('siteBtn').onclick = function () { sitesOpen($('sitePanel').hidden); };
   $('sitePanel').onchange = function (ev) { var v = ev.target.getAttribute('data-pick'); if (v) pickSite(v, ev.target.checked); };
   document.addEventListener('keydown', function (ev) { if (ev.key === 'Escape' && !$('sitePanel').hidden) { sitesOpen(false); $('siteBtn').focus(); } });
+  $('sitePanel').addEventListener('focusout', function (ev) {   // the keyboard left the list: it closes
+    var to = ev.relatedTarget;
+    if (to && !$('sitePanel').contains(to) && to !== $('siteBtn')) sitesOpen(false);
+  });
   $('reloadBtn').onclick = reloadAll;
   $('soundBtn').onclick = function () { if (soundRunning()) disableSound(); else enableSound(true); };
   document.addEventListener('click', function (ev) {
@@ -1333,7 +1389,7 @@
   loadField();
   // A hidden tab keeps the SOS coming (live, or from the server): the alarm must still go off behind other windows
   setInterval(loadSos, SOS_MS);
-  setInterval(function () { call(pingCall); }, PING_MS);
+  setInterval(function () { if (mono() - st.fieldOkAt > PING_MS) call(pingCall); }, PING_MS);   // device answers say the same
   setInterval(function () { if (st.denied) call(pingCall); }, SOS_MS);   // a refused account comes back within 30 s
   setInterval(liveProbe, PROBE_MS);
   setInterval(tick, 1000);
