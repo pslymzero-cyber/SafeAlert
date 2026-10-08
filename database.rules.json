@@ -177,6 +177,7 @@
       },
       "hb": {
         "$sc": {
+          ".indexOn": ["last"],
           "$sid": {
             ".write": "auth != null && $site.matches(/^[A-Za-z0-9_-]{1,32}$/) && $sc.matches(/^[A-Z0-9_-]{1,12}$/) && $sid.matches(/^[A-Za-z0-9_-]{1,40}$/) && newData.exists() && newData.child('uid').val() === auth.uid && (!data.exists() || (data.child('uid').val() === auth.uid && !data.child('end').exists()))",
             ".validate": "newData.hasChildren(['uid','role','start','last'])",

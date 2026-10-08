@@ -61,6 +61,27 @@
   footer { margin-top: 16px; color: var(--sub); font-size: 12px; }
   .denied { max-width: 560px; margin: 60px auto; background: #fff; border: 1px solid var(--line);
             border-radius: 10px; padding: 20px; line-height: 1.6; }
+  .band { display: none; padding: 9px 16px; font-weight: 700; text-align: center; }
+  .band button { font: inherit; margin-left: 10px; padding: 3px 12px; border-radius: 6px; border: 1px solid #fff; background: transparent; color: #fff; cursor: pointer; }
+  #soundBar { background: #3a3f4b; color: #fff; }
+  #connBand { position: fixed; top: 0; left: 0; right: 0; z-index: 200; background: #000; color: #fff; border-bottom: 3px solid #ff5252; }
+  .alert-overlay { display: none; position: fixed; inset: 0; z-index: 100; overflow: auto; padding: 56px 18px 24px;
+                   background: #b71c1c; color: #fff; animation: blink 1s steps(1, end) infinite; }
+  @keyframes blink { 0% { background: #b71c1c; } 50% { background: #f44336; } }
+  @media (prefers-reduced-motion: reduce) { .alert-overlay { animation: none; background: #b71c1c; } .banner.show { animation: none; } }
+  .alert-overlay h2 { margin: 0 0 12px; font-size: 26px; }
+  .oc { background: rgba(0, 0, 0, .28); border: 2px solid #fff; border-radius: 12px; padding: 14px 16px; margin-bottom: 14px; max-width: 760px; }
+  .oc .o-who { font-size: 26px; font-weight: 800; }
+  .oc .o-line { font-size: 18px; margin-top: 4px; }
+  .oc .o-t { font-size: 20px; margin-top: 8px; font-weight: 700; }
+  .oc .o-btns { margin-top: 12px; display: flex; flex-wrap: wrap; gap: 10px; }
+  .oc button, .oc a.call, .alert-overlay .o-sound button { font: inherit; font-size: 18px; font-weight: 800; padding: 10px 18px; border-radius: 8px;
+                   border: 2px solid #fff; background: #fff; color: #b71c1c; cursor: pointer; text-decoration: none; display: inline-block; }
+  .oc a.call { background: #1b5e20; color: #fff; }
+  .steps { max-width: 760px; font-size: 17px; line-height: 1.6; padding-left: 0; list-style: none; margin: 6px 0 0; }
+  .o-sound { margin: 0 0 12px; font-size: 18px; font-weight: 700; }
+  #toasts { position: fixed; right: 14px; bottom: 14px; z-index: 150; display: grid; gap: 8px; }
+  .toast { background: #2e7d32; color: #fff; padding: 10px 14px; border-radius: 8px; font-weight: 700; box-shadow: 0 2px 8px rgba(0,0,0,.3); }
   @media (max-width: 860px) {
     .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .grid { grid-template-columns: minmax(0, 1fr); }
@@ -75,12 +96,16 @@
     관리자가 스크립트 속성 <span class="mono">ADMIN_EMAILS</span>에 이 계정을 넣어야 열 수 있습니다.
   </div>
 <? } else { ?>
+<div id="connBand" class="band" role="alert"></div>
+<div id="soundBar" class="band"><button id="soundBarBtn" type="button">소리 켜기</button> 구조 요청 사이렌이 꺼져 있습니다</div>
+<div id="alertOverlay" class="alert-overlay" role="alertdialog" aria-live="assertive"></div>
+<div id="toasts" aria-live="polite"></div>
 <header>
   <h1>SafeAlert 관제</h1>
   <label>사업장 <select id="site"></select></label>
   <span class="spacer"></span>
   <span id="status">불러오는 중…</span>
-  <button id="soundBtn" type="button" title="새 구조 요청이 오면 소리로 알립니다">알림음 켜기</button>
+  <button id="soundBtn" type="button" title="구조 요청이 확인될 때까지 사이렌을 울립니다">알림음 켜기</button>
   <button id="reloadBtn" type="button">새로고침</button>
 </header>
 <main>
@@ -135,9 +160,13 @@
 <script>
   var FLOORS = ['1F', '2F', '3F', '4F', '5F', '6F', '7F', '8F', '9F', '10F'];
   var PROCS = ['OB', 'IB', 'ICQA', 'HUB', 'EHS', 'HR'];
-  var ROLE = { WALKER: '보행자', EPJ: 'EPJ', FORKLIFT: '지게차', UNKNOWN: '미상' };
+  var ROLE = { WALKER: '보행자', EPJ: 'EPJ', FORKLIFT: '지게차', UNKNOWN: '알 수 없음' };
   var REFRESH_MS = 30000;
-  var st = { sc: '<?!= initialSc ?>', floor: '', proc: '', data: null, seen: {}, first: true, sound: false, audio: null, busy: false };
+  var STALE_MS = 120000;     // no good snapshot for this long = the screen is not current
+  var ACK_KEEP_MS = 25 * 3600 * 1000;
+  var st = { sc: '<?!= initialSc ?>', floor: '', proc: '', data: null, audio: null, busy: false, again: false,
+             fails: 0, t0: Date.now(), lastGood: 0, skew: 0, prev: null, prevSc: '', sitesKey: '', ovSig: '' };
+  var mem = {};              // fallback when localStorage is unavailable
 
   function $(id) { return document.getElementById(id); }
   function esc(s) {
@@ -155,10 +184,38 @@
     var m = Math.max(0, Math.floor((now - t) / 60000));
     return m < 60 ? m + '분' : Math.floor(m / 60) + '시간 ' + (m % 60) + '분';
   }
-  function role(r) { return ROLE[r] || r || '미상'; }
+  function elapsed(ms) {
+    var s = Math.floor(Math.max(0, ms) / 1000), h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60);
+    return (h ? h + '시간 ' : '') + m + '분 ' + (s % 60) + '초';
+  }
+  function role(r) { return ROLE[r] || ROLE.UNKNOWN; }
   function scope(sc, f, p) { return (f || p) ? [sc, f, p].filter(Boolean).join('-') : sc + ' (층·공정 미지정)'; }
+  function place(sc, f, p) { return [sc, f, p].filter(Boolean).join('-'); }
   function match(sel, v) { return !sel || (sel === '-' ? !v : v === sel); }
   function inScope(r) { return match(st.floor, r.floor) && match(st.proc, r.proc); }
+  // SOS use the app's own rule (SiteScope.receives): an empty field of the record matches any choice;
+  // '미지정' matches only an empty field.
+  function smatch(sel, v) { return !sel || (sel === '-' ? !v : (!v || v === sel)); }
+  function sosScope(r) { return smatch(st.floor, r.floor) && smatch(st.proc, r.proc); }
+  function nowMs() { return Date.now() + st.skew; }
+
+  // ── browser-local storage (acknowledgements, sound preference) ──
+  function sget(k) {
+    try { var v = localStorage.getItem(k); if (v !== null) return v; } catch (e) { /* use memory */ }
+    return mem[k] == null ? null : mem[k];
+  }
+  function sset(k, v) {
+    mem[k] = v;
+    try { localStorage.setItem(k, v); } catch (e) { /* memory only */ }
+  }
+  function loadAck() {
+    try { var a = JSON.parse(sget('sa_ack') || '{}'); return a && typeof a === 'object' ? a : {}; } catch (e) { return {}; }
+  }
+  function saveAck(a) {
+    var cut = Date.now() - ACK_KEEP_MS;
+    Object.keys(a).forEach(function (k) { if (!(a[k] > cut)) delete a[k]; });
+    sset('sa_ack', JSON.stringify(a));
+  }
 
   function fillSelect(el, items, allLabel) {
     el.innerHTML = '<option value="">' + allLabel + '</option>' +
@@ -166,13 +223,20 @@
       '<option value="-">미지정</option>';
   }
 
+  // ── loading ──
   function load() {
-    if (st.busy) return;
+    if (st.busy) { st.again = true; return; }   // a site switch while a call is running: run again right after it
     st.busy = true;
+    st.again = false;
     $('status').textContent = '갱신 중…';
     google.script.run
-      .withSuccessHandler(function (d) { st.busy = false; onData(d); })
-      .withFailureHandler(function () { st.busy = false; showErr('서버에 연결하지 못했습니다. 30초 뒤 다시 시도합니다.'); })
+      .withSuccessHandler(function (d) { st.busy = false; onData(d); if (st.again) load(); })
+      .withFailureHandler(function () {
+        st.busy = false; st.fails++;
+        showErr('서버에 연결하지 못했습니다. 30초 뒤 다시 시도합니다.');
+        checkConn();
+        if (st.again) load();
+      })
       .getSnapshot(st.sc);
   }
 
@@ -186,36 +250,196 @@
     if (!d || !d.ok) {
       var why = d && d.error;
       if (why === 'denied') { location.reload(); return; }
+      st.fails++;
       showErr(why === 'setup' ? '스크립트 속성(FIREBASE_DB_URL · FIREBASE_DB_SECRET · SITES)을 확인하세요.'
+        : why === 'quota' ? '오늘 조회 한도를 다 썼습니다(24시간 안에 복구)'
         : why === 'http' ? '서버가 오류로 응답했습니다(' + d.code + '). 데이터베이스 비밀번호가 맞는지 확인하세요.'
         : '서버 기록을 읽지 못했습니다. 30초 뒤 다시 시도합니다.');
+      checkConn();
       return;
     }
+    st.fails = 0;
+    st.lastGood = Date.now();
+    st.skew = d.now - Date.now();
     showErr('');
-    if (st.sc !== d.sc || $('site').options.length !== d.sites.length) {
-      st.sc = d.sc;
-      $('site').innerHTML = d.sites.map(function (s) {
-        return '<option' + (s === d.sc ? ' selected' : '') + '>' + esc(s) + '</option>';
-      }).join('');
+    checkConn();
+    // A response for another site than the one chosen meanwhile is discarded: it must not change the select or the data
+    var valid = !!st.sc && d.sites.indexOf(st.sc) >= 0;
+    if (valid && st.sc !== d.sc) return;
+    if (!valid) st.sc = d.sc;
+    var key = d.sites.join(',');
+    if (st.sitesKey !== key) {
+      st.sitesKey = key;
+      $('site').innerHTML = d.sites.map(function (s) { return '<option>' + esc(s) + '</option>'; }).join('');
     }
+    $('site').value = st.sc;
+    toastReleased(d);
     st.data = d;
-    notifyNew(d);
     render();
+    refreshOverlay();
     $('status').textContent = hms(d.now) + ' 갱신 · ' + (d.viewer || '');
   }
 
-  function notifyNew(d) {
-    var fresh = d.sos.filter(function (s) { return s.active && !st.seen[s.key]; });
-    d.sos.forEach(function (s) { if (s.active) st.seen[s.key] = true; });
-    if (fresh.length && !st.first && st.sound) beep();
-    st.first = false;
+  // A5: an SOS that was active in the previous snapshot of this site and is not any more
+  function toastReleased(d) {
+    var cur = {};
+    d.sos.forEach(function (s) { if (s.active) cur[s.key] = true; });
+    if (st.prev && st.prevSc === d.sc) {
+      d.sos.forEach(function (s) {
+        if (!s.active && st.prev[s.key]) {
+          toast('해제됨 — ' + (s.auto ? '자동 해제' : '본인 해제') + ' · ' + (s.name || s.who));
+        }
+      });
+    }
+    st.prev = cur;
+    st.prevSc = d.sc;
   }
 
+  function toast(text) {
+    var el = document.createElement('div');
+    el.className = 'toast';
+    el.textContent = text;
+    $('toasts').appendChild(el);
+    setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, 8000);
+  }
+
+  // A6: a frozen page must never look healthy
+  function checkConn() {
+    var last = st.lastGood || st.t0;
+    var lost = st.fails >= 3 || Date.now() - last > STALE_MS;
+    var b = $('connBand');
+    if (lost) b.textContent = '연결 끊김 — 화면이 최신이 아닙니다 (마지막 갱신 ' + (st.lastGood ? hms(st.lastGood) : '없음') + ')';
+    b.style.display = lost ? 'block' : 'none';
+  }
+
+  // ── SOS alert screen ──
+  function unacked() {
+    var d = st.data;
+    if (!d) return [];
+    var a = loadAck();
+    return d.sos.filter(function (s) { return s.active && !a[s.key]; });   // the filters never hide an emergency
+  }
+
+  function refreshOverlay() {
+    var list = unacked(), o = $('alertOverlay');
+    if (!list.length) { o.style.display = 'none'; o.innerHTML = ''; st.ovSig = ''; return list; }
+    var sig = list.map(function (s) { return s.key + (s.stale ? '!' : ''); }).join(',') + '|' + soundRunning();
+    if (sig === st.ovSig) return list;
+    st.ovSig = sig;
+    o.style.display = 'block';
+    var d = st.data;
+    o.innerHTML = '<h2>🚨 구조 요청 ' + list.length + '건 — 확인하세요</h2>' +
+      (soundRunning() ? '' : '<div class="o-sound">소리가 꺼져 있어요 <button type="button" data-act="sound">소리 켜기</button></div>') +
+      list.map(function (s) {
+        return '<div class="oc">' +
+          '<div class="o-who">' + esc(s.name || '이름 없음') + ' · ' + esc(s.who) +
+          (s.stale ? ' <span class="tag stale">1시간 넘음 · 기기 꺼짐 의심</span>' : '') + '</div>' +
+          '<div class="o-line">장소 <b>' + esc(place(d.sc, s.floor, s.proc)) + '</b></div>' +
+          '<div class="o-line">' + (s.beacon ? '가까운 비콘: <b>' + esc(s.beacon) + '</b>' : '위치(비콘) 정보 없음') + '</div>' +
+          '<div class="o-line">원인 <b>' + esc(s.trigger) + '</b></div>' +
+          '<div class="o-t">발생 ' + hms(s.createdAt) + ' · 경과 <span class="el" data-t="' + esc(s.createdAt) + '">' +
+          elapsed(nowMs() - s.createdAt) + '</span></div>' +
+          '<div class="o-btns"><button type="button" data-act="ack" data-key="' + esc(s.key) + '">확인 — 대응 시작</button>' +
+          '<a class="call" href="tel:119" target="_top">119 전화</a></div></div>';
+      }).join('') +
+      '<ol class="steps">' +
+      '<li>① 현장 출동(위치 표시)</li>' +
+      '<li>② 의식·호흡 확인 — 반응이 없거나 호흡이 이상하면 119 · 심폐소생술 · AED(심정지는 4분 안)</li>' +
+      '<li>③ 넘어짐이면 머리·목을 움직이지 않기</li>' +
+      '<li>④ 한쪽 마비·말 어눌함(뇌졸중 의심)이면 바로 119(4.5시간 안 병원)</li>' +
+      '</ol>';
+    return list;
+  }
+
+  function ack(key) {
+    var a = loadAck();
+    a[key] = Date.now();
+    saveAck(a);
+    refreshOverlay();
+    render();
+  }
+
+  // ── sound (WebAudio only; the preference lives in localStorage: '1' = on) ──
+  function soundOn() { return sget('sa_sound') === '1'; }
+  function soundRunning() { return soundOn() && !!st.audio && st.audio.state === 'running'; }
+
+  function sirenCycle() {
+    try {
+      var ctx = st.audio;
+      if (!ctx || ctx.state !== 'running') return;
+      var t = ctx.currentTime;
+      [[0, 960], [0.45, 720]].forEach(function (p) {
+        var o = ctx.createOscillator(), g = ctx.createGain();
+        o.type = 'square'; o.frequency.value = p[1];
+        g.gain.setValueAtTime(0.0001, t + p[0]);
+        g.gain.exponentialRampToValueAtTime(0.3, t + p[0] + 0.03);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + p[0] + 0.42);
+        o.connect(g); g.connect(ctx.destination);
+        o.start(t + p[0]); o.stop(t + p[0] + 0.45);
+      });
+    } catch (e) { /* sound is optional */ }
+  }
+
+  function enableSound(test) {
+    try {
+      if (!st.audio) st.audio = new (window.AudioContext || window.webkitAudioContext)();
+      sset('sa_sound', '1');
+      Promise.resolve(st.audio.resume()).then(function () {
+        if (test) sirenCycle();
+        updateSoundUi();
+        refreshOverlay();
+      }, function () { updateSoundUi(); });
+    } catch (e) { /* no audio support */ }
+    updateSoundUi();
+  }
+
+  function disableSound() {
+    sset('sa_sound', '0');
+    try { if (st.audio) st.audio.suspend(); } catch (e) { /* ignore */ }
+    updateSoundUi();
+    refreshOverlay();
+  }
+
+  function updateSoundUi() {
+    $('soundBar').style.display = soundRunning() ? 'none' : 'block';
+    $('soundBtn').textContent = soundOn() ? '알림음 켜짐' : '알림음 켜기';
+    $('soundBtn').className = soundOn() ? 'on' : '';
+  }
+
+  // The first click or key of a later visit resumes the sound when the preference is on
+  function armResume() {
+    if (!soundOn()) return;
+    var go = function () {
+      document.removeEventListener('pointerdown', go, true);
+      document.removeEventListener('keydown', go, true);
+      if (soundOn() && !soundRunning()) enableSound(false);
+    };
+    document.addEventListener('pointerdown', go, true);
+    document.addEventListener('keydown', go, true);
+  }
+
+  // One 1-second ticker: elapsed text, the siren cycle and the connection check
+  function tick() {
+    var t = nowMs();
+    Array.prototype.forEach.call(document.querySelectorAll('.el'), function (e) {
+      e.textContent = elapsed(t - Number(e.getAttribute('data-t')));
+    });
+    if (soundOn() && st.audio && st.audio.state === 'suspended') {
+      try { st.audio.resume().catch(function () {}); } catch (e) { /* needs a click */ }
+    }
+    var list = refreshOverlay();
+    if (list.length && soundRunning()) sirenCycle();
+    updateSoundUi();
+    checkConn();
+  }
+
+  // ── tables ──
   function render() {
     var d = st.data;
     if (!d) return;
     var now = d.now;
-    var sos = d.sos.filter(inScope);
+    var acked = loadAck();
+    var sos = d.sos.filter(sosScope);
     var active = sos.filter(function (s) { return s.active; });
     var sessions = d.sessions.filter(inScope);
     var alive = sessions.filter(function (s) { return s.alive; });
@@ -227,7 +451,6 @@
     $('kAlive').textContent = alive.length;
     $('kLost').textContent = lost.length;
     $('kAlerts').textContent = dn + ' / ' + (hour.length - dn);
-    document.title = (active.length ? '🚨(' + active.length + ') ' : '') + 'SafeAlert 관제 ' + d.sc;
 
     var b = $('banner');
     if (active.length) {
@@ -242,10 +465,12 @@
     $('sosList').innerHTML = active.length ? active.map(function (s) {
       return '<div class="sos">' +
         '<div class="who">🚨 ' + esc(s.name || '이름 없음') + ' · ' + esc(s.who) +
-        (s.stale ? ' <span class="tag stale">1시간 넘음 · 기기 꺼짐 의심</span>' : '') + '</div>' +
+        (s.stale ? ' <span class="tag stale">1시간 넘음 · 기기 꺼짐 의심</span>' : '') +
+        (acked[s.key] ? ' <span class="tag ok">확인 ' + hm(acked[s.key]) + ' (이 화면)</span>' : '') + '</div>' +
         '<div class="line"><b>' + esc(s.trigger) + '</b> · ' + esc(scope(d.sc, s.floor, s.proc)) + '</div>' +
         '<div class="line">' + (s.beacon ? '가까운 비콘: <b>' + esc(s.beacon) + '</b>' : '위치(비콘) 정보 없음') + '</div>' +
-        '<div class="t">시작 ' + hms(s.createdAt) + ' · ' + ago(now, s.createdAt) + ' 경과</div></div>';
+        '<div class="t">시작 ' + hms(s.createdAt) + ' · <span class="el" data-t="' + esc(s.createdAt) + '">' +
+        elapsed(nowMs() - s.createdAt) + '</span> 경과</div></div>';
     }).join('') : '<div class="empty">진행 중인 구조 요청이 없습니다.</div>';
 
     // Collision alerts of the last hour, grouped by the phone that recorded them
@@ -296,40 +521,31 @@
     }).join('') : '<tr><td class="empty">최근 24시간 끝난 구조 요청이 없습니다.</td></tr>';
   }
 
-  function beep() {
-    try {
-      var ctx = st.audio;
-      if (!ctx) return;
-      [0, 0.35, 0.7].forEach(function (at) {
-        var o = ctx.createOscillator(), g = ctx.createGain();
-        o.type = 'square'; o.frequency.value = 880;
-        g.gain.setValueAtTime(0.0001, ctx.currentTime + at);
-        g.gain.exponentialRampToValueAtTime(0.25, ctx.currentTime + at + 0.02);
-        g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + at + 0.25);
-        o.connect(g); g.connect(ctx.destination);
-        o.start(ctx.currentTime + at); o.stop(ctx.currentTime + at + 0.3);
-      });
-    } catch (e) { /* sound is optional */ }
-  }
-
   fillSelect($('floor'), FLOORS, '전체 층');
   fillSelect($('proc'), PROCS, '전체 공정');
   $('floor').onchange = function () { st.floor = this.value; render(); };
   $('proc').onchange = function () { st.proc = this.value; render(); };
-  $('site').onchange = function () { st.sc = this.value; st.seen = {}; st.first = true; load(); };
+  $('site').onchange = function () {
+    st.sc = this.value; st.data = null; st.prev = null;   // nothing of the old site stays on screen
+    refreshOverlay();
+    load();
+  };
   $('reloadBtn').onclick = load;
-  $('soundBtn').onclick = function () {
-    st.sound = !st.sound;
-    if (st.sound && !st.audio) {
-      try { st.audio = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { st.sound = false; }
-    }
-    if (st.sound) beep();   // a test beep confirms the speaker works
-    this.textContent = st.sound ? '알림음 켜짐' : '알림음 켜기';
-    this.className = st.sound ? 'on' : '';
+  $('soundBtn').onclick = function () { if (soundOn()) disableSound(); else enableSound(true); };
+  $('soundBarBtn').onclick = function () { enableSound(true); };
+  $('alertOverlay').onclick = function (ev) {
+    var el = ev.target && ev.target.closest ? ev.target.closest('[data-act]') : null;
+    if (!el) return;
+    if (el.getAttribute('data-act') === 'ack') ack(el.getAttribute('data-key'));
+    else if (el.getAttribute('data-act') === 'sound') enableSound(true);
   };
   document.addEventListener('visibilitychange', function () { if (!document.hidden) load(); });
+  armResume();
+  updateSoundUi();
   load();
-  setInterval(function () { if (!document.hidden) load(); }, REFRESH_MS);
+  // Hidden tabs keep refreshing and ticking: the siren must still sound when the page is behind other windows
+  setInterval(load, REFRESH_MS);
+  setInterval(tick, 1000);
 </script>
 <? } ?>
 </body>
