@@ -18,6 +18,7 @@
       "alerts": {
         "$a": {
           "$b": {
+            ".read": "auth != null",
             ".indexOn": ["timestamp"],
             ".write": "auth != null && !data.exists() && $site.matches(/^[A-Za-z0-9_-]{1,32}$/) && $a.matches(/^[0-9]{8}$/)",
             ".validate": "!($a.matches(/^[0-9]{8}$/) && !$b.matches(/^[0-9]{8}$/)) || newData.hasChildren(['timestamp','deviceId','walkerId','rssi','alertLevel','myRole','peerRole','site','uid'])",
@@ -178,6 +179,7 @@
       },
       "hb": {
         "$sc": {
+          ".read": "auth != null",
           ".indexOn": ["last"],
           "$sid": {
             ".write": "auth != null && $site.matches(/^[A-Za-z0-9_-]{1,32}$/) && $sc.matches(/^[A-Z0-9_-]{1,12}$/) && $sid.matches(/^[A-Za-z0-9_-]{1,40}$/) && newData.exists() && newData.child('uid').val() === auth.uid && (!data.exists() || (data.child('uid').val() === auth.uid && !data.child('end').exists()))",

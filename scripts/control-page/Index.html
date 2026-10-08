@@ -339,7 +339,7 @@
 <div id="toasts" class="toasts" aria-live="polite"></div>
 
 <script>
-  var FB = <?!= fb ?>;                  // from doGet: { apiKey, dbUrl, root, why, sites, start, error, errCode, pit, code, sc, open, anon, aliveMs, releaseMs }
+  var FB = <?!= fb ?>;                  // from doGet: { apiKey, dbUrl, root, why, sites, start, error, errCode, pit, code, sc, open, anon, aliveMs, maxAlerts, releaseMs }
   var FLOORS = ['1F', '2F', '3F', '4F', '5F', '6F', '7F', '8F', '9F', '10F'];
   var PROCS = ['OB', 'IB', 'ICQA', 'HUB', 'EHS', 'HR'];
   var SDK = 'https://www.gstatic.com/firebasejs/10.12.2/';
@@ -366,6 +366,7 @@
   var CODE_RE = new RegExp(FB.code || '^$');
   var SC_RE = new RegExp(FB.sc);        // the site-code form (Code.gs SC_RE), for the codes read from the address
   var ALIVE_MS = FB.aliveMs;            // a session silent this long has lost contact (Code.gs ALIVE_MS)
+  var MAX_ALERTS = FB.maxAlerts;        // newest alerts of a day's node read (Code.gs MAX_ALERTS)
   var st = { pick: ['*'], floor: '', proc: '', tab: 'id',   // pick: the centers checked under '사업장' ('*': every center, new ones too)
              sites: {},                 // site -> { recs: { key: SOS }, at: server time up to which the list is known }
              fail: {},                  // site -> { why, code } while the server path cannot read it
@@ -380,7 +381,8 @@
              fieldOkAt: -Infinity, sideAt: 0,   // the last good device answer (the check waits while they come); last side render
              alarmKeys: [], alarmLast: {}, alarmNote: {}, alarmSig: '',
              live: { state: 'off', why: '', code: '', connected: false, offset: 0, got: {}, lostAt: null,
-                     gen: 0, refs: [], loaded: {}, tries: 0, retry: 0, probing: false, goodAt: 0, listening: false, from: 0, qs: {} },
+                     gen: 0, refs: [], loaded: {}, tries: 0, retry: 0, probing: false, goodAt: 0, listening: false, from: 0, qs: {},
+                     fq: {}, fieldDenied: false },   // fq: center -> its live devices and alerts (liveFieldOn)
              denied: false, deniedAt: 0, err: '', ffail: {}, current: stamp(),   // ffail: center -> why its devices and alerts could not be read
              ackOpenAt: -Infinity, resuming: false, audio: null, siren: null, sirenBuf: null };
   var mem = {};                         // fallback when localStorage is unavailable (sandboxed or partitioned frames)
@@ -566,6 +568,7 @@
     L.listening = true;
     FB.sites.forEach(liveSite);
     if (!FB.sites.length && !st.err) liveUp();   // no center yet and nothing wrong: there is nothing to wait for
+    liveFieldSync();
   }
   function liveUp() {
     var L = st.live;
@@ -590,6 +593,100 @@
       notes.forEach(toast);
     }, function (e) { delete L.got[sc]; liveDown('read', e && e.code); });
   }
+  // ── live devices and alerts: the checked centers' monitoring sessions and approach alerts, straight from Firebase like
+  // the SOS, where the rules let a signed-in reader see them. Elsewhere (rules not deployed yet, a refused read, live
+  // down) the server path reads them as before. ──
+  function kstDay(ms) { var d = new Date(ms + 9 * HOUR_MS); return '' + d.getUTCFullYear() + pad(d.getUTCMonth() + 1) + pad(d.getUTCDate()); }
+  // Named the way the server path names them (Code.gs sessions_ / alerts_; ControlPageParityTest keeps the fields equal)
+  function toSessions(node) {
+    var latest = {}, out = [], recs = node && typeof node === 'object' ? node : {};
+    Object.keys(recs).forEach(function (k) {
+      var s = recs[k];
+      if (s && typeof s.uid === 'string' && typeof s.last === 'number' && !(latest[s.uid] >= s.last)) latest[s.uid] = s.last;
+    });
+    Object.keys(recs).forEach(function (k) {
+      var s = recs[k];
+      if (!s || typeof s.last !== 'number' || typeof s.start !== 'number' || typeof s.end === 'number') return;
+      if (typeof s.uid === 'string' && s.last < latest[s.uid]) return;   // a leftover: the same phone wrote later
+      out.push({ role: roleName(str(s.role), ''), floor: code(s.floor), proc: code(s.proc), start: s.start, last: s.last });
+    });
+    return out.sort(function (x, y) { return y.last - x.last; });
+  }
+  function toAlerts(node, sc) {
+    var out = [], prefix = sc + '-', recs = node && typeof node === 'object' ? node : {};
+    var strip = function (id) { id = str(id); return id.indexOf(prefix) === 0 ? id.slice(prefix.length) : id; };
+    Object.keys(recs).forEach(function (k) {
+      var a = recs[k];
+      if (!a || typeof a.timestamp !== 'number') return;
+      var me = strip(a.walkerId), peer = strip(a.deviceId);
+      out.push({ t: a.timestamp, me: me, peer: peer, level: a.alertLevel === 'DANGER' ? 'DANGER' : 'WARNING',
+                 myRole: roleName(str(a.myRole), me), peerRole: roleName(str(a.peerRole), peer), floor: code(a.floor), proc: code(a.proc) });
+    });
+    return out;
+  }
+  // A center's live part in the shape of a server answer, judged by the time now (the last 24 hours, newest first)
+  function liveFieldPart(sc) {
+    var q = st.live.fq[sc], now = nowMs();
+    var inWin = function (x) { return x.t >= now - DAY_MS && x.t <= now + HOUR_MS; };
+    var alerts = toAlerts(q.data.today, sc).concat(toAlerts(q.data.yday, sc)).filter(inWin).sort(function (x, y) { return y.t - x.t; });
+    var full = function (n) { return !!n && Object.keys(n).length >= MAX_ALERTS; };
+    var sessions = toSessions(q.data.hb).filter(function (x) { return x.last >= now - DAY_MS; });
+    sessions.forEach(function (x) { x.sc = sc; });
+    alerts.forEach(function (x) { x.sc = sc; });
+    return { sc: sc, live: true, now: now, at: now, sessions: sessions, alerts: alerts.slice(0, MAX_ALERTS),
+             cut: alerts.length > MAX_ALERTS || full(q.data.today) || full(q.data.yday) };
+  }
+  function liveFieldOk(sc) {
+    var L = st.live, q = L.fq[sc];
+    return L.state === 'on' && !L.fieldDenied && !!q && !!(q.got.hb && q.got.today && q.got.yday) &&
+      (L.connected || !L.lostAt || age(L.lostAt) < LIVE_GRACE_MS);
+  }
+  // Listens to the checked centers (and the day's alert node, anew after midnight); stops for the others
+  function liveFieldSync() {
+    var L = st.live;
+    if (!L.listening || L.fieldDenied) return;
+    var day = kstDay(nowMs()), want = {};
+    st.view.forEach(function (sc) { want[sc] = true; });
+    Object.keys(L.fq).forEach(function (sc) { if (!want[sc] || L.fq[sc].day !== day) liveFieldOff(sc); });
+    st.view.forEach(function (sc) { if (!L.fq[sc]) liveFieldOn(sc, day); });
+  }
+  function liveFieldOn(sc, day) {
+    var L = st.live, db = firebase.database(), from = nowMs() - DAY_MS, q = { day: day, refs: [], data: {}, got: {} };
+    L.fq[sc] = q;
+    var on = function (name, ref) {
+      q.refs.push(listen(ref, function (snap) {
+        if (L.fq[sc] !== q) return;
+        q.data[name] = snap.val();
+        q.got[name] = true;
+        if (!liveFieldOk(sc)) return;
+        st.fs[sc] = liveFieldPart(sc);
+        delete st.ffail[sc];
+        mergeField();
+        renderAll();
+      }, function (e) { liveFieldDenied(e); }));
+    };
+    // Sessions by their last stamp (hb/$sc has ".indexOn": ["last"]); alerts under the phones' Korean dates, today and
+    // yesterday, by time ("timestamp" index), the newest MAX_ALERTS of each
+    on('hb', db.ref(FB.root + '/hb/' + sc).orderByChild('last').startAt(from));
+    on('today', db.ref(FB.root + '/alerts/' + sc + '/' + day).orderByChild('timestamp').startAt(from).limitToLast(MAX_ALERTS));
+    on('yday', db.ref(FB.root + '/alerts/' + sc + '/' + kstDay(nowMs() - DAY_MS)).orderByChild('timestamp').startAt(from).limitToLast(MAX_ALERTS));
+  }
+  function liveFieldOff(sc) {
+    var L = st.live, q = L.fq[sc];
+    if (!q) return;
+    q.refs.forEach(function (r) { try { r.off(); } catch (e) { /* already gone */ } });
+    L.refs = L.refs.filter(function (r) { return q.refs.indexOf(r) < 0; });
+    delete L.fq[sc];
+  }
+  // The rules do not let this page read them (not deployed yet, or refused): the server path carries them until live
+  // starts again
+  function liveFieldDenied() {
+    var L = st.live;
+    if (L.fieldDenied) return;
+    L.fieldDenied = true;
+    Object.keys(L.fq).forEach(liveFieldOff);
+    if (!st.fieldTimer && !fieldCall.busy) loadField();
+  }
   // Drops every live listener (before a restart, or for a refused account); the library stays loaded and signed in
   function liveStop() {
     var L = st.live;
@@ -601,6 +698,8 @@
     L.probing = false;
     L.listening = false;
     L.qs = {};
+    L.fq = {};
+    L.fieldDenied = false;   // the next start tries the live devices and alerts again (the rules may be out by then)
     clearTimeout(L.retry);
     L.retry = 0;
   }
@@ -730,20 +829,25 @@
   }
   // A request during a call goes out right after it (sosCall says when there is nothing to ask)
   function loadSos() { call(sosCall); }
-  // Devices and alerts: one checked center at a time, in turn (centers not asked yet first, so the panel fills quickly).
-  // The daily read limit holds however many centers are checked, and a failing one never holds the others back.
+  // Devices and alerts from the server for the checked centers live does not carry: one center at a time, in turn (centers
+  // not asked yet first, so the panel fills quickly). The daily read limit holds however many centers are checked, and a
+  // failing one never holds the others back.
+  function fieldTodo() { return st.view.filter(function (sc) { return !liveFieldOk(sc); }); }
   function loadField() {
     clearTimeout(st.fieldTimer);   // one schedule: a direct call replaces the pending read, never adds a second loop
     st.fieldTimer = 0;
     if (document.hidden || st.denied || !st.view.length) return;
+    var todo = fieldTodo();
+    if (!todo.length) { nextField(FIELD_MS); return; }   // live carries every checked center: look again later
     // The center asked least recently goes next (never asked counts as oldest, in list order)
-    st.fieldSc = st.view.reduce(function (a, b) { return (st.asked[b] || 0) < (st.asked[a] || 0) ? b : a; });
+    st.fieldSc = todo.reduce(function (a, b) { return (st.asked[b] || 0) < (st.asked[a] || 0) ? b : a; });
     st.asked[st.fieldSc] = mono();
     call(fieldCall);
   }
   function fieldGap() {
-    if (st.view.some(function (sc) { return !st.asked[sc]; })) return 1000;
-    return st.view.length > 1 ? Math.max(ALL_GAP_MS, FIELD_MS / st.view.length) : FIELD_MS;
+    var todo = fieldTodo();
+    if (todo.some(function (sc) { return !st.asked[sc]; })) return 1000;
+    return todo.length > 1 ? Math.max(ALL_GAP_MS, FIELD_MS / todo.length) : FIELD_MS;
   }
   function nextField(ms) { clearTimeout(st.fieldTimer); st.fieldTimer = setTimeout(loadField, ms); }
   function reloadAll() { loadSos(); loadField(); }
@@ -773,6 +877,7 @@
     added.forEach(function (sc) { FB.sites.push(sc); if (st.live.listening) liveSite(sc); });
     FB.sites.sort();
     fillSites();
+    liveFieldSync();
     mergeField();
     renderAll();
     notes.forEach(toast);
@@ -788,6 +893,7 @@
     }
     delete st.live.got[sc];
     delete st.asked[sc];   // back again later: read at once, like any new center
+    liveFieldOff(sc);
     delete st.sites[sc];
     delete st.fs[sc];
     delete st.fail[sc];
@@ -865,7 +971,7 @@
     st.fieldOkAt = mono();
     setServerTime(d.now);
     checkSites(d.sites, sent);
-    if (FB.sites.indexOf(d.sc) >= 0) {   // not a center this page dropped meanwhile
+    if (FB.sites.indexOf(d.sc) >= 0 && !liveFieldOk(d.sc)) {   // a center still shown, and not carried by live (newer)
       d.sessions.forEach(function (x) { x.sc = d.sc; });
       d.alerts.forEach(function (x) { x.sc = d.sc; });
       st.fs[d.sc] = d;
@@ -887,9 +993,10 @@
   function mergeField() {
     var parts = st.view.map(function (sc) { return st.fs[sc]; }).filter(Boolean);
     if (!parts.length) { st.f = null; return; }
-    var f = { now: nowMs(), at: Infinity, sessions: [], alerts: [], cut: false, n: parts.length, total: st.view.length };
+    var f = { now: nowMs(), at: Infinity, sessions: [], alerts: [], cut: false, n: parts.length, total: st.view.length,
+              live: parts.every(function (p) { return p.live; }) };
     parts.forEach(function (p) {
-      if (p.at < f.at) f.at = p.at;
+      if (!p.live && p.at < f.at) f.at = p.at;   // '기준': the oldest part read from the server
       f.cut = f.cut || p.cut;
       f.sessions = f.sessions.concat(p.sessions);
       f.alerts = f.alerts.concat(p.alerts);
@@ -938,6 +1045,7 @@
     // This browser keeps the checks (a center's PC checks its center once); a tab opened with ?sc= keeps its own
     if (!st.fromUrl) sset('sa_site', st.pick.join(','));
     fillSites();
+    liveFieldSync();
     abandon(fieldCall);    // the old choice's call: its errors no longer count (an answer is still kept for its site)
     mergeField();          // what is known of the new choice shows at once, with its own '기준' time
     renderAll();
@@ -1171,7 +1279,7 @@
     stat('stLost', ready ? lost.length : null, 'warn');
     stat('stDanger', ready ? dn : null, 'crit');
     stat('stWarn', ready ? hour.length - dn : null, '');
-    $('fieldAt').textContent = ready ? '기기·경보 ' + (f.total > 1 ? f.n + '/' + f.total + '곳 · ' : '') + hms(f.at) + ' 기준' : '';
+    $('fieldAt').textContent = ready ? '기기·경보 ' + (f.total > 1 ? f.n + '/' + f.total + '곳 · ' : '') + (f.live ? '실시간' : hms(f.at) + ' 기준') : '';
 
     var cnt = {};
     alive.forEach(function (s) { var k = (all ? s.sc : '') + '|' + s.role + '|' + s.floor + '|' + s.proc; cnt[k] = (cnt[k] || 0) + 1; });
@@ -1319,7 +1427,15 @@
       loadSos();
     }
     dropOld();
-    if (st.f && mono() - st.sideAt > 30000) renderSide();   // devices fall silent with time alone: '연락 끊김' moves on its own
+    // Every 30 s: devices fall silent and alerts age with time alone, and a new day has its own alert node
+    if (mono() - st.sideAt > 30000) {
+      st.sideAt = mono();
+      liveFieldSync();
+      st.view.forEach(function (sc) { if (liveFieldOk(sc)) st.fs[sc] = liveFieldPart(sc); });
+      mergeField();
+      renderSide();
+      renderAlerts();
+    }
     // A context the browser suspended may come back without a tap once the page has had one. One attempt at a time: a
     // resume the browser does not allow yet stays pending, and taps and keys try on their own meanwhile.
     if (soundPref() && st.audio && st.audio.state !== 'running') {

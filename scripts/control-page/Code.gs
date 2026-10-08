@@ -43,7 +43,7 @@
  *                            every center in the database, found automatically; you do not need to know the codes.
  *     - FIREBASE_ROOT      : (optional) database root; empty means wf11.
  *     - FIREBASE_WEB_API_KEY : (needed for live SOS) Firebase console → gear 'Project settings' ('프로젝트 설정') → 'General'
- *                            ('일반') → 'Web API Key' ('웹 API 키'). With it SOS reach the page within seconds; without
+ *                            ('일반') → 'Web API Key' ('웹 API 키'). With it SOS, devices and alerts reach the page within seconds; without
  *                            it, or if Google refuses the key (for example a key restricted to Android apps), the page
  *                            reads SOS through this script every 30 seconds and says why at the top. Each open page
  *                            holds one Firebase connection; the free plan allows 100 at a time for the whole project,
@@ -87,7 +87,10 @@
  * the pages within a minute.
  *
  * Daily limits of the account that runs the script (with 'Execute as' = 'Me' every viewer shares them): about 20,000
- * database reads (UrlFetch) and 50,000 reads of the script properties. Live SOS (the page shows '실시간') use neither.
+ * database reads (UrlFetch) and 50,000 reads of the script properties. Live SOS (the page shows '실시간') use neither,
+ * and neither do the checked centers' devices and alerts once the database rules let a signed-in reader see them (they
+ * come live then, '기기·경보 실시간' on the page; the rules go out with an app release). Until then, or where that read is
+ * refused, the script reads them as follows.
  * The script's reads are shared by all open tabs and viewers through the script cache: devices and alerts of a center
  * for 130 seconds (yesterday's alerts for 10 minutes). A page reads one checked center a minute (one center: every 2
  * minutes), which is about 3,000-4,500 reads a day; pages watching the same centers share them, and one center costs at
@@ -153,6 +156,7 @@ function doGet(e) {
     open: !!c.open,                             // ADMIN_EMAILS empty: anyone with the address sees the page
     anon: !t.viewer,                            // Google does not tell this deployment who is viewing
     aliveMs: ALIVE_MS,
+    maxAlerts: MAX_ALERTS,
     releaseMs: SOS_RELEASE_MS
   }).replace(/</g, '\\u003c');   // nothing in it can close the page's script tag
   return t.evaluate()
