@@ -1,11 +1,15 @@
 /*
- * 'SafeAlert 관제': read-only live view of the sites in SITES
- * Shows the active SOS requests of every site in SITES (full-screen alarm + siren until acknowledged in the browser), the
- * SOS of every site that ended in the last 24 hours, and, for the chosen site, devices monitoring now (and lost contact)
- * and collision alerts by device ID, filtered by floor / process.
+ * 'SafeAlert 관제': read-only live view of SOS requests, devices and collision alerts. One installation serves a center
+ * and the central control room alike:
+ *  - …/exec?sc=WF11 (or ?sc=WF11,WF12): those sites only. A center's control room bookmarks its own code.
+ *  - …/exec: every site this installation covers. With SITES empty that is every site code found in the database (SOS,
+ *    monitoring sessions or alerts); an open page takes a new center within about two minutes, without a reload.
+ * The page shows the active SOS of its sites (full-screen alarm + siren until acknowledged in the browser), their SOS
+ * that ended in the last 24 hours, and, for the site chosen on it, devices monitoring now (and lost contact) and
+ * collision alerts by device ID, filtered by floor / process.
  * The SOS lists come live from Firebase: the page signs in anonymously, as the app does, and listens to them (the rules
- * let any signed-in client read SOS). Devices and alerts are read by this script with the database secret kept in
- * Script Properties. Nothing is written anywhere; the page cannot change or switch off anything.
+ * let any signed-in client read SOS). Devices, alerts and the site list are read by this script with the database
+ * secret kept in Script Properties. Nothing is written anywhere; the page cannot change or switch off anything.
  *
  * Setup (screen labels are written 'English' ('한국어'), as in the SOS mail script). Each step says why, what Google
  * may warn, and what you have after it.
@@ -28,9 +32,12 @@
  *     'Save script properties' ('스크립트 속성 저장'):
  *     - FIREBASE_DB_URL    : same value as in the SOS mail script
  *     - FIREBASE_DB_SECRET : same value as in the SOS mail script
- *     - ADMIN_EMAILS       : Google accounts that may open this page, comma separated. Include your own account,
- *                            otherwise the page refuses you too.
- *     - SITES              : site codes to show, comma separated (e.g. WF11). The first one opens by default.
+ *     - ADMIN_EMAILS       : Google accounts that may open this page, comma separated. 'name@x.com' sees every site;
+ *                            'name@x.com:WF11' sees WF11 only (repeat the entry for more sites, e.g. a center's
+ *                            admins). Include your own account, otherwise the page refuses you too.
+ *     - SITES              : (optional) site codes this installation covers, comma separated (e.g. WF11). Empty =
+ *                            every site in the database, found automatically (the central control room); you do not
+ *                            need to know the codes. A center that installs its own copy puts its own code here.
  *     - FIREBASE_ROOT      : (optional) database root; empty means wf11.
  *     - FIREBASE_WEB_API_KEY : (recommended) Firebase console → gear 'Project settings' ('프로젝트 설정') → 'General'
  *                            ('일반') → 'Web API Key' ('웹 API 키'). With it SOS reach the page within seconds; without
@@ -57,10 +64,11 @@
  *     ADMIN_EMAILS check); the page needs both. If it shows checkboxes, tick 'Select all' ('모두 선택'). Then press
  *     'Allow' ('허용') or 'Continue' ('계속'). With 'User accessing the web app' every admin sees this once, on first opening.
  *     After it: the deployment shows the 'Web app' ('웹 앱') URL, https://script.google.com/macros/s/…/exec.
- *  8. Press 'Copy' ('복사') next to that URL, then 'Done' ('완료'). Open the URL in the control-room browser (add ?sc=WF11
- *     to open a site directly), bookmark it, and press '경보음 켜기' on the page once.
+ *  8. Press 'Copy' ('복사') next to that URL, then 'Done' ('완료'). Open it in the control-room browser, bookmark it, and
+ *     press '경보음 켜기' on the page once. A center's control room adds its code (…/exec?sc=WF11: that page watches and
+ *     alarms for WF11 only); the central control room uses the URL as it is (every site).
  *     Why: that URL is the control page (the script editor is not), and browsers keep a page silent until a click.
- *     After it: the bookmarked page opens for the accounts in ADMIN_EMAILS; others see a refusal.
+ *     After it: the bookmarked page opens for the accounts in ADMIN_EMAILS, each with its own sites; others are refused.
  *
  * Updating later: paste the new files, save, then 'Deploy' ('배포') → 'Manage deployments' ('배포 관리') → pencil 'Edit'
  * ('수정') → 'Version' ('버전'): 'New version' ('새 버전') → 'Deploy' ('배포'). Then reload every open control-page tab.
@@ -69,9 +77,10 @@
  *
  * Live SOS use none of the daily read limit (quota) of UrlFetch. If the page says the limit is used up, wait: it
  * recovers within 24 hours. The reads of this script are shared by all open tabs and viewers through the script cache:
- * devices and alerts of a site for 130 seconds (yesterday's alerts for 10 minutes) and, only while the live connection
- * is down, the SOS list of each site for 20 seconds (longer with 4 sites or more, so that all sites together stay under
- * about 13,000 reads a day).
+ * devices and alerts of a site for 130 seconds (yesterday's alerts for 10 minutes), the site list (SITES empty) for 2
+ * minutes and, only while the live connection is down, the SOS list of each site for 20 seconds (longer with 4 sites or
+ * more, so that all sites together stay under about 13,000 reads a day: with 50 sites a page without the live
+ * connection sees a new SOS only every few minutes).
  */
 
 var ALIVE_MS = 15 * 60 * 1000;        // A session writes 'last' every 5 min; 15 min without one = contact lost
@@ -80,6 +89,8 @@ var HOUR_MS = 3600 * 1000;
 var SOS_RELEASE_MS = 3600 * 1000;     // The app releases an unanswered SOS one hour after the server got it
 var SOS_MIN_TTL_S = 20;               // without live SOS: one read of a site's list serves every tab this long (seconds)
 var SOS_DAILY_READS = 13000;          // SOS reads of all sites together stay under this a day (UrlFetch quota: 20,000)
+var SITES_TTL_S = 120;                // the site list found in the database (SITES empty) is shared this long
+var SITES_KEEP_S = 6 * 3600;          // the last list found, used while the database cannot be read
 var FIELD_TTL_S = 130;                // sessions + alerts shared this long; past the 2-minute poll, so a lone tab reads every 2nd time
 var YDAY_TTL_S = 600;                 // yesterday's alerts: phones that were offline still upload into it after midnight
 var NO_INDEX_TTL_S = 1800;            // how long to remember that the rules lack an index (until a release deploys them)
@@ -99,10 +110,13 @@ var PIT_NAMES = { CB: 'Counterbalance', RT: 'Reach Truck', HR: 'High Reach', OP:
 function doGet(e) {
   var cfg = config_();
   var t = HtmlService.createTemplateFromFile('Index');
-  t.denied = !allowed_(cfg);
+  // The page's sites: ?sc=WF11 (or WF11,WF12) for a center, nothing for every site the viewer may see
+  var want = String((e && e.parameter && e.parameter.sc) || '').toUpperCase().replace(/[^A-Z0-9_,-]/g, '') || 'ALL';
+  var c = setup_(want);
+  t.denied = c.error === 'denied';
   t.viewer = viewer_();
-  var sites = sites_(cfg), sc = String((e && e.parameter && e.parameter.sc) || '').toUpperCase();
-  t.initialSc = sites.indexOf(sc) >= 0 ? sc : sites[0] || '';   // only a site in SITES reaches the page
+  var sites = c.sites || [];
+  t.initialSc = sites[0] || '';
   // What the page needs to listen to the SOS lists itself. None of it is secret: the app carries the same values.
   var key = cfg.get('FIREBASE_WEB_API_KEY'), db = db_(cfg);
   t.fb = JSON.stringify({
@@ -111,6 +125,8 @@ function doGet(e) {
     root: db.root,
     why: !API_KEY_RE.test(key) ? 'nokey' : !db.url || !db.root ? 'setup' : '',   // why the live path cannot start
     sites: sites,
+    want: want,                                 // sent back with every call: the server keeps the page to these sites
+    central: !!c.central && want === 'ALL',     // every site in the database: the page takes new ones as they appear
     pit: PIT_NAMES,
     code: CODE_RE.source,
     releaseMs: SOS_RELEASE_MS
@@ -126,8 +142,8 @@ function doGet(e) {
  * never passed on. lists[site] = { at: when it was read, recs: the records as the database holds them }; a site that
  * could not be read is in `failed` with the reason; only when no site could be read is the whole answer an error.
  */
-function getSosLists() {
-  var c = setup_();
+function getSosLists(want) {
+  var c = setup_(want);
   if (c.error) return { ok: false, error: c.error };
   var at = Date.now(), ttl = sosTtl_(c.sites.length), lists = {}, urls = {};
   c.sites.forEach(function (s) {
@@ -152,10 +168,11 @@ function getSosLists() {
   return { ok: true, sites: c.sites, now: Date.now(), lists: lists, failed: failed };
 }
 
-/** The page's periodic check of its viewer (still in ADMIN_EMAILS?) and of SITES (live SOS never pass through here). */
-function ping() {
-  var cfg = config_();
-  return allowed_(cfg) ? { ok: true, sites: sites_(cfg) } : { ok: false, error: 'denied' };
+/** The page's periodic check of its viewer (still in ADMIN_EMAILS?) and of its sites (live SOS never pass through here). */
+function ping(want) {
+  var c = setup_(want);
+  if (c.error === 'denied') return { ok: false, error: 'denied' };
+  return { ok: true, sites: c.sites.length || c.error === 'nosite' ? c.sites : null };   // null: not known just now
 }
 
 /**
@@ -163,11 +180,11 @@ function ping() {
  * after a failed call, and when the site is switched or the tab shown again; shared through the cache by every tab and
  * viewer for FIELD_TTL_S. A site no longer in SITES gets the first one (the page then asks for a reload).
  */
-function getField(sc) {
-  var c = setup_();
+function getField(sc, want) {
+  var c = setup_(want);
   if (c.error) return { ok: false, error: c.error };
   sc = String(sc || '').toUpperCase();
-  if (c.sites.indexOf(sc) < 0) sc = c.sites[0];
+  if (c.sites.indexOf(sc) < 0) sc = c.sites[0];   // only a site of this page that the viewer may see
   var key = 'field|' + c.base + sc, part = cacheGet_(c.cache, key);
   if (!part) {
     part = readField_(c, sc, Date.now());
@@ -311,15 +328,61 @@ function config_() {
   return { get: function (k) { return String(all[k] == null ? '' : all[k]).trim(); } };
 }
 
-/** The viewer check, then everything a read needs: { error } when refused or not set up. */
-function setup_() {
-  var cfg = config_();
-  if (!allowed_(cfg)) return { error: 'denied' };   // before any cache read
-  var db = db_(cfg), secret = cfg.get('FIREBASE_DB_SECRET'), sites = sites_(cfg);
-  if (!db.url || !db.root || !secret || !sites.length) return { error: 'setup' };
-  var base = db.url + '/' + db.root + '/';   // holds no secret: also the cache namespace
-  var auth = 'auth=' + encodeURIComponent(secret);
-  return { sites: sites, base: base, cache: cache_(), read: function (path, query) { return base + path + '.json?' + auth + (query || ''); } };
+/**
+ * The viewer check, then everything a read needs, for the sites a page asked for (want: 'ALL' or a list): { sites, base,
+ * cache, read, central }, with error set when refused ('denied'), not set up ('setup'), when the site list could not be
+ * read, or when none of the sites is the viewer's ('nosite'). sites is still filled from SITES when only the secret is
+ * missing (the page's live path needs no secret).
+ */
+function setup_(want) {
+  var cfg = config_(), acc = access_(cfg);
+  if (!acc) return { error: 'denied', sites: [] };   // before any cache read
+  var db = db_(cfg), secret = cfg.get('FIREBASE_DB_SECRET'), listed = sites_(cfg);
+  var c = { central: !listed.length };
+  if (db.url && db.root && secret) {
+    c.base = db.url + '/' + db.root + '/';   // holds no secret: also the cache namespace
+    var auth = 'auth=' + encodeURIComponent(secret);
+    c.cache = cache_();
+    c.read = function (path, query) { return c.base + path + '.json?' + auth + (query || ''); };
+  }
+  var all = listed.length ? listed : c.read ? found_(c) : null;
+  c.sites = all ? scope_(all, acc, want) : [];
+  if (!c.read) c.error = 'setup';
+  else if (!all) c.error = c.found || 'fetch';
+  else if (!c.sites.length) c.error = 'nosite';
+  return c;
+}
+
+/** The sites a call covers: those the page asked for ('ALL' or a list) among those that exist, that the viewer may see. */
+function scope_(all, acc, want) {
+  var w = want && want !== 'ALL' ? list_(String(want).toUpperCase()) : null;
+  return all.filter(function (s) { return (!w || w.indexOf(s) >= 0) && (acc.all || acc.sites.indexOf(s) >= 0); });
+}
+
+/**
+ * Every site code with SOS, monitoring sessions or alerts in the database (keys only: shallow reads), shared for
+ * SITES_TTL_S. A failed read falls back to the last list found; with none, null and c.found says why.
+ */
+function found_(c) {
+  var hit = cacheGet_(c.cache, 'sites2|' + c.base);
+  if (hit) return hit;
+  var out = [], got = null;
+  try {
+    got = fetchAll_({ sos: c.read('sos', '&shallow=true'), hb: c.read('hb', '&shallow=true'), alerts: c.read('alerts', '&shallow=true') });
+  } catch (err) {
+    c.found = failure_(err);
+  }
+  var whole = !!got && Object.keys(got).every(function (n) {
+    var node = ok_(got[n]);
+    if (node === undefined) { c.found = got[n].getResponseCode() !== 200 ? 'http' : 'fetch'; return false; }
+    Object.keys(node || {}).forEach(function (s) { if (SC_RE.test(s) && out.indexOf(s) < 0) out.push(s); });
+    return true;
+  });
+  if (!whole) return cacheGet_(c.cache, 'sites2last|' + c.base);
+  out.sort();
+  cacheJson_(c.cache, 'sites2|' + c.base, out, SITES_TTL_S);
+  cacheJson_(c.cache, 'sites2last|' + c.base, out, SITES_KEEP_S);
+  return out;
 }
 
 /** SITES as valid site codes; a site listed twice counts once. */
@@ -338,10 +401,21 @@ function viewer_() {
   return String(Session.getActiveUser().getEmail() || '').toLowerCase();
 }
 
-/** Only accounts listed in ADMIN_EMAILS. An unknown viewer (blank email) is always refused. */
-function allowed_(cfg) {
-  var who = viewer_();
-  return !!who && list_(cfg.get('ADMIN_EMAILS').toLowerCase()).indexOf(who) >= 0;
+/**
+ * What the viewer may see, from ADMIN_EMAILS: null when not listed (an unknown viewer, blank email, always is), { all }
+ * for an entry 'name@x.com', or { sites } for entries 'name@x.com:WF11' (one per site).
+ */
+function access_(cfg) {
+  var who = viewer_(), acc = null;
+  if (!who) return null;
+  list_(cfg.get('ADMIN_EMAILS').toLowerCase()).forEach(function (entry) {
+    var at = entry.indexOf(':'), sc = at < 0 ? '' : entry.slice(at + 1).toUpperCase();
+    if ((at < 0 ? entry : entry.slice(0, at)) !== who) return;
+    acc = acc || { all: false, sites: [] };
+    if (at < 0) acc.all = true;
+    else if (SC_RE.test(sc) && acc.sites.indexOf(sc) < 0) acc.sites.push(sc);
+  });
+  return acc;
 }
 
 /** One batch of reads by name. Throws like UrlFetchApp.fetchAll (network failure, daily limit). */
