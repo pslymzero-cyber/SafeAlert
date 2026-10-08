@@ -320,6 +320,7 @@
   var PROBE_MS = 60000;                 // a small live read every minute ...
   var PROBE_WAIT_MS = 15000;            // ... must come back this soon, or the line counts as dead
   var FIELD_MS = 120000;                // devices and alerts of the chosen site: every 2 minutes while the tab is visible
+  var ALL_GAP_MS = 30000;               // '전체': one site's devices and alerts at a time, every 30 s at most (daily read limit)
   var FIELD_RETRY_MS = 30000;           // after a failed read of devices and alerts
   var PING_MS = 300000;                 // is this account still in ADMIN_EMAILS, and its sites the same (live SOS never ask the script)
   var CENTRAL_PING_MS = 60000;          // a page for every site also asks for new sites this often
@@ -337,11 +338,13 @@
   var st = { sc: '<?!= initialSc ?>', floor: '', proc: '', tab: 'id',
              sites: {},                 // site -> { recs: { key: SOS }, at: server time up to which the list is known }
              fail: {},                  // site -> { why, code } while the server path cannot read it
-             f: null,                   // devices and alerts of st.sc: { sc, now, at, sessions, alerts, cut }
+             f: null,                   // what the field panel shows (mergeField): { now, at, sessions, alerts, cut, n, total }
+             fs: {},                    // site -> its last devices-and-alerts answer
+             fieldSc: '', fieldTimer: 0,   // the site the field call reads, the next read
              alarmKeys: [], alarmLast: {}, alarmSig: '',
              live: { state: 'off', why: '', code: '', connected: false, offset: 0, got: {}, lostAt: null,
                      gen: 0, refs: [], loaded: {}, tries: 0, retry: 0, probing: false, goodAt: 0, listening: false, from: 0 },
-             skew: 0, denied: false, deniedAt: 0, err: '', fieldErr: '', sitesChanged: false, current: stamp(), fieldRetry: 0,
+             skew: 0, denied: false, deniedAt: 0, err: '', fieldErr: '', sitesChanged: false, current: stamp(),
              ackOpenAt: -Infinity, resuming: false, audio: null, siren: null, sirenBuf: null };
   var mem = {};                         // fallback when localStorage is unavailable (sandboxed or partitioned frames)
   var ack = readAck();                  // SOS key -> time it was acknowledged in this browser
@@ -388,6 +391,9 @@
   // it shows under any filter; '미지정' shows only those. Active SOS are never filtered.
   function sosMatch(sel, v) { return sel === '-' ? !v : (!v || match(sel, v)); }
   function sosInScope(s) { return sosMatch(st.floor, s.floor) && sosMatch(st.proc, s.proc); }
+  // The site chosen on the page ('ALL' = every site of the page) decides every alert shown, the SOS alarm included
+  function inView(s) { return st.sc === 'ALL' || s.sc === st.sc; }
+  function allowAll() { return FB.central || FB.sites.length > 1; }
   function hourAlerts(f) { return f.alerts.filter(function (a) { return f.now - a.t <= HOUR_MS && inScope(a); }); }
   function setHtml(el, html) { if (el.__html !== html) { el.innerHTML = html; el.__html = html; } }   // keeps selections when nothing changed
 
@@ -427,7 +433,7 @@
     if (node && typeof node === 'object') Object.keys(node).forEach(function (k) {
       var s = toSos(sc, k, node[k]), old = recs[k];
       if (!s || !inWindow(s) || (old && !old.active)) return;
-      if (old && !s.active) notes.push(sosLabel(s) + ' 구조 요청이 끝났습니다 (' + endedHow(s) + ')');
+      if (old && !s.active && inView(s)) notes.push(sosLabel(s) + ' 구조 요청이 끝났습니다 (' + endedHow(s) + ')');
       recs[k] = s;
     });
     st.sites[sc] = { recs: recs, at: Math.max(cur.at, at) };
@@ -442,7 +448,7 @@
       var r = st.sites[sc].recs;
       Object.keys(r).forEach(function (k) {
         if (inWindow(r[k])) return;
-        if (r[k].active) toast(sosLabel(r[k]) + ' 구조 요청이 24시간이 지나 목록에서 빠졌습니다 (해제 기록 없음)');
+        if (r[k].active && inView(r[k])) toast(sosLabel(r[k]) + ' 구조 요청이 24시간이 지나 목록에서 빠졌습니다 (해제 기록 없음)');
         delete r[k];
         gone++;
       });
@@ -455,10 +461,10 @@
     Object.keys(st.sites).forEach(function (sc) { var r = st.sites[sc].recs; Object.keys(r).forEach(function (k) { out.push(r[k]); }); });
     return out;
   }
-  // Active SOS of every site in SITES, oldest first (the alarm keeps its own order: a card never moves while it is up).
-  // The floor/process filters never hide an emergency.
+  // Active SOS of the chosen site (or every site), oldest first (the alarm keeps its own order: a card never moves while it
+  // is up). The floor/process filters never hide an emergency.
   function activeSos() {
-    return allSos().filter(function (s) { return s.active; }).sort(function (a, b) { return a.createdAt - b.createdAt; });
+    return allSos().filter(function (s) { return s.active && inView(s); }).sort(function (a, b) { return a.createdAt - b.createdAt; });
   }
 
   // ── live SOS: the page listens to every site's list in Firebase itself, signed in anonymously like the app ──
@@ -623,8 +629,8 @@
   // longer blocks the next one; an answer is used whenever it is newer than the last one used, also when it comes after
   // its replacement left; an error counts only for the latest call. ──
   function caller(send, data, fail) { return { send: send, data: data, fail: fail, seq: 0, used: 0, busy: false, at: null, timer: 0, again: false, fails: 0 }; }
-  var sosCall = caller(function (run) { run.getSosLists(FB.want); }, onSos, sosFailed);
-  var fieldCall = caller(function (run) { run.getField(st.sc, FB.want); }, onField, fieldFailed);
+  var sosCall = caller(function (run) { run.getSosLists(st.sc === 'ALL' ? FB.want : st.sc); }, onSos, sosFailed);
+  var fieldCall = caller(function (run) { run.getField(st.fieldSc, FB.want); }, onField, fieldFailed);
   // Only an answer to a check sent after the refusal lifts it: an older one says nothing about now
   var pingCall = caller(function (run) { run.ping(FB.want); }, function (d, sent) {
     checkSites(d.sites);
@@ -662,7 +668,21 @@
   }
   // SOS from the server only while the live path is not usable; a call in flight is as good as a new one
   function loadSos() { if (!liveOk() && !st.denied && !sosCall.busy) call(sosCall); }
-  function loadField() { if (!document.hidden && !st.denied) call(fieldCall); }
+  // Devices and alerts: the chosen site every 2 minutes. '전체' reads one site at a time, the one read longest ago first
+  // (every site quickly after loading), so the daily read limit holds however many sites there are.
+  function loadField() {
+    if (document.hidden || st.denied || !FB.sites.length) return;
+    var next = st.sc;
+    if (next === 'ALL') FB.sites.forEach(function (sc) { if (next === 'ALL' || fieldAge(sc) > fieldAge(next)) next = sc; });
+    st.fieldSc = next;
+    call(fieldCall);
+  }
+  function fieldAge(sc) { var p = st.fs[sc]; return p ? nowMs() - p.at : Infinity; }
+  function fieldGap() {
+    if (st.sc !== 'ALL') return FIELD_MS;
+    return FB.sites.some(function (sc) { return !st.fs[sc]; }) ? 1000 : Math.max(ALL_GAP_MS, FIELD_MS / FB.sites.length);
+  }
+  function nextField(ms) { clearTimeout(st.fieldTimer); st.fieldTimer = setTimeout(loadField, ms); }
   function reloadAll() { loadSos(); loadField(); }
 
   function errText(why, code) {
@@ -685,16 +705,17 @@
     var first = !st.sc;
     FB.sites.push(sc);
     FB.sites.sort();
-    if (first) st.sc = sc;
+    if (first) st.sc = allowAll() ? 'ALL' : sc;
     fillSites();
     if (st.live.listening) liveSite(sc);
     if (first) loadField();
   }
   function fillSites() {
-    $('site').innerHTML = FB.sites.map(function (s) { return '<option>' + esc(s) + '</option>'; }).join('');
+    $('site').innerHTML = (allowAll() ? '<option value="ALL">전체</option>' : '') +
+      FB.sites.map(function (s) { return '<option>' + esc(s) + '</option>'; }).join('');
     $('site').value = st.sc;
     $('scope').textContent = FB.central ? '전체 사업장 ' + FB.sites.length + '곳' : FB.sites.join(' · ');
-    $('fieldTitle').textContent = (st.sc ? st.sc + ' ' : '') + '현장 상태';   // devices and alerts are of one site
+    $('fieldTitle').textContent = (st.sc === 'ALL' ? '전체' : st.sc) + ' 현장 상태';
   }
 
   function onSos(d) {
@@ -703,7 +724,6 @@
     st.err = '';
     st.current = stamp();
     if (!liveOk()) st.skew = d.now - Date.now();
-    checkSites(d.sites);
     var notes = [];
     Object.keys(d.lists).forEach(function (sc) { notes = notes.concat(setSite(sc, d.lists[sc].recs, d.lists[sc].at)); });
     (d.failed || []).forEach(function (f) { st.fail[f.sc] = f; });   // the site keeps what it showed
@@ -720,16 +740,36 @@
   function onField(d) {
     if (st.denied) return;   // asked before the refusal
     checkSites(d.sites);
-    if (d.sc !== st.sc) return;   // for the site chosen before a switch (the switch asked again), or one SITES dropped
-    st.f = d;
+    if (FB.sites.indexOf(d.sc) < 0) return;   // a site no longer on this page
+    d.sessions.forEach(function (x) { x.sc = d.sc; });
+    d.alerts.forEach(function (x) { x.sc = d.sc; });
+    st.fs[d.sc] = d;
     st.fieldErr = '';
+    mergeField();
     renderAll();
+    nextField(fieldGap());
   }
 
   function fieldFailed(why, code) {
-    st.fieldErr = '접근 경보와 기기 현황: ' + errText(why, code) + (st.f ? ' ' + hms(st.f.at) + ' 기준 내용을 보여 줍니다.' : '');
+    st.fieldErr = '접근 경보와 기기 현황' + (st.sc === 'ALL' && st.fieldSc ? '(' + st.fieldSc + ')' : '') + ': ' + errText(why, code) +
+      (st.f ? ' ' + hms(st.f.at) + ' 기준 내용을 보여 줍니다.' : '');
     renderStatus();
-    if (!st.fieldRetry) st.fieldRetry = setTimeout(function () { st.fieldRetry = 0; loadField(); }, FIELD_RETRY_MS);
+    nextField(FIELD_RETRY_MS);
+  }
+
+  // What the field panel shows: the chosen site's devices and alerts, or every site's together ('전체')
+  function mergeField() {
+    var list = st.sc === 'ALL' ? FB.sites : [st.sc], parts = list.map(function (sc) { return st.fs[sc]; }).filter(Boolean);
+    if (!parts.length) { st.f = null; return; }
+    var f = { now: nowMs(), at: Infinity, sessions: [], alerts: [], cut: false, n: parts.length, total: list.length };
+    parts.forEach(function (p) {
+      if (p.at < f.at) f.at = p.at;
+      f.cut = f.cut || p.cut;
+      f.sessions = f.sessions.concat(p.sessions);
+      f.alerts = f.alerts.concat(p.alerts);
+    });
+    if (parts.length > 1) f.alerts.sort(function (a, b) { return b.t - a.t; });
+    st.f = f;
   }
 
   // An account taken off ADMIN_EMAILS sees nothing more: no alarm, no data, no live lists. The page asks again every 30
@@ -743,6 +783,7 @@
     st.sites = {};
     st.fail = {};
     st.f = null;
+    st.fs = {};
     st.err = '';
     st.fieldErr = '';
     sosCall.fails = 0;
@@ -758,12 +799,14 @@
 
   function switchSite(sc) {
     st.sc = sc;
+    sset('sa_site', sc);   // this browser keeps the choice: a center's PC picks its center once
     fillSites();
-    st.f = null;           // nothing of the old site's devices and alerts stays on screen while the new one loads
     st.fieldErr = '';
-    abandon(fieldCall);    // the old site's call: its errors no longer count, its answer is dropped by onField
+    abandon(fieldCall);    // the old choice's call: its errors no longer count (an answer is still kept for its site)
+    mergeField();          // what is known of the new choice shows at once, with its own '기준' time
     renderAll();
     loadField();
+    loadSos();
   }
 
   function toast(text) {
@@ -971,7 +1014,7 @@
   }
 
   function renderSide() {
-    var f = st.f, ready = !!f;
+    var f = st.f, ready = !!f, all = st.sc === 'ALL';
     var ss = ready ? f.sessions.filter(inScope) : [];
     var alive = ss.filter(function (s) { return s.alive; }), lost = ss.filter(function (s) { return !s.alive; });
     var hour = ready ? hourAlerts(f) : [];
@@ -980,20 +1023,20 @@
     stat('stLost', ready ? lost.length : null, 'warn');
     stat('stDanger', ready ? dn : null, 'crit');
     stat('stWarn', ready ? hour.length - dn : null, '');
-    $('fieldAt').textContent = ready ? '기기·경보 ' + hms(f.at) + ' 기준' : '';
+    $('fieldAt').textContent = ready ? '기기·경보 ' + (f.total > 1 ? f.n + '/' + f.total + '곳 · ' : '') + hms(f.at) + ' 기준' : '';
 
     var cnt = {};
-    alive.forEach(function (s) { var k = s.role + '|' + s.floor + '|' + s.proc; cnt[k] = (cnt[k] || 0) + 1; });
+    alive.forEach(function (s) { var k = (all ? s.sc : '') + '|' + s.role + '|' + s.floor + '|' + s.proc; cnt[k] = (cnt[k] || 0) + 1; });
     var keys = Object.keys(cnt).sort();
     setHtml($('aliveTable'), !ready ? skeleton() : !keys.length ? blank('감시 중인 기기가 없습니다') :
-      '<thead><tr><th>역할</th><th>층</th><th>공정</th><th class="num">대수</th></tr></thead><tbody>' + keys.map(function (k) {
+      '<thead><tr>' + (all ? '<th>사업장</th>' : '') + '<th>역할</th><th>층</th><th>공정</th><th class="num">대수</th></tr></thead><tbody>' + keys.map(function (k) {
         var p = k.split('|');
-        return '<tr><td>' + esc(p[0]) + '</td><td>' + esc(p[1] || '-') + '</td><td>' + esc(p[2] || '-') + '</td><td class="num">' + cnt[k] + '</td></tr>';
+        return '<tr>' + (all ? '<td>' + esc(p[0]) + '</td>' : '') + '<td>' + esc(p[1]) + '</td><td>' + esc(p[2] || '-') + '</td><td>' + esc(p[3] || '-') + '</td><td class="num">' + cnt[k] + '</td></tr>';
       }).join('') + '</tbody>');
 
     setHtml($('lostTable'), !ready ? skeleton() : !lost.length ? blank('연락이 끊긴 기기가 없습니다') :
-      '<thead><tr><th>역할</th><th>층·공정</th><th>마지막 응답</th><th>감시 시작</th></tr></thead><tbody>' + lost.slice(0, 30).map(function (s) {
-        return '<tr><td>' + esc(s.role) + '</td><td>' + esc(scopeOf(s) || '-') + '</td><td>' + hm(s.last) +
+      '<thead><tr>' + (all ? '<th>사업장</th>' : '') + '<th>역할</th><th>층·공정</th><th>마지막 응답</th><th>감시 시작</th></tr></thead><tbody>' + lost.slice(0, 30).map(function (s) {
+        return '<tr>' + (all ? '<td>' + esc(s.sc) + '</td>' : '') + '<td>' + esc(s.role) + '</td><td>' + esc(scopeOf(s) || '-') + '</td><td>' + hm(s.last) +
           '<span class="sub">' + mins(f.now - s.last) + ' 전</span></td><td>' + hm(s.start) + '</td></tr>';
       }).join('') + '</tbody>');
   }
@@ -1006,29 +1049,31 @@
     if (!f) { setHtml(tbl, skeleton()); meta.textContent = ''; return; }
     meta.textContent = f.cut ? '경보가 많아 최근 ' + f.alerts.length + '건만 불러왔습니다' : '';
     meta.className = f.cut ? 'ph-meta warn' : 'ph-meta';
-    var filtered = !!(st.floor || st.proc);
+    var filtered = !!(st.floor || st.proc), all = st.sc === 'ALL';
+    var siteTh = all ? '<th>사업장</th>' : '', siteTd = function (x) { return all ? '<td>' + esc(x.sc) + '</td>' : ''; };
     if (st.tab === 'id') {
       var by = {};
       hourAlerts(f).forEach(function (a) {
-        var g = by[a.me] || (by[a.me] = { id: a.me, role: a.myRole, d: 0, w: 0, last: null });
+        var k = a.sc + '|' + a.me;
+        var g = by[k] || (by[k] = { sc: a.sc, id: a.me, role: a.myRole, d: 0, w: 0, last: null });
         if (a.level === 'DANGER') g.d++; else g.w++;
         if (!g.last || a.t > g.last.t) g.last = a;
       });
       var rows = Object.keys(by).map(function (k) { return by[k]; })
         .sort(function (x, y) { return (y.d - x.d) || (y.w - x.w) || (y.last.t - x.last.t); });
       setHtml(tbl, !rows.length ? blank(filtered ? '선택한 층·공정에 최근 1시간 접근 경보가 없습니다' : '최근 1시간 접근 경보가 없습니다') :
-        '<thead><tr><th>기기 ID</th><th>역할</th><th>층·공정</th><th class="num">위험</th><th class="num">경고</th><th>마지막</th><th>마지막 상대</th></tr></thead><tbody>' +
+        '<thead><tr>' + siteTh + '<th>기기 ID</th><th>역할</th><th>층·공정</th><th class="num">위험</th><th class="num">경고</th><th>마지막</th><th>마지막 상대</th></tr></thead><tbody>' +
         rows.map(function (g) {
-          return '<tr><td class="mono">' + esc(g.id) + '</td><td>' + esc(g.role) + '</td><td>' + esc(scopeOf(g.last) || '-') + '</td>' +
+          return '<tr>' + siteTd(g) + '<td class="mono">' + esc(g.id) + '</td><td>' + esc(g.role) + '</td><td>' + esc(scopeOf(g.last) || '-') + '</td>' +
             '<td class="num' + (g.d ? ' crit' : '') + '">' + g.d + '</td><td class="num">' + g.w + '</td>' +
             '<td>' + hm(g.last.t) + '</td><td><span class="mono">' + esc(g.last.peer) + '</span><span class="sub">' + esc(g.last.peerRole) + '</span></td></tr>';
         }).join('') + '</tbody>');
     } else {
       var recent = f.alerts.filter(inScope).slice(0, 50);
       setHtml(tbl, !recent.length ? blank(filtered ? '선택한 층·공정에 최근 24시간 접근 경보가 없습니다' : '최근 24시간 접근 경보가 없습니다') :
-        '<thead><tr><th>시각</th><th>등급</th><th>기록한 기기</th><th>상대</th><th>층·공정</th></tr></thead><tbody>' +
+        '<thead><tr>' + siteTh + '<th>시각</th><th>등급</th><th>기록한 기기</th><th>상대</th><th>층·공정</th></tr></thead><tbody>' +
         recent.map(function (a) {
-          return '<tr><td>' + hm(a.t) + '</td><td' + (a.level === 'DANGER' ? ' class="crit">위험' : '>경고') + '</td>' +
+          return '<tr>' + siteTd(a) + '<td>' + hm(a.t) + '</td><td' + (a.level === 'DANGER' ? ' class="crit">위험' : '>경고') + '</td>' +
             '<td><span class="mono">' + esc(a.me) + '</span><span class="sub">' + esc(a.myRole) + '</span></td>' +
             '<td><span class="mono">' + esc(a.peer) + '</span><span class="sub">' + esc(a.peerRole) + '</span></td>' +
             '<td>' + esc(scopeOf(a) || '-') + '</td></tr>';
@@ -1036,11 +1081,11 @@
     }
   }
 
-  // SOS of every site that ended in the last 24 hours, newest first
+  // SOS of the chosen site (or every site) that ended in the last 24 hours, newest first
   function renderEnded() {
     var tbl = $('endedTable');
     if (!Object.keys(st.sites).length) { setHtml(tbl, st.denied ? '' : skeleton()); return; }
-    var done = allSos().filter(function (s) { return !s.active && sosInScope(s); })   // the last 24 hours (dropOld)
+    var done = allSos().filter(function (s) { return !s.active && inView(s) && sosInScope(s); })   // the last 24 hours (dropOld)
       .sort(function (a, b) { return b.createdAt - a.createdAt; });
     setHtml(tbl, !done.length ? blank('최근 24시간 끝난 구조 요청이 없습니다') :
       '<thead><tr><th>시작</th><th>끝</th><th>작업자</th><th>원인</th><th>장소</th><th>끝난 방식</th></tr></thead><tbody>' +
@@ -1140,6 +1185,9 @@
 
   fill($('floor'), FLOORS, '전체');
   fill($('proc'), PROCS, '전체');
+  // The site chosen last time in this browser, if this page still has it; otherwise every site (nothing is missed)
+  var saved = sget('sa_site');
+  st.sc = saved && (saved === 'ALL' ? allowAll() : FB.sites.indexOf(saved) >= 0) ? saved : allowAll() ? 'ALL' : FB.sites[0] || '';
   fillSites();
   $('floor').onchange = function () { st.floor = this.value; renderAll(); };
   $('proc').onchange = function () { st.proc = this.value; renderAll(); };
@@ -1167,7 +1215,6 @@
   loadField();
   // A hidden tab keeps the SOS coming (live, or from the server): the alarm must still go off behind other windows
   setInterval(loadSos, SOS_MS);
-  setInterval(loadField, FIELD_MS);
   setInterval(function () { call(pingCall); }, FB.central ? CENTRAL_PING_MS : PING_MS);
   setInterval(function () { if (st.denied) call(pingCall); }, SOS_MS);   // a refused account comes back within 30 s
   setInterval(liveProbe, PROBE_MS);
