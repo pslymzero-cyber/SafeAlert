@@ -3,170 +3,293 @@
 <head>
 <base target="_top">
 <meta charset="utf-8">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
 <style>
+  /* Control-room console: neutral surfaces, colour only for abnormal states (red = SOS / danger, amber = caution). */
   :root {
-    --bg: #f4f5f7; --card: #ffffff; --ink: #1d2433; --sub: #5d6778; --line: #e3e6ec;
-    --red: #c62828; --red-bg: #fdecec; --amber: #a15c00; --amber-bg: #fff4e0;
-    --green: #2e7d32; --green-bg: #e8f5e9; --blue: #1f5fbf; --gray-bg: #eef0f3;
+    color-scheme: dark;
+    --bg: #0e1013; --bar: #121418; --surface: #15181c; --surface-2: #1b1f24; --surface-3: #22272d;
+    --line: #252a30; --line-2: #343b43;
+    --text: #e7e9ec; --text-2: #a3abb5; --text-3: #707984;
+    --crit: #f2555a; --crit-strong: #d8383e; --crit-ink: #ffb8ba; --crit-bg: #2a1416; --crit-line: #6b262b;
+    --warn: #e9b04a; --warn-bg: #2a2313;
+    --ok: #45b883; --ok-line: #2a5c45;
+    --font: "Pretendard Variable", Pretendard, -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, "D2Coding", monospace;
   }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--ink);
-         font: 14px/1.45 "Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans KR", system-ui, sans-serif; }
-  header { position: sticky; top: 0; z-index: 5; background: #1d2433; color: #fff;
-           display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; padding: 10px 16px; }
-  header h1 { margin: 0; font-size: 17px; letter-spacing: -0.2px; }
-  header .spacer { flex: 1; }
-  header select, header button { font: inherit; border-radius: 6px; border: 1px solid #4a5468;
-           background: #2b3447; color: #fff; padding: 5px 9px; }
-  header button { cursor: pointer; }
-  header button.on { background: #3d7a3f; border-color: #3d7a3f; }
-  #status { font-size: 12px; color: #c9d1de; }
-  main { max-width: 1280px; margin: 0 auto; padding: 14px 16px 40px; }
-  .banner { display: none; margin-bottom: 12px; padding: 12px 14px; border-radius: 8px;
-            background: var(--red); color: #fff; font-weight: 700; font-size: 16px; }
-  .banner.show { display: block; animation: pulse 1.2s ease-in-out infinite; }
-  @keyframes pulse { 50% { opacity: .72; } }
-  .err { display: none; margin-bottom: 12px; padding: 10px 12px; border-radius: 8px;
-         background: var(--amber-bg); color: var(--amber); font-weight: 600; }
-  .filters { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin-bottom: 12px; color: var(--sub); }
-  .filters select { font: inherit; padding: 5px 8px; border-radius: 6px; border: 1px solid var(--line); background: #fff; }
-  .kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
-  .kpi { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
-  .kpi .n { font-size: 30px; font-weight: 800; line-height: 1.1; }
-  .kpi .l { color: var(--sub); font-size: 12.5px; margin-top: 2px; }
-  .kpi.red .n { color: var(--red); } .kpi.amber .n { color: var(--amber); } .kpi.green .n { color: var(--green); }
-  .grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; }
-  section { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; min-width: 0; }
-  section.full { grid-column: 1 / -1; }
-  section h2 { margin: 0 0 8px; font-size: 15px; display: flex; gap: 8px; align-items: baseline; }
-  section h2 small { font-weight: 400; color: var(--sub); font-size: 12px; }
-  .sos-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
-  .sos { border: 2px solid var(--red); background: var(--red-bg); border-radius: 10px; padding: 10px 12px; }
-  .sos .who { font-size: 16px; font-weight: 800; color: var(--red); }
-  .sos .line { margin-top: 3px; }
-  .sos .t { color: var(--sub); font-size: 12.5px; margin-top: 4px; }
-  .tag { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 11.5px; font-weight: 700; }
-  .tag.d { background: var(--red-bg); color: var(--red); }
-  .tag.w { background: var(--amber-bg); color: var(--amber); }
-  .tag.g { background: var(--gray-bg); color: var(--sub); }
-  .tag.ok { background: var(--green-bg); color: var(--green); }
-  .tag.stale { background: #3a3f4b; color: #fff; }
-  .empty { color: var(--sub); padding: 6px 0; }
-  .tablewrap { overflow-x: auto; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); }
+  body { font: 14px/1.5 var(--font); -webkit-font-smoothing: antialiased; }
+  body.alarming { overflow: hidden; }
+  [hidden] { display: none !important; }
+  :focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+  h1, h2, h3 { margin: 0; font-weight: 600; }
+
+  /* bar */
+  .bar { position: sticky; top: 0; z-index: 10; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px;
+         padding: 10px 20px; background: var(--bar); border-bottom: 1px solid var(--line); }
+  .brand { display: flex; align-items: baseline; gap: 6px; font-size: 16px; font-weight: 700; letter-spacing: -0.01em; }
+  .brand span { color: var(--text-2); font-weight: 500; }
+  .pickers { display: flex; flex-wrap: wrap; gap: 8px 14px; }
+  .pick { display: inline-flex; align-items: center; gap: 7px; color: var(--text-3); font-size: 12px; }
+  .pick select { height: 30px; min-width: 84px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--line-2);
+                 background: var(--surface-2); color: var(--text); font: inherit; font-size: 13px; font-weight: 600; }
+  .sos-pill { height: 28px; padding: 0 12px; border: 0; border-radius: 6px; background: var(--crit-strong); color: #fff;
+              font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; }
+  .bar-end { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+  .live { display: inline-flex; align-items: center; gap: 7px; margin-right: 6px; color: var(--text-2); font-size: 12.5px;
+          font-variant-numeric: tabular-nums; }
+  .live i { width: 8px; height: 8px; border-radius: 50%; background: var(--text-3); }
+  .live.ok i { background: var(--ok); }
+  .live.bad { color: var(--crit); }
+  .live.bad i { background: var(--crit); }
+
+  /* buttons */
+  .btn { display: inline-flex; align-items: center; justify-content: center; height: 32px; padding: 0 12px; border-radius: 6px;
+         border: 1px solid var(--line-2); background: var(--surface-2); color: var(--text); font: inherit; font-size: 13px;
+         font-weight: 600; white-space: nowrap; text-decoration: none; cursor: pointer; }
+  .btn:hover { background: var(--surface-3); }
+  .btn:active { transform: translateY(1px); }
+  .btn-line { background: transparent; }
+  .btn-sm { height: 28px; font-size: 12.5px; }
+  .btn-sound.on { color: var(--ok); border-color: var(--ok-line); background: transparent; }
+  .btn-sound.off { color: var(--warn); background: transparent; }
+  .btn-crit { height: 46px; padding: 0 22px; font-size: 16px; font-weight: 700; color: #fff; background: var(--crit-strong); border-color: var(--crit-strong); }
+  .btn-crit:hover { background: #e2464c; }
+  .btn-call { height: 46px; padding: 0 18px; font-size: 16px; }
+
+  /* strips under the bar (in the flow: they never cover the controls) */
+  .strip { display: flex; align-items: center; gap: 14px; padding: 9px 20px; font-size: 13px; font-weight: 600; border-bottom: 1px solid var(--line); }
+  .strip .btn { margin-left: auto; }
+  .strip.crit { background: var(--crit-bg); color: var(--crit-ink); }
+  .strip.warn { background: var(--warn-bg); color: var(--warn); }
+  .strip.mute { background: var(--surface); color: var(--text-2); font-weight: 500; }
+
+  /* layout */
+  .layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 380px); gap: 16px; align-items: start;
+            max-width: 1600px; margin: 0 auto; padding: 16px 20px 8px; }
+  .col { display: grid; gap: 16px; min-width: 0; }
+  .panel { min-width: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; }
+  .ph { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-height: 46px; padding: 10px 16px; border-bottom: 1px solid var(--line); }
+  .ph h2 { font-size: 14px; }
+  .ph-meta { color: var(--text-3); font-size: 12px; }
+  .scroll { overflow-x: auto; }
+
+  /* SOS */
+  .sos.hot { border-color: var(--crit-line); }
+  .sos.hot .ph h2, .sos.hot .ph-meta { color: var(--crit); font-weight: 700; }
+  .sr { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; padding: 14px 16px 14px 13px;
+        border-left: 3px solid var(--crit); background: var(--crit-bg); }
+  .sr + .sr { border-top: 1px solid var(--line); }
+  .sr-name { font-size: 18px; font-weight: 700; line-height: 1.3; }
+  .sr-name span { margin-left: 8px; color: var(--text-2); font-size: 14px; font-weight: 500; }
+  .sr-meta { display: flex; flex-wrap: wrap; gap: 2px 20px; margin-top: 6px; }
+  .k { margin-right: 6px; color: var(--text-3); font-size: 12px; }
+  .sr-side { display: grid; justify-items: end; align-content: start; gap: 2px; text-align: right; }
+  .sr-side b { color: var(--crit); font-size: 26px; font-weight: 600; line-height: 1.1; font-variant-numeric: tabular-nums; }
+  .sr-side small { color: var(--text-2); font-size: 12px; }
+  .empty { display: grid; gap: 3px; padding: 20px 16px; }
+  .empty b { font-weight: 600; }
+  .empty span { color: var(--text-2); font-size: 13px; }
+
+  /* readouts */
+  .stats { display: grid; grid-template-columns: 1fr 1fr; margin: 0; }
+  .stats > div { padding: 14px 16px; border-bottom: 1px solid var(--line); }
+  .stats > div:nth-child(odd) { border-right: 1px solid var(--line); }
+  .stats > div:nth-last-child(-n+2) { border-bottom: 0; }
+  .stats dt { color: var(--text-2); font-size: 12px; }
+  .stats dt small { display: block; color: var(--text-3); font-size: 11px; }
+  .stats dd { margin: 6px 0 0; font-size: 28px; font-weight: 600; line-height: 1; font-variant-numeric: tabular-nums; }
+
+  /* tables */
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
-  th { color: var(--sub); font-weight: 600; font-size: 12px; background: #fafbfc; }
-  td.num { text-align: right; font-variant-numeric: tabular-nums; }
-  .mono { font-family: Consolas, "D2Coding", monospace; }
-  footer { margin-top: 16px; color: var(--sub); font-size: 12px; }
-  .denied { max-width: 560px; margin: 60px auto; background: #fff; border: 1px solid var(--line);
-            border-radius: 10px; padding: 20px; line-height: 1.6; }
-  .band { display: none; padding: 9px 16px; font-weight: 700; text-align: center; }
-  .band button { font: inherit; margin-left: 10px; padding: 3px 12px; border-radius: 6px; border: 1px solid #fff; background: transparent; color: #fff; cursor: pointer; }
-  #soundBar { background: #3a3f4b; color: #fff; }
-  #connBand { position: fixed; top: 0; left: 0; right: 0; z-index: 200; background: #000; color: #fff; border-bottom: 3px solid #ff5252; }
-  .alert-overlay { display: none; position: fixed; inset: 0; z-index: 100; overflow: auto; padding: 56px 18px 24px;
-                   background: #b71c1c; color: #fff; animation: blink 1s steps(1, end) infinite; }
-  @keyframes blink { 0% { background: #b71c1c; } 50% { background: #f44336; } }
-  @media (prefers-reduced-motion: reduce) { .alert-overlay { animation: none; background: #b71c1c; } .banner.show { animation: none; } }
-  .alert-overlay h2 { margin: 0 0 12px; font-size: 26px; }
-  .oc { background: rgba(0, 0, 0, .28); border: 2px solid #fff; border-radius: 12px; padding: 14px 16px; margin-bottom: 14px; max-width: 760px; }
-  .oc .o-who { font-size: 26px; font-weight: 800; }
-  .oc .o-line { font-size: 18px; margin-top: 4px; }
-  .oc .o-t { font-size: 20px; margin-top: 8px; font-weight: 700; }
-  .oc .o-btns { margin-top: 12px; display: flex; flex-wrap: wrap; gap: 10px; }
-  .oc button, .oc a.call, .alert-overlay .o-sound button { font: inherit; font-size: 18px; font-weight: 800; padding: 10px 18px; border-radius: 8px;
-                   border: 2px solid #fff; background: #fff; color: #b71c1c; cursor: pointer; text-decoration: none; display: inline-block; }
-  .oc a.call { background: #1b5e20; color: #fff; }
-  .steps { max-width: 760px; font-size: 17px; line-height: 1.6; padding-left: 0; list-style: none; margin: 6px 0 0; }
-  .o-sound { margin: 0 0 12px; font-size: 18px; font-weight: 700; }
-  #toasts { position: fixed; right: 14px; bottom: 14px; z-index: 150; display: grid; gap: 8px; }
-  .toast { background: #2e7d32; color: #fff; padding: 10px 14px; border-radius: 8px; font-weight: 700; box-shadow: 0 2px 8px rgba(0,0,0,.3); }
-  @media (max-width: 860px) {
-    .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .grid { grid-template-columns: minmax(0, 1fr); }
+  th { padding: 8px 16px; color: var(--text-3); font-size: 12px; font-weight: 500; text-align: left; white-space: nowrap; border-bottom: 1px solid var(--line); }
+  td { padding: 8px 16px; white-space: nowrap; border-bottom: 1px solid var(--line); }
+  tbody tr:last-child td { border-bottom: 0; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .mono { font-family: var(--mono); font-size: 12.5px; }
+  .sub { margin-left: 4px; color: var(--text-3); }
+  .crit { color: var(--crit); }
+  .warn { color: var(--warn); }
+  .ok { color: var(--ok); }
+  td.blank { padding: 18px 16px; color: var(--text-2); white-space: normal; }
+  .seg { display: inline-flex; margin-left: auto; border: 1px solid var(--line-2); border-radius: 6px; overflow: hidden; }
+  .seg button { height: 28px; padding: 0 12px; border: 0; background: transparent; color: var(--text-2); font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+  .seg button + button { border-left: 1px solid var(--line-2); }
+  .seg button[aria-pressed="true"] { background: var(--surface-3); color: var(--text); }
+  .sk { display: block; height: 12px; width: 55%; border-radius: 4px; background: var(--surface-2); }
+  .sk-row { height: 64px; margin: 12px 16px; border-radius: 6px; background: var(--surface-2); }
+
+  .foot { max-width: 1600px; margin: 0 auto; padding: 6px 20px 28px; color: var(--text-3); font-size: 12px; }
+
+  /* SOS alarm (full screen until acknowledged in this browser) */
+  .alarm { position: fixed; inset: 0; z-index: 30; overflow-y: auto; padding: 40px 16px; background: rgba(8, 9, 11, 0.92); }
+  .alarm::before { content: ""; position: fixed; inset: 0; border: 6px solid var(--crit); pointer-events: none; }
+  .alarm-panel { position: relative; max-width: 760px; margin: 0 auto; background: var(--surface);
+                 border: 1px solid var(--crit-line); border-top: 4px solid var(--crit); border-radius: 6px; }
+  .alarm-head { padding: 20px 24px 16px; border-bottom: 1px solid var(--line); }
+  .alarm-head h2 { color: var(--crit); font-size: 24px; font-weight: 700; }
+  .alarm-head p { margin: 6px 0 0; color: var(--text-2); font-size: 13px; }
+  .alarm-sound { display: flex; align-items: center; gap: 12px; margin-top: 12px; padding: 8px 12px; border-radius: 6px;
+                 background: var(--crit-bg); color: var(--crit-ink); font-size: 13px; font-weight: 600; }
+  .alarm-sound .btn { margin-left: auto; }
+  .ai { padding: 20px 24px; border-bottom: 1px solid var(--line); }
+  .ai-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+  .ai-name { font-size: 28px; font-weight: 700; line-height: 1.2; letter-spacing: -0.01em; }
+  .ai-name span { display: block; margin-top: 2px; color: var(--text-2); font-size: 15px; font-weight: 500; letter-spacing: 0; }
+  .ai-clock { display: grid; justify-items: end; gap: 4px; }
+  .ai-clock b { color: var(--crit); font-size: 40px; font-weight: 600; line-height: 1; font-variant-numeric: tabular-nums; }
+  .ai-clock small { color: var(--text-2); font-size: 12px; }
+  .ai-facts { display: grid; grid-template-columns: repeat(4, auto); justify-content: start; gap: 10px 36px; margin: 18px 0 0; }
+  .ai-facts dt { color: var(--text-3); font-size: 12px; }
+  .ai-facts dd { margin: 2px 0 0; font-size: 17px; font-weight: 600; }
+  .ai-note { margin: 12px 0 0; color: var(--warn); font-size: 13px; font-weight: 600; }
+  .ai-act { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
+  .steps { padding: 16px 24px 22px; }
+  .steps h3 { margin-bottom: 10px; color: var(--text-2); font-size: 13px; }
+  .steps ol { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; counter-reset: step; }
+  .steps li { display: grid; grid-template-columns: 22px 1fr; gap: 10px; counter-increment: step; }
+  .steps li::before { content: counter(step); display: grid; place-items: center; width: 22px; height: 22px; border: 1px solid var(--line-2);
+                      border-radius: 6px; color: var(--text-2); font-size: 12px; font-weight: 600; }
+
+  .toasts { position: fixed; right: 16px; bottom: 16px; z-index: 40; display: grid; gap: 8px; max-width: min(380px, calc(100vw - 32px)); }
+  .toast { padding: 10px 14px; border: 1px solid var(--line-2); border-left: 3px solid var(--ok); border-radius: 6px;
+           background: var(--surface-3); font-size: 13px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35); }
+
+  .denied { max-width: 520px; margin: 80px auto; padding: 24px; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; }
+  .denied h1 { margin-bottom: 12px; font-size: 18px; }
+  .denied p { margin: 6px 0; color: var(--text-2); }
+
+  /* the alarm moves; everything else stays still */
+  @keyframes pulse { 50% { opacity: 0.45; } }
+  @media (prefers-reduced-motion: no-preference) {
+    .alarm::before, .sos-pill { animation: pulse 1.4s ease-in-out infinite; }
+  }
+
+  @media (max-width: 1080px) {
+    .layout { display: flex; flex-direction: column; }
+    .col { display: contents; }
+    #sosSec { order: 1; } #statsSec { order: 2; } #alertsSec { order: 3; } #aliveSec { order: 4; } #lostSec { order: 5; } #endedSec { order: 6; }
+    .layout > .col > .panel { width: 100%; }
+  }
+  @media (max-width: 720px) {
+    .bar { position: static; padding: 10px 16px; }
+    .bar-end { width: 100%; margin-left: 0; }
+    .live { margin-right: auto; }
+    .strip { padding: 9px 16px; }
+    .layout { gap: 12px; padding: 12px 16px 8px; }
+    .sr { grid-template-columns: 1fr; gap: 6px; }
+    .sr-side { justify-items: start; text-align: left; }
+    .alarm { padding: 12px 10px; }
+    .alarm-head, .ai, .steps { padding-left: 16px; padding-right: 16px; }
+    .ai-name { font-size: 24px; }
+    .ai-clock b { font-size: 30px; }
+    .ai-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 16px; }
+    .ai-act .btn { flex: 1; }
+    .foot { padding: 6px 16px 24px; }
   }
 </style>
 </head>
 <body>
 <? if (denied) { ?>
-  <div class="denied">
-    <b>관제 권한이 없는 계정입니다.</b><br>
-    지금 계정: <span class="mono"><?= viewer || '확인되지 않음' ?></span><br>
-    관리자가 스크립트 속성 <span class="mono">ADMIN_EMAILS</span>에 이 계정을 넣어야 열 수 있습니다.
-  </div>
-<? } else { ?>
-<div id="connBand" class="band" role="alert"></div>
-<div id="soundBar" class="band"><button id="soundBarBtn" type="button">소리 켜기</button> 구조 요청 사이렌이 꺼져 있습니다</div>
-<div id="alertOverlay" class="alert-overlay" role="alertdialog" aria-live="assertive"></div>
-<div id="toasts" aria-live="polite"></div>
-<header>
-  <h1>SafeAlert 관제</h1>
-  <label>사업장 <select id="site"></select></label>
-  <span class="spacer"></span>
-  <span id="status">불러오는 중…</span>
-  <button id="soundBtn" type="button" title="구조 요청이 확인될 때까지 사이렌을 울립니다">알림음 켜기</button>
-  <button id="reloadBtn" type="button">새로고침</button>
-</header>
-<main>
-  <div id="banner" class="banner"></div>
-  <div id="err" class="err"></div>
-
-  <div class="filters">
-    <label>층 <select id="floor"></select></label>
-    <label>공정 <select id="proc"></select></label>
-    <span>· 30초마다 자동 갱신 · 보기 전용</span>
-  </div>
-
-  <div class="kpis">
-    <div class="kpi red"><div class="n" id="kSos">–</div><div class="l">진행 중 구조 요청</div></div>
-    <div class="kpi green"><div class="n" id="kAlive">–</div><div class="l">감시 중 기기</div></div>
-    <div class="kpi amber"><div class="n" id="kLost">–</div><div class="l">연락 끊김 (15분 넘게 응답 없음)</div></div>
-    <div class="kpi"><div class="n" id="kAlerts">–</div><div class="l">최근 1시간 접근 경보 (위험 / 경고)</div></div>
-  </div>
-
-  <div class="grid">
-    <section class="full">
-      <h2>진행 중 구조 요청 <small>쓰러진 작업자 — 가장 먼저 확인</small></h2>
-      <div id="sosList" class="sos-list"></div>
-    </section>
-
-    <section>
-      <h2>ID별 접근 경보 <small>최근 1시간 · 경보를 기록한 기기 기준</small></h2>
-      <div class="tablewrap"><table id="byId"></table></div>
-    </section>
-
-    <section>
-      <h2>감시 중 기기 <small>역할 · 층 · 공정별 (기기 ID는 기록하지 않음)</small></h2>
-      <div class="tablewrap"><table id="alive"></table></div>
-      <h2 style="margin-top:14px">연락 끊김 <small>최근 24시간 · 정상 종료 없이 15분 넘게 응답 없음</small></h2>
-      <div class="tablewrap"><table id="lost"></table></div>
-    </section>
-
-    <section class="full">
-      <h2>최근 접근 경보 <small>최근 50건</small></h2>
-      <div class="tablewrap"><table id="recent"></table></div>
-    </section>
-
-    <section class="full">
-      <h2>최근 24시간 끝난 구조 요청</h2>
-      <div class="tablewrap"><table id="resolved"></table></div>
-    </section>
-  </div>
-
-  <footer>SafeAlert 관제 — 서버 기록을 읽기만 합니다. 경보를 끄는 기능은 보안 검토 뒤에 추가됩니다.</footer>
+<main class="denied">
+  <h1>관제 권한이 없는 계정입니다</h1>
+  <p>지금 계정: <span class="mono"><?= viewer || '확인되지 않음' ?></span></p>
+  <p>관리자가 스크립트 속성 <span class="mono">ADMIN_EMAILS</span>에 이 계정을 넣으면 열 수 있습니다.</p>
 </main>
+<? } else { ?>
+<header class="bar">
+  <div class="brand">SafeAlert<span>관제</span></div>
+  <div class="pickers">
+    <label class="pick">사업장 <select id="site"></select></label>
+    <label class="pick">층 <select id="floor"></select></label>
+    <label class="pick">공정 <select id="proc"></select></label>
+  </div>
+  <button id="sosPill" class="sos-pill" type="button" data-act="jump" hidden></button>
+  <div class="bar-end">
+    <span id="live" class="live"><i aria-hidden="true"></i><span id="liveText">불러오는 중</span></span>
+    <button id="soundBtn" class="btn btn-sound off" type="button" data-sound aria-pressed="false">경보음 꺼짐</button>
+    <button id="reloadBtn" class="btn btn-line" type="button">새로고침</button>
+  </div>
+</header>
+<div id="strips"></div>
+
+<main class="layout">
+  <div class="col">
+    <section id="sosSec" class="panel sos">
+      <header class="ph"><h2>구조 요청</h2><span id="sosCount" class="ph-meta"></span></header>
+      <div id="sosList"></div>
+    </section>
+    <section id="alertsSec" class="panel">
+      <header class="ph">
+        <h2>접근 경보</h2>
+        <div class="seg" role="group" aria-label="접근 경보 보기">
+          <button type="button" data-act="tab" data-tab="id" aria-pressed="true">기기별 최근 1시간</button>
+          <button type="button" data-act="tab" data-tab="recent" aria-pressed="false">최근 50건</button>
+        </div>
+      </header>
+      <div class="scroll"><table id="alertTable"></table></div>
+    </section>
+    <section id="endedSec" class="panel">
+      <header class="ph"><h2>끝난 구조 요청</h2><span class="ph-meta">최근 24시간</span></header>
+      <div class="scroll"><table id="endedTable"></table></div>
+    </section>
+  </div>
+  <div class="col">
+    <section id="statsSec" class="panel">
+      <header class="ph"><h2>현장 상태</h2></header>
+      <dl class="stats">
+        <div><dt>감시 중 기기</dt><dd id="stAlive">-</dd></div>
+        <div><dt>연락 끊김<small>15분 넘게 응답 없음</small></dt><dd id="stLost">-</dd></div>
+        <div><dt>위험 경보<small>최근 1시간</small></dt><dd id="stDanger">-</dd></div>
+        <div><dt>경고<small>최근 1시간</small></dt><dd id="stWarn">-</dd></div>
+      </dl>
+    </section>
+    <section id="aliveSec" class="panel">
+      <header class="ph"><h2>감시 중 기기</h2><span class="ph-meta">기기 ID는 기록하지 않음</span></header>
+      <div class="scroll"><table id="aliveTable"></table></div>
+    </section>
+    <section id="lostSec" class="panel">
+      <header class="ph"><h2>연락 끊김</h2><span class="ph-meta">정상 종료 없이 15분 넘게 응답 없음</span></header>
+      <div class="scroll"><table id="lostTable"></table></div>
+    </section>
+  </div>
+</main>
+<footer class="foot">서버 기록을 읽기만 합니다. 경보를 끄는 기능은 보안 검토 뒤에 추가됩니다.</footer>
+
+<div id="alarm" class="alarm" role="alertdialog" aria-modal="true" aria-labelledby="alarmTitle" hidden>
+  <div class="alarm-panel">
+    <header class="alarm-head">
+      <h2 id="alarmTitle">구조 요청</h2>
+      <p>대응 시작을 누르면 이 화면의 경보음이 멈춥니다. 다른 관리자 화면은 각자 눌러야 합니다.</p>
+      <div id="alarmSound" class="alarm-sound"><span>경보음이 꺼져 있습니다</span><button type="button" class="btn btn-sm" data-act="sound" data-sound>경보음 켜기</button></div>
+    </header>
+    <div id="alarmList"></div>
+    <section class="steps">
+      <h3>대응 순서</h3>
+      <ol>
+        <li>현장 출동 (장소는 위에 표시)</li>
+        <li>의식·호흡 확인. 반응이 없거나 호흡이 이상하면 119, 심폐소생술, AED (심정지는 4분 안)</li>
+        <li>넘어짐이면 머리·목을 움직이지 않기</li>
+        <li>한쪽 마비·말 어눌함(뇌졸중 의심)이면 바로 119 (4.5시간 안 병원)</li>
+      </ol>
+    </section>
+  </div>
+</div>
+<div id="toasts" class="toasts" aria-live="polite"></div>
 
 <script>
   var FLOORS = ['1F', '2F', '3F', '4F', '5F', '6F', '7F', '8F', '9F', '10F'];
   var PROCS = ['OB', 'IB', 'ICQA', 'HUB', 'EHS', 'HR'];
-  var ROLE = { WALKER: '보행자', EPJ: 'EPJ', FORKLIFT: '지게차', UNKNOWN: '알 수 없음' };
   var REFRESH_MS = 30000;
-  var STALE_MS = 120000;     // no good snapshot for this long = the screen is not current
-  var ACK_KEEP_MS = 25 * 3600 * 1000;
-  var st = { sc: '<?!= initialSc ?>', floor: '', proc: '', data: null, audio: null, busy: false, again: false,
-             fails: 0, t0: Date.now(), lastGood: 0, skew: 0, prev: null, prevSc: '', sitesKey: '', ovSig: '' };
-  var mem = {};              // fallback when localStorage is unavailable
+  var STALE_MS = 120000;                // no good snapshot for this long: the screen is not current
+  var ACK_KEEP_MS = 25 * 3600 * 1000;   // longer than the 24-hour SOS window
+  var HOUR_MS = 3600 * 1000;
+  var st = { sc: '<?!= initialSc ?>', floor: '', proc: '', tab: 'id', d: null, skew: 0, busy: false, again: false,
+             fails: 0, err: '', slowErr: '', t0: Date.now(), lastGood: 0, sitesKey: '', alarmSig: '', stripSig: '',
+             audio: null, siren: null, sirenBuf: null };
+  var mem = {};                         // fallback when localStorage is unavailable (sandboxed or partitioned frames)
+  var ack = readAck();                  // SOS key -> time it was acknowledged in this browser
 
   function $(id) { return document.getElementById(id); }
   function esc(s) {
@@ -174,125 +297,111 @@
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
     });
   }
-  function hms(ms) {
-    return new Date(ms).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+  function timeFmt(o) {
+    o.hour12 = false; o.timeZone = 'Asia/Seoul';   // the site's clock, whatever the viewer's computer is set to
+    try { return new Intl.DateTimeFormat('ko-KR', o); } catch (e) { delete o.timeZone; return new Intl.DateTimeFormat('ko-KR', o); }
   }
-  function hm(ms) {
-    return new Date(ms).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false });
+  var fHms = timeFmt({ hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  var fHm = timeFmt({ hour: '2-digit', minute: '2-digit' });
+  function hms(ms) { return fHms.format(new Date(ms)); }
+  function hm(ms) { return fHm.format(new Date(ms)); }
+  function pad(n) { return (n < 10 ? '0' : '') + n; }
+  function clock(ms) {
+    var s = Math.max(0, Math.floor(ms / 1000)), h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60);
+    return (h ? h + ':' + pad(m) : m) + ':' + pad(s % 60);
   }
-  function ago(now, t) {
-    var m = Math.max(0, Math.floor((now - t) / 60000));
+  function mins(ms) {
+    var m = Math.max(0, Math.floor(ms / 60000));
     return m < 60 ? m + '분' : Math.floor(m / 60) + '시간 ' + (m % 60) + '분';
   }
-  function elapsed(ms) {
-    var s = Math.floor(Math.max(0, ms) / 1000), h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60);
-    return (h ? h + '시간 ' : '') + m + '분 ' + (s % 60) + '초';
-  }
-  function role(r) { return ROLE[r] || ROLE.UNKNOWN; }
-  function scope(sc, f, p) { return (f || p) ? [sc, f, p].filter(Boolean).join('-') : sc + ' (층·공정 미지정)'; }
-  function place(sc, f, p) { return [sc, f, p].filter(Boolean).join('-'); }
+  function nowMs() { return Date.now() + st.skew; }
+  function scopeOf(r) { return [r.floor, r.proc].filter(Boolean).join('-'); }
+  function placeOf(r) { return [st.d.sc, r.floor, r.proc].filter(Boolean).join('-'); }
+  function nameOf(s) { return s.name || '이름 없음'; }
+  function endedHow(s) { return s.auto ? '응답 없이 자동 종료' : '본인 해제'; }
   function match(sel, v) { return !sel || (sel === '-' ? !v : v === sel); }
   function inScope(r) { return match(st.floor, r.floor) && match(st.proc, r.proc); }
-  // SOS use the app's own rule (SiteScope.receives): an empty field of the record matches any choice;
-  // '미지정' matches only an empty field.
-  function smatch(sel, v) { return !sel || (sel === '-' ? !v : (!v || v === sel)); }
-  function sosScope(r) { return smatch(st.floor, r.floor) && smatch(st.proc, r.proc); }
-  function nowMs() { return Date.now() + st.skew; }
+  // SOS follow the app's own rule (SiteScope.receives): a record without floor or process reaches every phone, so it
+  // shows under any filter; '미지정' shows only those.
+  function sosMatch(sel, v) { return sel === '-' ? !v : (!v || match(sel, v)); }
+  function sosInScope(s) { return sosMatch(st.floor, s.floor) && sosMatch(st.proc, s.proc); }
 
   // ── browser-local storage (acknowledgements, sound preference) ──
   function sget(k) {
-    try { var v = localStorage.getItem(k); if (v !== null) return v; } catch (e) { /* use memory */ }
+    try { var v = localStorage.getItem(k); if (v !== null) return v; } catch (e) { /* memory below */ }
     return mem[k] == null ? null : mem[k];
   }
   function sset(k, v) {
     mem[k] = v;
     try { localStorage.setItem(k, v); } catch (e) { /* memory only */ }
   }
-  function loadAck() {
+  function readAck() {
     try { var a = JSON.parse(sget('sa_ack') || '{}'); return a && typeof a === 'object' ? a : {}; } catch (e) { return {}; }
   }
-  function saveAck(a) {
+  function saveAck() {
     var cut = Date.now() - ACK_KEEP_MS;
-    Object.keys(a).forEach(function (k) { if (!(a[k] > cut)) delete a[k]; });
-    sset('sa_ack', JSON.stringify(a));
-  }
-
-  function fillSelect(el, items, allLabel) {
-    el.innerHTML = '<option value="">' + allLabel + '</option>' +
-      items.map(function (x) { return '<option value="' + esc(x) + '">' + esc(x) + '</option>'; }).join('') +
-      '<option value="-">미지정</option>';
+    Object.keys(ack).forEach(function (k) { if (!(ack[k] > cut)) delete ack[k]; });
+    sset('sa_ack', JSON.stringify(ack));
   }
 
   // ── loading ──
   function load() {
-    if (st.busy) { st.again = true; return; }   // a site switch while a call is running: run again right after it
+    if (st.busy) { st.again = true; return; }   // a site switch during a call: run again right after it
     st.busy = true;
     st.again = false;
-    $('status').textContent = '갱신 중…';
+    var light = document.hidden && !!st.d && !!st.d.sessions;   // a hidden tab refreshes only what drives the alarm
     google.script.run
       .withSuccessHandler(function (d) { st.busy = false; onData(d); if (st.again) load(); })
-      .withFailureHandler(function () {
-        st.busy = false; st.fails++;
-        showErr('서버에 연결하지 못했습니다. 30초 뒤 다시 시도합니다.');
-        checkConn();
-        if (st.again) load();
-      })
-      .getSnapshot(st.sc);
+      .withFailureHandler(function () { st.busy = false; onFail('net'); if (st.again) load(); })
+      .getSnapshot(st.sc, { sosOnly: light });
   }
 
-  function showErr(msg) {
-    $('err').textContent = msg;
-    $('err').style.display = msg ? 'block' : 'none';
-    if (msg) $('status').textContent = '마지막 갱신 실패';
+  function onFail(why, code) {
+    st.fails++;
+    st.err = why === 'setup' ? '스크립트 속성(FIREBASE_DB_URL, FIREBASE_DB_SECRET, SITES)을 확인하세요.'
+      : why === 'quota' ? '오늘 조회 한도를 다 썼습니다. 24시간 안에 다시 읽을 수 있습니다.'
+      : why === 'http' ? '서버가 오류로 응답했습니다(' + code + '). 데이터베이스 비밀번호를 확인하세요.'
+      : '서버 기록을 읽지 못했습니다. 30초 뒤 다시 시도합니다.';
+    renderStatus();
   }
 
   function onData(d) {
     if (!d || !d.ok) {
-      var why = d && d.error;
-      if (why === 'denied') { location.reload(); return; }
-      st.fails++;
-      showErr(why === 'setup' ? '스크립트 속성(FIREBASE_DB_URL · FIREBASE_DB_SECRET · SITES)을 확인하세요.'
-        : why === 'quota' ? '오늘 조회 한도를 다 썼습니다(24시간 안에 복구)'
-        : why === 'http' ? '서버가 오류로 응답했습니다(' + d.code + '). 데이터베이스 비밀번호가 맞는지 확인하세요.'
-        : '서버 기록을 읽지 못했습니다. 30초 뒤 다시 시도합니다.');
-      checkConn();
+      if (d && d.error === 'denied') { location.reload(); return; }
+      onFail(d && d.error, d && d.code);
       return;
     }
+    // A response for a site other than the one chosen meanwhile is dropped: it changes neither the select nor the data
+    if (st.sc && st.sc !== d.sc && d.sites.indexOf(st.sc) >= 0) return;
+    st.sc = d.sc;
     st.fails = 0;
+    st.err = '';
+    st.slowErr = d.slowError ? '접근 경보와 기기 현황을 읽지 못해 이전 내용을 보여 줍니다. 구조 요청은 계속 갱신됩니다.' : '';
     st.lastGood = Date.now();
     st.skew = d.now - Date.now();
-    showErr('');
-    checkConn();
-    // A response for another site than the one chosen meanwhile is discarded: it must not change the select or the data
-    var valid = !!st.sc && d.sites.indexOf(st.sc) >= 0;
-    if (valid && st.sc !== d.sc) return;
-    if (!valid) st.sc = d.sc;
     var key = d.sites.join(',');
-    if (st.sitesKey !== key) {
+    if (key !== st.sitesKey) {
       st.sitesKey = key;
       $('site').innerHTML = d.sites.map(function (s) { return '<option>' + esc(s) + '</option>'; }).join('');
     }
     $('site').value = st.sc;
-    toastReleased(d);
-    st.data = d;
-    render();
-    refreshOverlay();
-    $('status').textContent = hms(d.now) + ' 갱신 · ' + (d.viewer || '');
+    var old = st.d && st.d.sc === d.sc ? st.d : null;
+    if (!d.sessions && old) { d.sessions = old.sessions; d.alerts = old.alerts; }   // hidden tab's SOS-only refresh, or a failed slow read
+    if (old) toastEnded(old, d);
+    st.d = d;
+    renderAll();
   }
 
-  // A5: an SOS that was active in the previous snapshot of this site and is not any more
-  function toastReleased(d) {
-    var cur = {};
-    d.sos.forEach(function (s) { if (s.active) cur[s.key] = true; });
-    if (st.prev && st.prevSc === d.sc) {
-      d.sos.forEach(function (s) {
-        if (!s.active && st.prev[s.key]) {
-          toast('해제됨 — ' + (s.auto ? '자동 해제' : '본인 해제') + ' · ' + (s.name || s.who));
-        }
-      });
-    }
-    st.prev = cur;
-    st.prevSc = d.sc;
+  // An SOS that was active in the previous snapshot of this site: ended, or gone from the 24-hour window unresolved
+  function toastEnded(old, d) {
+    var byKey = {};
+    d.sos.forEach(function (s) { byKey[s.key] = s; });
+    old.sos.forEach(function (s) {
+      if (!s.active) return;
+      var cur = byKey[s.key];
+      if (!cur) toast(nameOf(s) + ' 구조 요청이 24시간이 지나 목록에서 빠졌습니다 (해제 기록 없음)');
+      else if (!cur.active) toast(nameOf(cur) + ' 구조 요청이 끝났습니다 (' + endedHow(cur) + ')');
+    });
   }
 
   function toast(text) {
@@ -300,250 +409,308 @@
     el.className = 'toast';
     el.textContent = text;
     $('toasts').appendChild(el);
-    setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, 8000);
+    setTimeout(function () { el.remove(); }, 8000);
   }
 
-  // A6: a frozen page must never look healthy
-  function checkConn() {
-    var last = st.lastGood || st.t0;
-    var lost = st.fails >= 3 || Date.now() - last > STALE_MS;
-    var b = $('connBand');
-    if (lost) b.textContent = '연결 끊김 — 화면이 최신이 아닙니다 (마지막 갱신 ' + (st.lastGood ? hms(st.lastGood) : '없음') + ')';
-    b.style.display = lost ? 'block' : 'none';
+  // ── rendering ──
+  function renderAll() { renderStatus(); renderAlarm(); renderSos(); renderSide(); renderAlerts(); renderEnded(); }
+
+  function lostConn() { return st.fails >= 3 || Date.now() - (st.lastGood || st.t0) > STALE_MS; }
+
+  // Runs every second: touches the DOM only when something changed
+  function renderStatus() {
+    var lost = lostConn(), run = soundRunning();
+    var cls = lost ? 'live bad' : st.lastGood ? 'live ok' : 'live';
+    var txt = lost ? '연결 끊김' : st.d ? hms(st.d.now) + ' 갱신' : '불러오는 중';
+    if ($('live').className !== cls) $('live').className = cls;
+    if ($('liveText').textContent !== txt) $('liveText').textContent = txt;
+
+    var strips = [];
+    if (lost) strips.push(['crit', '연결 끊김. 화면이 최신이 아닙니다' + (st.lastGood ? ' (마지막 갱신 ' + hms(st.lastGood) + ')' : ''), 'retry', '다시 시도']);
+    if (st.err) strips.push(['warn', st.err, '', '']);
+    if (st.slowErr && !st.err) strips.push(['warn', st.slowErr, '', '']);
+    if (!run) strips.push(['mute', soundPref() ? '경보음이 멈춰 있습니다. 화면을 한 번 누르면 다시 켜집니다.'
+                                               : '경보음이 꺼져 있습니다. 구조 요청이 와도 소리가 나지 않습니다.', 'sound', '경보음 켜기']);
+    var sig = JSON.stringify(strips);
+    if (sig !== st.stripSig) {
+      st.stripSig = sig;
+      $('strips').innerHTML = strips.map(function (s) {
+        return '<div class="strip ' + s[0] + '" role="' + (s[0] === 'mute' ? 'status' : 'alert') + '"><span>' + esc(s[1]) + '</span>' +
+          (s[2] ? '<button type="button" class="btn btn-sm" data-act="' + s[2] + '"' + (s[2] === 'sound' ? ' data-sound' : '') + '>' + s[3] + '</button>' : '') +
+          '</div>';
+      }).join('');
+    }
+
+    var b = $('soundBtn'), label = run ? '경보음 켜짐' : '경보음 꺼짐', bcls = run ? 'btn btn-sound on' : 'btn btn-sound off';
+    if (b.textContent !== label) b.textContent = label;
+    if (b.className !== bcls) { b.className = bcls; b.setAttribute('aria-pressed', run ? 'true' : 'false'); }
+
+    var n = st.d ? st.d.sos.filter(function (s) { return s.active; }).length : 0, pill = $('sosPill');
+    pill.hidden = !n;
+    if (n && pill.textContent !== '구조 요청 ' + n + '건') pill.textContent = '구조 요청 ' + n + '건';
   }
 
-  // ── SOS alert screen ──
-  function unacked() {
-    var d = st.data;
-    if (!d) return [];
-    var a = loadAck();
-    return d.sos.filter(function (s) { return s.active && !a[s.key]; });   // the filters never hide an emergency
+  // Active SOS not yet acknowledged in this browser. The filters never hide an emergency.
+  function unacked() { return st.d ? st.d.sos.filter(function (s) { return s.active && !ack[s.key]; }) : []; }
+
+  function renderAlarm() {
+    var list = unacked(), box = $('alarm');
+    var sig = list.map(function (s) { return s.key + (s.stale ? '!' : ''); }).join(',');
+    if (sig !== st.alarmSig) {
+      var opening = !st.alarmSig && !!sig;
+      st.alarmSig = sig;
+      box.hidden = !list.length;
+      document.body.classList.toggle('alarming', list.length > 0);
+      $('alarmTitle').textContent = '구조 요청 ' + list.length + '건';
+      $('alarmList').innerHTML = list.map(alarmItem).join('');
+      if (opening) {
+        var first = box.querySelector('[data-act="ack"]');
+        if (first) first.focus({ preventScroll: true });
+      }
+    }
+    $('alarmSound').hidden = soundRunning();   // toggled in place: rebuilding the list would swallow a click in flight
+    syncSiren();
   }
 
-  function refreshOverlay() {
-    var list = unacked(), o = $('alertOverlay');
-    if (!list.length) { o.style.display = 'none'; o.innerHTML = ''; st.ovSig = ''; return list; }
-    var sig = list.map(function (s) { return s.key + (s.stale ? '!' : ''); }).join(',') + '|' + soundRunning();
-    if (sig === st.ovSig) return list;
-    st.ovSig = sig;
-    o.style.display = 'block';
-    var d = st.data;
-    o.innerHTML = '<h2>🚨 구조 요청 ' + list.length + '건 — 확인하세요</h2>' +
-      (soundRunning() ? '' : '<div class="o-sound">소리가 꺼져 있어요 <button type="button" data-act="sound">소리 켜기</button></div>') +
-      list.map(function (s) {
-        return '<div class="oc">' +
-          '<div class="o-who">' + esc(s.name || '이름 없음') + ' · ' + esc(s.who) +
-          (s.stale ? ' <span class="tag stale">1시간 넘음 · 기기 꺼짐 의심</span>' : '') + '</div>' +
-          '<div class="o-line">장소 <b>' + esc(place(d.sc, s.floor, s.proc)) + '</b></div>' +
-          '<div class="o-line">' + (s.beacon ? '가까운 비콘: <b>' + esc(s.beacon) + '</b>' : '위치(비콘) 정보 없음') + '</div>' +
-          '<div class="o-line">원인 <b>' + esc(s.trigger) + '</b></div>' +
-          '<div class="o-t">발생 ' + hms(s.createdAt) + ' · 경과 <span class="el" data-t="' + esc(s.createdAt) + '">' +
-          elapsed(nowMs() - s.createdAt) + '</span></div>' +
-          '<div class="o-btns"><button type="button" data-act="ack" data-key="' + esc(s.key) + '">확인 — 대응 시작</button>' +
-          '<a class="call" href="tel:119" target="_top">119 전화</a></div></div>';
-      }).join('') +
-      '<ol class="steps">' +
-      '<li>① 현장 출동(위치 표시)</li>' +
-      '<li>② 의식·호흡 확인 — 반응이 없거나 호흡이 이상하면 119 · 심폐소생술 · AED(심정지는 4분 안)</li>' +
-      '<li>③ 넘어짐이면 머리·목을 움직이지 않기</li>' +
-      '<li>④ 한쪽 마비·말 어눌함(뇌졸중 의심)이면 바로 119(4.5시간 안 병원)</li>' +
-      '</ol>';
-    return list;
+  function fact(k, v) { return '<div><dt>' + k + '</dt><dd>' + esc(v) + '</dd></div>'; }
+  function alarmItem(s) {
+    var t = Number(s.createdAt);
+    return '<article class="ai">' +
+      '<div class="ai-head"><div class="ai-name">' + esc(nameOf(s)) + '<span>' + esc(s.who) + '</span></div>' +
+      '<div class="ai-clock"><b data-t="' + t + '">' + clock(nowMs() - t) + '</b><small>경과 시간</small></div></div>' +
+      '<dl class="ai-facts">' + fact('장소', placeOf(s)) + fact('원인', s.trigger) + fact('가까운 비콘', s.beacon || '정보 없음') +
+      fact('발생', hms(t)) + '</dl>' +
+      (s.stale ? '<p class="ai-note">1시간이 지나도 해제되지 않았습니다. 기기가 꺼졌을 수 있습니다.</p>' : '') +
+      '<div class="ai-act"><button type="button" class="btn btn-crit" data-act="ack" data-key="' + esc(s.key) + '">대응 시작</button>' +
+      '<a class="btn btn-call" href="tel:119" target="_top">119 전화</a></div>' +
+      '</article>';
   }
 
-  function ack(key) {
-    var a = loadAck();
-    a[key] = Date.now();
-    saveAck(a);
-    refreshOverlay();
-    render();
+  function ackSos(key) {
+    ack[key] = Date.now();
+    saveAck();
+    renderAlarm();
+    renderSos();
   }
 
-  // ── sound (WebAudio only; the preference lives in localStorage: '1' = on) ──
-  function soundOn() { return sget('sa_sound') === '1'; }
-  function soundRunning() { return soundOn() && !!st.audio && st.audio.state === 'running'; }
+  function renderSos() {
+    var box = $('sosList'), sec = $('sosSec');
+    if (!st.d) { box.innerHTML = '<div class="sk-row"></div>'; $('sosCount').textContent = ''; sec.classList.remove('hot'); return; }
+    var act = st.d.sos.filter(function (s) { return s.active && sosInScope(s); });
+    sec.classList.toggle('hot', act.length > 0);
+    $('sosCount').textContent = act.length ? act.length + '건 진행 중' : '';
+    box.innerHTML = act.length ? act.map(sosRow).join('') :
+      '<div class="empty"><b>진행 중인 구조 요청이 없습니다</b>' +
+      '<span>구조 요청이 오면 화면 전체에 경보가 뜨고, 대응 시작을 누를 때까지 경보음이 울립니다.</span></div>';
+  }
+  function meta(k, v) { return '<span><span class="k">' + k + '</span>' + esc(v) + '</span>'; }
+  function sosRow(s) {
+    var t = Number(s.createdAt), a = ack[s.key];
+    return '<div class="sr"><div>' +
+      '<div class="sr-name">' + esc(nameOf(s)) + '<span>' + esc(s.who) + '</span></div>' +
+      '<div class="sr-meta">' + meta('장소', placeOf(s)) + meta('원인', s.trigger) + meta('가까운 비콘', s.beacon || '정보 없음') +
+      meta('발생', hms(t)) + '</div></div>' +
+      '<div class="sr-side"><b data-t="' + t + '">' + clock(nowMs() - t) + '</b>' +
+      '<small>' + (a ? '이 화면에서 ' + hm(a) + ' 확인' : '확인 전') + '</small>' +
+      (s.stale ? '<small class="warn">해제 안 됨, 기기 꺼짐 의심</small>' : '') + '</div></div>';
+  }
 
-  function sirenCycle() {
-    try {
-      var ctx = st.audio;
-      if (!ctx || ctx.state !== 'running') return;
-      var t = ctx.currentTime;
-      [[0, 960], [0.45, 720]].forEach(function (p) {
-        var o = ctx.createOscillator(), g = ctx.createGain();
-        o.type = 'square'; o.frequency.value = p[1];
-        g.gain.setValueAtTime(0.0001, t + p[0]);
-        g.gain.exponentialRampToValueAtTime(0.3, t + p[0] + 0.03);
-        g.gain.exponentialRampToValueAtTime(0.0001, t + p[0] + 0.42);
-        o.connect(g); g.connect(ctx.destination);
-        o.start(t + p[0]); o.stop(t + p[0] + 0.45);
+  function blank(msg) { return '<tbody><tr><td class="blank">' + msg + '</td></tr></tbody>'; }
+  function skeleton() { return '<tbody>' + [0, 1, 2].map(function () { return '<tr><td><span class="sk"></span></td></tr>'; }).join('') + '</tbody>'; }
+  function stat(id, n, tone) {
+    var el = $(id);
+    el.textContent = n == null ? '-' : n;
+    el.className = n ? tone : '';
+  }
+
+  function renderSide() {
+    var d = st.d, ready = !!(d && d.sessions);
+    var ss = ready ? d.sessions.filter(inScope) : [];
+    var alive = ss.filter(function (s) { return s.alive; }), lost = ss.filter(function (s) { return !s.alive; });
+    var hour = ready ? d.alerts.filter(function (a) { return d.now - a.t <= HOUR_MS && inScope(a); }) : [];
+    var dn = hour.filter(function (a) { return a.level === 'DANGER'; }).length;
+    stat('stAlive', ready ? alive.length : null, '');
+    stat('stLost', ready ? lost.length : null, 'warn');
+    stat('stDanger', ready ? dn : null, 'crit');
+    stat('stWarn', ready ? hour.length - dn : null, '');
+
+    var cnt = {};
+    alive.forEach(function (s) { var k = s.role + '|' + s.floor + '|' + s.proc; cnt[k] = (cnt[k] || 0) + 1; });
+    var keys = Object.keys(cnt).sort();
+    $('aliveTable').innerHTML = !ready ? skeleton() : !keys.length ? blank('감시 중인 기기가 없습니다') :
+      '<thead><tr><th>역할</th><th>층</th><th>공정</th><th class="num">대수</th></tr></thead><tbody>' + keys.map(function (k) {
+        var p = k.split('|');
+        return '<tr><td>' + esc(p[0]) + '</td><td>' + esc(p[1] || '-') + '</td><td>' + esc(p[2] || '-') + '</td><td class="num">' + cnt[k] + '</td></tr>';
+      }).join('') + '</tbody>';
+
+    $('lostTable').innerHTML = !ready ? skeleton() : !lost.length ? blank('연락이 끊긴 기기가 없습니다') :
+      '<thead><tr><th>역할</th><th>층·공정</th><th>마지막 응답</th></tr></thead><tbody>' + lost.slice(0, 30).map(function (s) {
+        return '<tr><td>' + esc(s.role) + '</td><td>' + esc(scopeOf(s) || '-') + '</td><td>' + hm(s.last) +
+          '<span class="sub">' + mins(d.now - s.last) + ' 전</span></td></tr>';
+      }).join('') + '</tbody>';
+  }
+
+  function renderAlerts() {
+    Array.prototype.forEach.call(document.querySelectorAll('[data-tab]'), function (b) {
+      b.setAttribute('aria-pressed', b.getAttribute('data-tab') === st.tab ? 'true' : 'false');
+    });
+    var d = st.d, tbl = $('alertTable');
+    if (!d || !d.alerts) { tbl.innerHTML = skeleton(); return; }
+    if (st.tab === 'id') {
+      var by = {};
+      d.alerts.forEach(function (a) {
+        if (d.now - a.t > HOUR_MS || !inScope(a)) return;
+        var g = by[a.me] || (by[a.me] = { id: a.me, role: a.myRole, d: 0, w: 0, last: null });
+        if (a.level === 'DANGER') g.d++; else g.w++;
+        if (!g.last || a.t > g.last.t) g.last = a;
       });
-    } catch (e) { /* sound is optional */ }
+      var rows = Object.keys(by).map(function (k) { return by[k]; })
+        .sort(function (x, y) { return (y.d - x.d) || (y.w - x.w) || (y.last.t - x.last.t); });
+      tbl.innerHTML = !rows.length ? blank('최근 1시간 접근 경보가 없습니다') :
+        '<thead><tr><th>기기 ID</th><th>역할</th><th>층·공정</th><th class="num">위험</th><th class="num">경고</th><th>마지막</th><th>마지막 상대</th></tr></thead><tbody>' +
+        rows.map(function (g) {
+          return '<tr><td class="mono">' + esc(g.id) + '</td><td>' + esc(g.role) + '</td><td>' + esc(scopeOf(g.last) || '-') + '</td>' +
+            '<td class="num' + (g.d ? ' crit' : '') + '">' + g.d + '</td><td class="num">' + g.w + '</td>' +
+            '<td>' + hm(g.last.t) + '</td><td><span class="mono">' + esc(g.last.peer) + '</span><span class="sub">' + esc(g.last.peerRole) + '</span></td></tr>';
+        }).join('') + '</tbody>';
+    } else {
+      var recent = d.alerts.filter(inScope).slice(0, 50);
+      tbl.innerHTML = !recent.length ? blank('최근 24시간 접근 경보가 없습니다') :
+        '<thead><tr><th>시각</th><th>등급</th><th>기록한 기기</th><th>상대</th><th>층·공정</th></tr></thead><tbody>' +
+        recent.map(function (a) {
+          return '<tr><td class="num">' + hms(a.t) + '</td><td' + (a.level === 'DANGER' ? ' class="crit">위험' : '>경고') + '</td>' +
+            '<td><span class="mono">' + esc(a.me) + '</span><span class="sub">' + esc(a.myRole) + '</span></td>' +
+            '<td><span class="mono">' + esc(a.peer) + '</span><span class="sub">' + esc(a.peerRole) + '</span></td>' +
+            '<td>' + esc(scopeOf(a) || '-') + '</td></tr>';
+        }).join('') + '</tbody>';
+    }
   }
+
+  function renderEnded() {
+    var d = st.d, tbl = $('endedTable');
+    if (!d) { tbl.innerHTML = skeleton(); return; }
+    var done = d.sos.filter(function (s) { return !s.active && sosInScope(s); });
+    tbl.innerHTML = !done.length ? blank('최근 24시간 끝난 구조 요청이 없습니다') :
+      '<thead><tr><th>시작</th><th>끝</th><th>작업자</th><th>원인</th><th>장소</th><th>끝난 방식</th></tr></thead><tbody>' +
+      done.map(function (s) {
+        return '<tr><td>' + hm(s.createdAt) + '</td><td>' + (s.resolvedAt ? hm(s.resolvedAt) : '-') + '</td>' +
+          '<td>' + esc(nameOf(s)) + '<span class="sub">' + esc(s.who) + '</span></td><td>' + esc(s.trigger) + '</td>' +
+          '<td>' + esc(placeOf(s)) + '</td><td class="' + (s.auto ? 'warn' : 'ok') + '">' + endedHow(s) + '</td></tr>';
+      }).join('') + '</tbody>';
+  }
+
+  // ── sound (Web Audio only; the preference lives in localStorage: '1' = on) ──
+  function soundPref() { return sget('sa_sound') === '1'; }
+  function soundRunning() { return soundPref() && !!st.audio && st.audio.state === 'running'; }
 
   function enableSound(test) {
     try {
       if (!st.audio) st.audio = new (window.AudioContext || window.webkitAudioContext)();
       sset('sa_sound', '1');
       Promise.resolve(st.audio.resume()).then(function () {
-        if (test) sirenCycle();
-        updateSoundUi();
-        refreshOverlay();
-      }, function () { updateSoundUi(); });
-    } catch (e) { /* no audio support */ }
-    updateSoundUi();
+        if (test && !unacked().length) play(false);
+        renderStatus();
+        renderAlarm();
+      }, renderStatus);
+    } catch (e) { /* no Web Audio */ }
+    renderStatus();
   }
 
   function disableSound() {
     sset('sa_sound', '0');
+    sirenOff();
     try { if (st.audio) st.audio.suspend(); } catch (e) { /* ignore */ }
-    updateSoundUi();
-    refreshOverlay();
+    renderStatus();
+    renderAlarm();
   }
 
-  function updateSoundUi() {
-    $('soundBar').style.display = soundRunning() ? 'none' : 'block';
-    $('soundBtn').textContent = soundOn() ? '알림음 켜짐' : '알림음 켜기';
-    $('soundBtn').className = soundOn() ? 'on' : '';
+  // One second of a two-tone siren, built once and looped on the audio thread: throttled timers of a background tab
+  // cannot delay or thin it out
+  function sirenBuffer(ctx) {
+    var sr = ctx.sampleRate, buf = ctx.createBuffer(1, sr, sr), ch = buf.getChannelData(0);
+    for (var i = 0; i < sr; i++) {
+      var t = i / sr, first = t < 0.5, local = first ? t : t - 0.5, f = first ? 960 : 720;
+      var env = Math.max(0, Math.min(1, local / 0.02, (0.45 - local) / 0.04));
+      ch[i] = env * 0.22 * (Math.sin(2 * Math.PI * f * local) >= 0 ? 1 : -1);
+    }
+    return buf;
   }
+  function play(loop) {
+    var src = st.audio.createBufferSource();
+    src.buffer = st.sirenBuf || (st.sirenBuf = sirenBuffer(st.audio));
+    src.loop = loop;
+    src.connect(st.audio.destination);
+    src.start();
+    return src;
+  }
+  function sirenOn() { if (!st.siren) { try { st.siren = play(true); } catch (e) { st.siren = null; } } }
+  function sirenOff() {
+    if (!st.siren) return;
+    try { st.siren.stop(); st.siren.disconnect(); } catch (e) { /* already stopped */ }
+    st.siren = null;
+  }
+  function syncSiren() { if (soundRunning() && unacked().length) sirenOn(); else sirenOff(); }
 
-  // The first click or key of a later visit resumes the sound when the preference is on
+  // On a later visit the first click or key anywhere resumes the sound (browsers need a gesture). The sound buttons are
+  // left to their own handlers, so one click never switches it on and straight off again.
   function armResume() {
-    if (!soundOn()) return;
-    var go = function () {
+    if (!soundPref()) return;
+    var go = function (ev) {
+      if (ev.target && ev.target.closest && ev.target.closest('[data-sound]')) return;
       document.removeEventListener('pointerdown', go, true);
       document.removeEventListener('keydown', go, true);
-      if (soundOn() && !soundRunning()) enableSound(false);
+      if (soundPref() && !soundRunning()) enableSound(false);
     };
     document.addEventListener('pointerdown', go, true);
     document.addEventListener('keydown', go, true);
   }
 
-  // One 1-second ticker: elapsed text, the siren cycle and the connection check
+  // One 1-second ticker: elapsed clocks, the connection check and the siren state (the siren itself loops on its own)
   function tick() {
-    var t = nowMs();
-    Array.prototype.forEach.call(document.querySelectorAll('.el'), function (e) {
-      e.textContent = elapsed(t - Number(e.getAttribute('data-t')));
-    });
-    if (soundOn() && st.audio && st.audio.state === 'suspended') {
-      try { st.audio.resume().catch(function () {}); } catch (e) { /* needs a click */ }
+    var now = nowMs(), els = document.querySelectorAll('[data-t]');
+    for (var i = 0; i < els.length; i++) {
+      var txt = clock(now - Number(els[i].getAttribute('data-t')));
+      if (els[i].textContent !== txt) els[i].textContent = txt;
     }
-    var list = refreshOverlay();
-    if (list.length && soundRunning()) sirenCycle();
-    updateSoundUi();
-    checkConn();
+    renderStatus();
+    syncSiren();
   }
 
-  // ── tables ──
-  function render() {
-    var d = st.data;
-    if (!d) return;
-    var now = d.now;
-    var acked = loadAck();
-    var sos = d.sos.filter(sosScope);
-    var active = sos.filter(function (s) { return s.active; });
-    var sessions = d.sessions.filter(inScope);
-    var alive = sessions.filter(function (s) { return s.alive; });
-    var lost = sessions.filter(function (s) { return !s.alive; });
-    var hour = d.alerts.filter(function (a) { return now - a.t <= 3600000 && inScope(a); });
-    var dn = hour.filter(function (a) { return a.level === 'DANGER'; }).length;
-
-    $('kSos').textContent = active.length;
-    $('kAlive').textContent = alive.length;
-    $('kLost').textContent = lost.length;
-    $('kAlerts').textContent = dn + ' / ' + (hour.length - dn);
-
-    var b = $('banner');
-    if (active.length) {
-      b.textContent = '구조 요청 ' + active.length + '건 진행 중 — ' + active.map(function (s) {
-        return (s.name || s.who) + ' (' + s.trigger + ', ' + scope(d.sc, s.floor, s.proc) + ')';
-      }).join(' · ');
-      b.className = 'banner show';
-    } else {
-      b.className = 'banner';
-    }
-
-    $('sosList').innerHTML = active.length ? active.map(function (s) {
-      return '<div class="sos">' +
-        '<div class="who">🚨 ' + esc(s.name || '이름 없음') + ' · ' + esc(s.who) +
-        (s.stale ? ' <span class="tag stale">1시간 넘음 · 기기 꺼짐 의심</span>' : '') +
-        (acked[s.key] ? ' <span class="tag ok">확인 ' + hm(acked[s.key]) + ' (이 화면)</span>' : '') + '</div>' +
-        '<div class="line"><b>' + esc(s.trigger) + '</b> · ' + esc(scope(d.sc, s.floor, s.proc)) + '</div>' +
-        '<div class="line">' + (s.beacon ? '가까운 비콘: <b>' + esc(s.beacon) + '</b>' : '위치(비콘) 정보 없음') + '</div>' +
-        '<div class="t">시작 ' + hms(s.createdAt) + ' · <span class="el" data-t="' + esc(s.createdAt) + '">' +
-        elapsed(nowMs() - s.createdAt) + '</span> 경과</div></div>';
-    }).join('') : '<div class="empty">진행 중인 구조 요청이 없습니다.</div>';
-
-    // Collision alerts of the last hour, grouped by the phone that recorded them
-    var by = {};
-    hour.forEach(function (a) {
-      var g = by[a.me] || (by[a.me] = { id: a.me, role: a.myRole, floor: a.floor, proc: a.proc, d: 0, w: 0, t: 0, peer: '', peerRole: '' });
-      if (a.level === 'DANGER') g.d++; else g.w++;
-      if (a.t > g.t) { g.t = a.t; g.peer = a.peer; g.peerRole = a.peerRole; g.floor = a.floor; g.proc = a.proc; }
-    });
-    var rows = Object.keys(by).map(function (k) { return by[k]; })
-      .sort(function (x, y) { return (y.d - x.d) || (y.w - x.w) || (y.t - x.t); });
-    $('byId').innerHTML = rows.length ? '<tr><th>ID</th><th>역할</th><th>층·공정</th><th class="num">위험</th><th class="num">경고</th><th>마지막</th><th>마지막 상대</th></tr>' +
-      rows.map(function (g) {
-        return '<tr><td class="mono">' + esc(g.id) + '</td><td>' + esc(role(g.role)) + '</td><td>' + esc([g.floor, g.proc].filter(Boolean).join('-') || '–') +
-          '</td><td class="num">' + (g.d ? '<span class="tag d">' + g.d + '</span>' : '0') + '</td><td class="num">' + (g.w ? '<span class="tag w">' + g.w + '</span>' : '0') +
-          '</td><td>' + hm(g.t) + '</td><td class="mono">' + esc(g.peer) + ' <span class="tag g">' + esc(role(g.peerRole)) + '</span></td></tr>';
-      }).join('') : '<tr><td class="empty">최근 1시간 접근 경보가 없습니다.</td></tr>';
-
-    // Monitoring devices by role × floor × process (sessions carry no device ID by design)
-    var cnt = {};
-    alive.forEach(function (s) {
-      var k = s.role + '|' + s.floor + '|' + s.proc;
-      cnt[k] = (cnt[k] || 0) + 1;
-    });
-    var ck = Object.keys(cnt).sort();
-    $('alive').innerHTML = ck.length ? '<tr><th>역할</th><th>층</th><th>공정</th><th class="num">대수</th></tr>' + ck.map(function (k) {
-      var p = k.split('|');
-      return '<tr><td>' + esc(role(p[0])) + '</td><td>' + esc(p[1] || '–') + '</td><td>' + esc(p[2] || '–') + '</td><td class="num">' + cnt[k] + '</td></tr>';
-    }).join('') : '<tr><td class="empty">감시 중인 기기가 없습니다.</td></tr>';
-
-    $('lost').innerHTML = lost.length ? '<tr><th>역할</th><th>층·공정</th><th>마지막 응답</th><th>감시 시작</th></tr>' + lost.slice(0, 30).map(function (s) {
-      return '<tr><td>' + esc(role(s.role)) + '</td><td>' + esc([s.floor, s.proc].filter(Boolean).join('-') || '–') +
-        '</td><td>' + hm(s.last) + ' (' + ago(now, s.last) + ' 전)</td><td>' + hm(s.start) + '</td></tr>';
-    }).join('') : '<tr><td class="empty">연락이 끊긴 기기가 없습니다.</td></tr>';
-
-    var recent = d.alerts.filter(inScope).slice(0, 50);
-    $('recent').innerHTML = recent.length ? '<tr><th>시각</th><th>등급</th><th>기록한 기기</th><th>상대</th><th>층·공정</th></tr>' + recent.map(function (a) {
-      return '<tr><td>' + hms(a.t) + '</td><td>' + (a.level === 'DANGER' ? '<span class="tag d">위험</span>' : '<span class="tag w">경고</span>') +
-        '</td><td class="mono">' + esc(a.me) + ' <span class="tag g">' + esc(role(a.myRole)) + '</span></td><td class="mono">' + esc(a.peer) +
-        ' <span class="tag g">' + esc(role(a.peerRole)) + '</span></td><td>' + esc([a.floor, a.proc].filter(Boolean).join('-') || '–') + '</td></tr>';
-    }).join('') : '<tr><td class="empty">오늘 기록된 접근 경보가 없습니다.</td></tr>';
-
-    var done = sos.filter(function (s) { return !s.active; });
-    $('resolved').innerHTML = done.length ? '<tr><th>시작</th><th>끝남</th><th>작업자</th><th>원인</th><th>층·공정</th><th>끝난 방식</th></tr>' + done.map(function (s) {
-      return '<tr><td>' + hm(s.createdAt) + '</td><td>' + (s.resolvedAt ? hm(s.resolvedAt) : '–') + '</td><td>' + esc(s.name || '–') + ' · ' + esc(s.who) +
-        '</td><td>' + esc(s.trigger) + '</td><td>' + esc([s.floor, s.proc].filter(Boolean).join('-') || '–') + '</td><td>' +
-        (s.auto ? '<span class="tag stale">응답 없이 자동 종료</span>' : '<span class="tag ok">본인 해제</span>') + '</td></tr>';
-    }).join('') : '<tr><td class="empty">최근 24시간 끝난 구조 요청이 없습니다.</td></tr>';
+  function fill(el, items, all) {
+    el.innerHTML = '<option value="">' + all + '</option>' +
+      items.map(function (x) { return '<option value="' + esc(x) + '">' + esc(x) + '</option>'; }).join('') +
+      '<option value="-">미지정</option>';
   }
+  function refilter() { renderSos(); renderSide(); renderAlerts(); renderEnded(); }
 
-  fillSelect($('floor'), FLOORS, '전체 층');
-  fillSelect($('proc'), PROCS, '전체 공정');
-  $('floor').onchange = function () { st.floor = this.value; render(); };
-  $('proc').onchange = function () { st.proc = this.value; render(); };
+  fill($('floor'), FLOORS, '전체');
+  fill($('proc'), PROCS, '전체');
+  $('floor').onchange = function () { st.floor = this.value; refilter(); };
+  $('proc').onchange = function () { st.proc = this.value; refilter(); };
   $('site').onchange = function () {
-    st.sc = this.value; st.data = null; st.prev = null;   // nothing of the old site stays on screen
-    refreshOverlay();
+    st.sc = this.value;
+    st.d = null;          // nothing of the old site stays on screen while the new one loads
+    renderAll();
     load();
   };
   $('reloadBtn').onclick = load;
-  $('soundBtn').onclick = function () { if (soundOn()) disableSound(); else enableSound(true); };
-  $('soundBarBtn').onclick = function () { enableSound(true); };
-  $('alertOverlay').onclick = function (ev) {
+  $('soundBtn').onclick = function () { if (soundRunning()) disableSound(); else enableSound(true); };
+  document.addEventListener('click', function (ev) {
     var el = ev.target && ev.target.closest ? ev.target.closest('[data-act]') : null;
     if (!el) return;
-    if (el.getAttribute('data-act') === 'ack') ack(el.getAttribute('data-key'));
-    else if (el.getAttribute('data-act') === 'sound') enableSound(true);
-  };
+    var act = el.getAttribute('data-act');
+    if (act === 'ack') ackSos(el.getAttribute('data-key'));
+    else if (act === 'sound') enableSound(true);
+    else if (act === 'retry') load();
+    else if (act === 'tab') { st.tab = el.getAttribute('data-tab'); renderAlerts(); }
+    else if (act === 'jump') $('sosSec').scrollIntoView({ block: 'start' });
+  });
+  window.addEventListener('storage', function (e) { if (e.key === 'sa_ack') { ack = readAck(); renderAlarm(); renderSos(); } });
   document.addEventListener('visibilitychange', function () { if (!document.hidden) load(); });
   armResume();
-  updateSoundUi();
+  renderAll();
   load();
-  // Hidden tabs keep refreshing and ticking: the siren must still sound when the page is behind other windows
+  // Hidden tabs keep refreshing (the SOS part only): the alarm must still go off behind other windows
   setInterval(load, REFRESH_MS);
   setInterval(tick, 1000);
 </script>

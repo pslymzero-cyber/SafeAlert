@@ -38,7 +38,7 @@ class ControlPageParityTest {
         assertEquals(SosLedger.AUTO_RELEASE_MS, release[1].toLong() * release[2].toLong())
     }
 
-    // Role names: the page's server script and the mail say the same thing, and the page's own map says what the app says.
+    // Role names: the page's server script and the mail name roles the same way, and the server sends the label (the page keeps no role map of its own).
     @Test fun role_names_match_the_app_and_the_mail_script() {
         val g = gs()
         val m = mail()
@@ -49,14 +49,8 @@ class ControlPageParityTest {
         assertEquals(m.substringAfter("var PIT_NAMES = {").substringBefore("};"), g.substringAfter("var PIT_NAMES = {").substringBefore("};"))
 
         val html = page()
-        val map = Regex("""(\w+): '([^']*)'""").findAll(html.substringAfter("var ROLE = {").substringBefore("};"))
-            .associate { it.groupValues[1] to it.groupValues[2] }
-        assertEquals(sosRoleLabel("WALKER", ""), map["WALKER"])
-        assertEquals(sosRoleLabel("FORKLIFT", ""), map["FORKLIFT"])
-        assertEquals(sosRoleLabel("EPJ", ""), map["EPJ"])
         assertEquals("알 수 없음", sosRoleLabel("X", ""))
-        assertEquals(sosRoleLabel("X", ""), map["UNKNOWN"])
-        assertTrue("역할 이름이 모르는 값이면 같은 라벨", html.contains("function role(r) { return ROLE[r] || ROLE.UNKNOWN; }"))
+        assertFalse("역할 이름은 서버의 roleName_ 이 보냄", html.contains("var ROLE"))
         assertFalse("옛 표기 '미상'", html.contains("미상"))
     }
 
