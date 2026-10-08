@@ -626,4 +626,58 @@ class LoneWorkerPeerTest {
         assertEquals(Pattern.SIREN, Pattern.of(l.mode, l.audiblePeers().isNotEmpty()))
         assertTrue(l.alarmVibrates)
     }
+
+    // A server SOS outside this phone's floor/process scope stays hidden and silent until it is heard over Bluetooth; then
+    //   it is one named entry that rings and its row carries the sender's floor-proc.
+    @Test fun out_of_scope_sos_stays_quiet_until_heard_on_air() {
+        val l = meLogic()
+        l.srv("K1", "P", 1, true, created = 5L, now = 1_000, inScope = false, floor = "2F", proc = "OB")
+        assertTrue("범위 밖 기록은 목록에 없다", l.peers.isEmpty())
+        assertTrue("범위 밖 기록은 울리지 않는다", l.audiblePeers().isEmpty())
+        l.onPeerBle("P", true, 2_000, 1)
+        assertEquals(1, l.audiblePeers().size)
+        val p = l.peer("P")
+        assertEquals("K1", p.key)
+        assertEquals("n", p.name)
+        assertTrue("행에 층·공정이 보인다", p.line(2_000).contains("2F-OB"))
+    }
+
+    // The same merge when the advert came first: the out-of-scope record only names the entry that already rings.
+    @Test fun ble_first_then_out_of_scope_record_names_the_entry() {
+        val l = meLogic()
+        l.onPeerBle("P", true, 1_000, 1)
+        assertEquals(1, l.audiblePeers().size)
+        l.srv("K1", "P", 1, true, created = 5L, now = 2_000, inScope = false)
+        assertEquals(1, l.peers.size)
+        assertEquals("K1", l.peer("P").key)
+        assertEquals("n", l.peer("P").name)
+        assertEquals(1, l.audiblePeers().size)
+    }
+
+    // A quiet entry stays hidden when it ends; it turns normal only when a later delivery of the record is in scope.
+    @Test fun quiet_entry_stays_hidden_when_resolved_and_rings_when_scope_widens() {
+        val l = meLogic()
+        l.srv("K1", "P", 1, true, created = 5L, now = 1_000, inScope = false)
+        l.srv("K1", "P", 1, false, created = 5L, now = 2_000, resolvedAt = 6L, serverNow = 6L)
+        assertTrue(l.peers.isEmpty())
+        assertTrue(l.audiblePeers().isEmpty())
+        l.srv("K2", "Q", 1, true, created = 5L, now = 3_000, inScope = false)
+        assertTrue(l.peers.isEmpty())
+        l.srv("K2", "Q", 1, true, created = 5L, now = 4_000, inScope = true)
+        assertEquals(1, l.peers.size)
+        assertEquals(1, l.audiblePeers().size)
+    }
+
+    // A quiet entry still runs the one-hour release (also for a record replayed after its hour), without ever showing.
+    @Test fun out_of_scope_sos_runs_the_one_hour_release() {
+        val l = meLogic()
+        l.srv("K1", "P", 1, true, created = 5L, now = 1_000, serverNow = 5L, inScope = false)
+        l.tick(1_000 + SosLedger.AUTO_RELEASE_MS)
+        assertEquals(listOf("K1"), l.takeAutoReleasedPeers())
+        assertTrue(l.peers.isEmpty())
+        val now = 2 * SosLedger.AUTO_RELEASE_MS
+        l.srv("K2", "Q", 1, true, created = 5L, now = now, serverNow = 5L + SosLedger.AUTO_RELEASE_MS, inScope = false)
+        assertEquals(listOf("K2"), l.takeAutoReleasedPeers())
+        assertTrue(l.peers.isEmpty())
+    }
 }

@@ -27,6 +27,9 @@ package com.wf11.safealert.service
  *   an old sender's next SOS cannot be told apart), and its record is queued (takeAutoReleased) to be marked released on
  *   the server, where its writer may be gone. A BLE-only entry may never have reached the server (nobody was told), so it
  *   ends that way only once its adverts have stopped as well.
+ * - A server record outside this phone's floor/process scope is a quiet entry: hidden and silent, but it merges either way
+ *   with its episode's BLE entry (which then rings with the name) and runs the one-hour release. It becomes a normal entry
+ *   when heard over BLE or delivered again in scope, and stays hidden after it ends.
  */
 
 /** One peer row used by the screen and the acknowledge gate. id = entry id, epId = episode ID. */
@@ -53,7 +56,15 @@ class LoneWorkerPeers {
         /** When the SOS began on this device's clock: the server record's time, or when first heard over BLE. */
         val startMs: Long = firstSeenMs,
         /** Ended by the one-hour limit, not by its worker. */
-        val autoEnded: Boolean = false
+        val autoEnded: Boolean = false,
+        /** Floor and process the sender gave ("" = none), shown on the row. */
+        val floor: String = "",
+        val proc: String = "",
+        /**
+         * Out-of-scope server entry not heard over Bluetooth: kept only to merge with its adverts and to run the one-hour
+         * release; not listed, not audible, no notification; stays hidden after it ends.
+         */
+        val quiet: Boolean = false
     ) {
         val fromServer: Boolean get() = key != null
         /** Store key. */
@@ -64,12 +75,14 @@ class LoneWorkerPeers {
 
     /**
      * One server record. resolvedLocalMs / startLocalMs = resolve and creation times converted to this device's elapsed
-     * time (null if unknown); auto = released by the one-hour limit (reason auto).
+     * time (null if unknown); auto = released by the one-hour limit (reason auto). inScope = false means the record is
+     * outside this phone's floor/process scope.
      */
     data class ServerRec(
         val key: String, val bleId: String, val name: String, val role: String, val trigger: String,
         val beacon: String, val createdAtMs: Long, val active: Boolean, val ep: Int, val resolvedLocalMs: Long?,
-        val startLocalMs: Long? = null, val auto: Boolean = false
+        val startLocalMs: Long? = null, val auto: Boolean = false,
+        val floor: String = "", val proc: String = "", val inScope: Boolean = true
     )
 
     companion object {
@@ -114,7 +127,8 @@ class LoneWorkerPeers {
     /** Server keys released by the one-hour limit, waiting to be marked released on the server. */
     private val autoReleased = ArrayList<String>()
 
-    val all: Collection<Peer> get() = map.values
+    /** Entries the screen and notifications see (quiet ones are left out). */
+    val all: Collection<Peer> get() = map.values.filter { !it.quiet }
 
     fun onServer(rec: ServerRec, nowMs: Long) {
         val (key, bleId, name, role, trigger, beacon, createdAtMs, active, ep) = rec
@@ -148,7 +162,8 @@ class LoneWorkerPeers {
                 map[kId] = cur.copy(
                     name = name, role = role, trigger = trigger,
                     beacon = beacon.ifEmpty { cur.beacon }, createdAtMs = createdAtMs,
-                    startMs = rec.startLocalMs ?: cur.startMs
+                    startMs = rec.startLocalMs ?: cur.startMs,
+                    floor = rec.floor, proc = rec.proc, quiet = cur.quiet && !rec.inScope
                 )
             }
             return
@@ -161,14 +176,16 @@ class LoneWorkerPeers {
             map[kId] = Peer(
                 bleId, key, name, role, trigger, beacon.ifEmpty { b.beacon }, createdAtMs,
                 firstSeenMs = b.firstSeenMs, active = true, silenced = coldServer(kId, epId, nowMs),
-                resolvedAtMs = 0L, episode = ep, lastBleMs = b.lastBleMs, startMs = rec.startLocalMs ?: b.startMs
+                resolvedAtMs = 0L, episode = ep, lastBleMs = b.lastBleMs, startMs = rec.startLocalMs ?: b.startMs,
+                floor = rec.floor, proc = rec.proc
             )
             return
         }
         map[kId] = Peer(
             bleId, key, name, role, trigger, beacon, createdAtMs,
             firstSeenMs = nowMs, active = true, silenced = coldServer(kId, epId, nowMs),
-            resolvedAtMs = 0L, episode = ep, startMs = rec.startLocalMs ?: nowMs
+            resolvedAtMs = 0L, episode = ep, startMs = rec.startLocalMs ?: nowMs,
+            floor = rec.floor, proc = rec.proc, quiet = !rec.inScope
         )
     }
 
@@ -192,6 +209,7 @@ class LoneWorkerPeers {
                 val keep = !gap || (first && p.key != null && coldServer(p.id, p.epId, nowMs))
                 map[p.id] = p.copy(
                     lastBleMs = nowMs,
+                    quiet = false,
                     silenced = p.silenced && keep,
                     beacon = if (p.key == null) p.beacon.ifEmpty { beacon } else p.beacon
                 )
@@ -225,7 +243,7 @@ class LoneWorkerPeers {
         }
     }
 
-    fun audible(): List<Peer> = map.values.filter { it.active && !it.silenced }
+    fun audible(): List<Peer> = map.values.filter { it.active && !it.silenced && !it.quiet }
 
     fun tick(nowMs: Long) {
         for (p in map.values.toList()) {

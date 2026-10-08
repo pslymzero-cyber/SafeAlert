@@ -32,7 +32,7 @@ import java.util.concurrent.Executors
 class LoneWorkerSosSync(
     private val ctx: Context,
     private val handler: Handler,
-    private val onPeer: (SosRemote.SosRecord) -> Unit,
+    private val onPeer: (SosRemote.SosRecord, Boolean) -> Unit,
     private val onChange: () -> Unit
 ) {
     companion object {
@@ -301,13 +301,11 @@ class LoneWorkerSosSync(
                 handler.post {
                     // Skip my own records (including those under my bleId from before a role switch)
                     val mine = SosRemote.currentUid()
-                    // The scope filter is for the server path only (BLE-heard SOS bypasses it); resolved records
-                    // always pass, so a clear is never stranded after the scope narrows.
-                    if (gen == generation && !(rec.uid.isNotEmpty() && rec.uid == mine) &&
-                        SiteScope.receives(rec.active, rec.floor, rec.proc, f, p, all)
-                    ) {
+                    // Every record but mine is delivered (its path is needed for the one-hour release); out-of-scope
+                    // active ones arrive with inScope false and stay quiet in LoneWorkerPeers until heard over Bluetooth.
+                    if (gen == generation && !(rec.uid.isNotEmpty() && rec.uid == mine)) {
                         peerPaths[rec.key] = path
-                        onPeer(rec)
+                        onPeer(rec, SiteScope.receives(rec.active, rec.floor, rec.proc, f, p, all))
                     }
                 }
             },

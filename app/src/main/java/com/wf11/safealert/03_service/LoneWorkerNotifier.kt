@@ -13,6 +13,7 @@ import androidx.core.app.NotificationCompat
 import com.wf11.safealert.model.PitType
 import com.wf11.safealert.ui.LoneWorkerActivity
 import com.wf11.safealert.ui.MainActivity
+import com.wf11.safealert.utils.SiteScope
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -37,14 +38,14 @@ internal fun sosRoleLabel(role: String, name: String): String =
     }
 
 /**
- * One peer entry line: name · role · time · location · status. Role is omitted
+ * One peer entry line: name · role · floor-proc · time · location · status. Role is omitted
  * when empty (peer seen only over BLE, before a server record).
  */
 internal fun LoneWorkerPeers.Peer.line(nowMs: Long): String {
     val roleText = role.ifEmpty { null }?.let { sosRoleLabel(it, displayName()) }
     val wall = if (fromServer) createdAtMs else System.currentTimeMillis() - (nowMs - firstSeenMs)
     return listOfNotNull(
-        displayName(), roleText, HHMM.format(Instant.ofEpochMilli(wall).atZone(ZoneId.systemDefault())),
+        displayName(), roleText, SiteScope.label("", floor, proc).ifEmpty { null }, HHMM.format(Instant.ofEpochMilli(wall).atZone(ZoneId.systemDefault())),
         beacon.ifEmpty { null }?.let { if (fromServer) "마지막 위치: $it" else "${it} 근처" },
         if (active) "구조 요청" else if (autoEnded) LoneWorkerNotifier.AUTO_ENDED else "해제됨"
     ).joinToString(" · ")

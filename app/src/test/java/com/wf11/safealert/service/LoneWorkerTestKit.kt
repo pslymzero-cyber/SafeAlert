@@ -161,11 +161,13 @@ internal fun LoneWorkerLogic.peer(id: String, ep: Int? = null) =
 internal fun LoneWorkerLogic.srv(
     key: String, id: String, ep: Int, active: Boolean, created: Long, now: Long,
     name: String = "n", beacon: String = "",
-    resolvedAt: Long = 0L, serverNow: Long? = null, wall: Long = 0L, auto: Boolean = false
+    resolvedAt: Long = 0L, serverNow: Long? = null, wall: Long = 0L, auto: Boolean = false,
+    inScope: Boolean = true, floor: String = "", proc: String = ""
 ) = onPeerServer(
     LoneWorkerPeers.ServerRec(key, id, name, "WALKER", "still", beacon, created, active, ep,
         LoneWorkerPeers.resolvedLocalMs(resolvedAt, serverNow, wall, now),
-        LoneWorkerPeers.startLocalMs(created, serverNow, now), auto),
+        LoneWorkerPeers.startLocalMs(created, serverNow, now), auto,
+        floor = floor, proc = proc, inScope = inScope),
     now
 )
 

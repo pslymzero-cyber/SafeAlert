@@ -60,7 +60,7 @@ class LoneWorkerMonitor(
     private val alarm = LoneWorkerAlarm(ctx, setAlarmVolume)
     private val handler = Handler(Looper.getMainLooper())
     private val sync = LoneWorkerSosSync(ctx, handler,
-        { rec ->
+        { rec, inScope ->
             if (started) {
                 val t = now()
                 val serverNow = SosRemote.serverNowMs()
@@ -68,7 +68,8 @@ class LoneWorkerMonitor(
                 logic.onPeerServer(LoneWorkerPeers.ServerRec(
                     rec.key, rec.bleId, rec.name, rec.role, rec.trigger, rec.beacon, rec.createdAt, rec.active, rec.ep,
                     LoneWorkerPeers.resolvedLocalMs(rec.resolvedAt, serverNow, wall, t),
-                    LoneWorkerPeers.startLocalMs(rec.createdAt, serverNow, t), rec.auto
+                    LoneWorkerPeers.startLocalMs(rec.createdAt, serverNow, t), rec.auto,
+                    floor = rec.floor, proc = rec.proc, inScope = inScope
                 ), t)
                 render()
             }
