@@ -38,8 +38,8 @@ object SosRemote {
         val ep: Int = 0,          // SOS episode 1..255 (0 = none); same value as the BLE advertised episode
         val resolvedAt: Long = 0L, // Resolve server time (0 if none)
         val auto: Boolean = false, // Released by the one-hour limit (reason auto), not by its worker
-        val floor: String = "",   // Writer's floor code ("" = none / 1.2.8 sender)
-        val proc: String = ""     // Writer's process code ("" = none / 1.2.8 sender)
+        val floor: String = "",   // Writer's floor code ("" = none / sender that never writes it)
+        val proc: String = ""     // Writer's process code ("" = none / sender that never writes it)
     )
 
     private const val SOS_STR_MAX = 64
@@ -119,24 +119,6 @@ object SosRemote {
     fun replayStartAt(t0WallMs: Long, serverOffsetMs: Long): Long = t0WallMs + serverOffsetMs - REPLAY_WINDOW_MS
 
     fun nodePath(root: String, site: String): String = "$root/sos/$site"
-
-    /** Path of the admin-managed floor / process list of a site (read-only for clients). */
-    fun sitesPath(root: String, site: String): String = "$root/sites/$site"
-
-    /**
-     * One-shot read of the site's floor / process list node. On success (true, the raw value or null if absent);
-     * on failure (false, null). Failure logs never include the path or uid.
-     */
-    fun readSite(root: String, site: String, onResult: (Boolean, Any?) -> Unit) {
-        FirebaseDatabase.getInstance().reference.child(sitesPath(root, site)).get()
-            .addOnCompleteListener {
-                if (it.isSuccessful) onResult(true, it.result?.value)
-                else {
-                    Log.w(TAG, "층·공정 목록 조회 실패")
-                    onResult(false, null)
-                }
-            }
-    }
 
     /** Path of the lone-worker liveness session node. */
     fun hbPath(root: String, site: String): String = "$root/hb/$site"

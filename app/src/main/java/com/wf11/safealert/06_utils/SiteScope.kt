@@ -12,15 +12,9 @@ object SiteScope {
     /** Trimmed, uppercased value if it is a valid floor/process code, else "". */
     fun code(raw: String?): String = raw?.trim()?.uppercase()?.takeIf { CODE.matches(it) }.orEmpty()
 
-    /** Comma list ("1F,2F") to distinct valid codes; anything that is not a string gives []. */
-    fun codes(raw: Any?): List<String> =
-        (raw as? String)?.split(',')?.map { code(it) }?.filter { it.isNotEmpty() }?.distinct().orEmpty()
-
-    /** Site node ({root}/sites/{sc}) to (floors, procs); a non-map node gives two empty lists. */
-    fun lists(node: Any?): Pair<List<String>, List<String>> {
-        val m = node as? Map<*, *> ?: return emptyList<String>() to emptyList()
-        return codes(m["floors"]) to codes(m["procs"])
-    }
+    /** Picker choices built into the app. */
+    val FLOORS: List<String> = (1..10).map { "${it}F" }
+    val PROCS: List<String> = listOf("OB", "IB", "ICQA", "HUB", "EHS", "HR")
 
     /** "WF11-1F-OB"; empty floor/proc parts are left out. */
     fun label(site: String, floor: String, proc: String): String =

@@ -120,11 +120,6 @@
           }
         }
       },
-      "sites": {
-        "$sc": {
-          ".read": "auth != null"
-        }
-      },
       "sos": {
         "$sc": {
           ".read": "auth != null",

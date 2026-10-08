@@ -16,7 +16,7 @@ class SiteScopeTest {
     fun receives_truthTable() {
         val rows = listOf(
             Row(true, "2F", "IB", "", "", false, true),     // I have no scope: receive everything
-            Row(true, "", "", "1F", "OB", false, true),     // 1.2.8 sender (no floor/proc)
+            Row(true, "", "", "1F", "OB", false, true),     // sender that never writes floor/proc
             Row(true, "1F", "OB", "1F", "OB", false, true),
             Row(true, "2F", "IB", "1F", "OB", false, false),
             Row(true, "1F", "IB", "1F", "OB", false, false),
@@ -33,22 +33,10 @@ class SiteScopeTest {
     }
 
     @Test
-    fun codes_normalizeAndDropInvalid() {
-        assertEquals(listOf("1F", "2F", "B1"), SiteScope.codes("1F, 2f ,,B1"))
-        assertEquals(listOf("OB"), SiteScope.codes("1층,TOOLONG,OB,OB"))
-        assertTrue(SiteScope.codes(null).isEmpty())
-        assertTrue(SiteScope.codes(5).isEmpty())
-        assertTrue(SiteScope.codes("").isEmpty())
-    }
-
-    @Test
-    fun lists_readSiteNode() {
-        assertEquals(
-            listOf("1F", "2F") to listOf("IB", "OB"),
-            SiteScope.lists(mapOf("floors" to "1F,2F", "procs" to "ib,ob"))
-        )
-        assertEquals(emptyList<String>() to emptyList<String>(), SiteScope.lists("x"))
-        assertEquals(emptyList<String>() to listOf("OB"), SiteScope.lists(mapOf("procs" to "OB")))
+    fun builtInLists_areTheFixedValidCodes() {
+        assertEquals((1..10).map { "${it}F" }, SiteScope.FLOORS)
+        assertEquals(listOf("OB", "IB", "ICQA", "HUB", "EHS", "HR"), SiteScope.PROCS)
+        for (c in SiteScope.FLOORS + SiteScope.PROCS) assertEquals(c, SiteScope.code(c), c)
     }
 
     @Test

@@ -44,17 +44,15 @@ class DatabaseRulesParityTest {
     }
 
     // Floor / process: the same pattern as the app's SiteScope in sos, hb and alerts (two fields each), unchanged on
-    //   resolve, and a read-only site list node.
-    @Test fun floor_proc_rules_match_the_app_pattern_and_sites_is_read_only() {
+    //   resolve; there is no site list node (the lists are built into the app).
+    @Test fun floor_proc_rules_match_the_app_pattern() {
         val s = repoFile("database.rules.json")
         val rule = ".matches(/${SiteScope.CODE_PATTERN}/)"
         assertTrue(rule, Regex(Regex.escape(rule)).findAll(s).count() >= 6)
         for (k in listOf("floor", "proc")) {
             assertTrue(k, sosWrite().contains("newData.child('$k').val() === data.child('$k').val()"))
         }
-        val sites = s.substringAfter("\"sites\": {").substringBefore("\"sos\": {")
-        assertTrue(sites, sites.contains("\"\$sc\": {") && sites.contains("\".read\": \"auth != null\""))
-        assertTrue(sites, !sites.contains(".write"))
+        assertTrue("sites 노드가 없어야 한다", !s.contains("\"sites\""))
     }
 
     @Test fun hb_rules_clock_slack_and_g_object() {

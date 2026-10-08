@@ -783,13 +783,6 @@ object DevSettings {
     var sosAllSite: Boolean
         get() = prefs.getBoolean(KEY_SOS_ALL_SITE, false)
         set(v) = prefs.edit().putBoolean(KEY_SOS_ALL_SITE, v).apply()
-    /** Cached floor / process lists of the current site (comma separated), kept for offline use. */
-    var siteFloors: String
-        get() = prefs.getString("site_floors_" + siteCode, "") ?: ""
-        set(v) = prefs.edit().putString("site_floors_" + siteCode, v).apply()
-    var siteProcs: String
-        get() = prefs.getString("site_procs_" + siteCode, "") ?: ""
-        set(v) = prefs.edit().putString("site_procs_" + siteCode, v).apply()
 
     // Stores split per site (common file names). With a code they become base_CODE.
     private val SITE_PREF_BASES = listOf("beacon_registry")
