@@ -1,5 +1,6 @@
 package com.wf11.safealert.service
 
+import com.wf11.safealert.utils.DevSettings
 import com.wf11.safealert.utils.SiteScope
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -38,6 +39,9 @@ class ControlPageParityTest {
 
         val release = Regex("""var SOS_RELEASE_MS = (\d+) \* (\d+);""").find(gs())!!.groupValues
         assertEquals(SosLedger.AUTO_RELEASE_MS, release[1].toLong() * release[2].toLong())
+
+        // The site-code form by which the page finds centers and reads ADMIN_EMAILS entries: the app's normalizeSite
+        assertEquals("^[A-Z0-9_-]{1,${DevSettings.SITE_CODE_MAX_LEN}}$", gs().substringAfter("var SC_RE = /").substringBefore("/;"))
     }
 
     // Role names: the page's server script, the page itself (it names live SOS) and the mail use the same rule; the equipment table lives in Code.gs only (the page gets it from doGet).
@@ -74,14 +78,15 @@ class ControlPageParityTest {
         val html = page()
         val g = gs()
         fun flat(s: String) = s.replace(Regex("""\s+"""), "")
+        fun noComments(s: String) = s.lines().joinToString("\n") { it.substringBefore("//") }   // keys only, not words of comments
         assertEquals(flat(g.substringAfter("function str_(v) {").substringBefore("}")), flat(html.substringAfter("function str(v) {").substringBefore("}")))
         assertEquals(flat(g.substringAfter("function code_(v) {").substringBefore("\n}")), flat(html.substringAfter("function code(v) {").substringBefore("}")))
-        val sent = Regex("""(\w+):""").findAll(g.substringAfter("t.fb = JSON.stringify({").substringBefore("})")).map { it.groupValues[1] }.toSet()
+        val sent = Regex("""(\w+):""").findAll(noComments(g.substringAfter("t.fb = JSON.stringify({").substringBefore("})"))).map { it.groupValues[1] }.toSet()
         val read = Regex("""FB\.(\w+)""").findAll(html).map { it.groupValues[1] }.toSet()
         assertTrue("페이지가 읽는 설정 $read 은 doGet 이 보내는 것 $sent", read.isNotEmpty() && sent.containsAll(read))
         // Every record field the page reads reaches it on the server path too (a missing one shows only while live is down)
         val uses = Regex("""\br\.(\w+)""").findAll(html.substringAfter("function toSos(sc, key, r) {").substringBefore("\n  }")).map { it.groupValues[1] }.toSet()
-        val keeps = Regex("""(\w+):""").findAll(g.substringAfter("function sosRecs_(node) {").substringBefore("\n}")).map { it.groupValues[1] }.toSet()
+        val keeps = Regex("""(\w+):""").findAll(noComments(g.substringAfter("function sosRecs_(node) {").substringBefore("\n}"))).map { it.groupValues[1] }.toSet()
         assertTrue("서버 경로가 보내는 필드 $keeps 에 페이지가 읽는 $uses 가 다 있다", uses.isNotEmpty() && keeps.containsAll(uses))
     }
 }

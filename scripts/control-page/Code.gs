@@ -1,12 +1,12 @@
 /*
- * 'SafeAlert 관제': read-only live view of SOS requests, devices and collision alerts. One installation serves a center
- * and the central control room alike:
- *  - …/exec?sc=WF11 (or ?sc=WF11,WF12): those sites only. A center's control room bookmarks its own code.
- *  - …/exec: every site this installation covers. With SITES empty that is every site code found in the database (SOS,
- *    monitoring sessions or alerts); an open page takes a new center within about two minutes, without a reload.
- * The page shows the active SOS of its sites (full-screen alarm + siren until acknowledged in the browser), their SOS
- * that ended in the last 24 hours, and, for the site chosen on it, devices monitoring now (and lost contact) and
- * collision alerts by device ID, filtered by floor / process.
+ * 'SafeAlert 관제': read-only live view of SOS requests, devices and collision alerts of the centers. One installation
+ * serves every center and the central control room alike. The page watches the centers checked under '사업장' at its
+ * top ('전체' checks every center, the ones that appear later too). Only the checked centers count: the active SOS
+ * (full-screen alarm + siren until acknowledged in the browser), SOS that ended in the last 24 hours, devices monitoring
+ * now (and lost contact) and collision alerts by device ID, filtered by floor / process. The browser remembers the checks
+ * (a center's PC checks its center once), and …/exec?sc=WF11 (or ?sc=WF11,WF12) opens with those centers checked. With
+ * SITES empty the centers are every site code found in the database (SOS, monitoring sessions or alerts); an open page
+ * takes a new center within about six minutes, without a reload.
  * The SOS lists come live from Firebase: the page signs in anonymously, as the app does, and listens to them (the rules
  * let any signed-in client read SOS). Devices, alerts and the site list are read by this script with the database
  * secret kept in Script Properties. Nothing is written anywhere; the page cannot change or switch off anything.
@@ -32,12 +32,11 @@
  *     'Save script properties' ('스크립트 속성 저장'):
  *     - FIREBASE_DB_URL    : same value as in the SOS mail script
  *     - FIREBASE_DB_SECRET : same value as in the SOS mail script
- *     - ADMIN_EMAILS       : Google accounts that may open this page, comma separated. 'name@x.com' sees every site;
- *                            'name@x.com:WF11' sees WF11 only (repeat the entry for more sites, e.g. a center's
+ *     - ADMIN_EMAILS       : Google accounts that may open this page, comma separated. 'name@x.com' sees every center;
+ *                            'name@x.com:WF11' sees WF11 only (repeat the entry for more centers, e.g. a center's
  *                            admins). Include your own account, otherwise the page refuses you too.
- *     - SITES              : (optional) site codes this installation covers, comma separated (e.g. WF11). Empty =
- *                            every site in the database, found automatically (the central control room); you do not
- *                            need to know the codes. A center that installs its own copy puts its own code here.
+ *     - SITES              : (optional) center codes this installation covers, comma separated (e.g. WF11). Empty =
+ *                            every center in the database, found automatically; you do not need to know the codes.
  *     - FIREBASE_ROOT      : (optional) database root; empty means wf11.
  *     - FIREBASE_WEB_API_KEY : (recommended) Firebase console → gear 'Project settings' ('프로젝트 설정') → 'General'
  *                            ('일반') → 'Web API Key' ('웹 API 키'). With it SOS reach the page within seconds; without
@@ -64,11 +63,10 @@
  *     ADMIN_EMAILS check); the page needs both. If it shows checkboxes, tick 'Select all' ('모두 선택'). Then press
  *     'Allow' ('허용') or 'Continue' ('계속'). With 'User accessing the web app' every admin sees this once, on first opening.
  *     After it: the deployment shows the 'Web app' ('웹 앱') URL, https://script.google.com/macros/s/…/exec.
- *  8. Press 'Copy' ('복사') next to that URL, then 'Done' ('완료'). Open it in the control-room browser, bookmark it, and
- *     press '경보음 켜기' on the page once. A center's control room adds its code (…/exec?sc=WF11: that page watches and
- *     alarms for WF11 only); the central control room uses the URL as it is (every site).
+ *  8. Press 'Copy' ('복사') next to that URL, then 'Done' ('완료'). Open it in the control-room browser, check the centers
+ *     to watch under '사업장' at the top of the page, bookmark it, and press '경보음 켜기' on the page once.
  *     Why: that URL is the control page (the script editor is not), and browsers keep a page silent until a click.
- *     After it: the bookmarked page opens for the accounts in ADMIN_EMAILS, each with its own sites; others are refused.
+ *     After it: the bookmarked page opens for the accounts in ADMIN_EMAILS, each with its own centers; others are refused.
  *
  * Updating later: paste the new files, save, then 'Deploy' ('배포') → 'Manage deployments' ('배포 관리') → pencil 'Edit'
  * ('수정') → 'Version' ('버전'): 'New version' ('새 버전') → 'Deploy' ('배포'). Then reload every open control-page tab.
@@ -77,10 +75,10 @@
  *
  * Live SOS use none of the daily read limit (quota) of UrlFetch. If the page says the limit is used up, wait: it
  * recovers within 24 hours. The reads of this script are shared by all open tabs and viewers through the script cache:
- * devices and alerts of a site for 130 seconds (yesterday's alerts for 10 minutes), the site list (SITES empty) for 2
- * minutes and, only while the live connection is down, the SOS list of each site for 20 seconds (longer with 4 sites or
- * more, so that all sites together stay under about 13,000 reads a day: with 50 sites a page without the live
- * connection sees a new SOS only every few minutes).
+ * devices and alerts of a center for 130 seconds (yesterday's alerts for 10 minutes; with several centers chosen the page
+ * reads one center a minute), the center list (SITES empty) for 5 minutes and, only while the live connection is down,
+ * the SOS list of each chosen center for 20 seconds (longer with 4 centers or more, so that they stay under about 13,000
+ * reads a day: with 50 centers chosen a page without the live connection sees a new SOS only every few minutes).
  */
 
 var ALIVE_MS = 15 * 60 * 1000;        // A session writes 'last' every 5 min; 15 min without one = contact lost
@@ -89,7 +87,8 @@ var HOUR_MS = 3600 * 1000;
 var SOS_RELEASE_MS = 3600 * 1000;     // The app releases an unanswered SOS one hour after the server got it
 var SOS_MIN_TTL_S = 20;               // without live SOS: one read of a site's list serves every tab this long (seconds)
 var SOS_DAILY_READS = 13000;          // SOS reads of all sites together stay under this a day (UrlFetch quota: 20,000)
-var SITES_TTL_S = 120;                // the site list found in the database (SITES empty) is shared this long
+var SITES_TTL_S = 300;                // the site list found in the database (SITES empty) is shared this long
+var SITES_FAIL_S = 60;                // a failed search for the site list is not repeated for this long
 var SITES_KEEP_S = 6 * 3600;          // the last list found, used while the database cannot be read
 var FIELD_TTL_S = 130;                // sessions + alerts shared this long; past the 2-minute poll, so a lone tab reads every 2nd time
 var YDAY_TTL_S = 600;                 // yesterday's alerts: phones that were offline still upload into it after midnight
@@ -110,13 +109,13 @@ var PIT_NAMES = { CB: 'Counterbalance', RT: 'Reach Truck', HR: 'High Reach', OP:
 function doGet(e) {
   var cfg = config_();
   var t = HtmlService.createTemplateFromFile('Index');
-  // The page's sites: ?sc=WF11 (or WF11,WF12) for a center, nothing for every site the viewer may see
-  var want = String((e && e.parameter && e.parameter.sc) || '').toUpperCase().replace(/[^A-Z0-9_,-]/g, '') || 'ALL';
-  var c = setup_(want);
+  // ?sc=WF11 (or WF11,WF12) opens the page with those centers checked; the page lists every center the viewer may see
+  var start = list_(String((e && e.parameter && e.parameter.sc) || '').toUpperCase())
+    .filter(function (s) { return SC_RE.test(s); }).slice(0, 100).join(',');
+  var c = setup_();
   t.denied = c.error === 'denied';
   t.viewer = viewer_();
   var sites = c.sites || [];
-  t.initialSc = sites[0] || '';
   // What the page needs to listen to the SOS lists itself. None of it is secret: the app carries the same values.
   var key = cfg.get('FIREBASE_WEB_API_KEY'), db = db_(cfg);
   t.fb = JSON.stringify({
@@ -125,8 +124,9 @@ function doGet(e) {
     root: db.root,
     why: !API_KEY_RE.test(key) ? 'nokey' : !db.url || !db.root ? 'setup' : '',   // why the live path cannot start
     sites: sites,
-    want: want,                                 // sent back with every call: the server keeps the page to these sites
-    central: !!c.central && want === 'ALL',     // every site in the database: the page takes new ones as they appear
+    start: start,
+    error: c.error && c.error !== 'denied' && c.error !== 'nosite' ? c.error : '',   // the center list could not be read
+    errCode: c.code || 0,
     pit: PIT_NAMES,
     code: CODE_RE.source,
     releaseMs: SOS_RELEASE_MS
@@ -144,11 +144,13 @@ function doGet(e) {
  */
 function getSosLists(want) {
   var c = setup_(want);
-  if (c.error) return { ok: false, error: c.error };
+  if (c.error) return { ok: false, error: c.error, code: c.code };
   var at = Date.now(), ttl = sosTtl_(c.sites.length), lists = {}, urls = {};
+  var hits = cacheGetAll_(c.cache, c.sites.map(function (s) { return 'sos2|' + c.base + s; }));
   c.sites.forEach(function (s) {
-    var hit = cacheGet_(c.cache, 'sos2|' + c.base + s);
-    if (hit) lists[s] = hit;
+    // A list another page cached is used only while it is as fresh as this call's own reads would be
+    var hit = hits['sos2|' + c.base + s];
+    if (hit && at - hit.at < ttl * 1000) lists[s] = hit;
     else urls[s] = c.read('sos/' + s, '&orderBy=' + q_('"createdAt"') + '&startAt=' + (at - WINDOW_MS));   // sos/$sc has ".indexOn": ["createdAt"]
   });
   var got = {}, thrown = '';
@@ -168,23 +170,23 @@ function getSosLists(want) {
   return { ok: true, sites: c.sites, now: Date.now(), lists: lists, failed: failed };
 }
 
-/** The page's periodic check of its viewer (still in ADMIN_EMAILS?) and of its sites (live SOS never pass through here). */
-function ping(want) {
-  var c = setup_(want);
+/** The page's periodic check of its viewer (still in ADMIN_EMAILS?) and of its centers (live SOS never pass through here). */
+function ping() {
+  var c = setup_();
   if (c.error === 'denied') return { ok: false, error: 'denied' };
   return { ok: true, sites: c.sites.length || c.error === 'nosite' ? c.sites : null };   // null: not known just now
 }
 
 /**
- * Sessions and collision alerts of one site for the last 24 hours. Called by a visible page every 2 minutes, 30 seconds
- * after a failed call, and when the site is switched or the tab shown again; shared through the cache by every tab and
- * viewer for FIELD_TTL_S. A site no longer in SITES gets the first one (the page then asks for a reload).
+ * Sessions and collision alerts of one center for the last 24 hours. A visible page asks for its chosen center every 2
+ * minutes (several chosen centers: one a minute, in turn), 30 seconds after a failed call, and when the choice changes or
+ * the tab is shown again; shared through the cache by every tab and viewer for FIELD_TTL_S.
  */
-function getField(sc, want) {
-  var c = setup_(want);
-  if (c.error) return { ok: false, error: c.error };
+function getField(sc) {
+  var c = setup_();
+  if (c.error) return { ok: false, error: c.error, code: c.code };
   sc = String(sc || '').toUpperCase();
-  if (c.sites.indexOf(sc) < 0) sc = c.sites[0];   // only a site of this page that the viewer may see
+  if (c.sites.indexOf(sc) < 0) return { ok: false, error: 'nosite' };   // not a center this viewer sees (any more)
   var key = 'field|' + c.base + sc, part = cacheGet_(c.cache, key);
   if (!part) {
     part = readField_(c, sc, Date.now());
@@ -330,7 +332,7 @@ function config_() {
 
 /**
  * The viewer check, then everything a read needs, for the sites a page asked for (want: 'ALL' or a list): { sites, base,
- * cache, read, central }, with error set when refused ('denied'), not set up ('setup'), when the site list could not be
+ * cache, read }, with error set when refused ('denied'), not set up ('setup'), when the site list could not be
  * read, or when none of the sites is the viewer's ('nosite'). sites is still filled from SITES when only the secret is
  * missing (the page's live path needs no secret).
  */
@@ -338,7 +340,7 @@ function setup_(want) {
   var cfg = config_(), acc = access_(cfg);
   if (!acc) return { error: 'denied', sites: [] };   // before any cache read
   var db = db_(cfg), secret = cfg.get('FIREBASE_DB_SECRET'), listed = sites_(cfg);
-  var c = { central: !listed.length };
+  var c = {};
   if (db.url && db.root && secret) {
     c.base = db.url + '/' + db.root + '/';   // holds no secret: also the cache namespace
     var auth = 'auth=' + encodeURIComponent(secret);
@@ -348,14 +350,14 @@ function setup_(want) {
   var all = listed.length ? listed : c.read ? found_(c) : null;
   c.sites = all ? scope_(all, acc, want) : [];
   if (!c.read) c.error = 'setup';
-  else if (!all) c.error = c.found || 'fetch';
+  else if (!all) { c.error = c.found || 'fetch'; c.code = c.foundCode || 0; }
   else if (!c.sites.length) c.error = 'nosite';
   return c;
 }
 
 /** The sites a call covers: those the page asked for ('ALL' or a list) among those that exist, that the viewer may see. */
 function scope_(all, acc, want) {
-  var w = want && want !== 'ALL' ? list_(String(want).toUpperCase()) : null;
+  var w = want == null || want === 'ALL' ? null : list_(String(want).toUpperCase());   // '' asks for no site
   return all.filter(function (s) { return (!w || w.indexOf(s) >= 0) && (acc.all || acc.sites.indexOf(s) >= 0); });
 }
 
@@ -364,8 +366,9 @@ function scope_(all, acc, want) {
  * SITES_TTL_S. A failed read falls back to the last list found; with none, null and c.found says why.
  */
 function found_(c) {
-  var hit = cacheGet_(c.cache, 'sites2|' + c.base);
+  var hit = cacheGet_(c.cache, 'sites2|' + c.base), failed = cacheGet_(c.cache, 'sites2fail|' + c.base);
   if (hit) return hit;
+  if (failed) { c.found = failed.why; c.foundCode = failed.code; return cacheGet_(c.cache, 'sites2last|' + c.base); }
   var out = [], got = null;
   try {
     got = fetchAll_({ sos: c.read('sos', '&shallow=true'), hb: c.read('hb', '&shallow=true'), alerts: c.read('alerts', '&shallow=true') });
@@ -374,11 +377,21 @@ function found_(c) {
   }
   var whole = !!got && Object.keys(got).every(function (n) {
     var node = ok_(got[n]);
-    if (node === undefined) { c.found = got[n].getResponseCode() !== 200 ? 'http' : 'fetch'; return false; }
-    Object.keys(node || {}).forEach(function (s) { if (SC_RE.test(s) && out.indexOf(s) < 0) out.push(s); });
+    if (node === undefined) {
+      c.foundCode = got[n].getResponseCode();
+      c.found = c.foundCode !== 200 ? 'http' : 'fetch';
+      return false;
+    }
+    // alerts also hold the dated layout of phones without a site code (alerts/<yyyyMMdd>/…): a date is not a center
+    Object.keys(node || {}).forEach(function (s) {
+      if (SC_RE.test(s) && !(n === 'alerts' && /^[0-9]{8}$/.test(s)) && out.indexOf(s) < 0) out.push(s);
+    });
     return true;
   });
-  if (!whole) return cacheGet_(c.cache, 'sites2last|' + c.base);
+  if (!whole) {
+    cacheJson_(c.cache, 'sites2fail|' + c.base, { why: c.found, code: c.foundCode || 0 }, SITES_FAIL_S);
+    return cacheGet_(c.cache, 'sites2last|' + c.base);
+  }
   out.sort();
   cacheJson_(c.cache, 'sites2|' + c.base, out, SITES_TTL_S);
   cacheJson_(c.cache, 'sites2last|' + c.base, out, SITES_KEEP_S);
@@ -408,7 +421,8 @@ function viewer_() {
 function access_(cfg) {
   var who = viewer_(), acc = null;
   if (!who) return null;
-  list_(cfg.get('ADMIN_EMAILS').toLowerCase()).forEach(function (entry) {
+  // 'name@x.com : WF11' is the same entry as 'name@x.com:WF11' (a space must not turn a one-center entry into every center)
+  list_(cfg.get('ADMIN_EMAILS').toLowerCase().replace(/\s*:\s*/g, ':')).forEach(function (entry) {
     var at = entry.indexOf(':'), sc = at < 0 ? '' : entry.slice(at + 1).toUpperCase();
     if ((at < 0 ? entry : entry.slice(0, at)) !== who) return;
     acc = acc || { all: false, sites: [] };
@@ -433,6 +447,16 @@ function sosTtl_(n) { return Math.max(SOS_MIN_TTL_S, Math.ceil(86400 * n / SOS_D
 /** The script cache, or null when it is unavailable. It holds processed data only, never the secret or a URL. */
 function cache_() {
   try { return CacheService.getScriptCache(); } catch (e) { return null; }
+}
+
+/** Several cache entries in one round trip: key -> parsed value (missing and unreadable ones are left out). */
+function cacheGetAll_(cache, keys) {
+  var out = {};
+  try {
+    var got = cache && keys.length ? cache.getAll(keys) : {};
+    Object.keys(got || {}).forEach(function (k) { try { out[k] = JSON.parse(got[k]); } catch (e) { /* left out */ } });
+  } catch (e) { /* caching is optional */ }
+  return out;
 }
 
 function cacheGet_(cache, key) {
