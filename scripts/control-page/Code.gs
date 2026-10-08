@@ -1,5 +1,5 @@
 /*
- * SafeAlert 관제: read-only live view of one site
+ * 'SafeAlert 관제': read-only live view of one site
  * Shows active SOS requests (full-screen alarm + siren until acknowledged in the browser), SOS that ended in the last
  * 24 hours, devices monitoring now (and lost contact), and collision alerts by device ID, filtered by floor / process.
  * It only reads the Realtime Database with the database secret kept in Script Properties; it cannot change or switch
@@ -31,41 +31,47 @@
  *     - SITES              : site codes to show, comma separated (e.g. WF11). The first one opens by default.
  *     - FIREBASE_ROOT      : (optional) database root; empty means wf11.
  *     Why: the secret stays on Google's side and never reaches the page. After it: the page can read the database.
- *  6. Top right 'Deploy' ('배포') → 'New deployment' ('새 배포') → gear beside 'Select type' ('유형 선택') → 'Web app'
+ *  6. Deploy: this gives the page its web address.
+ *     'Deploy' ('배포') at the top right > 'New deployment' ('새 배포') > gear beside 'Select type' ('유형 선택') > 'Web app'
  *     ('웹 앱').
  *     One admin: 'Execute as' ('다음 사용자 인증 정보로 실행') = 'Me' ('나'),
  *       'Who has access' ('액세스 권한이 있는 사용자') = 'Only myself' ('나만').
  *     Several admins (recommended): 'Execute as' = 'User accessing the web app' ('웹 앱에 액세스하는 사용자'),
  *       'Who has access' = 'Anyone with Google account' ('Google 계정이 있는 모든 사용자'), and list every admin in
  *       ADMIN_EMAILS (anyone not listed is refused by the page).
- *     Why: the first choice shares one quota; the second gives each viewer their own.
- *     After it: a deployment waiting for permission.
- *  7. 'Deploy' ('배포') → 'Authorize access' ('액세스 승인') → choose the account. Google shows 'Google hasn't verified
- *     this app' ('Google에서 확인하지 않은 앱'): 'Advanced' ('고급') → 'Go to SafeAlert 관제 (unsafe)'
- *     ('SafeAlert 관제(으)로 이동(안전하지 않음)') → 'Allow' ('허용').
- *     Why: the script reads Firebase with the secret, and a personal script Google has not reviewed always shows this
- *     warning. Each admin approves it once. After it: the deployment is live.
- *  8. Copy the 'Web app' ('웹 앱') URL ending in /exec. Add ?sc=WF11 to open a site directly. Bookmark it.
+ *     Why: the first choice shares one quota; the second gives each viewer their own. Then press 'Deploy' ('배포').
+ *  7. The first deployment asks for permission: 'Authorize access' ('액세스 승인') → choose the account.
+ *     Google then warns 'Google hasn't verified this app' ('Google에서 확인하지 않은 앱'); it shows this for any script
+ *     it has not reviewed, including your own. Do not press 'Back to safety' ('안전한 환경으로 돌아가기'). Press 'Advanced'
+ *     ('고급') → 'Go to SafeAlert 관제 (unsafe)' ('SafeAlert 관제(으)로 이동(안전하지 않음)').
+ *     The permission screen lists connecting to an external service (Firebase) and seeing your email address (the
+ *     ADMIN_EMAILS check); the page needs both. If it shows checkboxes, tick 'Select all' ('모두 선택'). Then press
+ *     'Allow' ('허용') or 'Continue' ('계속'). With 'User accessing the web app' every admin sees this once, on first opening.
+ *     After it: the deployment shows the 'Web app' ('웹 앱') URL, https://script.google.com/macros/s/…/exec.
+ *  8. Press 'Copy' ('복사') next to that URL, then 'Done' ('완료'). Open the URL in the control-room browser (add ?sc=WF11
+ *     to open a site directly), bookmark it, and press '경보음 켜기' on the page once.
+ *     Why: that URL is the control page (the script editor is not), and browsers keep a page silent until a click.
  *     After it: the bookmarked page opens for the accounts in ADMIN_EMAILS; others see a refusal.
  *
  * Updating later: paste the new files, save, then 'Deploy' ('배포') → 'Manage deployments' ('배포 관리') → pencil 'Edit'
- * ('수정') → 'Version' ('버전'): 'New version' ('새 버전') → 'Deploy' ('배포').
- * Why: this keeps the same URL ('New deployment' would make a new one and the bookmark would stay on the old one).
+ * ('수정') → 'Version' ('버전'): 'New version' ('새 버전') → 'Deploy' ('배포'). Then reload every open control-page tab.
+ * Why: this keeps the same URL ('New deployment' would make a new one and the bookmark would stay on the old one), and a
+ * tab opened before the update keeps running the old page against the new script.
  *
- * If the page says it used its daily read limit (quota), wait: it recovers within 24 hours. Reads are cached (SOS
- * 20 seconds, the rest 2 minutes, yesterday's alerts 1 hour) and a hidden tab reads only the SOS part.
+ * If the page says it used its daily read limit (quota), wait: it recovers within 24 hours. Sessions and alerts are
+ * cached for 2 minutes, and a hidden tab reads only the SOS part. The SOS of every site in SITES is read on each refresh
+ * (an SOS anywhere raises the alarm), so each extra site adds one small read per refresh.
  */
 
 var ALIVE_MS = 15 * 60 * 1000;        // A session writes 'last' every 5 min; 15 min without one = contact lost
 var WINDOW_MS = 24 * 3600 * 1000;     // SOS, sessions and alerts are read for the last 24 hours
 var HOUR_MS = 3600 * 1000;
 var SOS_RELEASE_MS = 3600 * 1000;     // The app releases an unanswered SOS one hour after the server got it
-var SOS_TTL_S = 20;                   // The SOS part is cached this long (seconds)
-var SLOW_TTL_S = 120;                 // Sessions + alerts are cached this long
-var DAY_TTL_S = 3600;                 // Yesterday's alert node hardly changes after midnight
-var RECENT_ALERTS = 50;               // The page lists this many newest alerts
-var MAX_ALERTS = 300;                 // Alerts sent to the page: the last hour (counts by ID) plus the newest 50
+var SLOW_TTL_S = 120;                 // Sessions + alerts are cached this long (seconds); the SOS part is never cached
+var NO_INDEX_TTL_S = 600;             // How long to remember that the rules lack an index (until the release deploys them)
+var MAX_ALERTS = 400;                 // Newest alerts of the last 24 hours sent to the page (alertsCut says there were more)
 var CACHE_MAX_BYTES = 90 * 1000;      // CacheService refuses a value over 100 KB
+var MUTE = { muteHttpExceptions: true };
 var PUSH_CHARS = '-0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz';
 var DB_URL_RE = /^https:\/\/[A-Za-z0-9.-]+\/?$/;
 var SC_RE = /^[A-Z0-9_-]{1,12}$/;
@@ -95,7 +101,7 @@ function doGet(e) {
  */
 function getSnapshot(sc, opt) {
   var cfg = config_();
-  if (!allowed_(cfg)) return { ok: false, error: 'denied', viewer: viewer_() };   // before any cache read
+  if (!allowed_(cfg)) return { ok: false, error: 'denied' };   // before any cache read
   var dbUrl = cfg.get('FIREBASE_DB_URL');
   var secret = cfg.get('FIREBASE_DB_SECRET');
   var root = cfg.get('FIREBASE_ROOT') || 'wf11';
@@ -108,91 +114,121 @@ function getSnapshot(sc, opt) {
   var sosOnly = !!(opt && opt.sosOnly);
 
   var now = Date.now();
-  var base = dbUrl.replace(/\/$/, '') + '/' + root + '/';
+  var base = dbUrl.replace(/\/$/, '') + '/' + root + '/';   // holds no secret: also the cache namespace
   var auth = 'auth=' + encodeURIComponent(secret);
+  var read = function (path, query) { return base + path + '.json?' + auth + (query || ''); };
   var cache = cache_();
-  // Keys carry the database host, the root and the site: a changed property never serves another database's data
-  var ns = dbUrl.replace(/^https:\/\//, '').replace(/\/$/, '') + '|' + root + '|' + sc;
-  var yday = day_(now - WINDOW_MS);
-  var kSos = 'sos|' + ns, kSlow = 'slow|' + ns, kDay = 'day|' + ns + '|' + yday;
-  var sosPart = cacheGet_(cache, kSos);
-  var slowPart = sosOnly ? null : cacheGet_(cache, kSlow);
-  var dayPart = sosOnly || slowPart ? null : cacheGet_(cache, kDay);
+  var ns = base + sc;
+  var slowPart = sosOnly ? null : cacheGet_(cache, 'slow|' + ns);
+  var hbNoIdx = !!cacheGet_(cache, 'noidx|hb|' + ns), alNoIdx = !!cacheGet_(cache, 'noidx|alerts|' + ns);
+  var hbUrl = function (keyRange) {
+    // Session keys are push keys, so the key range is the start time (a session started over 24 h ago is missed)
+    return keyRange ? read('hb/' + sc, '&orderBy=' + q_('"$key"') + '&startAt=' + q_('"' + pushPrefix_(now - WINDOW_MS) + '"'))
+      : read('hb/' + sc, '&orderBy=' + q_('"last"') + '&startAt=' + (now - WINDOW_MS));   // hb/$sc has ".indexOn": ["last"]
+  };
+  var dayUrl = function (ms, whole) {
+    // Alert records sit under the sending phone's local date (KST); a date node has ".indexOn": ["timestamp"]
+    return read('alerts/' + sc + '/' + day_(ms), whole ? '' : '&orderBy=' + q_('"timestamp"') + '&limitToLast=' + MAX_ALERTS);
+  };
 
-  var parse = function (r) { return JSON.parse(r.getContentText() || 'null'); };
-  // Fetch errors never pass their text on: it can carry the URL (the secret). Only the daily limit is told apart.
-  var failure = function (err) { return /too many times/i.test(String(err && err.message)) ? 'quota' : 'fetch'; };
-
-  // The SOS part is read first and on its own: a failing session or alert read must never hold back a new SOS
-  if (!sosPart) {
-    var r;
-    try {
-      r = UrlFetchApp.fetch(base + 'sos/' + sc + '.json?' + auth + '&orderBy=' + q_('"createdAt"') + '&startAt=' + (now - WINDOW_MS),   // sos/$sc has ".indexOn": ["createdAt"]
-        { muteHttpExceptions: true });
-    } catch (err) {
-      return { ok: false, error: failure(err) };
-    }
-    if (r.getResponseCode() !== 200) return { ok: false, error: 'http', code: r.getResponseCode() };
-    sosPart = { at: now, sos: sos_(parse(r)) };
-    putNewer_(cache, kSos, sosPart, SOS_TTL_S);
-  }
-
-  // Sessions and alerts: when they fail the page keeps its previous ones and says so (slowError)
-  var slowError = '';
+  // The SOS part is never cached: every call shows the newest state, so no slow call can bring back an SOS another
+  // call has already seen released. Every site in SITES is read: an SOS elsewhere must raise the alarm on this page
+  // too. sos/$sc has ".indexOn": ["createdAt"].
+  var urls = {};
+  sites.forEach(function (s) { urls['sos|' + s] = read('sos/' + s, '&orderBy=' + q_('"createdAt"') + '&startAt=' + (now - WINDOW_MS)); });
+  var sosNames = Object.keys(urls);
   if (!sosOnly && !slowPart) {
-    var urls = {
-      hb: base + 'hb/' + sc + '.json?' + auth + '&orderBy=' + q_('"last"') + '&startAt=' + (now - WINDOW_MS),   // hb/$sc has ".indexOn": ["last"]
-      // Alert records sit under the sending phone's local date (KST): today always, yesterday from its own cache
-      today: base + 'alerts/' + sc + '/' + day_(now) + '.json?' + auth
-    };
-    if (!dayPart) urls.yday = base + 'alerts/' + sc + '/' + yday + '.json?' + auth;
-    var names = Object.keys(urls), got = {};
+    urls.hb = hbUrl(hbNoIdx);
+    urls.today = dayUrl(now, alNoIdx);
+    urls.yday = dayUrl(now - WINDOW_MS, alNoIdx);
+  }
+  var names = Object.keys(urls), got = {}, slowError = '';
+  try {
+    var res = UrlFetchApp.fetchAll(names.map(function (n) { return { url: urls[n], muteHttpExceptions: true }; }));
+    names.forEach(function (n, i) { got[n] = res[i]; });
+  } catch (err) {
+    // A network failure or the daily limit throws for the whole batch: read the SOS parts again on their own, so a
+    // failing session or alert read never holds back a new SOS
+    if (names.length === sosNames.length) return { ok: false, error: failure_(err) };
+    slowError = failure_(err);
     try {
-      var res = UrlFetchApp.fetchAll(names.map(function (n) { return { url: urls[n], muteHttpExceptions: true }; }));
-      names.forEach(function (n, i) { got[n] = res[i]; });
-      // Rules without the hb 'last' index answer 400 "Index not defined" until the release deploys them: read by key
-      // range then. Session keys are push keys, so the range is their start time (a session older than 24 h is missed).
-      if (got.hb.getResponseCode() === 400 && /Index not defined/.test(got.hb.getContentText() || '')) {
-        got.hb = UrlFetchApp.fetch(base + 'hb/' + sc + '.json?' + auth + '&orderBy=' + q_('"$key"') +
-          '&startAt=' + q_('"' + pushPrefix_(now - WINDOW_MS) + '"'), { muteHttpExceptions: true });
+      var again = UrlFetchApp.fetchAll(sosNames.map(function (n) { return { url: urls[n], muteHttpExceptions: true }; }));
+      got = {};
+      sosNames.forEach(function (n, i) { got[n] = again[i]; });
+    } catch (err2) {
+      return { ok: false, error: failure_(err2) };
+    }
+  }
+  var main = got['sos|' + sc];
+  if (main.getResponseCode() !== 200) return { ok: false, error: 'http', code: main.getResponseCode() };
+  var sos = sos_(parse_(main));
+  var others = [], othersFailed = [];
+  sites.forEach(function (s) {
+    if (s === sc) return;
+    var r = got['sos|' + s];
+    if (r.getResponseCode() !== 200) { othersFailed.push(s); return; }
+    sos_(parse_(r)).forEach(function (x) { if (x.active) { x.sc = s; others.push(x); } });
+  });
+
+  if (got.hb) {
+    try {
+      // Rules without an index answer 400 "Index not defined" until the release deploys them: read without the query
+      // then, and remember that for a while
+      if (noIndex_(got.hb)) {
+        got.hb = UrlFetchApp.fetch(hbUrl(true), MUTE);
+        cachePut_(cache, 'noidx|hb|' + ns, '1', NO_INDEX_TTL_S);
       }
-      names.forEach(function (n) { if (got[n].getResponseCode() !== 200) slowError = 'http'; });
+      if (noIndex_(got.today) || noIndex_(got.yday)) {
+        got.today = UrlFetchApp.fetch(dayUrl(now, true), MUTE);
+        got.yday = UrlFetchApp.fetch(dayUrl(now - WINDOW_MS, true), MUTE);
+        cachePut_(cache, 'noidx|alerts|' + ns, '1', NO_INDEX_TTL_S);
+      }
+      ['hb', 'today', 'yday'].forEach(function (n) { if (got[n].getResponseCode() !== 200) slowError = 'http'; });
     } catch (err) {
-      slowError = failure(err);
+      slowError = failure_(err);
     }
     if (!slowError) {
-      if (got.yday) {
-        dayPart = { alerts: newest_(alerts_(parse(got.yday), sc)).slice(0, MAX_ALERTS) };
-        cachePut_(cache, kDay, JSON.stringify(dayPart), DAY_TTL_S);
-      }
-      var alerts = newest_(alerts_(parse(got.today), sc).concat(dayPart.alerts))
-        .filter(function (a, i) { return now - a.t <= HOUR_MS || i < RECENT_ALERTS; })
-        .slice(0, MAX_ALERTS);
-      slowPart = { at: now, sessions: sessions_(parse(got.hb)), alerts: alerts };
-      // ponytail: a site with hundreds of sessions could still pass the cache limit; the oldest alerts go first then
+      var today = alerts_(parse_(got.today), sc);
+      var alerts = today.concat(alerts_(parse_(got.yday), sc))
+        .filter(function (a) { return a.t >= now - WINDOW_MS && a.t <= now + HOUR_MS; })   // 24 hours; a wrong clock stays out
+        .sort(function (a, b) { return b.t - a.t; });
+      slowPart = { at: now, sessions: sessions_(parse_(got.hb)), alerts: alerts.slice(0, MAX_ALERTS),
+                   cut: alerts.length > MAX_ALERTS || today.length >= MAX_ALERTS };
+      // ponytail: a site with hundreds of open sessions could pass the cache limit; the oldest alerts go first, flagged
       while (bytes_(JSON.stringify(slowPart)) > CACHE_MAX_BYTES && slowPart.alerts.length) {
         slowPart.alerts = slowPart.alerts.slice(0, Math.floor(slowPart.alerts.length * 0.8));
+        slowPart.cut = true;
       }
-      putNewer_(cache, kSlow, slowPart, SLOW_TTL_S);
+      cachePut_(cache, 'slow|' + ns, JSON.stringify(slowPart), SLOW_TTL_S);
     }
   }
 
   // Time-dependent fields are worked out here, from this call's clock, also for a cached part
-  sosPart.sos.forEach(function (s) { s.stale = !!s.active && now - s.createdAt > SOS_RELEASE_MS + 5 * 60 * 1000; });
+  sos.concat(others).forEach(function (s) { s.stale = !!s.active && now - s.createdAt > SOS_RELEASE_MS + 5 * 60 * 1000; });
   if (slowPart) slowPart.sessions.forEach(function (s) { s.alive = now - s.last <= ALIVE_MS; });
 
   return {
     ok: true,
     sc: sc,
     sites: sites,
-    now: Date.now(),            // the clock when the answer leaves: the page's elapsed counters do not lag by the fetch time
-    viewer: viewer_(),
-    sos: sosPart.sos,
+    now: Date.now(),                          // the clock when the answer leaves: elapsed counters do not lag by the fetch time
+    sos: sos,
+    others: others,                           // active SOS of the other sites in SITES (each with sc)
+    othersFailed: othersFailed,               // sites whose SOS could not be read this time
     sessions: slowPart ? slowPart.sessions : null,
     alerts: slowPart ? slowPart.alerts : null,
-    slowError: slowError        // '' | 'http' | 'fetch' | 'quota': sessions and alerts could not be read this time
+    alertsCut: !!(slowPart && slowPart.cut),  // more alerts existed in 24 hours than were sent
+    slowAt: slowPart ? slowPart.at : 0,       // when sessions and alerts were read (cached up to 2 minutes)
+    slowError: slowError                      // '' | 'http' | 'fetch' | 'quota': sessions and alerts could not be read this time
   };
 }
+
+function parse_(r) { return JSON.parse(r.getContentText() || 'null'); }
+
+/** Fetch errors never pass their text on: it can carry the URL (the secret). Only the daily limit is told apart. */
+function failure_(err) { return /too many times/i.test(String(err && err.message)) ? 'quota' : 'fetch'; }
+
+function noIndex_(r) { return !!r && r.getResponseCode() === 400 && /Index not defined/.test(r.getContentText() || ''); }
 
 /** SOS records, active first. stale (still active an hour after creation) is set by getSnapshot. */
 function sos_(node) {
@@ -260,7 +296,6 @@ function alerts_(node, sc) {
   return out;
 }
 
-function newest_(list) { return list.sort(function (a, b) { return b.t - a.t; }); }
 
 // ── helpers ───────────────────────────────────────────────
 
@@ -295,16 +330,6 @@ function cachePut_(cache, key, value, ttlSeconds) {
   try { if (cache) cache.put(key, value, ttlSeconds); } catch (e) { /* caching is optional */ }
 }
 
-/**
- * Caches a part unless a call that started later already cached a newer one: a slow call must not bring back an SOS
- * another call has already seen released.
- * ponytail: get-then-put is not atomic; wrap it in LockService.getScriptLock() if two calls ever land within milliseconds.
- */
-function putNewer_(cache, key, part, ttlSeconds) {
-  var cur = cacheGet_(cache, key);
-  if (cur && cur.at > part.at) return;
-  cachePut_(cache, key, JSON.stringify(part), ttlSeconds);
-}
 
 /** UTF-8 size of a string (Korean labels take 3 bytes each). */
 function bytes_(s) { return encodeURIComponent(s).replace(/%[0-9A-F]{2}/gi, '_').length; }

@@ -69,8 +69,9 @@ class LoneWorkerPeers {
          */
         val quiet: Boolean = false,
         /**
-         * When this out-of-scope server entry took over a Bluetooth entry that had already ended on air: the time that entry
-         * ended. Leftover adverts within PEER_RESOLVE_GUARD_MS of it do not wake the quiet entry. Null = never ended on air.
+         * When this server entry (in or out of scope) took over a Bluetooth entry that had already ended on air: the time that
+         * entry ended. Leftover adverts within PEER_RESOLVE_GUARD_MS of it are ignored: they neither wake a quiet entry nor
+         * undo an acknowledgement. Null = never ended on air.
          */
         val endedOnAirMs: Long? = null
     ) {
@@ -202,8 +203,8 @@ class LoneWorkerPeers {
                 firstSeenMs = b.firstSeenMs, active = true, silenced = coldServer(kId, epId, nowMs),
                 resolvedAtMs = 0L, episode = ep, lastBleMs = b.lastBleMs, startMs = rec.startLocalMs ?: b.startMs,
                 floor = rec.floor, proc = rec.proc,
-                // Out of scope and already over on air: the late record stays quiet, also against that SOS's leftover adverts
-                // for the guard time; still heard: it keeps ringing.
+                // Already over on air: an out-of-scope record stays quiet; in or out of scope, that SOS's leftover adverts
+                // within the guard time are ignored (no wake, no undoing an acknowledgement). Still heard: it keeps ringing.
                 quiet = !rec.inScope && !b.active,
                 endedOnAirMs = if (!b.active) b.resolvedAtMs else null
             )
@@ -231,7 +232,7 @@ class LoneWorkerPeers {
         if (matches.any { it.active }) {
             for (p in matches) {
                 if (!p.active) continue
-                if (p.quiet && p.endedOnAirMs != null && nowMs - p.endedOnAirMs <= PEER_RESOLVE_GUARD_MS) continue
+                if (p.endedOnAirMs != null && nowMs - p.endedOnAirMs <= PEER_RESOLVE_GUARD_MS) continue
                 val first = p.lastBleMs == Long.MIN_VALUE
                 val gap = first || nowMs - p.lastBleMs >= PEER_BLE_GAP_MS
                 // Even on first hearing, keep the mute if an acknowledgement from before the service restart (pending mute) points to this server entry.

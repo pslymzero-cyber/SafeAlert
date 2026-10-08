@@ -18,6 +18,7 @@
       "alerts": {
         "$a": {
           "$b": {
+            ".indexOn": ["timestamp"],
             ".write": "auth != null && !data.exists() && $site.matches(/^[A-Za-z0-9_-]{1,32}$/) && $a.matches(/^[0-9]{8}$/)",
             ".validate": "!($a.matches(/^[0-9]{8}$/) && !$b.matches(/^[0-9]{8}$/)) || newData.hasChildren(['timestamp','deviceId','walkerId','rssi','alertLevel','myRole','peerRole','site','uid'])",
             "timestamp": {

@@ -736,6 +736,19 @@ class LoneWorkerPeerTest {
         assertEquals(1, l.audiblePeers().size)
     }
 
+    // An acknowledged in-scope SOS that ended on air stays acknowledged against its leftover adverts.
+    @Test fun leftover_advert_does_not_undo_an_acknowledged_in_scope_sos_that_ended_on_air() {
+        val l = meLogic()
+        l.onPeerBle("P", true, 1_000, 1)
+        l.onPeerBle("P", false, 2_000)
+        l.tick(2_000 + LoneWorkerPeers.PEER_BLE_FALL_MS)
+        l.srv("K1", "P", 1, true, created = 5L, now = 13_000, inScope = true)
+        l.silencePeers(13_500, mapOf(l.peer("P").id to "P#1"))
+        assertTrue(l.audiblePeers().isEmpty())
+        l.onPeerBle("P", true, 40_000, 1)   // within 30 s of the on-air end (12_000), but more than 30 s after the last advert (1_000)
+        assertTrue("확인한 구조 요청은 남은 광고로 다시 울리지 않는다", l.audiblePeers().isEmpty())
+    }
+
     // sig() is the change signature of the visible entries (id, active, silenced); quiet entries are left out.
     @Test fun peer_sig_matches_the_hash_over_visible_entries() {
         val l = meLogic()

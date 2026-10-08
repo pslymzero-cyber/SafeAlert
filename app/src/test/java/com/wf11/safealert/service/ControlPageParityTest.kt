@@ -58,4 +58,9 @@ class ControlPageParityTest {
     @Test fun page_does_not_set_the_tab_title() {
         assertFalse(page().contains("document.title"))
     }
+
+    // The auto-ended label on the page is the app's own wording (LoneWorkerNotifier.AUTO_ENDED).
+    @Test fun ended_reason_label_matches_the_app() {
+        assertTrue(page().contains("s.auto ? '" + LoneWorkerNotifier.AUTO_ENDED + "'"))
+    }
 }
