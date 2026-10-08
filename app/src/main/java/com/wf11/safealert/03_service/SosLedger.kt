@@ -215,7 +215,7 @@ class SosLedger(
         val uid = transport.uid() ?: return
         if (key in createBusy || (createNext[key] ?: 0L) > clock()) return
         createBusy.add(key)
-        sendCreate(path, key, currentRecord(), uid, scopedRetry = true)
+        sendCreate(path, key, currentRecord(), uid)
     }
 
     /**
@@ -224,14 +224,14 @@ class SosLedger(
      * finds the record absent and drops it, so a retry would leave a record nobody resolves. Other failures check whether
      * the record landed late and otherwise back off.
      */
-    private fun sendCreate(sentPath: String, sentKey: String, rec: Record, uid: String, scopedRetry: Boolean) {
+    private fun sendCreate(sentPath: String, sentKey: String, rec: Record, uid: String) {
         transport.create(sentPath, sentKey, rec, uid) { ok ->
             if (ok) {
                 createBusy.remove(sentKey)
                 onCreated(sentPath, sentKey)
                 onChange()
-            } else if (scopedRetry && (rec.floor.isNotEmpty() || rec.proc.isNotEmpty()) && kv.get(K_KEY) == sentKey && hasActive()) {
-                sendCreate(sentPath, sentKey, rec.copy(floor = "", proc = ""), uid, scopedRetry = false)
+            } else if ((rec.floor.isNotEmpty() || rec.proc.isNotEmpty()) && kv.get(K_KEY) == sentKey && hasActive()) {
+                sendCreate(sentPath, sentKey, rec.copy(floor = "", proc = ""), uid)
             } else {
                 // If my record already exists on the server (a pre-restart write landed late), don't write again; treat it as sent
                 transport.read(sentPath, sentKey) { r ->

@@ -702,6 +702,31 @@ class LoneWorkerPeerTest {
         assertEquals("K1", l.peer("P").key)
     }
 
+    // Leftover adverts of an out-of-scope SOS that ended on air stay silent for the guard time after the on-air end, also
+    //   after its late active record took over the entry; heard again after the guard they ring.
+    @Test fun leftover_advert_of_an_out_of_scope_sos_that_ended_on_air_stays_silent_within_the_guard() {
+        val l = meLogic()
+        l.onPeerBle("P", true, 1_000, 1)
+        l.onPeerBle("P", false, 2_000)
+        l.tick(2_000 + LoneWorkerPeers.PEER_BLE_FALL_MS)
+        l.srv("K1", "P", 1, true, created = 5L, now = 13_000, inScope = false)
+        l.onPeerBle("P", true, 14_000, 1)
+        assertTrue("공중에서 끝난 범위 밖 SOS 의 남은 광고는 울리지 않는다", l.audiblePeers().isEmpty())
+        assertTrue("목록에도 없다", l.peers.isEmpty())
+    }
+
+    @Test fun advert_of_an_out_of_scope_sos_that_ended_on_air_rings_after_the_guard() {
+        val l = meLogic()
+        l.onPeerBle("P", true, 1_000, 1)
+        l.onPeerBle("P", false, 2_000)
+        l.tick(2_000 + LoneWorkerPeers.PEER_BLE_FALL_MS)
+        l.srv("K1", "P", 1, true, created = 5L, now = 13_000, inScope = false)
+        l.onPeerBle("P", true, 2_000 + LoneWorkerPeers.PEER_BLE_FALL_MS + LoneWorkerPeers.PEER_RESOLVE_GUARD_MS + 1, 1)
+        assertEquals("보호 시간 뒤 다시 들리면 울린다", 1, l.audiblePeers().size)
+        assertEquals(1, l.peers.size)
+        assertEquals("K1", l.peer("P").key)
+    }
+
     @Test fun in_scope_record_for_an_sos_that_ended_on_air_rings_again() {
         val l = meLogic()
         l.onPeerBle("P", true, 1_000, 1)
@@ -711,7 +736,7 @@ class LoneWorkerPeerTest {
         assertEquals(1, l.audiblePeers().size)
     }
 
-    // sig() is the hash the monitor used to compute over the visible entries: the quiet ones do not count.
+    // sig() is the change signature of the visible entries (id, active, silenced); quiet entries are left out.
     @Test fun peer_sig_matches_the_hash_over_visible_entries() {
         val l = meLogic()
         l.srv("K1", "P", 1, true, created = 5L, now = 1_000)

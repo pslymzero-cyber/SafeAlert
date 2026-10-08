@@ -185,7 +185,7 @@ class LoneWorkerActivity : AppCompatActivity() {
             LoneWorkerLogic.Mode.SOS -> {
                 chip("내 구조 요청")
                 b.tvLwTitle.text = "구조 요청 중"
-                b.tvLwBody.text = (listOf(listOfNotNull("${audience()} 휴대폰에 구조 요청이 나가고 있어요", st.serverStatus).joinToString("\n")) + peerLines)
+                b.tvLwBody.text = (listOf(listOfNotNull("동료 휴대폰에 구조 요청이 나가고 있어요", st.serverStatus).joinToString("\n")) + peerLines)
                     .joinToString("\n\n")
                 b.btnLwPrimary.text = "괜찮아요"
                 ALERT
@@ -193,14 +193,14 @@ class LoneWorkerActivity : AppCompatActivity() {
             LoneWorkerLogic.Mode.CHECKING -> {
                 chip(if (st.trigger == "fall") "넘어짐 감지" else "${st.stillMin}분 동안 움직임 없음")
                 b.tvLwTitle.text = "괜찮으세요?"
-                b.tvLwBody.text = (listOf("응답이 없으면 같은 사업장에 구조 요청이 나가요\n" +
+                b.tvLwBody.text = (listOf("응답이 없으면 ${audience()}에 구조 요청이 나가요\n" +
                     (if (st.closesByTurn) LoneWorkerNotifier.TURN_CLOSE_HINT else walkHint(st.stepsAvailable))) + peerLines)
                     .joinToString("\n\n")
                 b.btnLwPrimary.text = "괜찮아요"
                 CHECK
             }
             else -> {
-                chip("${audience()} 동료")
+                chip("동료")
                 b.tvLwTitle.text = if (st.peerActive) "동료 구조 요청" else if (st.peerAutoEnded) LoneWorkerNotifier.AUTO_ENDED else "해제됨"
                 b.tvLwBody.text = peerLines.joinToString("\n\n")
                 b.btnLwPrimary.text = if (st.peerActive) "확인" else "닫기"

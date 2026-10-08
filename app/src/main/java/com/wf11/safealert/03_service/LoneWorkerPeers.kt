@@ -31,7 +31,8 @@ import com.wf11.safealert.utils.SiteScope
  *   ends that way only once its adverts have stopped as well.
  * - A server record outside this phone's floor/process scope is a quiet entry: hidden and silent, but it merges either way
  *   with its episode's BLE entry (which then rings with the name) and runs the one-hour release. It becomes a normal entry
- *   when heard over BLE or delivered again in scope, and stays hidden after it ends.
+ *   when heard over BLE or delivered again in scope, and stays hidden after it ends. An advert of an SOS that already ended
+ *   on air does not count as being heard within PEER_RESOLVE_GUARD_MS of that end.
  */
 
 /** One peer row used by the screen and the acknowledge gate. id = entry id, epId = episode ID. */
@@ -66,7 +67,12 @@ class LoneWorkerPeers {
          * Out-of-scope server entry not heard over Bluetooth: kept only to merge with its adverts and to run the one-hour
          * release; not listed, not audible, no notification; stays hidden after it ends.
          */
-        val quiet: Boolean = false
+        val quiet: Boolean = false,
+        /**
+         * When this out-of-scope server entry took over a Bluetooth entry that had already ended on air: the time that entry
+         * ended. Leftover adverts within PEER_RESOLVE_GUARD_MS of it do not wake the quiet entry. Null = never ended on air.
+         */
+        val endedOnAirMs: Long? = null
     ) {
         val fromServer: Boolean get() = key != null
         /** Store key. */
@@ -138,6 +144,7 @@ class LoneWorkerPeers {
 
     /** Change signature of the visible entries (id, active, silenced), without building a list. */
     fun sig(): Int {
+        if (map.isEmpty()) return 0
         var h = 0
         for (p in map.values) {
             if (p.quiet) continue
@@ -195,8 +202,10 @@ class LoneWorkerPeers {
                 firstSeenMs = b.firstSeenMs, active = true, silenced = coldServer(kId, epId, nowMs),
                 resolvedAtMs = 0L, episode = ep, lastBleMs = b.lastBleMs, startMs = rec.startLocalMs ?: b.startMs,
                 floor = rec.floor, proc = rec.proc,
-                // Out of scope and already over on air: the late record must not ring it again; still heard: it keeps ringing.
-                quiet = !rec.inScope && !b.active
+                // Out of scope and already over on air: the late record stays quiet, also against that SOS's leftover adverts
+                // for the guard time; still heard: it keeps ringing.
+                quiet = !rec.inScope && !b.active,
+                endedOnAirMs = if (!b.active) b.resolvedAtMs else null
             )
             return
         }
@@ -222,6 +231,7 @@ class LoneWorkerPeers {
         if (matches.any { it.active }) {
             for (p in matches) {
                 if (!p.active) continue
+                if (p.quiet && p.endedOnAirMs != null && nowMs - p.endedOnAirMs <= PEER_RESOLVE_GUARD_MS) continue
                 val first = p.lastBleMs == Long.MIN_VALUE
                 val gap = first || nowMs - p.lastBleMs >= PEER_BLE_GAP_MS
                 // Even on first hearing, keep the mute if an acknowledgement from before the service restart (pending mute) points to this server entry.
