@@ -139,6 +139,9 @@
   .alarm-sound { display: flex; align-items: center; gap: 12px; margin-top: 12px; padding: 8px 12px; border-radius: 6px;
                  background: var(--crit-bg); color: var(--crit-ink); font-size: 13px; font-weight: 600; }
   .alarm-sound .btn { margin-left: auto; }
+  .alarm-notes { display: grid; gap: 8px; margin-top: 12px; }
+  .alarm-notes:empty { display: none; }
+  .alarm-notes .toast { box-shadow: none; }
   .ai { padding: 20px 24px; border-bottom: 1px solid var(--line); }
   .ai-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
   .ai-name { font-size: 28px; font-weight: 700; line-height: 1.2; letter-spacing: -0.01em; }
@@ -158,7 +161,7 @@
   .steps li::before { content: counter(step); display: grid; place-items: center; width: 22px; height: 22px; border: 1px solid var(--line-2);
                       border-radius: 6px; color: var(--text-2); font-size: 12px; font-weight: 600; }
 
-  /* toasts stay under the alarm: they must never cover its buttons */
+  /* page toasts sit under the alarm (they must never cover its buttons); while it is up they are written inside it */
   .toasts { position: fixed; right: 16px; bottom: 16px; z-index: 20; display: grid; gap: 8px; max-width: min(380px, calc(100vw - 32px)); }
   .toast { padding: 10px 14px; border: 1px solid var(--line-2); border-left: 3px solid var(--ok); border-radius: 6px;
            background: var(--surface-3); font-size: 13px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35); }
@@ -181,7 +184,7 @@
     .bar-end { width: 100%; margin-left: 0; }
     .live { margin-right: auto; }
     .strip { padding: 9px 16px; }
-    .strip.crit { position: sticky; top: 0; z-index: 9; }   /* the bar scrolls away here: the stale warning must not */
+    #strips.stick { position: sticky; top: 0; z-index: 9; }   /* the bar scrolls away here: the warnings must not */
     .layout { gap: 12px; padding: 12px 16px 8px; }
     .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .stats > div:nth-child(3) { border-left: 0; }
@@ -227,7 +230,7 @@
     <header class="ph"><h2>구조 요청</h2><span id="sosCount" class="ph-meta"></span></header>
     <div id="sosList"></div>
   </section>
-  <section id="statsSec" class="panel full">
+  <section class="panel full">
     <header class="ph"><h2>현장 상태</h2><span id="slowAt" class="ph-meta"></span></header>
     <dl class="stats">
       <div><dt>감시 중 기기</dt><dd id="stAlive">-</dd></div>
@@ -237,7 +240,7 @@
     </dl>
   </section>
   <div class="col">
-    <section id="alertsSec" class="panel">
+    <section class="panel">
       <header class="ph">
         <h2>접근 경보</h2><span id="alertsMeta" class="ph-meta"></span>
         <div class="seg" role="group" aria-label="접근 경보 보기">
@@ -247,17 +250,17 @@
       </header>
       <div class="scroll"><table id="alertTable"></table></div>
     </section>
-    <section id="endedSec" class="panel">
+    <section class="panel">
       <header class="ph"><h2>끝난 구조 요청</h2><span class="ph-meta">최근 24시간</span></header>
       <div class="scroll"><table id="endedTable"></table></div>
     </section>
   </div>
   <div class="col">
-    <section id="aliveSec" class="panel">
+    <section class="panel">
       <header class="ph"><h2>감시 중 기기</h2><span class="ph-meta">기기 ID는 기록하지 않음</span></header>
       <div class="scroll"><table id="aliveTable"></table></div>
     </section>
-    <section id="lostSec" class="panel">
+    <section class="panel">
       <header class="ph"><h2>연락 끊김</h2><span class="ph-meta">정상 종료 없이 15분 넘게 응답 없음</span></header>
       <div class="scroll"><table id="lostTable"></table></div>
     </section>
@@ -272,6 +275,7 @@
       <p>대응 시작을 누르면 이 화면의 경보음이 멈춥니다. 다른 관리자 화면은 각자 눌러야 합니다.</p>
       <p id="alarmConn" class="alarm-conn" hidden></p>
       <div id="alarmSound" class="alarm-sound"><span>경보음이 꺼져 있습니다</span><button type="button" class="btn btn-sm" data-act="sound" data-sound>경보음 켜기</button></div>
+      <div id="alarmNotes" class="alarm-notes" aria-live="polite"></div>
     </header>
     <div id="alarmList"></div>
     <section class="steps">
@@ -290,17 +294,20 @@
 <script>
   var FLOORS = ['1F', '2F', '3F', '4F', '5F', '6F', '7F', '8F', '9F', '10F'];
   var PROCS = ['OB', 'IB', 'ICQA', 'HUB', 'EHS', 'HR'];
-  var REFRESH_MS = 30000;
-  var STALE_MS = 120000;                // no good snapshot for this long: the screen is not current
+  var SOS_MS = 30000;                   // SOS of every site: every 30 seconds, also in a hidden tab (it drives the alarm)
+  var FIELD_MS = 120000;                // devices and alerts of the chosen site: every 2 minutes while the tab is visible
+  var STALE_MS = 120000;                // no SOS answer for this long: the screen is not current
   var ACK_KEEP_MS = 25 * 3600 * 1000;   // longer than the 24-hour SOS window
   var HOUR_MS = 3600 * 1000;            // '최근 1시간' (the server sends 24 hours of alerts)
   var STALE_NOTE = '1시간이 지나도 해제되지 않음 (기기 꺼짐 의심)';
-  var CALL_TIMEOUT_MS = 45000;          // a call with no answer this long counts as failed and no longer blocks the next one
-  var ACK_GUARD_MS = 800;               // no acknowledgement this soon after the alarm list changed (double click, new SOS)
+  var CALL_TIMEOUT_MS = 45000;          // a call with no answer this long no longer blocks the next one
+  var ACK_GUARD_MS = 800;               // no acknowledgement this soon after the alarm list changed (double click)
   var CAN_CALL = !!(window.matchMedia && matchMedia('(pointer: coarse)').matches);   // phones dial tel: links, PCs do not
-  var st = { sc: '<?!= initialSc ?>', floor: '', proc: '', tab: 'id', d: null, skew: 0, busy: false, again: false,
-             fails: 0, err: '', slowErr: '', denied: false, t0: Date.now(), lastGood: 0, sitesKey: '', alarmSig: '',
-             stripSig: '', armed: false, timer: 0, seq: 0, busyAt: 0, ackOpenAt: 0, audio: null, siren: null, sirenBuf: null };
+  var st = { sc: '<?!= initialSc ?>', floor: '', proc: '', tab: 'id',
+             s: null,                   // SOS of every site in SITES: { sites, now, sos (each with sc, staleAt), failed, kept }
+             f: null,                   // devices and alerts of st.sc: { sc, now, at, sessions, alerts, cut }
+             skew: 0, denied: false, err: '', fieldErr: '', fails: 0, goodWall: 0, goodMono: 0, t0: mono(),
+             alarmSig: '', ackOpenAt: -Infinity, resuming: false, audio: null, siren: null, sirenBuf: null };
   var mem = {};                         // fallback when localStorage is unavailable (sandboxed or partitioned frames)
   var ack = readAck();                  // SOS key -> time it was acknowledged in this browser
 
@@ -329,11 +336,17 @@
     var m = Math.max(0, Math.floor(ms / 60000));
     return m < 60 ? m + '분' : Math.floor(m / 60) + '시간 ' + (m % 60) + '분';
   }
+  // Intervals use the monotonic clock: a step of the computer's clock must not block acknowledging or the call watchdog
+  function mono() { return performance.now(); }
   function nowMs() { return Date.now() + st.skew; }
   function scopeOf(r) { return [r.floor, r.proc].filter(Boolean).join('-'); }
-  function placeOf(r) { var sc = r.sc || st.d.sc, s = scopeOf(r); return s ? sc + '-' + s : sc + ' (층·공정 미지정)'; }
-  // Active SOS of the selected site and of the other sites in SITES: an SOS anywhere is an emergency on this screen
-  function activeSos(d) { return d ? d.sos.filter(function (s) { return s.active; }).concat(d.others || []) : []; }
+  function placeOf(r) { var s = scopeOf(r); return s ? r.sc + '-' + s : r.sc + ' (층·공정 미지정)'; }
+  // Active SOS of every site in SITES, oldest first: a new one is added at the end and never takes the place of a card
+  // being read. The floor/process filters never hide an emergency.
+  function activeSos() {
+    return st.s ? st.s.sos.filter(function (s) { return s.active; }).sort(function (a, b) { return a.createdAt - b.createdAt; }) : [];
+  }
+  function isStale(s) { return nowMs() > s.staleAt; }
   function nameOf(s) { return s.name || '이름 없음'; }
   function endedHow(s) { return s.auto ? '응답 없이 자동 종료' : '본인 해제'; }
   function match(sel, v) { return !sel || (sel === '-' ? !v : v === sel); }
@@ -342,7 +355,7 @@
   // it shows under any filter; '미지정' shows only those. Active SOS are never filtered.
   function sosMatch(sel, v) { return sel === '-' ? !v : (!v || match(sel, v)); }
   function sosInScope(s) { return sosMatch(st.floor, s.floor) && sosMatch(st.proc, s.proc); }
-  function hourAlerts(d) { return d.alerts.filter(function (a) { return d.now - a.t <= HOUR_MS && inScope(a); }); }
+  function hourAlerts(f) { return f.alerts.filter(function (a) { return f.now - a.t <= HOUR_MS && inScope(a); }); }
   function setHtml(el, html) { if (el.__html !== html) { el.innerHTML = html; el.__html = html; } }   // keeps selections when nothing changed
 
   // ── browser-local storage (acknowledgements, sound preference) ──
@@ -363,23 +376,62 @@
     sset('sa_ack', JSON.stringify(ack));
   }
 
-  // ── loading ──
-  function load() {
-    if (st.denied) return;
-    if (st.busy && Date.now() - st.busyAt < CALL_TIMEOUT_MS) { st.again = true; return; }   // e.g. a site switch mid-call
-    if (st.busy) onFail('net');                 // the previous call never answered: count it as failed and ask again
-    var seq = ++st.seq;
-    st.busy = true;
-    st.busyAt = Date.now();
-    st.again = false;
-    var light = document.hidden && !!st.d && !!st.d.sessions;   // a hidden tab refreshes only what drives the alarm
-    google.script.run   // an abandoned call that answers late is ignored
-      .withSuccessHandler(function (d) { if (seq !== st.seq) return; st.busy = false; onData(d); if (st.again) load(); })
-      .withFailureHandler(function () { if (seq !== st.seq) return; st.busy = false; onFail('net'); if (st.again) load(); })
-      .getSnapshot(st.sc, { sosOnly: light });
+  // ── loading: one call at a time per kind. A call with no answer for CALL_TIMEOUT_MS no longer blocks the next one, and
+  // an answer is used whenever it is newer than the last one used, also when it comes after its replacement left. ──
+  var sosCall = { send: function (run) { run.getSos(); }, data: onSos, fail: sosFailed, seq: 0, used: 0, busy: false, at: 0, again: false };
+  var fieldCall = { send: function (run) { run.getField(st.sc); }, data: onField, fail: fieldFailed, seq: 0, used: 0, busy: false, at: 0, again: false };
+  function call(c) {
+    if (c.busy && mono() - c.at < CALL_TIMEOUT_MS) { c.again = true; return; }   // e.g. a site switch during a call
+    if (c.busy) c.fail('net');                    // the previous call never answered: counted once, and asked again
+    var seq = ++c.seq;
+    c.busy = true;
+    c.at = mono();
+    c.again = false;
+    c.send(google.script.run
+      .withSuccessHandler(function (d) {
+        if (seq === c.seq) c.busy = false;
+        if (seq > c.used) { c.used = seq; c.data(d); }
+        if (seq === c.seq && c.again) call(c);
+      })
+      .withFailureHandler(function () {
+        if (seq !== c.seq) return;                // an abandoned call was counted when it was abandoned
+        c.busy = false;
+        c.fail('net');
+        if (c.again) call(c);
+      }));
+  }
+  function loadSos() { call(sosCall); }
+  function loadField() { if (!document.hidden) call(fieldCall); }
+  function reloadAll() { loadSos(); loadField(); }
+
+  function onSos(d) {
+    if (!d || !d.ok) {
+      if (d && d.error === 'denied') deny(); else sosFailed(d && d.error, d && d.code);
+      return;
+    }
+    var back = st.denied;
+    st.denied = false;
+    st.fails = 0;
+    st.err = '';
+    st.goodWall = Date.now();
+    st.goodMono = mono();
+    st.skew = d.now - Date.now();
+    // A site that could not be read keeps what it showed: a failed read must not silence its alarm
+    var prev = st.s, failed = d.failed || [];
+    if (prev && failed.length) d.sos = d.sos.concat(prev.sos.filter(function (s) { return failed.indexOf(s.sc) >= 0; }));
+    d.kept = !!prev;
+    var notes = prev ? endedNotes(prev, d) : [];
+    st.s = d;
+    var sc = d.sites.indexOf(st.sc) >= 0 ? st.sc : d.sites[0];
+    setHtml($('site'), d.sites.map(function (s) { return '<option>' + esc(s) + '</option>'; }).join(''));
+    $('site').value = sc;
+    if (sc !== st.sc) { st.sc = sc; st.f = null; st.fieldErr = ''; back = true; }
+    renderAll();
+    notes.forEach(toast);   // after rendering: while the alarm is up a note goes inside it
+    if (back) loadField();
   }
 
-  function onFail(why, code) {
+  function sosFailed(why, code) {
     st.fails++;
     st.err = why === 'setup' ? '스크립트 속성(FIREBASE_DB_URL, FIREBASE_DB_SECRET, SITES)을 확인하세요.'
       : why === 'quota' ? '오늘 조회 한도를 다 썼습니다. 24시간 안에 다시 읽을 수 있습니다.'
@@ -388,108 +440,97 @@
     renderStatus();
   }
 
-  function onData(d) {
+  function onField(d) {
     if (!d || !d.ok) {
-      if (d && d.error === 'denied') {
-        // The sandboxed frame cannot reload the /exec page: say it here and stop asking
-        st.denied = true;
-        clearInterval(st.timer);
-        st.d = null;
-        renderAll();
-        return;
-      }
-      onFail(d && d.error, d && d.code);
+      if (d && d.error === 'denied') deny(); else fieldFailed(d && d.error);
       return;
     }
-    // A response for a site other than the one chosen meanwhile is dropped: it changes neither the select nor the data
-    if (st.sc && st.sc !== d.sc && d.sites.indexOf(st.sc) >= 0) return;
+    // An answer for the site chosen before a switch is dropped (the switch asked again)
+    if (st.sc && d.sc !== st.sc && st.s && st.s.sites.indexOf(st.sc) >= 0) return;
     st.sc = d.sc;
-    st.fails = 0;
-    st.err = '';
-    st.lastGood = Date.now();
-    st.skew = d.now - Date.now();
-    var key = d.sites.join(',');
-    if (key !== st.sitesKey) {
-      st.sitesKey = key;
-      $('site').innerHTML = d.sites.map(function (s) { return '<option>' + esc(s) + '</option>'; }).join('');
-    }
-    $('site').value = st.sc;
-    var old = st.d && st.d.sc === d.sc ? st.d : null;
-    if (!d.sessions && old && old.sessions) {   // hidden tab's SOS-only refresh, or a failed slow read
-      d.sessions = old.sessions; d.alerts = old.alerts; d.alertsCut = old.alertsCut; d.slowAt = old.slowAt;
-    }
-    st.slowErr = !d.slowError ? '' : d.sessions ? '접근 경보와 기기 현황을 읽지 못해 ' + hms(d.slowAt) + ' 기준 내용을 보여 줍니다.'
-      : '접근 경보와 기기 현황을 읽지 못했습니다. 구조 요청은 계속 갱신됩니다.';
-    d.others = d.others || [];
-    var failed = d.othersFailed || [];
-    if (failed.length) {   // a failed read must not silence that site's alarm: keep what it had
-      if (st.d && st.d.others) st.d.others.forEach(function (s) { if (failed.indexOf(s.sc) >= 0) d.others.push(s); });
-      st.slowErr += (st.slowErr ? ' ' : '') + failed.join(', ') + ' 구조 요청을 읽지 못해 직전 내용을 보여 줍니다.';
-    }
-    if (old) toastEnded(old, d);
-    st.d = d;
+    st.f = d;
+    st.fieldErr = '';
     renderAll();
   }
 
-  // An SOS that was active in the previous snapshot: ended, or gone from the 24-hour window unresolved. Other sites send
-  // only their active SOS, so one that leaves that list is reported without the reason.
-  function toastEnded(old, d) {
-    var byKey = {}, elsewhere = {};
+  function fieldFailed(why) {
+    st.fieldErr = (why === 'quota' ? '오늘 조회 한도를 다 써서 ' : '') + '접근 경보와 기기 현황을 읽지 못했습니다' +
+      (st.f ? '. ' + hms(st.f.at) + ' 기준 내용을 보여 줍니다.' : '. 구조 요청은 따로 계속 갱신됩니다.');
+    renderStatus();
+  }
+
+  // An account taken off ADMIN_EMAILS sees nothing more; the page keeps asking and comes back once it is listed again
+  function deny() {
+    st.denied = true;
+    st.s = null;
+    st.f = null;
+    st.err = '';
+    st.fieldErr = '';
+    st.fails = 0;
+    renderAll();
+  }
+
+  // SOS that were active in the previous answer and have ended or left the 24-hour window since
+  function endedNotes(prev, d) {
+    var byKey = {}, out = [];
     d.sos.forEach(function (s) { byKey[s.key] = s; });
-    d.others.forEach(function (s) { elsewhere[s.key] = true; });
-    old.sos.forEach(function (s) {
+    prev.sos.forEach(function (s) {
       if (!s.active) return;
-      var cur = byKey[s.key];
-      if (!cur) toast(nameOf(s) + ' 구조 요청이 24시간이 지나 목록에서 빠졌습니다 (해제 기록 없음)');
-      else if (!cur.active) toast(nameOf(cur) + ' 구조 요청이 끝났습니다 (' + endedHow(cur) + ')');
+      var cur = byKey[s.key], who = (s.sc !== st.sc ? s.sc + ' ' : '') + nameOf(s);
+      if (!cur) out.push(who + ' 구조 요청이 24시간이 지나 목록에서 빠졌습니다 (해제 기록 없음)');
+      else if (!cur.active) out.push(who + ' 구조 요청이 끝났습니다 (' + endedHow(cur) + ')');
     });
-    (old.others || []).forEach(function (s) {
-      if (!elsewhere[s.key]) toast(s.sc + ' ' + nameOf(s) + ' 구조 요청이 진행 목록에서 빠졌습니다 (사유는 ' + s.sc + ' 화면에서)');
-    });
+    return out;
   }
 
   function toast(text) {
     var el = document.createElement('div');
     el.className = 'toast';
     el.textContent = text;
-    $('toasts').appendChild(el);
+    // While the alarm is up the note goes inside it: everything outside is covered (and must never cover its buttons)
+    $(document.body.classList.contains('alarming') ? 'alarmNotes' : 'toasts').appendChild(el);
     setTimeout(function () { el.remove(); }, 8000);
   }
 
   // ── rendering ──
   function renderAll() { renderStatus(); renderAlarm(); renderSos(); renderSide(); renderAlerts(); renderEnded(); }
 
-  function lostConn() { return !st.denied && (st.fails >= 3 || Date.now() - (st.lastGood || st.t0) > STALE_MS); }
+  function lostConn() { return !st.denied && (st.fails >= 3 || mono() - (st.goodMono || st.t0) > STALE_MS); }
+
+  // Sites whose SOS could not be read this time: said on the page and inside the alarm
+  function failText() {
+    var f = st.s ? st.s.failed : [];
+    return f.length ? f.join(', ') + ' 구조 요청을 읽지 못하고 있습니다' + (st.s.kept ? '. 직전에 읽은 내용을 보여 줍니다.' : '.') : '';
+  }
 
   // Runs every second: touches the DOM only when something changed
   function renderStatus() {
-    var lost = lostConn(), run = soundRunning();
-    var cls = lost || st.denied ? 'live bad' : st.lastGood ? 'live ok' : 'live';
-    var txt = st.denied ? '권한 없음' : lost ? '연결 끊김' : st.d ? hms(st.d.now) + ' 갱신' : '불러오는 중';
+    var lost = lostConn(), run = soundRunning(), fail = failText();
+    var cls = lost || st.denied ? 'live bad' : st.goodWall ? 'live ok' : 'live';
+    var txt = st.denied ? '권한 없음' : lost ? '연결 끊김' : st.s ? hms(st.s.now) + ' 갱신' : '불러오는 중';
     if ($('live').className !== cls) $('live').className = cls;
     if ($('liveText').textContent !== txt) $('liveText').textContent = txt;
-    var lostText = '연결 끊김. 화면이 최신이 아닙니다' + (st.lastGood ? ' (마지막 갱신 ' + hms(st.lastGood) + ')' : '');
+    var lostText = '연결 끊김. 화면이 최신이 아닙니다' + (st.goodWall ? ' (마지막 갱신 ' + hms(st.goodWall) + ')' : '');
 
     var strips = [];
-    if (st.denied) strips.push(['crit', '이 계정은 관제 권한이 없어졌습니다. 관리자에게 ADMIN_EMAILS 등록을 요청하세요.', '', '']);
+    if (st.denied) strips.push(['crit', '이 계정은 관제 권한이 없습니다. 관리자에게 ADMIN_EMAILS 등록을 요청하세요. 등록되면 이 화면이 저절로 다시 열립니다.', '', '']);
     if (lost) strips.push(['crit', lostText, 'retry', '다시 시도']);
     if (st.err) strips.push(['warn', st.err, '', '']);
-    if (st.slowErr && !st.err) strips.push(['warn', st.slowErr, '', '']);
+    if (fail) strips.push(['warn', fail, '', '']);
+    if (st.fieldErr) strips.push(['warn', st.fieldErr, '', '']);
     if (!run && !st.denied) strips.push(['mute', soundPref() ? '경보음이 멈춰 있습니다. 화면을 한 번 누르면 다시 켜집니다.'
                                                              : '경보음이 꺼져 있습니다. 구조 요청이 와도 소리가 나지 않습니다.', 'sound', '경보음 켜기']);
-    var sig = JSON.stringify(strips);
-    if (sig !== st.stripSig) {
-      st.stripSig = sig;
-      $('strips').innerHTML = strips.map(function (s) {
-        return '<div class="strip ' + s[0] + '" role="' + (s[0] === 'mute' ? 'status' : 'alert') + '"><span>' + esc(s[1]) + '</span>' +
-          (s[2] ? '<button type="button" class="btn btn-sm" data-act="' + s[2] + '"' + (s[2] === 'sound' ? ' data-sound' : '') + '>' + s[3] + '</button>' : '') +
-          '</div>';
-      }).join('');
-    }
-    // The alarm covers the strips: it says it itself when the screen is not current
-    var conn = $('alarmConn');
-    if (conn.hidden !== !lost) conn.hidden = !lost;
-    if (lost && conn.textContent !== lostText) conn.textContent = lostText;
+    setHtml($('strips'), strips.map(function (s) {
+      return '<div class="strip ' + s[0] + '" role="' + (s[0] === 'mute' ? 'status' : 'alert') + '"><span>' + esc(s[1]) + '</span>' +
+        (s[2] ? '<button type="button" class="btn btn-sm" data-act="' + s[2] + '"' + (s[2] === 'sound' ? ' data-sound' : '') + '>' + s[3] + '</button>' : '') +
+        '</div>';
+    }).join(''));
+    // On a phone the bar scrolls away: the strips stay at the top while the SOS on screen may not be current
+    $('strips').classList.toggle('stick', lost || st.denied || !!st.err || !!fail);
+    // The alarm covers the page: it says itself what makes its own list unreliable
+    var warn = lost ? lostText : fail, conn = $('alarmConn');
+    if (conn.hidden !== !warn) conn.hidden = !warn;
+    if (warn && conn.textContent !== warn) conn.textContent = warn;
 
     var mute = $('alarmSound');   // toggled in place: rebuilding the alarm list would swallow a click in flight
     if (mute.hidden !== run) mute.hidden = run;
@@ -498,22 +539,34 @@
     if (b.textContent !== label) b.textContent = label;
     if (b.className !== bcls) { b.className = bcls; b.setAttribute('aria-pressed', run ? 'true' : 'false'); }
 
-    var n = activeSos(st.d).length, pill = $('sosPill');
+    var n = activeSos().length, pill = $('sosPill');
     pill.hidden = !n;
     if (n && pill.textContent !== '구조 요청 ' + n + '건') pill.textContent = '구조 요청 ' + n + '건';
+
+    var lay = document.querySelector('.layout');   // a refused account sees no data at all
+    if (lay.hidden !== st.denied) lay.hidden = st.denied;
   }
 
-  // Active SOS not yet acknowledged in this browser, at any site in SITES. The filters never hide an emergency.
-  function unacked() { return activeSos(st.d).filter(function (s) { return !ack[s.key]; }); }
+  // Active SOS not yet acknowledged in this browser, at any site in SITES
+  function unacked() { return activeSos().filter(function (s) { return !ack[s.key]; }); }
 
   // While the alarm is up, everything behind it is inert: no key or click can change the site or the sound under it
   function setInert(on) {
-    ['.bar', '#strips', '.layout', '.foot', '#toasts'].forEach(function (q) { var el = document.querySelector(q); if (el) el.inert = on; });
+    ['.bar', '#strips', '.layout', '.foot'].forEach(function (q) { var el = document.querySelector(q); if (el) el.inert = on; });
+  }
+
+  // Elapsed clocks are written here, never into the built HTML, so an unchanged list keeps its DOM
+  function clocks(root) {
+    var now = nowMs(), els = root.querySelectorAll('[data-t]');
+    for (var i = 0; i < els.length; i++) {
+      var txt = clock(now - Number(els[i].getAttribute('data-t')));
+      if (els[i].textContent !== txt) els[i].textContent = txt;
+    }
   }
 
   function renderAlarm() {
     var list = unacked(), box = $('alarm');
-    var sig = list.map(function (s) { return s.key + (s.stale ? '!' : ''); }).join(',');
+    var sig = list.map(function (s) { return s.key + (isStale(s) ? '!' : ''); }).join(',');
     if (sig !== st.alarmSig) {
       st.alarmSig = sig;
       box.hidden = !list.length;
@@ -521,9 +574,10 @@
       setInert(list.length > 0);
       $('alarmTitle').textContent = '구조 요청 ' + list.length + '건';
       $('alarmList').innerHTML = list.map(alarmItem).join('');
-      // A rebuilt list can put another SOS's button under the pointer or the key in use: no acknowledgement for a
-      // moment, and focus goes to the title, never to a button that would silence an SOS nobody has read yet
-      st.ackOpenAt = Date.now();
+      clocks($('alarmList'));
+      // After a card is acknowledged the ones below slide up under the pointer: no acknowledgement for a moment, and
+      // focus goes to the title, never to a button that would silence an SOS nobody has read yet
+      st.ackOpenAt = mono();
       if (list.length) $('alarmTitle').focus({ preventScroll: true });
     }
     syncSiren();
@@ -533,44 +587,43 @@
     return [['장소', placeOf(s)], ['원인', s.trigger], ['가까운 비콘', s.beacon || '정보 없음'], ['발생', hms(s.createdAt)]];
   }
   function alarmItem(s) {
-    var t = Number(s.createdAt);
     return '<article class="ai">' +
       '<div class="ai-head"><div class="ai-name">' + esc(nameOf(s)) + '<span>' + esc(s.who) + '</span></div>' +
-      '<div class="ai-clock"><b data-t="' + t + '">' + clock(nowMs() - t) + '</b><small>경과 시간</small></div></div>' +
+      '<div class="ai-clock"><b data-t="' + Number(s.createdAt) + '"></b><small>경과 시간</small></div></div>' +
       '<dl class="ai-facts">' + facts(s).map(function (f) { return '<div><dt>' + f[0] + '</dt><dd>' + esc(f[1]) + '</dd></div>'; }).join('') + '</dl>' +
-      (s.stale ? '<p class="ai-note">' + STALE_NOTE + '</p>' : '') +
+      (isStale(s) ? '<p class="ai-note">' + STALE_NOTE + '</p>' : '') +
       '<div class="ai-act"><button type="button" class="btn btn-crit" data-act="ack" data-key="' + esc(s.key) + '">대응 시작</button>' +
       (CAN_CALL ? '<a class="btn btn-call" href="tel:119" target="_top">119 전화</a>' : '<span class="call-note">119 신고는 전화기로</span>') + '</div>' +
       '</article>';
   }
 
   function ackSos(key) {
-    if (Date.now() - st.ackOpenAt < ACK_GUARD_MS) return;
+    if (mono() - st.ackOpenAt < ACK_GUARD_MS) return;
     ack[key] = Date.now();
     saveAck();
     renderAlarm();
     renderSos();
   }
 
-  // Every active SOS, whatever the floor/process filter, other sites in SITES included (the alarm and the bar count them too)
+  // Every active SOS of every site, whatever the floor/process filter (the alarm and the bar count them too)
   function renderSos() {
     var box = $('sosList'), sec = $('sosSec');
-    if (!st.d) { box.innerHTML = st.denied ? '' : '<div class="sk-row"></div>'; $('sosCount').textContent = ''; sec.classList.remove('hot'); return; }
-    var act = activeSos(st.d);
+    var act = activeSos(), cnt = act.length ? act.length + '건 진행 중' : '';
     sec.classList.toggle('hot', act.length > 0);
-    $('sosCount').textContent = act.length ? act.length + '건 진행 중' : '';
-    box.innerHTML = act.length ? act.map(sosRow).join('') :
+    if ($('sosCount').textContent !== cnt) $('sosCount').textContent = cnt;
+    setHtml(box, !st.s ? '<div class="sk-row"></div>' : act.length ? act.map(sosRow).join('') :
       '<div class="empty"><b>진행 중인 구조 요청이 없습니다</b>' +
-      '<span>구조 요청이 오면 화면 전체에 경보가 뜨고, 대응 시작을 누를 때까지 경보음이 울립니다.</span></div>';
+      '<span>구조 요청이 오면 화면 전체에 경보가 뜨고, 대응 시작을 누를 때까지 경보음이 울립니다.</span></div>');
+    clocks(box);
   }
   function sosRow(s) {
-    var t = Number(s.createdAt), a = ack[s.key];
+    var a = ack[s.key];
     return '<div class="sr"><div>' +
       '<div class="sr-name">' + esc(nameOf(s)) + '<span>' + esc(s.who) + '</span></div>' +
       '<div class="sr-meta">' + facts(s).map(function (f) { return '<span><span class="k">' + f[0] + '</span>' + esc(f[1]) + '</span>'; }).join('') + '</div></div>' +
-      '<div class="sr-side"><b data-t="' + t + '">' + clock(nowMs() - t) + '</b>' +
+      '<div class="sr-side"><b data-t="' + Number(s.createdAt) + '"></b>' +
       '<small>' + (a ? '이 화면에서 ' + hm(a) + ' 확인' : '확인 전') + '</small>' +
-      (s.stale ? '<small class="warn">' + STALE_NOTE + '</small>' : '') + '</div></div>';
+      (isStale(s) ? '<small class="warn">' + STALE_NOTE + '</small>' : '') + '</div></div>';
   }
 
   function blank(msg) { return '<tbody><tr><td class="blank">' + msg + '</td></tr></tbody>'; }
@@ -582,16 +635,16 @@
   }
 
   function renderSide() {
-    var d = st.d, ready = !!(d && d.sessions);
-    var ss = ready ? d.sessions.filter(inScope) : [];
+    var f = st.f, ready = !!f;
+    var ss = ready ? f.sessions.filter(inScope) : [];
     var alive = ss.filter(function (s) { return s.alive; }), lost = ss.filter(function (s) { return !s.alive; });
-    var hour = ready ? hourAlerts(d) : [];
+    var hour = ready ? hourAlerts(f) : [];
     var dn = hour.filter(function (a) { return a.level === 'DANGER'; }).length;
     stat('stAlive', ready ? alive.length : null, '');
     stat('stLost', ready ? lost.length : null, 'warn');
     stat('stDanger', ready ? dn : null, 'crit');
     stat('stWarn', ready ? hour.length - dn : null, '');
-    $('slowAt').textContent = ready && d.slowAt ? '기기·경보 ' + hms(d.slowAt) + ' 기준' : '';
+    $('slowAt').textContent = ready ? '기기·경보 ' + hms(f.at) + ' 기준' : '';
 
     var cnt = {};
     alive.forEach(function (s) { var k = s.role + '|' + s.floor + '|' + s.proc; cnt[k] = (cnt[k] || 0) + 1; });
@@ -605,7 +658,7 @@
     setHtml($('lostTable'), !ready ? skeleton() : !lost.length ? blank('연락이 끊긴 기기가 없습니다') :
       '<thead><tr><th>역할</th><th>층·공정</th><th>마지막 응답</th><th>감시 시작</th></tr></thead><tbody>' + lost.slice(0, 30).map(function (s) {
         return '<tr><td>' + esc(s.role) + '</td><td>' + esc(scopeOf(s) || '-') + '</td><td>' + hm(s.last) +
-          '<span class="sub">' + mins(d.now - s.last) + ' 전</span></td><td>' + hm(s.start) + '</td></tr>';
+          '<span class="sub">' + mins(f.now - s.last) + ' 전</span></td><td>' + hm(s.start) + '</td></tr>';
       }).join('') + '</tbody>');
   }
 
@@ -613,14 +666,14 @@
     Array.prototype.forEach.call(document.querySelectorAll('[data-tab]'), function (b) {
       b.setAttribute('aria-pressed', b.getAttribute('data-tab') === st.tab ? 'true' : 'false');
     });
-    var d = st.d, tbl = $('alertTable'), meta = $('alertsMeta');
-    if (!d || !d.alerts) { setHtml(tbl, skeleton()); meta.textContent = ''; return; }
-    meta.textContent = d.alertsCut ? '경보가 많아 최근 ' + d.alerts.length + '건만 불러왔습니다' : '';
-    meta.className = d.alertsCut ? 'ph-meta warn' : 'ph-meta';
+    var f = st.f, tbl = $('alertTable'), meta = $('alertsMeta');
+    if (!f) { setHtml(tbl, skeleton()); meta.textContent = ''; return; }
+    meta.textContent = f.cut ? '경보가 많아 최근 ' + f.alerts.length + '건만 불러왔습니다' : '';
+    meta.className = f.cut ? 'ph-meta warn' : 'ph-meta';
     var filtered = !!(st.floor || st.proc);
     if (st.tab === 'id') {
       var by = {};
-      hourAlerts(d).forEach(function (a) {
+      hourAlerts(f).forEach(function (a) {
         var g = by[a.me] || (by[a.me] = { id: a.me, role: a.myRole, d: 0, w: 0, last: null });
         if (a.level === 'DANGER') g.d++; else g.w++;
         if (!g.last || a.t > g.last.t) g.last = a;
@@ -635,7 +688,7 @@
             '<td>' + hm(g.last.t) + '</td><td><span class="mono">' + esc(g.last.peer) + '</span><span class="sub">' + esc(g.last.peerRole) + '</span></td></tr>';
         }).join('') + '</tbody>');
     } else {
-      var recent = d.alerts.filter(inScope).slice(0, 50);
+      var recent = f.alerts.filter(inScope).slice(0, 50);
       setHtml(tbl, !recent.length ? blank(filtered ? '선택한 층·공정에 최근 24시간 접근 경보가 없습니다' : '최근 24시간 접근 경보가 없습니다') :
         '<thead><tr><th>시각</th><th>등급</th><th>기록한 기기</th><th>상대</th><th>층·공정</th></tr></thead><tbody>' +
         recent.map(function (a) {
@@ -647,10 +700,12 @@
     }
   }
 
+  // SOS of the chosen site that ended in the last 24 hours, newest first
   function renderEnded() {
-    var d = st.d, tbl = $('endedTable');
-    if (!d) { setHtml(tbl, st.denied ? '' : skeleton()); return; }
-    var done = d.sos.filter(function (s) { return !s.active && sosInScope(s); });
+    var tbl = $('endedTable');
+    if (!st.s) { setHtml(tbl, skeleton()); return; }
+    var done = st.s.sos.filter(function (s) { return !s.active && s.sc === st.sc && sosInScope(s); })
+      .sort(function (a, b) { return b.createdAt - a.createdAt; });
     setHtml(tbl, !done.length ? blank('최근 24시간 끝난 구조 요청이 없습니다') :
       '<thead><tr><th>시작</th><th>끝</th><th>작업자</th><th>원인</th><th>장소</th><th>끝난 방식</th></tr></thead><tbody>' +
       done.map(function (s) {
@@ -714,33 +769,31 @@
 
   // While the preference is on but the sound is not running (a later visit, or the browser suspended it), every tap or
   // key tries again until it runs. pointerup / touchend / keydown count as a user gesture on touch screens too
-  // (pointerdown does not). The sound buttons are left to their own handlers.
+  // (pointerdown does not). The sound buttons are left to their own handlers. Adding the same listener twice is a no-op.
   var RESUME_EVENTS = ['pointerup', 'touchend', 'keydown'];
-  function armResume() {
-    if (st.armed) return;
-    st.armed = true;
-    RESUME_EVENTS.forEach(function (n) { document.addEventListener(n, resumeOnGesture, true); });
-  }
+  function armResume() { RESUME_EVENTS.forEach(function (n) { document.addEventListener(n, resumeOnGesture, true); }); }
   function resumeOnGesture(ev) {
     if (ev.target && ev.target.closest && ev.target.closest('[data-sound]')) return;
     if (soundPref() && !soundRunning()) { enableSound(false); return; }
-    st.armed = false;
     RESUME_EVENTS.forEach(function (n) { document.removeEventListener(n, resumeOnGesture, true); });
   }
 
-  // One 1-second ticker: elapsed clocks, the connection check and the sound state (the siren itself loops on its own)
+  // One 1-second ticker: elapsed clocks, stale notes, the connection check and the sound state (the siren loops by itself)
   function tick() {
-    var now = nowMs(), els = document.querySelectorAll('[data-t]');
-    for (var i = 0; i < els.length; i++) {
-      var txt = clock(now - Number(els[i].getAttribute('data-t')));
-      if (els[i].textContent !== txt) els[i].textContent = txt;
-    }
+    // A context the browser suspended may come back without a tap once the page has had one. One attempt at a time: a
+    // resume the browser does not allow yet stays pending, and taps and keys try on their own meanwhile.
     if (soundPref() && st.audio && st.audio.state !== 'running') {
-      try { Promise.resolve(st.audio.resume()).catch(function () {}); } catch (e) { /* needs a gesture */ }
+      if (!st.resuming) {
+        st.resuming = true;
+        var done = function () { st.resuming = false; };
+        try { Promise.resolve(st.audio.resume()).then(done, done); } catch (e) { done(); }
+      }
       armResume();
     }
     renderStatus();
-    syncSiren();
+    renderSos();
+    renderAlarm();
+    clocks(document);
   }
 
   function fill(el, items, all) {
@@ -755,12 +808,12 @@
   $('proc').onchange = function () { st.proc = this.value; renderAll(); };
   $('site').onchange = function () {
     st.sc = this.value;
-    st.d = null;          // nothing of the old site stays on screen while the new one loads
-    st.slowErr = '';
+    st.f = null;          // nothing of the old site's devices and alerts stays on screen while the new one loads
+    st.fieldErr = '';
     renderAll();
-    load();
+    call(fieldCall);
   };
-  $('reloadBtn').onclick = load;
+  $('reloadBtn').onclick = reloadAll;
   $('soundBtn').onclick = function () { if (soundRunning()) disableSound(); else enableSound(true); };
   document.addEventListener('click', function (ev) {
     var el = ev.target && ev.target.closest ? ev.target.closest('[data-act]') : null;
@@ -768,17 +821,18 @@
     var act = el.getAttribute('data-act');
     if (act === 'ack') ackSos(el.getAttribute('data-key'));
     else if (act === 'sound') enableSound(true);
-    else if (act === 'retry') load();
+    else if (act === 'retry') reloadAll();
     else if (act === 'tab') { st.tab = el.getAttribute('data-tab'); renderAlerts(); }
     else if (act === 'jump') $('sosSec').scrollIntoView({ block: 'start' });
   });
   window.addEventListener('storage', function (e) { if (e.key === 'sa_ack') { ack = readAck(); renderAlarm(); renderSos(); } });
-  document.addEventListener('visibilitychange', function () { if (!document.hidden) load(); });
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) reloadAll(); });
   if (soundPref()) armResume();
   renderAll();
-  load();
-  // Hidden tabs keep refreshing (the SOS part only): the alarm must still go off behind other windows
-  st.timer = setInterval(load, REFRESH_MS);
+  reloadAll();
+  // A hidden tab keeps asking for the SOS: the alarm must still go off behind other windows
+  setInterval(loadSos, SOS_MS);
+  setInterval(loadField, FIELD_MS);
   setInterval(tick, 1000);
 </script>
 <? } ?>
