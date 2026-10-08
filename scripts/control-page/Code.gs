@@ -1,8 +1,8 @@
 /*
  * 'SafeAlert 관제': read-only live view of the sites in SITES
- * Shows the active SOS requests of every site in SITES (full-screen alarm + siren until acknowledged in the browser) and,
- * for the chosen site, SOS that ended in the last 24 hours, devices monitoring now (and lost contact), and collision
- * alerts by device ID, filtered by floor / process.
+ * Shows the active SOS requests of every site in SITES (full-screen alarm + siren until acknowledged in the browser), the
+ * SOS of every site that ended in the last 24 hours, and, for the chosen site, devices monitoring now (and lost contact)
+ * and collision alerts by device ID, filtered by floor / process.
  * The SOS lists come live from Firebase: the page signs in anonymously, as the app does, and listens to them (the rules
  * let any signed-in client read SOS). Devices and alerts are read by this script with the database secret kept in
  * Script Properties. Nothing is written anywhere; the page cannot change or switch off anything.
@@ -35,7 +35,9 @@
  *     - FIREBASE_WEB_API_KEY : (recommended) Firebase console → gear 'Project settings' ('프로젝트 설정') → 'General'
  *                            ('일반') → 'Web API Key' ('웹 API 키'). With it SOS reach the page within seconds; without
  *                            it, or if Google refuses the key (for example a key restricted to Android apps), the page
- *                            reads SOS through this script every 30 seconds and says why at the top.
+ *                            reads SOS through this script every 30 seconds and says why at the top. Each open page
+ *                            holds one Firebase connection; the free plan allows 100 at a time for the whole project,
+ *                            monitoring phones included, so keep one control-page tab per screen.
  *     Why: the secret stays on Google's side and never reaches the page (the web API key is not a secret: the app
  *     carries it too). After it: the page can read the database.
  *  6. Deploy: this gives the page its web address.
@@ -67,7 +69,7 @@
  *
  * Live SOS use none of the daily read limit (quota) of UrlFetch. If the page says the limit is used up, wait: it
  * recovers within 24 hours. The reads of this script are shared by all open tabs and viewers through the script cache:
- * devices and alerts of a site for 100 seconds (yesterday's alerts for 10 minutes) and, only while the live connection
+ * devices and alerts of a site for 130 seconds (yesterday's alerts for 10 minutes) and, only while the live connection
  * is down, the SOS list of each site for 20 seconds (longer with 4 sites or more, so that all sites together stay under
  * about 13,000 reads a day).
  */
@@ -78,7 +80,7 @@ var HOUR_MS = 3600 * 1000;
 var SOS_RELEASE_MS = 3600 * 1000;     // The app releases an unanswered SOS one hour after the server got it
 var SOS_MIN_TTL_S = 20;               // without live SOS: one read of a site's list serves every tab this long (seconds)
 var SOS_DAILY_READS = 13000;          // SOS reads of all sites together stay under this a day (UrlFetch quota: 20,000)
-var FIELD_TTL_S = 100;                // sessions + alerts of a site are shared this long: under the page's 2-minute poll
+var FIELD_TTL_S = 130;                // sessions + alerts shared this long; past the 2-minute poll, so a lone tab reads every 2nd time
 var YDAY_TTL_S = 600;                 // yesterday's alerts: phones that were offline still upload into it after midnight
 var NO_INDEX_TTL_S = 1800;            // how long to remember that the rules lack an index (until a release deploys them)
 var MAX_ALERTS = 400;                 // newest alerts of the last 24 hours sent to the page (cut says there were more)
@@ -102,11 +104,12 @@ function doGet(e) {
   var sites = sites_(cfg), sc = String((e && e.parameter && e.parameter.sc) || '').toUpperCase();
   t.initialSc = sites.indexOf(sc) >= 0 ? sc : sites[0] || '';   // only a site in SITES reaches the page
   // What the page needs to listen to the SOS lists itself. None of it is secret: the app carries the same values.
-  var key = cfg.get('FIREBASE_WEB_API_KEY'), dbUrl = cfg.get('FIREBASE_DB_URL'), root = cfg.get('FIREBASE_ROOT') || 'wf11';
+  var key = cfg.get('FIREBASE_WEB_API_KEY'), db = db_(cfg);
   t.fb = JSON.stringify({
     apiKey: API_KEY_RE.test(key) ? key : '',
-    dbUrl: DB_URL_RE.test(dbUrl) ? dbUrl.replace(/\/$/, '') : '',
-    root: ROOT_RE.test(root) ? root : '',
+    dbUrl: db.url,
+    root: db.root,
+    why: !API_KEY_RE.test(key) ? 'nokey' : !db.url || !db.root ? 'setup' : '',   // why the live path cannot start
     sites: sites,
     pit: PIT_NAMES,
     code: CODE_RE.source,
@@ -123,12 +126,12 @@ function doGet(e) {
  * never passed on. lists[site] = { at: when it was read, recs: the records as the database holds them }; a site that
  * could not be read is in `failed` with the reason; only when no site could be read is the whole answer an error.
  */
-function getSos() {
+function getSosLists() {
   var c = setup_();
   if (c.error) return { ok: false, error: c.error };
   var at = Date.now(), ttl = sosTtl_(c.sites.length), lists = {}, urls = {};
   c.sites.forEach(function (s) {
-    var hit = cacheGet_(c.cache, 'sos|' + c.base + s);
+    var hit = cacheGet_(c.cache, 'sos2|' + c.base + s);
     if (hit) lists[s] = hit;
     else urls[s] = c.read('sos/' + s, '&orderBy=' + q_('"createdAt"') + '&startAt=' + (at - WINDOW_MS));   // sos/$sc has ".indexOn": ["createdAt"]
   });
@@ -143,18 +146,22 @@ function getSos() {
       return;
     }
     lists[s] = { at: at, recs: sosRecs_(node) };
-    putNewer_(c.cache, 'sos|' + c.base + s, lists[s], ttl);
+    putNewer_(c.cache, 'sos2|' + c.base + s, lists[s], ttl);
   });
   if (failed.length === c.sites.length) return { ok: false, error: failed[0].why, code: failed[0].code };
   return { ok: true, sites: c.sites, now: Date.now(), lists: lists, failed: failed };
 }
 
-/** The page's periodic check that its viewer is still in ADMIN_EMAILS (live SOS never pass through this script). */
-function ping() { return allowed_(config_()) ? { ok: true } : { ok: false, error: 'denied' }; }
+/** The page's periodic check of its viewer (still in ADMIN_EMAILS?) and of SITES (live SOS never pass through here). */
+function ping() {
+  var cfg = config_();
+  return allowed_(cfg) ? { ok: true, sites: sites_(cfg) } : { ok: false, error: 'denied' };
+}
 
 /**
- * Sessions and collision alerts of one site for the last 24 hours. Called by a visible page every 2 minutes and when the
- * site is switched; shared through the cache by every tab and viewer for FIELD_TTL_S.
+ * Sessions and collision alerts of one site for the last 24 hours. Called by a visible page every 2 minutes, 30 seconds
+ * after a failed call, and when the site is switched or the tab shown again; shared through the cache by every tab and
+ * viewer for FIELD_TTL_S. A site no longer in SITES gets the first one (the page then asks for a reload).
  */
 function getField(sc) {
   var c = setup_();
@@ -169,12 +176,12 @@ function getField(sc) {
   }
   var now = Date.now();
   part.sessions.forEach(function (s) { s.alive = now - s.last <= ALIVE_MS; });   // from this call's clock, also when cached
-  return { ok: true, sc: sc, now: now, at: part.at, sessions: part.sessions, alerts: part.alerts, cut: part.cut };
+  return { ok: true, sc: sc, sites: c.sites, now: now, at: part.at, sessions: part.sessions, alerts: part.alerts, cut: part.cut };
 }
 
 /** Reads the sessions and alerts of a site; { error, code } when a read failed. */
 function readField_(c, sc, now) {
-  var ns = c.base + sc, ydayKey = 'yday|' + ns + '|' + day_(now - WINDOW_MS);
+  var ns = c.base + sc, ydayKey = 'yday2|' + ns + '|' + day_(now - WINDOW_MS);
   var whole = !!cacheGet_(c.cache, 'noidx|' + ns), yday = cacheGet_(c.cache, ydayKey);
   var urls = function (whole) {
     // Session keys are push keys: without the index the key range stands for the start time (a session started over
@@ -308,12 +315,9 @@ function config_() {
 function setup_() {
   var cfg = config_();
   if (!allowed_(cfg)) return { error: 'denied' };   // before any cache read
-  var dbUrl = cfg.get('FIREBASE_DB_URL');
-  var secret = cfg.get('FIREBASE_DB_SECRET');
-  var root = cfg.get('FIREBASE_ROOT') || 'wf11';
-  var sites = sites_(cfg);
-  if (!DB_URL_RE.test(dbUrl) || !secret || !ROOT_RE.test(root) || !sites.length) return { error: 'setup' };
-  var base = dbUrl.replace(/\/$/, '') + '/' + root + '/';   // holds no secret: also the cache namespace
+  var db = db_(cfg), secret = cfg.get('FIREBASE_DB_SECRET'), sites = sites_(cfg);
+  if (!db.url || !db.root || !secret || !sites.length) return { error: 'setup' };
+  var base = db.url + '/' + db.root + '/';   // holds no secret: also the cache namespace
   var auth = 'auth=' + encodeURIComponent(secret);
   return { sites: sites, base: base, cache: cache_(), read: function (path, query) { return base + path + '.json?' + auth + (query || ''); } };
 }
@@ -321,6 +325,13 @@ function setup_() {
 /** SITES as valid site codes; a site listed twice counts once. */
 function sites_(cfg) {
   return list_(cfg.get('SITES').toUpperCase()).filter(function (s, i, all) { return SC_RE.test(s) && all.indexOf(s) === i; });
+}
+
+/** Where the database is: { url, root }, each '' when its Script Property is malformed. doGet and setup_ both use it,
+ *  so the page's live path and this script read the same place. */
+function db_(cfg) {
+  var url = cfg.get('FIREBASE_DB_URL'), root = cfg.get('FIREBASE_ROOT') || 'wf11';
+  return { url: DB_URL_RE.test(url) ? url.replace(/\/$/, '') : '', root: ROOT_RE.test(root) ? root : '' };
 }
 
 function viewer_() {

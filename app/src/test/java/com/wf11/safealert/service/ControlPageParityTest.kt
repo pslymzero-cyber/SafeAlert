@@ -67,4 +67,21 @@ class ControlPageParityTest {
     @Test fun ended_reason_label_matches_the_app() {
         assertTrue(page().contains("s.auto ? '" + LoneWorkerNotifier.AUTO_ENDED + "'"))
     }
+
+    // The page cleans SOS records with the script's own helpers and reads only settings doGet sends: a renamed or dropped
+    // one would fall back silently (no equipment names, every floor/process blank, no stale note).
+    @Test fun page_helpers_and_settings_match_code_gs() {
+        val html = page()
+        val g = gs()
+        fun flat(s: String) = s.replace(Regex("""\s+"""), "")
+        assertEquals(flat(g.substringAfter("function str_(v) {").substringBefore("}")), flat(html.substringAfter("function str(v) {").substringBefore("}")))
+        assertEquals(flat(g.substringAfter("function code_(v) {").substringBefore("\n}")), flat(html.substringAfter("function code(v) {").substringBefore("}")))
+        val sent = Regex("""(\w+):""").findAll(g.substringAfter("t.fb = JSON.stringify({").substringBefore("})")).map { it.groupValues[1] }.toSet()
+        val read = Regex("""FB\.(\w+)""").findAll(html).map { it.groupValues[1] }.toSet()
+        assertTrue("페이지가 읽는 설정 $read 은 doGet 이 보내는 것 $sent", read.isNotEmpty() && sent.containsAll(read))
+        // Every record field the page reads reaches it on the server path too (a missing one shows only while live is down)
+        val uses = Regex("""\br\.(\w+)""").findAll(html.substringAfter("function toSos(sc, key, r) {").substringBefore("\n  }")).map { it.groupValues[1] }.toSet()
+        val keeps = Regex("""(\w+):""").findAll(g.substringAfter("function sosRecs_(node) {").substringBefore("\n}")).map { it.groupValues[1] }.toSet()
+        assertTrue("서버 경로가 보내는 필드 $keeps 에 페이지가 읽는 $uses 가 다 있다", uses.isNotEmpty() && keeps.containsAll(uses))
+    }
 }
