@@ -1,0 +1,67 @@
+package com.wf11.safealert.service
+
+import com.wf11.safealert.utils.SiteScope
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+/**
+ * The control page (scripts/control-page) copies values from the app and from the rescue mail script because it runs on
+ * Google's side and cannot import them. This pins every copy so a change in one place fails here instead of showing a
+ * different list, rule or name on the control screen.
+ */
+class ControlPageParityTest {
+
+    private fun page() = repoFile("scripts/control-page/Index.html")
+    private fun gs() = repoFile("scripts/control-page/Code.gs")
+    private fun mail() = repoFile("scripts/sos-mail/Code.gs")
+
+    private fun quoted(list: String) = Regex("""'([^']*)'""").findAll(list).map { it.groupValues[1] }.toList()
+
+    // Floor and process lists in the page's pickers are the app's built-in lists.
+    @Test fun page_floor_and_process_lists_match_the_app() {
+        val html = page()
+        val floors = html.substringAfter("var FLOORS = [").substringBefore("];")
+        val procs = html.substringAfter("var PROCS = [").substringBefore("];")
+        assertEquals(SiteScope.FLOORS, quoted(floors))
+        assertEquals(SiteScope.PROCS, quoted(procs))
+    }
+
+    // The code rule (floor / process) and the one-hour release are the app's, and the rule is the mail script's too.
+    @Test fun code_rule_and_release_time_match_the_app_and_the_mail_script() {
+        val code = gs().substringAfter("var CODE_RE = /").substringBefore("/;")
+        assertEquals(SiteScope.CODE_PATTERN, code)
+        assertTrue("메일 스크립트도 같은 규칙", mail().contains("/$code/.test(rec[k])"))
+
+        val release = Regex("""var SOS_RELEASE_MS = (\d+) \* (\d+);""").find(gs())!!.groupValues
+        assertEquals(SosLedger.AUTO_RELEASE_MS, release[1].toLong() * release[2].toLong())
+    }
+
+    // Role names: the page's server script and the mail say the same thing, and the page's own map says what the app says.
+    @Test fun role_names_match_the_app_and_the_mail_script() {
+        val g = gs()
+        val m = mail()
+        val body = g.substringAfter("function roleName_(r, name) {").substringBefore("\n}")
+        val mailBody = m.substringAfter("function roleName(r, name) {").substringBefore("\n}")
+            .replace("str(name)", "name")   // the mail script sanitises the text there; the page does it before the call
+        assertEquals(mailBody, body)
+        assertEquals(m.substringAfter("var PIT_NAMES = {").substringBefore("};"), g.substringAfter("var PIT_NAMES = {").substringBefore("};"))
+
+        val html = page()
+        val map = Regex("""(\w+): '([^']*)'""").findAll(html.substringAfter("var ROLE = {").substringBefore("};"))
+            .associate { it.groupValues[1] to it.groupValues[2] }
+        assertEquals(sosRoleLabel("WALKER", ""), map["WALKER"])
+        assertEquals(sosRoleLabel("FORKLIFT", ""), map["FORKLIFT"])
+        assertEquals(sosRoleLabel("EPJ", ""), map["EPJ"])
+        assertEquals("알 수 없음", sosRoleLabel("X", ""))
+        assertEquals(sosRoleLabel("X", ""), map["UNKNOWN"])
+        assertTrue("역할 이름이 모르는 값이면 같은 라벨", html.contains("function role(r) { return ROLE[r] || ROLE.UNKNOWN; }"))
+        assertFalse("옛 표기 '미상'", html.contains("미상"))
+    }
+
+    // The tab title is set by doGet only: a script-set title would replace it with the latest SOS count in a hidden tab.
+    @Test fun page_does_not_set_the_tab_title() {
+        assertFalse(page().contains("document.title"))
+    }
+}
