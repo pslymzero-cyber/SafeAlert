@@ -221,7 +221,8 @@ class DevSettingsActivity : AppCompatActivity() {
                 .setOnCancelListener { sw.isChecked = true }
                 .show()
         }
-        bindIntField(binding.etLwStillMin,     { DevSettings.lwStillMin },     { DevSettings.lwStillMin = it })
+        binding.cbSosAllSite.setOnCheckedChangeListener { _, c -> DevSettings.sosAllSite = c; updateSectionSummaries() }
+        bindIntField(binding.etLwStillMin,    { DevSettings.lwStillMin },     { DevSettings.lwStillMin = it })
         bindIntField(binding.etLwResponseMin,  { DevSettings.lwResponseMin },  { DevSettings.lwResponseMin = it })
         bindIntField(binding.etLwZoneFallCm,   { DevSettings.lwZoneFallCm },   { DevSettings.lwZoneFallCm = it })
         bindDoubleField(binding.etLwZoneFallG, { DevSettings.lwZoneFallG },    { DevSettings.lwZoneFallG = it })
@@ -336,7 +337,6 @@ class DevSettingsActivity : AppCompatActivity() {
         })
         // "UWB 고급" (UWB advanced) section — its 4 switches (probe upload, promote, speed promote, separation release) are
         // written immediately; AlertStateMachine reads them live.
-        binding.cbSosAllSite.setOnCheckedChangeListener { _, c -> DevSettings.sosAllSite = c; updateSectionSummaries() }
         binding.swUwbProbeUpload.setOnCheckedChangeListener { _, c -> DevSettings.uwbProbeUploadEnabled = c; updateSectionSummaries() }
         binding.swUwbPromote.setOnCheckedChangeListener    { _, c -> DevSettings.uwbPromoteEnabled    = c; updateSectionSummaries() }
         binding.swUwbVelPromote.setOnCheckedChangeListener { _, c -> DevSettings.uwbVelPromoteEnabled = c; updateSectionSummaries() }

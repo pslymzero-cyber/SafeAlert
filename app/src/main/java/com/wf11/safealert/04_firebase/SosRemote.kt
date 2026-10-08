@@ -123,12 +123,16 @@ object SosRemote {
     /** Path of the lone-worker liveness session node. */
     fun hbPath(root: String, site: String): String = "$root/hb/$site"
 
-    /** Partial update of the session node (updateChildren). Failure logs never include the path, key or uid. */
+    /**
+     * Partial update of the session node (updateChildren). Failure logs never include the path, key or uid. Older rules
+     * refuse floor/proc, so a refused update that carried them goes again without them.
+     */
     fun update(path: String, key: String, fields: Map<String, Any>, onDone: (Boolean) -> Unit) {
         FirebaseDatabase.getInstance().reference.child(path).child(key).updateChildren(fields)
             .addOnCompleteListener {
                 if (!it.isSuccessful) Log.w(TAG, "살아 있음 기록 실패")
-                onDone(it.isSuccessful)
+                val retry = if (it.isSuccessful) null else SiteScope.withoutScope(fields)
+                if (retry != null) update(path, key, retry, onDone) else onDone(it.isSuccessful)
             }
     }
 
@@ -141,14 +145,16 @@ object SosRemote {
 
     /**
      * Creates the record. createdAt is server time. The result (success or not) goes to
-     * onResult. While offline it stays pending until a response arrives.
+     * onResult. While offline it stays pending until a response arrives. Older rules refuse floor/proc, so a refused
+     * record goes again without them (it then reaches every phone of the site).
      */
     fun create(path: String, key: String, payload: Map<String, Any>, onResult: (Boolean) -> Unit) {
         FirebaseDatabase.getInstance().reference.child(path).child(key).setValue(payload)
             .addOnCompleteListener {
                 if (it.isSuccessful) Log.d(TAG, "구조 요청 기록: $key")
                 else Log.e(TAG, "구조 요청 기록 실패: ${it.exception?.message}")
-                onResult(it.isSuccessful)
+                val retry = if (it.isSuccessful) null else SiteScope.withoutScope(payload)
+                if (retry != null) create(path, key, retry, onResult) else onResult(it.isSuccessful)
             }
     }
 

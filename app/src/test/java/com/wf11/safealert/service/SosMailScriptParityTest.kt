@@ -1,6 +1,7 @@
 package com.wf11.safealert.service
 
 import com.wf11.safealert.model.PitType
+import com.wf11.safealert.utils.SiteScope
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -88,5 +89,13 @@ class SosMailScriptParityTest {
             Triple("FORKLIFT", "XX-01", forklift), Triple("EPJ", "Kim", "EPJ"), Triple("UNKNOWN", "Kim", unknown)
         )
         for ((role, name, want) in cases) assertEquals("$role $name", want, sosRoleLabel(role, name))
+    }
+
+    // The mail script labels a record's site with the same code pattern and join as the app (WF11-1F-OB).
+    @Test fun site_label_matches_the_app_code_pattern_and_join() {
+        val body = script().substringAfter("function siteLabel(sc, rec) {").substringBefore("\n}")
+        assertTrue(body, body.contains("/" + SiteScope.CODE_PATTERN + "/.test("))
+        assertTrue(body, body.contains("sc += '-' + rec[k]"))
+        assertEquals("WF11-1F-OB", SiteScope.label("WF11", "1F", "OB"))
     }
 }

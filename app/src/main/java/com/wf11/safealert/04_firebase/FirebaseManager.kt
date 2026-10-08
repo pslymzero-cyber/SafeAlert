@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.database.DataSnapshot
+import com.google.firebase.database.DatabaseReference
 import com.google.firebase.database.FirebaseDatabase
 import com.wf11.safealert.BuildConfig
 import com.wf11.safealert.utils.BeaconRegistry
@@ -53,11 +54,18 @@ object FirebaseManager {
         if (items.isEmpty()) return
         for ((url, data) in items) {
             runCatching {
-                FirebaseDatabase.getInstance().getReferenceFromUrl(url).setValue(data + ("uid" to uid))
-                    .addOnFailureListener { Log.e(TAG, "보류 경보 저장 실패: ${it.message}") }
+                writeWithUid(FirebaseDatabase.getInstance().getReferenceFromUrl(url), data, uid, "보류 경보 저장 실패")
             }.onFailure { Log.e(TAG, "보류 경보 전송 오류: ${it.message}") }
         }
         Log.d(TAG, "보류 경보 ${items.size}건 저장")
+    }
+
+    /** Writes data plus uid; a refused write that carried floor/proc goes once more without them (older rules). */
+    private fun writeWithUid(ref: DatabaseReference, data: Map<String, Any>, uid: String, failLog: String) {
+        ref.setValue(data + ("uid" to uid)).addOnFailureListener {
+            Log.e(TAG, "$failLog: ${it.message}")
+            SiteScope.withoutScope(data)?.let { bare -> ref.setValue(bare + ("uid" to uid)) }
+        }
     }
 
     // Roles (myRole/peerRole) are converted to names in 03_service before being passed — 04_firebase does not
@@ -65,7 +73,7 @@ object FirebaseManager {
     fun saveAlert(deviceId: String, walkerId: String, rssi: Int, level: String,
                   myRole: String = "UNKNOWN", peerRole: String = "UNKNOWN") {
         val logId = BeaconRegistry.shortFullId(deviceId)   // Beacon UUID keys are stored as 8 chars only
-        val today = SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(Date())
+        val today = SimpleDateFormat("yyyyMMdd", Locale.US).format(Date())
         val alertId = UUID.randomUUID().toString()
         val data = mapOf(
             "timestamp" to System.currentTimeMillis(),
@@ -86,8 +94,7 @@ object FirebaseManager {
             Log.d(TAG, "경보 보류(로그인 전): $level ${withSite(logId)}")
             return
         }
-        ref.setValue(data + ("uid" to uid))
-            .addOnFailureListener { Log.e(TAG, "경보 저장 실패: ${it.message}") }
+        writeWithUid(ref, data, uid, "경보 저장 실패")
         Log.d(TAG, "경보 저장: $level ${withSite(logId)} rssi=$rssi")
     }
 
@@ -99,7 +106,7 @@ object FirebaseManager {
     //   it is meant for real-device measurement sessions, not continuous collection, so it is off by default.
     fun saveUwbProbe(myId: String, model: String, site: String,
                      pairKey: String, distM: Float, rssi: Int) {
-        val today = SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(Date())
+        val today = SimpleDateFormat("yyyyMMdd", Locale.US).format(Date())
         val data = mapOf(
             "timestamp" to System.currentTimeMillis(),
             "walkerId"  to myId,

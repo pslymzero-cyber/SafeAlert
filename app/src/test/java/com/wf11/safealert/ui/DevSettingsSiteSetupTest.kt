@@ -185,4 +185,32 @@ class DevSettingsSiteSetupTest {
         assertEquals("꺼짐: 무동작·넘어짐 확인 · 경보음 (개발자 설정)", status.text.toString())
         assertEquals(activity.getColor(R.color.sa_warning), status.currentTextColor)
     }
+
+    @Test
+    fun `사업장을 바꾸면 층·공정이 비워진다`() {
+        DevSettings.floor = "1F"
+        DevSettings.proc = "OB"
+        DevSettings.siteCode = "HOME1"
+        assertEquals("같은 사업장이면 남는다", "1F" to "OB", DevSettings.floor to DevSettings.proc)
+        DevSettings.siteCode = "OTHER"
+        assertEquals("", DevSettings.floor)
+        assertEquals("", DevSettings.proc)
+    }
+
+    @Test
+    fun `기본값 초기화는 감시 시작 사업장이면 층·공정을 남기고 아니면 비운다`() {
+        DevSettings.floor = "1F"
+        DevSettings.proc = "OB"
+        DevSettings.sosAllSite = true
+        DevSettings.resetToDefault()
+        assertEquals("1F" to "OB", DevSettings.floor to DevSettings.proc)
+        assertFalse(DevSettings.sosAllSite)
+        DevSettings.siteCode = "OTHER"
+        DevSettings.floor = "2F"
+        DevSettings.proc = "IB"
+        DevSettings.resetToDefault()
+        assertEquals("HOME1", DevSettings.siteCode)
+        assertEquals("", DevSettings.floor)
+        assertEquals("", DevSettings.proc)
+    }
 }

@@ -1,6 +1,7 @@
 package com.wf11.safealert.utils
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -51,5 +52,12 @@ class SiteScopeTest {
         assertEquals(mapOf("floor" to "1F", "proc" to "OB"), SiteScope.fields("1F", "OB"))
         assertTrue(SiteScope.fields("", "").isEmpty())
         assertEquals(mapOf("proc" to "OB"), SiteScope.fields("toolong", "OB"))
+    }
+
+    @Test
+    fun withoutScope_dropsFloorAndProcOrReturnsNull() {
+        assertEquals(mapOf("a" to 1), SiteScope.withoutScope(mapOf("a" to 1, "floor" to "1F", "proc" to "OB")))
+        assertEquals(mapOf("a" to 1), SiteScope.withoutScope(mapOf("a" to 1, "proc" to "OB")))
+        assertNull(SiteScope.withoutScope(mapOf("a" to 1)))
     }
 }

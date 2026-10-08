@@ -29,6 +29,13 @@ object SiteScope {
     }
 
     /**
+     * The map without floor/proc, or null when it carries neither. Rules that predate those fields refuse a record
+     * carrying them, so a refused write goes again with this.
+     */
+    fun <V> withoutScope(m: Map<String, V>): Map<String, V>? =
+        if ("floor" in m || "proc" in m) m - "floor" - "proc" else null
+
+    /**
      * Whether a server SOS record should ring here. Resolved records and the whole-site switch always pass; otherwise
      * floor and process each match when either side is empty or both are equal.
      */
