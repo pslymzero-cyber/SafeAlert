@@ -393,14 +393,7 @@ class LoneWorkerMonitor(
         render()
     }
 
-    private fun peerSig(): Int {
-        var h = 0
-        for (p in logic.peers) {
-            h = h * 31 + p.id.hashCode()
-            h = h * 31 + (if (p.active) 1 else 0) + (if (p.silenced) 2 else 0)
-        }
-        return h
-    }
+    private fun peerSig(): Int = logic.peerSig()
 
     // ── Screen state ──────────────────────────────────────────
 

@@ -20,6 +20,14 @@ object SiteScope {
     fun label(site: String, floor: String, proc: String): String =
         listOf(site, floor, proc).filter { it.isNotEmpty() }.joinToString("-")
 
+    /** Who my own SOS reaches, for the wording on screen and in notifications. */
+    fun audience(floor: String, proc: String): String = when {
+        floor.isNotEmpty() && proc.isNotEmpty() -> "같은 층·공정(${label("", floor, proc)})"
+        floor.isNotEmpty() -> "같은 층(${floor})"
+        proc.isNotEmpty() -> "같은 공정(${proc})"
+        else -> "같은 사업장"
+    }
+
     /** Record fields for floor/proc; empty or invalid values are omitted. */
     fun fields(floor: String, proc: String): Map<String, String> {
         val m = LinkedHashMap<String, String>()

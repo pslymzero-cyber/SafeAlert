@@ -380,7 +380,7 @@
 
                 </LinearLayout>
 
-                <!-- Floor + process pickers (lists come from the server per site; hidden when there is no list and nothing is set) -->
+                <!-- Floor + process pickers (lists are built into the app: SiteScope.FLOORS / PROCS; the row is shown whenever a site code is set, MainActivity.renderSiteScope) -->
                 <LinearLayout
                     android:id="@+id/row_site_scope"
                     android:layout_width="match_parent"

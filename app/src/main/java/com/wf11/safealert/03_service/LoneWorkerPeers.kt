@@ -1,5 +1,7 @@
 package com.wf11.safealert.service
 
+import com.wf11.safealert.utils.SiteScope
+
 /**
  * Peer rescue-request store (pure). No Android dependency; times are elapsed ms passed in by the caller.
  *
@@ -71,6 +73,10 @@ class LoneWorkerPeers {
         val id: String get() = if (key != null) "k:$key" else "b:$bleId#$episode"
         /** Acknowledge target ID. Unchanged when a server key is obtained. */
         val epId: String get() = "$bleId#$episode"
+        /** "1F-OB", "" without floor/process. */
+        val scopeLabel: String get() = SiteScope.label("", floor, proc)
+        /** Name plus " · 1F-OB" for a notification. */
+        fun nameWithScope(): String = displayName().let { n -> scopeLabel.let { if (it.isEmpty()) n else "$n · $it" } }
     }
 
     /**
@@ -130,6 +136,17 @@ class LoneWorkerPeers {
     /** Entries the screen and notifications see (quiet ones are left out). */
     val all: Collection<Peer> get() = map.values.filter { !it.quiet }
 
+    /** Change signature of the visible entries (id, active, silenced), without building a list. */
+    fun sig(): Int {
+        var h = 0
+        for (p in map.values) {
+            if (p.quiet) continue
+            h = h * 31 + p.id.hashCode()
+            h = h * 31 + (if (p.active) 1 else 0) + (if (p.silenced) 2 else 0)
+        }
+        return h
+    }
+
     fun onServer(rec: ServerRec, nowMs: Long) {
         val (key, bleId, name, role, trigger, beacon, createdAtMs, active, ep) = rec
         val kId = "k:$key"
@@ -177,7 +194,9 @@ class LoneWorkerPeers {
                 bleId, key, name, role, trigger, beacon.ifEmpty { b.beacon }, createdAtMs,
                 firstSeenMs = b.firstSeenMs, active = true, silenced = coldServer(kId, epId, nowMs),
                 resolvedAtMs = 0L, episode = ep, lastBleMs = b.lastBleMs, startMs = rec.startLocalMs ?: b.startMs,
-                floor = rec.floor, proc = rec.proc
+                floor = rec.floor, proc = rec.proc,
+                // Out of scope and already over on air: the late record must not ring it again; still heard: it keeps ringing.
+                quiet = !rec.inScope && !b.active
             )
             return
         }

@@ -60,4 +60,11 @@ class SiteScopeTest {
         assertEquals(mapOf("a" to 1), SiteScope.withoutScope(mapOf("a" to 1, "proc" to "OB")))
         assertNull(SiteScope.withoutScope(mapOf("a" to 1)))
     }
+
+    @Test fun audience_names_who_receives_my_sos() {
+        assertEquals("같은 사업장", SiteScope.audience("", ""))
+        assertEquals("같은 층·공정(1F-OB)", SiteScope.audience("1F", "OB"))
+        assertEquals("같은 층(1F)", SiteScope.audience("1F", ""))
+        assertEquals("같은 공정(OB)", SiteScope.audience("", "OB"))
+    }
 }

@@ -105,7 +105,14 @@ class LoneWorkerHeartbeat(private val remote: HbRemote, private val kv: SosKv, p
             carried = ok
         }
         keep()
-        remote.update(p, k, mapOf("uid" to u, "role" to r, "start" to s, "last" to s) + remote.scope(), answer(++gen, k))
+        val base = mapOf<String, Any>("uid" to u, "role" to r, "start" to s, "last" to s)
+        val scope = remote.scope()
+        val g = ++gen
+        remote.update(p, k, base + scope) { sent ->
+            // Rules that predate floor/proc refuse the scoped start: go again without them, but only while this session is
+            // still the current one (after end() a late retry would create a session nobody ends).
+            if (!sent && scope.isNotEmpty() && g == gen) remote.update(p, k, base, answer(g, k)) else answer(g, k)(sent)
+        }
     }
 
     private fun write(k: String, fields: Map<String, Any>) = remote.update(path, k, fields, answer(gen, k))

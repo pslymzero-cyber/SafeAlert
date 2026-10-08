@@ -680,4 +680,50 @@ class LoneWorkerPeerTest {
         assertEquals(listOf("K2"), l.takeAutoReleasedPeers())
         assertTrue(l.peers.isEmpty())
     }
+
+    // The same out-of-scope SOS that already ended over Bluetooth must not ring again when its (late) active server record
+    //   arrives; while its adverts are still heard it rings as before, and an in-scope record rings as before.
+    @Test fun out_of_scope_record_for_an_sos_that_ended_on_air_stays_quiet() {
+        val l = meLogic()
+        l.onPeerBle("P", true, 1_000, 1)
+        l.onPeerBle("P", false, 2_000)
+        l.tick(2_000 + LoneWorkerPeers.PEER_BLE_FALL_MS)
+        assertFalse(l.peer("P").active)
+        l.srv("K1", "P", 1, true, created = 5L, now = 13_000, inScope = false)
+        assertTrue("끝난 범위 밖 SOS 는 다시 울리지 않는다", l.audiblePeers().isEmpty())
+        assertTrue("목록에도 없다", l.peers.isEmpty())
+    }
+
+    @Test fun out_of_scope_record_for_an_sos_still_heard_on_air_rings() {
+        val l = meLogic()
+        l.onPeerBle("P", true, 1_000, 1)
+        l.srv("K1", "P", 1, true, created = 5L, now = 2_000, inScope = false)
+        assertEquals(1, l.audiblePeers().size)
+        assertEquals("K1", l.peer("P").key)
+    }
+
+    @Test fun in_scope_record_for_an_sos_that_ended_on_air_rings_again() {
+        val l = meLogic()
+        l.onPeerBle("P", true, 1_000, 1)
+        l.onPeerBle("P", false, 2_000)
+        l.tick(2_000 + LoneWorkerPeers.PEER_BLE_FALL_MS)
+        l.srv("K1", "P", 1, true, created = 5L, now = 13_000, inScope = true)
+        assertEquals(1, l.audiblePeers().size)
+    }
+
+    // sig() is the hash the monitor used to compute over the visible entries: the quiet ones do not count.
+    @Test fun peer_sig_matches_the_hash_over_visible_entries() {
+        val l = meLogic()
+        l.srv("K1", "P", 1, true, created = 5L, now = 1_000)
+        l.srv("K2", "Q", 1, true, created = 5L, now = 1_000)
+        l.silencePeers(1_500, mapOf(l.peer("Q").id to "Q#1"))
+        l.srv("K3", "R", 1, true, created = 5L, now = 2_000, inScope = false)
+        var h = 0
+        for (p in l.peers) {
+            h = h * 31 + p.id.hashCode()
+            h = h * 31 + (if (p.active) 1 else 0) + (if (p.silenced) 2 else 0)
+        }
+        assertEquals(2, l.peers.size)
+        assertEquals(h, l.peerSig())
+    }
 }

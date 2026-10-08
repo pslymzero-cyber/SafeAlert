@@ -215,13 +215,23 @@ class SosLedger(
         val uid = transport.uid() ?: return
         if (key in createBusy || (createNext[key] ?: 0L) > clock()) return
         createBusy.add(key)
-        val sentKey = key
-        val sentPath = path
-        transport.create(sentPath, sentKey, currentRecord(), uid) { ok ->
+        sendCreate(path, key, currentRecord(), uid, scopedRetry = true)
+    }
+
+    /**
+     * One create. A refusal of a record carrying floor/process (rules that predate those fields) is retried at once without
+     * them, before any read, but only while this SOS is still the active one: after "괜찮아요" the pending resolve's read
+     * finds the record absent and drops it, so a retry would leave a record nobody resolves. Other failures check whether
+     * the record landed late and otherwise back off.
+     */
+    private fun sendCreate(sentPath: String, sentKey: String, rec: Record, uid: String, scopedRetry: Boolean) {
+        transport.create(sentPath, sentKey, rec, uid) { ok ->
             if (ok) {
                 createBusy.remove(sentKey)
                 onCreated(sentPath, sentKey)
                 onChange()
+            } else if (scopedRetry && (rec.floor.isNotEmpty() || rec.proc.isNotEmpty()) && kv.get(K_KEY) == sentKey && hasActive()) {
+                sendCreate(sentPath, sentKey, rec.copy(floor = "", proc = ""), uid, scopedRetry = false)
             } else {
                 // If my record already exists on the server (a pre-restart write landed late), don't write again; treat it as sent
                 transport.read(sentPath, sentKey) { r ->

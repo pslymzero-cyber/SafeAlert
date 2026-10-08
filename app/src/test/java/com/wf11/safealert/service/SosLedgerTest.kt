@@ -16,6 +16,7 @@ class SosLedgerTest {
     /** Ledger whose mail-queue hook appends "event:key" to [seen]. */
     private fun recording(kv: Kv, tr: FakeSosTransport, seen: MutableList<String>) =
         SosLedger(kv, tr, { now }, { e, _, k -> seen.add("$e:$k") })
+    private fun scoped() = SosLedger.Record("BLE_ME", "n", "WALKER", "still", null, null, 0, 0, "1F", "OB")
     private fun rec(sid: Int = 0) = SosLedger.Record("BLE_ME", "n", "WALKER", "still", null, null, sid)
 
     // An SOS released by the one-hour limit is recorded on the server as automatic, and no resolve mail is reported:
@@ -301,5 +302,42 @@ class SosLedgerTest {
         l3.tick(); tr3.resolves[0].cb(false); tr3.reads[0].cb(Remote.MINE_RESOLVED)
         assertEquals(listOf("resolved:k9"), seen3)
         assertNull(kv3.m["r.list"])
+    }
+
+    // Rules that predate floor/proc refuse the scoped create. While the SOS is still active it goes again at once without
+    //   them (before any read), and the record is then resolved normally.
+    @Test fun refused_scoped_create_is_retried_at_once_without_scope() {
+        val kv = Kv(); val tr = FakeSosTransport(); val l = ledger(kv, tr)
+        l.begin(scoped())
+        assertEquals("1F", tr.recs[0].floor)
+        tr.creates[0].cb(false)
+        assertEquals(2, tr.creates.size)
+        assertTrue("읽기보다 먼저 다시 쓴다", tr.reads.isEmpty())
+        assertEquals("", tr.recs[1].floor)
+        assertEquals("", tr.recs[1].proc)
+        assertEquals(tr.creates[0].key, tr.creates[1].key)
+        tr.creates[1].cb(true)
+        assertTrue(l.hasActive())
+        l.resolve()
+        assertEquals(1, tr.resolves.size)
+        assertEquals(tr.creates[1].key, tr.resolves[0].key)
+        tr.resolves[0].cb(true)
+        assertFalse(l.hasActive())
+    }
+
+    // The worker pressed "괜찮아요" before the refused scoped create came back: no second create, so nothing is left on the
+    //   server; the pending resolve finds the record absent and drops the entry.
+    @Test fun refused_scoped_create_after_resolve_is_not_retried() {
+        val kv = Kv(); val tr = FakeSosTransport(); val l = ledger(kv, tr)
+        l.begin(scoped())
+        l.resolve()
+        tr.creates[0].cb(false)
+        assertEquals(1, tr.creates.size)
+        tr.resolves[0].cb(false)
+        tr.reads.last().cb(Remote.ABSENT)
+        assertTrue("대기 중인 해제가 사라졌다", kv.m["r.list"].isNullOrEmpty())
+        now += 10 * 60_000L
+        l.tick()
+        assertEquals("다시 쓰지 않는다", 1, tr.creates.size)
     }
 }

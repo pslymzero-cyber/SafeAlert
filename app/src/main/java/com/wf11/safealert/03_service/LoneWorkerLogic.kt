@@ -131,6 +131,7 @@ class LoneWorkerLogic(var myBleId: String) {
 
     val sosActive: Boolean get() = mode == Mode.SOS
     val peers: Collection<LoneWorkerPeers.Peer> get() = peerStore.all
+    fun peerSig(): Int = peerStore.sig()
 
     /** Monitoring on (feature enabled in developer settings and sensor present; set by the monitor via setEnabled). */
     var enabled = true

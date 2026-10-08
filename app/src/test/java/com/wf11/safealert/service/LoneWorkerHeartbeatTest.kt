@@ -16,6 +16,8 @@ class LoneWorkerHeartbeatTest {
         var server = 1_700_000_000_000L
         var keyN = 0
         val writes = ArrayList<W>()
+        var scope: Map<String, Any> = emptyMap()
+        override fun scope() = scope
         override fun uid() = uid
         override fun path() = path
         override fun newKey(path: String) = "s" + (++keyN)
@@ -318,5 +320,32 @@ class LoneWorkerHeartbeatTest {
         g.r.server += 10 * min // anchor arrives
         start.done(true)
         assertEquals(mapOf("g/0" to mapOf("from" to g.s0, "to" to g.s0 + 22 * min)), g.gaps().single().fields)
+    }
+
+    // Rules that predate floor/proc refuse the scoped start: it goes again at once without them and the session then
+    //   refreshes normally.
+    @Test fun refused_scoped_start_is_retried_without_scope() {
+        r.scope = mapOf("floor" to "1F", "proc" to "OB")
+        hb.tick(true, "WALKER")
+        assertEquals("1F", r.writes[0].fields["floor"])
+        r.writes[0].done(false)
+        assertEquals(2, r.writes.size)
+        assertEquals(mapOf("uid" to "u1", "role" to "WALKER", "start" to s0, "last" to s0), r.writes[1].fields)
+        assertEquals(r.writes[0].key, r.writes[1].key)
+        r.writes[1].done(true)
+        adv(5 * min); hb.tick(true, "WALKER")
+        assertEquals(3, r.writes.size)
+        assertEquals(mapOf<String, Any>("last" to s0 + 5 * min), r.writes[2].fields)
+        assertEquals(r.writes[0].key, r.writes[2].key)
+    }
+
+    // The session ended while the scoped start was still in flight: its refusal must not create a session nobody ends.
+    @Test fun refused_scoped_start_after_end_is_not_retried() {
+        r.scope = mapOf("floor" to "1F")
+        hb.tick(true, "WALKER")
+        hb.end()
+        val before = r.writes.size
+        r.writes[0].done(false)
+        assertEquals(before, r.writes.size)
     }
 }

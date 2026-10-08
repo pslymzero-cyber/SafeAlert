@@ -18,6 +18,8 @@ import com.wf11.safealert.service.LoneWorkerLogic
 import com.wf11.safealert.service.LoneWorkerMonitor
 import com.wf11.safealert.service.LoneWorkerNotifier
 import com.wf11.safealert.service.PeerRow
+import com.wf11.safealert.utils.DevSettings
+import com.wf11.safealert.utils.SiteScope
 
 /**
  * Lone-worker check and SOS screen.
@@ -112,11 +114,14 @@ class LoneWorkerActivity : AppCompatActivity() {
         }
     }
 
+    /** Who my own SOS reaches (this phone's floor/process scope). */
+    private fun audience() = SiteScope.audience(DevSettings.floor, DevSettings.proc)
+
     private fun showConfirm() {
         if (confirmDialog?.isShowing == true) return
         confirmDialog = AlertDialog.Builder(this)
             .setTitle("정말 괜찮으신가요?")
-            .setMessage("해제하면 같은 사업장 휴대폰의 구조 요청 경보가 꺼져요")
+            .setMessage("해제하면 동료 휴대폰의 구조 요청 경보도 꺼져요")
             .setPositiveButton("괜찮아요") { _, _ -> LoneWorkerMonitor.current?.cancelSos() }
             .setNegativeButton("취소", null)
             .show()
@@ -180,7 +185,7 @@ class LoneWorkerActivity : AppCompatActivity() {
             LoneWorkerLogic.Mode.SOS -> {
                 chip("내 구조 요청")
                 b.tvLwTitle.text = "구조 요청 중"
-                b.tvLwBody.text = (listOf(listOfNotNull("같은 사업장 휴대폰에 구조 요청이 나가고 있어요", st.serverStatus).joinToString("\n")) + peerLines)
+                b.tvLwBody.text = (listOf(listOfNotNull("${audience()} 휴대폰에 구조 요청이 나가고 있어요", st.serverStatus).joinToString("\n")) + peerLines)
                     .joinToString("\n\n")
                 b.btnLwPrimary.text = "괜찮아요"
                 ALERT
@@ -195,7 +200,7 @@ class LoneWorkerActivity : AppCompatActivity() {
                 CHECK
             }
             else -> {
-                chip("같은 사업장 동료")
+                chip("${audience()} 동료")
                 b.tvLwTitle.text = if (st.peerActive) "동료 구조 요청" else if (st.peerAutoEnded) LoneWorkerNotifier.AUTO_ENDED else "해제됨"
                 b.tvLwBody.text = peerLines.joinToString("\n\n")
                 b.btnLwPrimary.text = if (st.peerActive) "확인" else "닫기"

@@ -13,6 +13,7 @@ import androidx.core.app.NotificationCompat
 import com.wf11.safealert.model.PitType
 import com.wf11.safealert.ui.LoneWorkerActivity
 import com.wf11.safealert.ui.MainActivity
+import com.wf11.safealert.utils.DevSettings
 import com.wf11.safealert.utils.SiteScope
 import java.time.Instant
 import java.time.ZoneId
@@ -45,7 +46,7 @@ internal fun LoneWorkerPeers.Peer.line(nowMs: Long): String {
     val roleText = role.ifEmpty { null }?.let { sosRoleLabel(it, displayName()) }
     val wall = if (fromServer) createdAtMs else System.currentTimeMillis() - (nowMs - firstSeenMs)
     return listOfNotNull(
-        displayName(), roleText, SiteScope.label("", floor, proc).ifEmpty { null }, HHMM.format(Instant.ofEpochMilli(wall).atZone(ZoneId.systemDefault())),
+        displayName(), roleText, scopeLabel.ifEmpty { null }, HHMM.format(Instant.ofEpochMilli(wall).atZone(ZoneId.systemDefault())),
         beacon.ifEmpty { null }?.let { if (fromServer) "마지막 위치: $it" else "${it} 근처" },
         if (active) "구조 요청" else if (autoEnded) LoneWorkerNotifier.AUTO_ENDED else "해제됨"
     ).joinToString(" · ")
@@ -170,12 +171,12 @@ class LoneWorkerNotifier(
             mode == LoneWorkerLogic.Mode.SOS ->
                 Triple("구조 요청 중", "[괜찮아요]를 눌러야 해제돼요", "괜찮아요" to activityPi(REQ_CONFIRM, true))
             mode == LoneWorkerLogic.Mode.CHECKING ->
-                Triple("괜찮으세요?", "응답이 없으면 같은 사업장에 구조 요청이 나가요. " + (if (closesByTurn) TURN_CLOSE_HINT else "걸으면 자동으로 닫혀요"), "괜찮아요" to servicePi(REQ_ACK, BleService.ACTION_LW_ACK))
+                Triple("괜찮으세요?", "응답이 없으면 ${SiteScope.audience(DevSettings.floor, DevSettings.proc)}에 구조 요청이 나가요. " + (if (closesByTurn) TURN_CLOSE_HINT else "걸으면 자동으로 닫혀요"), "괜찮아요" to servicePi(REQ_ACK, BleService.ACTION_LW_ACK))
             audible.isNotEmpty() ->
-                Triple("구조 요청", audible.joinToString(", ") { it.displayName() }, "확인" to servicePi(REQ_SILENCE, BleService.ACTION_LW_SILENCE, audible))
+                Triple("구조 요청", audible.joinToString(", ") { it.nameWithScope() }, "확인" to servicePi(REQ_SILENCE, BleService.ACTION_LW_SILENCE, audible))
             quiet != null -> Triple(quiet.first, quiet.second, null)
             else -> Triple(if (resolved.all { it.autoEnded }) AUTO_ENDED else "해제됨",
-                resolved.joinToString(", ") { it.displayName() }, null)
+                resolved.joinToString(", ") { it.nameWithScope() }, null)
         }
         val open = activityPi(REQ_OPEN, false)
         val b = NotificationCompat.Builder(ctx, CHANNEL_ID)

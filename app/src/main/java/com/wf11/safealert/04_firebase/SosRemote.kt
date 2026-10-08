@@ -124,15 +124,15 @@ object SosRemote {
     fun hbPath(root: String, site: String): String = "$root/hb/$site"
 
     /**
-     * Partial update of the session node (updateChildren). Failure logs never include the path, key or uid. Older rules
-     * refuse floor/proc, so a refused update that carried them goes again without them.
+     * Partial update of the session node (updateChildren). Failure logs never include the path, key or uid. A refusal is
+     * reported as is: the caller (LoneWorkerHeartbeat) owns the retry without floor/proc, because only it knows whether
+     * the session it belongs to is still current.
      */
     fun update(path: String, key: String, fields: Map<String, Any>, onDone: (Boolean) -> Unit) {
         FirebaseDatabase.getInstance().reference.child(path).child(key).updateChildren(fields)
             .addOnCompleteListener {
                 if (!it.isSuccessful) Log.w(TAG, "살아 있음 기록 실패")
-                val retry = if (it.isSuccessful) null else SiteScope.withoutScope(fields)
-                if (retry != null) update(path, key, retry, onDone) else onDone(it.isSuccessful)
+                onDone(it.isSuccessful)
             }
     }
 
@@ -145,16 +145,16 @@ object SosRemote {
 
     /**
      * Creates the record. createdAt is server time. The result (success or not) goes to
-     * onResult. While offline it stays pending until a response arrives. Older rules refuse floor/proc, so a refused
-     * record goes again without them (it then reaches every phone of the site).
+     * onResult. While offline it stays pending until a response arrives. A refusal is reported as is: SosLedger owns the
+     * retry without floor/proc (it then reaches every phone of the site), because only it knows whether the SOS is still
+     * the active one.
      */
     fun create(path: String, key: String, payload: Map<String, Any>, onResult: (Boolean) -> Unit) {
         FirebaseDatabase.getInstance().reference.child(path).child(key).setValue(payload)
             .addOnCompleteListener {
                 if (it.isSuccessful) Log.d(TAG, "구조 요청 기록: $key")
                 else Log.e(TAG, "구조 요청 기록 실패: ${it.exception?.message}")
-                val retry = if (it.isSuccessful) null else SiteScope.withoutScope(payload)
-                if (retry != null) create(path, key, retry, onResult) else onResult(it.isSuccessful)
+                onResult(it.isSuccessful)
             }
     }
 
