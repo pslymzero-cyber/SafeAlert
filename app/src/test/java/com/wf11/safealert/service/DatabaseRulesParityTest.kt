@@ -63,4 +63,19 @@ class DatabaseRulesParityTest {
         // a gap may start before its session start (baseline carried over a restart)
         assertTrue(!hb.substringAfter("\"g\": {").substringBefore("\"\$other\"").contains("start"))
     }
+
+    // The control page listens to hb/<center> by 'last' and alerts/<center>/<day> by 'timestamp' itself: a signed-in reader
+    //   must be let in there and those keys indexed (a refused listen leaves the page on the slow server reads).
+    @Test fun control_page_live_reads_match_the_rules() {
+        val s = repoFile("database.rules.json")
+        val page = repoFile("scripts/control-page/Index.html")
+        val hb = hbBlock().substringAfter("\"\$sc\": {")
+        val alerts = s.substringAfter("\"alerts\": {").substringAfter("\"\$b\": {")
+        for ((node, key) in listOf(hb to "last", alerts to "timestamp")) {
+            val own = node.substringBefore("{")   // the node's own rules, before its first child
+            assertTrue(own, own.contains("\".read\": \"auth != null\""))
+            assertTrue(own, own.contains("\".indexOn\": [\"$key\"]"))
+            assertTrue(key, page.contains("orderByChild('$key')"))
+        }
+    }
 }

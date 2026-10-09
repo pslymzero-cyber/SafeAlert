@@ -349,9 +349,10 @@
   var LIVE_RETRY_MS = [60000, 120000, 300000, 900000];   // a failed live start is tried again, more slowly each time
   var PROBE_MS = 60000;                 // a small live read every minute ...
   var PROBE_WAIT_MS = 15000;            // ... must come back this soon, or the line counts as dead
-  var FIELD_MS = 120000;                // devices and alerts of the chosen site: every 2 minutes while the tab is visible
+  var FIELD_MS = 120000;                // server reads of devices and alerts (centers live does not carry): every 2 minutes while visible
   var ALL_GAP_MS = 60000;               // several centers chosen: one center's devices and alerts at a time, every 60 s (daily read limit)
   var FIELD_RETRY_MS = 30000;           // after a failed read of devices and alerts
+  var FIELD_DENIED_MS = 5 * 60000;      // live devices and alerts refused (rules, a cancelled listen): tried again this often
   var PING_MS = 60000;                  // is this account still allowed, and which centers it sees, while no device answer says so
   var STALE_MS = 120000;                // no SOS for this long (live or from the server): the screen is not current
   var ACK_KEEP_MS = 25 * 3600 * 1000;   // longer than the 24-hour SOS window
@@ -366,23 +367,24 @@
   var CODE_RE = new RegExp(FB.code || '^$');
   var SC_RE = new RegExp(FB.sc);        // the site-code form (Code.gs SC_RE), for the codes read from the address
   var ALIVE_MS = FB.aliveMs;            // a session silent this long has lost contact (Code.gs ALIVE_MS)
-  var MAX_ALERTS = FB.maxAlerts;        // newest alerts of a day's node read (Code.gs MAX_ALERTS)
+  var MAX_ALERTS = FB.maxAlerts || 400; // newest alerts of a day's node read (Code.gs MAX_ALERTS; the same 400 if it sends none)
   var st = { pick: ['*'], floor: '', proc: '', tab: 'id',   // pick: the centers checked under '사업장' ('*': every center, new ones too)
              sites: {},                 // site -> { recs: { key: SOS }, at: server time up to which the list is known }
              fail: {},                  // site -> { why, code } while the server path cannot read it
-             f: null,                   // what the field panel shows (mergeField): { now, at, sessions, alerts, cut, n, total }
-             fs: {},                    // site -> its last devices-and-alerts answer
+             f: null,                   // what the field panel shows (mergeField): { now, at, sessions, alerts, cut, n, total, live }
+             fs: {},                    // site -> its last devices-and-alerts part: a server answer, or one built from live (live: true)
              fieldSc: '', fieldTimer: 0,   // the site the field call reads, the next read
              asked: {},                 // center -> when its devices were last asked for (the least recent goes next)
              view: [], viewSet: {},     // the checked centers the page lists now (refreshView)
              clk: null, srv: null,      // the last tick's two clocks; server time as last measured (setServerTime)
              fromUrl: false,            // the checks came from the address (?sc=): this tab's own, not saved for the browser
              sitesAt: -Infinity,        // when the call whose center list was applied last was sent (older lists change nothing)
-             fieldOkAt: -Infinity, sideAt: 0,   // the last good device answer (the check waits while they come); last side render
+             fieldOkAt: -Infinity,      // the last good device answer (the check waits while they come)
+             syncAt: 0, liveSig: '',    // tick()'s upkeep of live devices and alerts: when it last ran, which centers live carried
              alarmKeys: [], alarmLast: {}, alarmNote: {}, alarmSig: '',
              live: { state: 'off', why: '', code: '', connected: false, offset: 0, got: {}, lostAt: null,
                      gen: 0, refs: [], loaded: {}, tries: 0, retry: 0, probing: false, goodAt: 0, listening: false, from: 0, qs: {},
-                     fq: {}, fieldDenied: false },   // fq: center -> its live devices and alerts (liveFieldOn)
+                     fq: {}, fieldDenied: false, deniedAt: 0 },   // fq: center -> its live devices and alerts (liveFieldOn)
              denied: false, deniedAt: 0, err: '', ffail: {}, current: stamp(),   // ffail: center -> why its devices and alerts could not be read
              ackOpenAt: -Infinity, resuming: false, audio: null, siren: null, sirenBuf: null };
   var mem = {};                         // fallback when localStorage is unavailable (sandboxed or partitioned frames)
@@ -594,82 +596,115 @@
     }, function (e) { delete L.got[sc]; liveDown('read', e && e.code); });
   }
   // ── live devices and alerts: the checked centers' monitoring sessions and approach alerts, straight from Firebase like
-  // the SOS, where the rules let a signed-in reader see them. Elsewhere (rules not deployed yet, a refused read, live
-  // down) the server path reads them as before. ──
+  // the SOS (the rules let a signed-in reader see them). A center live does not carry (a refused read, live down) is read
+  // by the server path instead. ──
   function kstDay(ms) { var d = new Date(ms + 9 * HOUR_MS); return '' + d.getUTCFullYear() + pad(d.getUTCMonth() + 1) + pad(d.getUTCDate()); }
-  // Named the way the server path names them (Code.gs sessions_ / alerts_; ControlPageParityTest keeps the fields equal)
-  function toSessions(node) {
-    var latest = {}, out = [], recs = node && typeof node === 'object' ? node : {};
-    Object.keys(recs).forEach(function (k) {
-      var s = recs[k];
-      if (s && typeof s.uid === 'string' && typeof s.last === 'number' && !(latest[s.uid] >= s.last)) latest[s.uid] = s.last;
+  // The server path's own record rules (Code.gs each_ / sessions_ / alerts_; ControlPageParityTest keeps the bodies equal)
+  function each(node, fn) {
+    if (!node || typeof node !== 'object') return;
+    Object.keys(node).forEach(function (k) {
+      var v = node[k];
+      if (v && typeof v === 'object') fn(k, v);
     });
-    Object.keys(recs).forEach(function (k) {
-      var s = recs[k];
-      if (!s || typeof s.last !== 'number' || typeof s.start !== 'number' || typeof s.end === 'number') return;
+  }
+  function toSessions(node) {
+    var latest = {};
+    each(node, function (key, s) {
+      if (typeof s.uid === 'string' && typeof s.last === 'number' && !(latest[s.uid] >= s.last)) latest[s.uid] = s.last;
+    });
+    var out = [];
+    each(node, function (key, s) {
+      if (typeof s.last !== 'number' || typeof s.start !== 'number') return;
+      if (typeof s.end === 'number') return;   // stopped normally
       if (typeof s.uid === 'string' && s.last < latest[s.uid]) return;   // a leftover: the same phone wrote later
       out.push({ role: roleName(str(s.role), ''), floor: code(s.floor), proc: code(s.proc), start: s.start, last: s.last });
     });
-    return out.sort(function (x, y) { return y.last - x.last; });
+    out.sort(function (a, b) { return b.last - a.last; });
+    return out;
   }
   function toAlerts(node, sc) {
-    var out = [], prefix = sc + '-', recs = node && typeof node === 'object' ? node : {};
+    var out = [];
+    var prefix = sc + '-';
     var strip = function (id) { id = str(id); return id.indexOf(prefix) === 0 ? id.slice(prefix.length) : id; };
-    Object.keys(recs).forEach(function (k) {
-      var a = recs[k];
-      if (!a || typeof a.timestamp !== 'number') return;
+    each(node, function (key, a) {
+      if (typeof a.timestamp !== 'number') return;
       var me = strip(a.walkerId), peer = strip(a.deviceId);
-      out.push({ t: a.timestamp, me: me, peer: peer, level: a.alertLevel === 'DANGER' ? 'DANGER' : 'WARNING',
-                 myRole: roleName(str(a.myRole), me), peerRole: roleName(str(a.peerRole), peer), floor: code(a.floor), proc: code(a.proc) });
+      out.push({
+        t: a.timestamp,
+        me: me,                       // the phone that recorded the alert
+        peer: peer,                   // the device it was alerted about
+        level: a.alertLevel === 'DANGER' ? 'DANGER' : 'WARNING',
+        myRole: roleName(str(a.myRole), me),
+        peerRole: roleName(str(a.peerRole), peer),
+        floor: code(a.floor),
+        proc: code(a.proc)
+      });
     });
     return out;
   }
-  // A center's live part in the shape of a server answer, judged by the time now (the last 24 hours, newest first)
+  // A center's live part in the shape of a server answer (Code.gs readField_), judged by the time now
   function liveFieldPart(sc) {
     var q = st.live.fq[sc], now = nowMs();
-    var inWin = function (x) { return x.t >= now - DAY_MS && x.t <= now + HOUR_MS; };
-    var alerts = toAlerts(q.data.today, sc).concat(toAlerts(q.data.yday, sc)).filter(inWin).sort(function (x, y) { return y.t - x.t; });
-    var full = function (n) { return !!n && Object.keys(n).length >= MAX_ALERTS; };
+    var full = function (node) { return Object.keys(node || {}).length >= MAX_ALERTS; };
+    var inWindow = function (a) { return a.t >= now - DAY_MS && a.t <= now + HOUR_MS; };
+    var newestFirst = function (a, b) { return b.t - a.t; };
+    var ys = toAlerts(q.data.yday, sc).filter(inWindow).sort(newestFirst);
+    var yday = { list: ys.slice(0, MAX_ALERTS), full: full(q.data.yday) || ys.length > MAX_ALERTS };
+    yday.oldest = yday.list.length ? yday.list[yday.list.length - 1].t : 0;
+    var alerts = toAlerts(q.data.today, sc).concat(yday.list).filter(inWindow).sort(newestFirst);
+    // The listened range starts where the listening did, so it keeps sessions that have left the 24 hours since
     var sessions = toSessions(q.data.hb).filter(function (x) { return x.last >= now - DAY_MS; });
     sessions.forEach(function (x) { x.sc = sc; });
     alerts.forEach(function (x) { x.sc = sc; });
     return { sc: sc, live: true, now: now, at: now, sessions: sessions, alerts: alerts.slice(0, MAX_ALERTS),
-             cut: alerts.length > MAX_ALERTS || full(q.data.today) || full(q.data.yday) };
+             // yesterday's left-out records only matter while the 24 hours still reach past the oldest one kept
+             cut: alerts.length > MAX_ALERTS || full(q.data.today) || (yday.full && now - DAY_MS < yday.oldest) };
   }
   function liveFieldOk(sc) {
     var L = st.live, q = L.fq[sc];
-    return L.state === 'on' && !L.fieldDenied && !!q && !!(q.got.hb && q.got.today && q.got.yday) &&
+    return L.state === 'on' && !!q && !!(q.got.hb && q.got.today && q.got.yday) &&
       (L.connected || !L.lostAt || age(L.lostAt) < LIVE_GRACE_MS);
   }
-  // Listens to the checked centers (and the day's alert node, anew after midnight); stops for the others
+  // Listens to the checked centers on the current KST day over the last 24 hours, and stops for the others. tick() runs it
+  // every second: a new day listens anew, and so does a window that began late (the computer's clock ran ahead before
+  // server time was known). A refused read is tried again after FIELD_DENIED_MS. A failure stays here: the SOS paths call it.
   function liveFieldSync() {
     var L = st.live;
-    if (!L.listening || L.fieldDenied) return;
-    var day = kstDay(nowMs()), want = {};
-    st.view.forEach(function (sc) { want[sc] = true; });
-    Object.keys(L.fq).forEach(function (sc) { if (!want[sc] || L.fq[sc].day !== day) liveFieldOff(sc); });
-    st.view.forEach(function (sc) { if (!L.fq[sc]) liveFieldOn(sc, day); });
+    if (!L.listening || (L.fieldDenied && mono() - L.deniedAt < FIELD_DENIED_MS)) return;
+    L.fieldDenied = false;
+    try {
+      var now = nowMs(), day = kstDay(now);
+      Object.keys(L.fq).forEach(function (sc) {
+        var q = L.fq[sc];
+        if (!st.viewSet[sc] || q.day !== day || q.from > now - DAY_MS + 5 * 60000) liveFieldOff(sc);
+      });
+      st.view.forEach(function (sc) { if (!L.fq[sc]) liveFieldOn(sc, now); });
+    } catch (e) { /* the server path carries these centers */ }
   }
-  function liveFieldOn(sc, day) {
-    var L = st.live, db = firebase.database(), from = nowMs() - DAY_MS, q = { day: day, refs: [], data: {}, got: {} };
-    L.fq[sc] = q;
+  function liveFieldOn(sc, now) {
+    var L = st.live, db = firebase.database(), from = now - DAY_MS;
+    var q = L.fq[sc] = { day: kstDay(now), from: from, refs: [], data: {}, got: {} };
+    // ponytail: every snapshot rebuilds its center and renders the page; coalesce in tick() if one tab ever watches
+    // thousands of phones
     var on = function (name, ref) {
       q.refs.push(listen(ref, function (snap) {
         if (L.fq[sc] !== q) return;
         q.data[name] = snap.val();
         q.got[name] = true;
-        if (!liveFieldOk(sc)) return;
+        if (!liveFieldOk(sc)) return;   // live is not on yet: tick() takes it up once it is
         st.fs[sc] = liveFieldPart(sc);
         delete st.ffail[sc];
         mergeField();
         renderAll();
-      }, function (e) { liveFieldDenied(e); }));
+      }, liveFieldDenied));
     };
     // Sessions by their last stamp (hb/$sc has ".indexOn": ["last"]); alerts under the phones' Korean dates, today and
-    // yesterday, by time ("timestamp" index), the newest MAX_ALERTS of each
+    // yesterday of the same moment, by time ("timestamp" index), the newest MAX_ALERTS of each.
+    // ponytail: records stamped ahead by a fast phone clock count toward that limit (the server path bounds them with
+    // endAt); it shows only past MAX_ALERTS a day in one center, where the list is cut anyway
     on('hb', db.ref(FB.root + '/hb/' + sc).orderByChild('last').startAt(from));
-    on('today', db.ref(FB.root + '/alerts/' + sc + '/' + day).orderByChild('timestamp').startAt(from).limitToLast(MAX_ALERTS));
-    on('yday', db.ref(FB.root + '/alerts/' + sc + '/' + kstDay(nowMs() - DAY_MS)).orderByChild('timestamp').startAt(from).limitToLast(MAX_ALERTS));
+    on('today', db.ref(FB.root + '/alerts/' + sc + '/' + q.day).orderByChild('timestamp').startAt(from).limitToLast(MAX_ALERTS));
+    on('yday', db.ref(FB.root + '/alerts/' + sc + '/' + kstDay(from)).orderByChild('timestamp').startAt(from).limitToLast(MAX_ALERTS));
   }
   function liveFieldOff(sc) {
     var L = st.live, q = L.fq[sc];
@@ -678,14 +713,14 @@
     L.refs = L.refs.filter(function (r) { return q.refs.indexOf(r) < 0; });
     delete L.fq[sc];
   }
-  // The rules do not let this page read them (not deployed yet, or refused): the server path carries them until live
-  // starts again
+  // The rules refuse this page the devices and alerts, or a listen was cancelled: the server path carries every center
+  // (tick() starts its read at once) until liveFieldSync tries live again
   function liveFieldDenied() {
     var L = st.live;
     if (L.fieldDenied) return;
     L.fieldDenied = true;
+    L.deniedAt = mono();
     Object.keys(L.fq).forEach(liveFieldOff);
-    if (!st.fieldTimer && !fieldCall.busy) loadField();
   }
   // Drops every live listener (before a restart, or for a refused account); the library stays loaded and signed in
   function liveStop() {
@@ -699,7 +734,7 @@
     L.listening = false;
     L.qs = {};
     L.fq = {};
-    L.fieldDenied = false;   // the next start tries the live devices and alerts again (the rules may be out by then)
+    L.fieldDenied = false;   // the next start tries the live devices and alerts again
     clearTimeout(L.retry);
     L.retry = 0;
   }
@@ -983,7 +1018,8 @@
   }
 
   function fieldFailed(why, code) {
-    if (why === 'nosite') { nextField(fieldGap()); return; }   // a center the server no longer gives: the next ping drops it
+    // A center the server no longer gives (the next ping drops it), or one live carries meanwhile: nothing to report
+    if (why === 'nosite' || liveFieldOk(fieldCall.sc)) { nextField(fieldGap()); return; }
     st.ffail[fieldCall.sc] = errText(why, code);   // kept until that center is read again: another one's success says nothing
     renderStatus();
     nextField(FIELD_RETRY_MS);
@@ -993,10 +1029,12 @@
   function mergeField() {
     var parts = st.view.map(function (sc) { return st.fs[sc]; }).filter(Boolean);
     if (!parts.length) { st.f = null; return; }
+    // A part built from live counts as live while live still carries its center; after that it is as old as when it was built
+    var live = function (p) { return p.live && liveFieldOk(p.sc); };
     var f = { now: nowMs(), at: Infinity, sessions: [], alerts: [], cut: false, n: parts.length, total: st.view.length,
-              live: parts.every(function (p) { return p.live; }) };
+              live: parts.every(live) };
     parts.forEach(function (p) {
-      if (!p.live && p.at < f.at) f.at = p.at;   // '기준': the oldest part read from the server
+      if (!live(p) && p.at < f.at) f.at = p.at;   // '기준': the oldest part not carried live now
       f.cut = f.cut || p.cut;
       f.sessions = f.sessions.concat(p.sessions);
       f.alerts = f.alerts.concat(p.alerts);
@@ -1114,7 +1152,7 @@
     if (!live && !st.denied && !none && FB.sites.length && st.live.state !== 'starting' && st.live.state !== 'off') more.push(['warn', liveText(), '', '']);
     var ff = st.view.filter(function (sc) { return st.ffail[sc]; });
     if (ff.length) more.push(['warn', '접근 경보와 기기 현황: ' + ff.map(function (sc) { return (st.view.length > 1 ? sc + ' ' : '') + st.ffail[sc]; }).join(' ') +
-      (st.f ? ' ' + hms(st.f.at) + ' 기준 내용을 보여 줍니다.' : ''), '', '']);
+      (st.f && isFinite(st.f.at) ? ' ' + hms(st.f.at) + ' 기준 내용을 보여 줍니다.' : ''), '', '']);
     if (!run && !st.denied) more.push(['mute', soundPref() ? '경보음이 멈춰 있습니다. 화면을 한 번 누르면 다시 켜집니다.'
                                                          : '경보음이 꺼져 있습니다. 구조 요청이 와도 소리가 나지 않습니다.', 'sound', '경보음 켜기']);
     setHtml($('strips'), more.map(strip).join(''));
@@ -1268,7 +1306,6 @@
   }
 
   function renderSide() {
-    st.sideAt = mono();
     var f = st.f, ready = !!f, all = st.view.length > 1;
     var ss = ready ? f.sessions.filter(inScope) : [];
     var isAlive = function (s) { return nowMs() - s.last <= ALIVE_MS; };   // judged now, not when the center was last read
@@ -1427,14 +1464,20 @@
       loadSos();
     }
     dropOld();
-    // Every 30 s: devices fall silent and alerts age with time alone, and a new day has its own alert node
-    if (mono() - st.sideAt > 30000) {
-      st.sideAt = mono();
-      liveFieldSync();
-      st.view.forEach(function (sc) { if (liveFieldOk(sc)) st.fs[sc] = liveFieldPart(sc); });
+    // Live devices and alerts follow the checks and the KST day. A change in which centers live carries shows at once, and a
+    // center it does not carry is read from the server right away; every 30 s besides, devices fall silent and alerts age
+    // with time alone.
+    liveFieldSync();
+    var carried = st.view.map(function (sc) { return liveFieldOk(sc) ? 1 : 0; }).join('');
+    if (carried !== st.liveSig || mono() - st.syncAt > 30000) {
+      var dropped = carried !== st.liveSig && carried.indexOf('0') >= 0;
+      st.liveSig = carried;
+      st.syncAt = mono();
+      st.view.forEach(function (sc) { if (liveFieldOk(sc)) { st.fs[sc] = liveFieldPart(sc); delete st.ffail[sc]; } });
       mergeField();
       renderSide();
       renderAlerts();
+      if (dropped && !fieldCall.busy) loadField();
     }
     // A context the browser suspended may come back without a tap once the page has had one. One attempt at a time: a
     // resume the browser does not allow yet stays pending, and taps and keys try on their own meanwhile.

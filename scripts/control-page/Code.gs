@@ -88,9 +88,8 @@
  *
  * Daily limits of the account that runs the script (with 'Execute as' = 'Me' every viewer shares them): about 20,000
  * database reads (UrlFetch) and 50,000 reads of the script properties. Live SOS (the page shows '실시간') use neither,
- * and neither do the checked centers' devices and alerts once the database rules let a signed-in reader see them (they
- * come live then, '기기·경보 실시간' on the page; the rules go out with an app release). Until then, or where that read is
- * refused, the script reads them as follows.
+ * nor do the devices and alerts of the checked centers the page listens to itself ('기기·경보 … 실시간'; the database
+ * rules let a signed-in reader see them). A center live does not carry (a refused read, live down) is read as follows.
  * The script's reads are shared by all open tabs and viewers through the script cache: devices and alerts of a center
  * for 130 seconds (yesterday's alerts for 10 minutes). A page reads one checked center a minute (one center: every 2
  * minutes), which is about 3,000-4,500 reads a day; pages watching the same centers share them, and one center costs at
@@ -210,9 +209,10 @@ function ping() {
 }
 
 /**
- * Sessions and collision alerts of one center for the last 24 hours. A visible page asks for its chosen center every 2
- * minutes (several chosen centers: one a minute, in turn), 30 seconds after a failed call, and when the choice changes or
- * the tab is shown again; shared through the cache by every tab and viewer for FIELD_TTL_S.
+ * Sessions and collision alerts of one center for the last 24 hours, for a page whose live connection does not carry that
+ * center. A visible page asks for such a center every 2 minutes (several: one a minute, in turn), 30 seconds after a
+ * failed call, and when the choice changes or the tab is shown again; shared through the cache by every tab and viewer
+ * for FIELD_TTL_S.
  */
 function getField(sc) {
   var c = setup_();
@@ -320,8 +320,8 @@ function sosRecs_(node) {
 /**
  * One row per monitoring session still open. A phone that restarted without stopping leaves an un-ended session behind:
  * per uid only the session written last counts. 'last' is refreshed every 5 minutes by the live session, while 'start'
- * can carry the phone's own clock right after a restart. uid is used here only and never sent to the page. Sessions
- * without a uid are kept as they are. alive is set by getField.
+ * can carry the phone's own clock right after a restart. This answer carries no uid, but any signed-in client may read
+ * the raw records (the page's live path does). Sessions without a uid are kept as they are. alive is set by getField.
  */
 function sessions_(node) {
   var latest = {};

@@ -88,13 +88,11 @@ class ControlPageParityTest {
         val uses = Regex("""\br\.(\w+)""").findAll(html.substringAfter("function toSos(sc, key, r) {").substringBefore("\n  }")).map { it.groupValues[1] }.toSet()
         val keeps = Regex("""(\w+):""").findAll(noComments(g.substringAfter("function sosRecs_(node) {").substringBefore("\n}"))).map { it.groupValues[1] }.toSet()
         assertTrue("서버 경로가 보내는 필드 $keeps 에 페이지가 읽는 $uses 가 다 있다", uses.isNotEmpty() && keeps.containsAll(uses))
-        // Devices and alerts read live are named from the same record fields as on the server path
-        fun fields(src: String, v: String) = Regex("""\b$v\.(\w+)""").findAll(src).map { it.groupValues[1] }.toSet()
-        val gsSessions = fields(g.substringAfter("function sessions_(node) {").substringBefore("\n}"), "s")
-        val pageSessions = fields(html.substringAfter("function toSessions(node) {").substringBefore("\n  }"), "s")
-        assertTrue("세션 필드 $gsSessions = $pageSessions", gsSessions.isNotEmpty() && gsSessions == pageSessions)
-        val gsAlerts = fields(g.substringAfter("function alerts_(node, sc) {").substringBefore("\n}"), "a")
-        val pageAlerts = fields(html.substringAfter("function toAlerts(node, sc) {").substringBefore("\n  }"), "a")
-        assertTrue("경보 필드 $gsAlerts = $pageAlerts", gsAlerts.isNotEmpty() && gsAlerts == pageAlerts)
+        // Devices and alerts read live go through the server path's own record rules: the same bodies, helper names without '_'
+        fun body(src: String, head: String, end: String) =
+            flat(noComments(src.substringAfter(head).substringBefore(end))).replace(Regex("""\b(each|str|code|roleName)_\("""), "\$1(")
+        assertEquals(body(g, "function each_(node, fn) {", "\n}"), body(html, "function each(node, fn) {", "\n  }"))
+        assertEquals(body(g, "function sessions_(node) {", "\n}"), body(html, "function toSessions(node) {", "\n  }"))
+        assertEquals(body(g, "function alerts_(node, sc) {", "\n}"), body(html, "function toAlerts(node, sc) {", "\n  }"))
     }
 }

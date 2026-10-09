@@ -1,16 +1,15 @@
 name: Alert digest
 
 # Periodically aggregates alert history and commits it to the repo.
-#   database.rules.json: the root is ".read":false, and {firebaseRoot}/alerts and uwb_probe
-#   have no .read rule at all, so REST cannot read them. echo_calib is "auth != null", but
-#   CI has no user token. FIREBASE_DB_SECRET is an admin credential that bypasses the rules,
-#   so only here are all three read — the same credential as release.yml's version PATCH.
+#   database.rules.json: the root is ".read":false. {firebaseRoot}/alerts, hb (lone-worker alive
+#   sessions) and echo_calib are "auth != null", and uwb_probe has no .read rule; CI has no user
+#   token. FIREBASE_DB_SECRET is an admin credential that bypasses the rules, so it reads them
+#   here — the same credential as release.yml's version PATCH.
 #
 #   The output is a single ALERTS.md at the repo root. Opening the repo in the GitHub app
 #   shows it near the top of the file list — no need to dig through folders.
-#   Raw JSON is never committed — this repo is public.
-#   hb (lone-worker alive sessions) has no .read rule either, so it is read only with the same admin secret,
-#   and only per-center counts, without identifiers, go into the '연락 끊김 (기록만)' table.
+#   Raw JSON is never committed — this repo is public: of hb only per-center counts, without
+#   identifiers, go into the '연락 끊김 (기록만)' table.
 
 on:
   schedule:
