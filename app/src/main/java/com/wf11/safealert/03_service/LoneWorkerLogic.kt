@@ -113,6 +113,13 @@ class LoneWorkerLogic(var myBleId: String) {
          * arrived to help. The action is the same; only the label differs.
          */
         const val RESCUER_BUTTON_MS = 60_000L
+        /**
+         * After the rescuer releases the SOS from the requester's phone, that phone keeps sending the advertisement with the SOS
+         * bit cleared for this long and then stops monitoring. A phone that learns of the SOS by Bluetooth only must hear the
+         * cleared bit once (a live advertisement is heard within PEER_LIVE_AD_MS); it then ends the entry after
+         * PEER_BLE_FALL_MS by its own clock. One that never hears it keeps the entry until the one-hour limit.
+         */
+        const val RESCUER_STOP_DELAY_MS = LoneWorkerPeers.PEER_LIVE_AD_MS
     }
 
     /** Changed live from settings (default 3 min / 2 min). No-motion check only — the accident check is fixed at 30 s / 1 min. */
@@ -132,6 +139,9 @@ class LoneWorkerLogic(var myBleId: String) {
     var trigger = ""
         private set
     var modeSinceMs = 0L
+        private set
+    /** When this phone stops monitoring after the rescuer's release of its own SOS; null = nothing scheduled. */
+    var stopAt: Long? = null
         private set
     var zoneSettled = false
         private set
@@ -427,11 +437,29 @@ class LoneWorkerLogic(var myBleId: String) {
         return true
     }
 
-    /** Suspicion was already cleared on SOS entry and falls during SOS are discarded, so there is no suspicion to end. */
-    fun cancelSos(nowMs: Long): Boolean {
+    /**
+     * Suspicion was already cleared on SOS entry and falls during SOS are discarded, so there is no suspicion to end.
+     * byUser = the exit button on the requester's SOS screen; when it is already the rescuer's button the phone then stops
+     * monitoring after RESCUER_STOP_DELAY_MS. The default (the one-hour automatic release) never schedules a stop.
+     */
+    fun cancelSos(nowMs: Long, byUser: Boolean = false): Boolean {
         if (mode != Mode.SOS) return false
+        if (byUser && rescuerButton(nowMs)) stopAt = nowMs + RESCUER_STOP_DELAY_MS
         toWatching(nowMs)
         return true
+    }
+
+    /** True once when the scheduled monitoring stop is due. */
+    fun takeStop(nowMs: Long): Boolean {
+        val at = stopAt ?: return false
+        if (nowMs < at) return false
+        stopAt = null
+        return true
+    }
+
+    /** Drops a scheduled stop (the user started monitoring again in the meantime). */
+    fun clearStop() {
+        stopAt = null
     }
 
     /**

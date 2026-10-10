@@ -13,13 +13,17 @@ import com.wf11.safealert.ui.MainActivity
  * channel (LOW) is silent, so a separate audible notice channel is used.
  * Tapping opens the main screen — if permissions are missing, the screen shows the
  * permission warning; otherwise returning to the screen restarts monitoring.
+ * It also tells the requester's phone that monitoring stopped after the rescuer's release.
  */
 object ServiceStopNotice {
     const val NOTIF_ID = 1002
     const val CHANNEL_ID = "safealert_notice"
 
-    /** permission = stopped because start permissions are missing (the text points to permission settings). */
-    fun show(ctx: Context, permission: Boolean) {
+    /**
+     * permission = stopped because start permissions are missing (the text points to permission settings).
+     * rescuer = stopped on purpose after the rescuer released this phone's own SOS.
+     */
+    fun show(ctx: Context, permission: Boolean, rescuer: Boolean = false) {
         val nm = ctx.getSystemService(NotificationManager::class.java) ?: return
         runCatching {
             nm.createNotificationChannel(NotificationChannel(CHANNEL_ID, "감시 중지 안내", NotificationManager.IMPORTANCE_DEFAULT))
@@ -30,8 +34,8 @@ object ServiceStopNotice {
             val pi = PendingIntent.getActivity(ctx, 5, open, PendingIntent.FLAG_IMMUTABLE)
             nm.notify(NOTIF_ID, NotificationCompat.Builder(ctx, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.stat_sys_warning)
-                .setContentTitle(if (permission) "권한이 없어 감시가 멈췄습니다" else "감시가 중지됐습니다")
-                .setContentText(if (permission) "눌러서 권한 설정" else "눌러서 다시 시작")
+                .setContentTitle(if (permission) "권한이 없어 감시가 멈췄습니다" else if (rescuer) LoneWorkerNotifier.RESCUER_STOPPED else "감시가 중지됐습니다")
+                .setContentText(if (permission) "눌러서 권한 설정" else if (rescuer) "다시 쓰려면 감시를 새로 시작하세요" else "눌러서 다시 시작")
                 .setContentIntent(pi).setAutoCancel(true).build())
         }
     }

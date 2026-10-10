@@ -33,7 +33,7 @@ import com.wf11.safealert.utils.SiteScope
  * There are no snooze/rest buttons, and Back does not close the screen during a check or SOS: the check window
  * closes only via "괜찮아요" or walking (the mounted no-motion window: rotation, shaking or "괜찮아요"),
  * and an SOS closes only via the user's own button: "괜찮아요", or "구조자 확인" once the SOS is old enough
- * (LoneWorkerLogic.RESCUER_BUTTON_MS). The button on an SOS always goes through a confirmation ("정말 괜찮으신가요?", or
+ * (LoneWorkerLogic.RESCUER_BUTTON_MS); releasing with the rescuer's button also stops this phone's monitoring a moment later. The button on an SOS always goes through a confirmation ("정말 괜찮으신가요?", or
  * "작업자를 확인하셨나요?" for the rescuer's button), and the lock-screen notification's button opens the same confirmation
  * (EXTRA_CONFIRM_OK).
  * Taps right after a button's action changes (SETTLE_MS after the screen type or the active
@@ -127,7 +127,7 @@ class LoneWorkerActivity : AppCompatActivity() {
         confirmDialog = AlertDialog.Builder(this)
             .setTitle(if (rescuer) "작업자를 확인하셨나요?" else "정말 괜찮으신가요?")
             .setMessage(
-                if (rescuer) "해제하면 이 휴대폰의 사이렌과 동료 휴대폰의 구조 요청 경보가 꺼져요"
+                if (rescuer) "해제하면 이 휴대폰의 사이렌과 동료 휴대폰의 구조 요청 경보가 꺼지고, 이 휴대폰의 감시가 중지돼요"
                 else "해제하면 동료 휴대폰의 구조 요청 경보도 꺼져요"
             )
             .setPositiveButton(if (rescuer) LoneWorkerNotifier.RESCUER_OK else "괜찮아요") { _, _ -> LoneWorkerMonitor.current?.cancelSos() }

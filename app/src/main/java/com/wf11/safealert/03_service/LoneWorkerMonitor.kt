@@ -23,7 +23,11 @@ import com.wf11.safealert.utils.DevSettings
 class LoneWorkerMonitor(
     private val ctx: Context,
     private val advertiseSos: (Boolean, Int, Int) -> Unit,
-    setAlarmVolume: (Int) -> Unit
+    setAlarmVolume: (Int) -> Unit,
+    /** Clears the saved running state once the rescuer's release is stored, so a service death in the stop delay does not revive monitoring. */
+    private val onRescuerRelease: () -> Unit = {},
+    /** Stops this phone's monitoring when the delay after the rescuer's release is over. */
+    private val onRescuerStop: () -> Unit = {}
 ) {
 
     /** State drawn by the check screen. uiState() returns null when mode is WATCHING and there are no peer rows. */
@@ -54,6 +58,8 @@ class LoneWorkerMonitor(
         private const val SYNC_TICK_MS = 10_000L
 
         @Volatile var current: LoneWorkerMonitor? = null
+        /** Set when monitoring stopped after the rescuer's release; the main screen reads it once and clears it. */
+        @Volatile var rescuerStopped = false
         var uiListener: (() -> Unit)? = null
     }
 
@@ -100,6 +106,7 @@ class LoneWorkerMonitor(
     private val beaconNoteAt = HashMap<String, Long>()
 
     val sosActive: Boolean get() = started && logic.sosActive
+    val rescuerButton: Boolean get() = started && logic.rescuerButton(now())
     // Rescue-request episode and beacon short ID carried in the advertisement — 0 when not requesting rescue
     val sosEpisode: Int get() = if (sosActive) sync.episode() else 0
     val sosHint: Int get() = if (sosActive) sync.hint() else 0
@@ -115,6 +122,7 @@ class LoneWorkerMonitor(
      */
     val banner: String? get() = when {
         !started -> null
+        logic.stopAt != null -> "${LoneWorkerNotifier.RESCUER_OK} — ${LoneWorkerNotifier.RESCUER_STOP_SOON}"
         sensors.noSensor -> "사고·무동작 감시 불가 — 가속도 센서 없음 (동료 구조 요청 수신은 계속)"
         else -> logic.rest.banner
     }
@@ -369,7 +377,26 @@ class LoneWorkerMonitor(
 
     fun cancelSos() {
         if (!started) return
-        logic.cancelSos(now())
+        val t = now()
+        val released = logic.cancelSos(t, byUser = true)
+        render() // Sends the server release and clears the advertised SOS bit
+        val at = logic.stopAt
+        if (released && at != null) {
+            // The running state is cleared only after the release is stored: the other way round, a death in between leaves
+            // a stored SOS with no running state to revive it
+            onRescuerRelease()
+            handler.removeCallbacks(stopRunnable)
+            handler.postDelayed(stopRunnable, (at - t).coerceAtLeast(0L))
+        }
+    }
+
+    private val stopRunnable = Runnable { if (started && logic.takeStop(now())) onRescuerStop() }
+
+    /** The user started monitoring again while a stop after the rescuer's release was pending: the stop is dropped. */
+    fun keepRunning() {
+        if (!started) return
+        logic.clearStop()
+        handler.removeCallbacks(stopRunnable)
         render()
     }
 
@@ -426,9 +453,10 @@ class LoneWorkerMonitor(
     private val keepText: String get() = logic.rest.keepText
 
     /**
-     * Quiet notice notification. Priority: no sensor, sensor registration failed, sensor signal lost, clear not sent, no step permission.
+     * Quiet notice notification. Priority: monitoring stop pending, no sensor, sensor registration failed, sensor signal lost, clear not sent, no step permission.
      */
     private fun notice(): Pair<String, String>? = when {
+        logic.stopAt != null -> LoneWorkerNotifier.RESCUER_OK to LoneWorkerNotifier.RESCUER_STOP_SOON
         DevSettings.lwEnabled && sensors.noSensor ->
             "무동작 감시 불가" to "이 기기에는 가속도 센서가 없어 사고·무동작 감시를 하지 않습니다. 동료 구조 요청 수신은 계속됩니다"
         DevSettings.lwEnabled && !sensors.registered ->
@@ -496,7 +524,8 @@ class LoneWorkerMonitor(
         if (showScreen) notifier.openScreen()
         updateWakeLock(false)
         scheduleLoop()
-        resume.save(logic.snapshot(t), t)
+        // The release cleared the saved restart state; writing it again while the stop is pending would leave a stale one if the service dies
+        if (logic.stopAt == null) resume.save(logic.snapshot(t), t)
         uiListener?.invoke()
     }
 

@@ -42,11 +42,11 @@ internal fun LoneWorkerLogic.loopNeeded(sensorsNeedWake: Boolean): Boolean =
 
 /**
  * Whether the wake lock is needed — sensors, an equipment mount while monitoring,
- * checking / SOS, a ringing peer, or a passed deadline awaiting judgment.
+ * checking / SOS, a ringing peer, a passed deadline awaiting judgment, or a monitoring stop pending after a rescuer's release.
  */
 internal fun LoneWorkerLogic.wakeNeeded(sensorsNeedWake: Boolean, nowMs: Long): Boolean =
     sensorsNeedWake || enabled && mounted || mode != LoneWorkerLogic.Mode.WATCHING ||
-        audiblePeers().isNotEmpty() || waitingToJudge(nowMs)
+        audiblePeers().isNotEmpty() || waitingToJudge(nowMs) || stopAt != null
 
 
 /** Whether my own SOS is old enough that its exit button (screen, dialog, notification) reads "구조자 확인". */

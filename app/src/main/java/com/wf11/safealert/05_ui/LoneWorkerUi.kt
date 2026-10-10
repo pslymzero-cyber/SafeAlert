@@ -82,6 +82,17 @@ object LoneWorkerUi {
     }
 
     /**
+     * Reads and clears the flag set when monitoring stopped after the rescuer's release of this phone's own SOS; shows the
+     * toast and returns true once, so the main screen then goes to its stopped state.
+     */
+    fun takeRescuerStop(activity: Activity): Boolean {
+        if (!LoneWorkerMonitor.rescuerStopped) return false
+        LoneWorkerMonitor.rescuerStopped = false
+        Toast.makeText(activity, LoneWorkerNotifier.RESCUER_STOPPED, Toast.LENGTH_LONG).show()
+        return true
+    }
+
+    /**
      * If my SOS is in progress, show a notice and return true; the caller stops its action.
      * Only the live monitor's sosActive decides. With no monitor but a saved SOS, revive the service and block.
      */

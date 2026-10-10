@@ -144,7 +144,17 @@ class BleService : LifecycleService() {
     private val volumeGuardHandler = android.os.Handler(android.os.Looper.getMainLooper())
     // Lone-worker no-motion/fall SOS — the constructor only stores references; every entry point is a no-op before start()
     private val loneWorker by lazy {
-        LoneWorkerMonitor(this, advertiseSos = { sos, ep, hint -> bleAdvertiser?.updateSos(sos, ep, hint) }, setAlarmVolume = { setAlarmVolumeGuarded(it) })
+        LoneWorkerMonitor(this, advertiseSos = { sos, ep, hint -> bleAdvertiser?.updateSos(sos, ep, hint) }, setAlarmVolume = { setAlarmVolumeGuarded(it) },
+            onRescuerRelease = {
+                // The release is already stored: clear the saved running state so a service death in the stop delay does not revive monitoring
+                LoneWorkerResume.clearOnUserStop(getSharedPreferences("safealert_prefs", MODE_PRIVATE).edit()).commit()
+            },
+            onRescuerStop = {
+                if (requestStop()) {
+                    LoneWorkerMonitor.rescuerStopped = true
+                    ServiceStopNotice.show(this, permission = false, rescuer = true)
+                }
+            })
     }
     // Set when started by a background restore (STICKY, boot, update, notification
     // button) — for the Android 11 location "Allow all the time" check
@@ -727,6 +737,7 @@ class BleService : LifecycleService() {
                 myCategory = intent.getIntExtra(EXTRA_CATEGORY, BleConstants.CAT_FORKLIFT)
                 // Save the mode: used by onStartCommand to restore after a START_STICKY restart
                 saveRunningMode(myMode, myId, myCategory)
+                loneWorker.keepRunning() // Drops a pending stop after a rescuer's release
                 bgStarted = false
                 if (!startForegroundTyped("${categoryRoleName(myCategory)} 실행 중",
                         buildSubText(DevSettings.deviceTx, DevSettings.deviceRx))) return failStart(startId)
@@ -737,26 +748,12 @@ class BleService : LifecycleService() {
                 myMode = "WALKER"
                 myCategory = BleConstants.CAT_WALKER   // always walker
                 saveRunningMode(myMode, myId, myCategory)
+                loneWorker.keepRunning() // Drops a pending stop after a rescuer's release
                 bgStarted = false
                 if (!startForegroundTyped("보행자 실행 중", buildSubText(DevSettings.walkerTx, DevSettings.walkerRx))) return failStart(startId)
                 applyMode()
             }
-            ACTION_STOP       -> if (loneWorker.sosActive) {
-                // No stop or role switch during an SOS — only the wearer's own "괜찮아요" clears it
-                Log.d(TAG, "구조 요청 중 정지 요청 무시")
-                // Restore the running state the screen already cleared — the next restore and screen return use it
-                saveRunningMode(myMode, myId, myCategory)
-                val sp = getSharedPreferences("safealert_prefs", MODE_PRIVATE)
-                if (sp.getLong("running_since", 0L) == 0L) sp.edit().putLong("running_since", System.currentTimeMillis()).commit()
-                sendStatusBroadcast("[괜찮아요]로 먼저 해제하세요")
-            } else {
-                // User stopped explicitly → remove the START_STICKY restore keys synchronously (.commit).
-                //   Cleared only here, not inside stopAll(): the onDestroy→stopAll() path (system kill, app exit) needs the prefs to
-                //   remain so the Always-On restore works. device_id is the user identifier, so it is kept.
-                //   The lone-worker resume state is cleared as well.
-                LoneWorkerResume.clearOnUserStop(getSharedPreferences("safealert_prefs", MODE_PRIVATE).edit()).commit()
-                stopAll()
-            }
+            ACTION_STOP       -> requestStop()
             ACTION_TEST_START -> startTestAlert()
             ACTION_TEST_STOP  -> stopTestAlert()
             ACTION_MUTE_TEMP   -> muteTemporarily("화면 터치")
@@ -783,6 +780,30 @@ class BleService : LifecycleService() {
             ACTION_LW_SILENCE -> loneWorker.silencePeers(LoneWorkerNotifier.peerTargets(intent))
         }
         return START_STICKY
+    }
+
+    /**
+     * The one stop path: the main screen's [중지] (ACTION_STOP) and the stop after a rescuer's release of this phone's own SOS.
+     * Returns false when refused because an SOS is still active.
+     */
+    private fun requestStop(): Boolean {
+        if (loneWorker.sosActive) {
+            // No stop or role switch during an SOS — only the wearer's own "괜찮아요" clears it
+            Log.d(TAG, "구조 요청 중 정지 요청 무시")
+            // Restore the running state the screen already cleared — the next restore and screen return use it
+            saveRunningMode(myMode, myId, myCategory)
+            val sp = getSharedPreferences("safealert_prefs", MODE_PRIVATE)
+            if (sp.getLong("running_since", 0L) == 0L) sp.edit().putLong("running_since", System.currentTimeMillis()).commit()
+            sendStatusBroadcast("[괜찮아요]로 먼저 해제하세요")
+            return false
+        }
+        // User stopped explicitly → remove the START_STICKY restore keys synchronously (.commit).
+        //   Cleared only here, not inside stopAll(): the onDestroy→stopAll() path (system kill, app exit) needs the prefs to
+        //   remain so the Always-On restore works. device_id is the user identifier, so it is kept.
+        //   The lone-worker resume state is cleared as well.
+        LoneWorkerResume.clearOnUserStop(getSharedPreferences("safealert_prefs", MODE_PRIVATE).edit()).commit()
+        stopAll()
+        return true
     }
 
     /** Save mode and ID to SharedPrefs (for restore after a START_STICKY restart) */

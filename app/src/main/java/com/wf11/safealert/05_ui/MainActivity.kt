@@ -107,6 +107,7 @@ class MainActivity : AppCompatActivity() {
         private var lastMuted = false
         override fun run() {
             LoneWorkerUi.onPoll(this@MainActivity, binding.tvLwStatus, binding.layoutPermissionWarning, binding.tvPermissionMsg, currentMode == null, this@MainActivity::showPermissionWarning) { restoreRunningState() }   // Check/SOS screen entry, stop-race recovery, charging hint, reachability recheck
+            if (LoneWorkerUi.takeRescuerStop(this@MainActivity) && currentMode != null) stopServiceImmediately(tellService = false)
             if (binding.cardRunning.visibility == View.VISIBLE) {
                 // Fallback for missed broadcasts — reads the service snapshot (BleService.detectedSnapshot)
                 //   directly to sync the list. With working broadcasts the value is the same (no-op);
@@ -665,7 +666,7 @@ class MainActivity : AppCompatActivity() {
         showRunningUi(mode, since)
     }
 
-    private fun stopServiceImmediately() {
+    private fun stopServiceImmediately(tellService: Boolean = true) {
         // No delayed post: during a delay the START_STICKY restore could read leftover prefs (running_mode)
         //   and revive the service. prefs are written with commit (synchronous) so the on-disk state is
         //   'stopped' before ACTION_STOP arrives.
@@ -704,8 +705,9 @@ class MainActivity : AppCompatActivity() {
         binding.layoutSelect.visibility = View.VISIBLE
         binding.layoutPermissionWarning.visibility = View.GONE
 
-        // Post immediately — BLE stack cleanup is BleService.stopAll()'s own job.
-        startService(Intent(this, BleService::class.java).apply { action = BleService.ACTION_STOP })
+        // Post immediately — BLE stack cleanup is BleService.stopAll()'s own job. Skipped when the service already stopped itself
+        //   (after a rescuer's release): only the screen and the saved state go to stopped.
+        if (tellService) startService(Intent(this, BleService::class.java).apply { action = BleService.ACTION_STOP })
     }
 
     // Role switch while running (stop → restart) — the role prefix (DEVICE_/WALKER_) is baked into the advertised fullId,

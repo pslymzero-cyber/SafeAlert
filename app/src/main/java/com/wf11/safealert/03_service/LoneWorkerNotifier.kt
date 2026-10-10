@@ -83,6 +83,12 @@ class LoneWorkerNotifier(
         /** Label of the own-SOS exit button once the SOS is older than LoneWorkerLogic.RESCUER_BUTTON_MS. */
         const val RESCUER_OK = "구조자 확인"
 
+        /** Banner / notification line on the requester's phone while its monitoring stop is pending after the rescuer's release. */
+        const val RESCUER_STOP_SOON = "잠시 뒤 이 휴대폰의 감시를 중지합니다"
+
+        /** Stop notice and toast on the requester's phone once monitoring stopped after the rescuer's release. */
+        const val RESCUER_STOPPED = "구조자 확인으로 감시를 중지했습니다"
+
         const val TURN_CLOSE_HINT = "회전하거나 ${LoneWorkerLogic.STRONG_RUN_MS / 1000}초 넘게 흔들거나 [괜찮아요]를 누르면 닫혀요"
 
         /** Flag passed when the notification's "괜찮아요" opens the screen: the screen shows the confirmation dialog right away. */
