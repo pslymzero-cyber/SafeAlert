@@ -215,15 +215,15 @@ function buildMail(event, sc, id, rec, stillMin) {
     if (!(sec > 0)) sec = 0;
     return {
       subject: '[SafeAlert 해제] ' + sc + ' ' + name + ' - 구조 요청 해제 (기록 ' + no + ')',
-      html: mailHtml('#2e7d32', '구조 요청 해제', who, '작업자가 [괜찮아요]로 해제했습니다.', [
+      html: mailHtml('#2e7d32', '구조 요청 해제', who, '구조 요청을 낸 폰에서 해제했습니다.', [
         ['해제 시각', esc(fmt(rec.resolvedAt, 'HH:mm:ss')) + ' (서버 기록)', true],
         ['걸린 시간', '구조 요청 기록 후 ' + Math.floor(sec / 60) + '분 ' + (sec % 60) + '초'],
         ['사업장', siteCell('#2e7d32', sc, rec)],
         ['상태', badge('#e8f5e9', '#2e7d32', '해제됨')],
         ['기록 번호', esc(no)]
       ]),
-      body: name + '(' + role + ') 작업자가 서버 기록 ' + fmt(rec.resolvedAt, 'HH:mm:ss') +
-        '에 [괜찮아요]로 구조 요청을 해제했습니다. (구조 요청 기록 후 ' + Math.floor(sec / 60) + '분 ' + (sec % 60) + '초)' +
+      body: name + '(' + role + ') 작업자의 구조 요청이 서버 기록 ' + fmt(rec.resolvedAt, 'HH:mm:ss') +
+        '에 구조 요청을 낸 폰에서 해제됐습니다. (구조 요청 기록 후 ' + Math.floor(sec / 60) + '분 ' + (sec % 60) + '초)' +
         '\n기록 번호: ' + no + '\n\n' + TAIL
     };
   }
@@ -237,7 +237,7 @@ function buildMail(event, sc, id, rec, stillMin) {
   var ended = auto ? '응답 없이 자동 종료' : '해제됨';
   var state = done
     ? '상태: ' + ended + ' (' + fmt(rec.resolvedAt, 'HH:mm:ss') + ')'
-    : '상태: 구조 요청 중 (작업자가 [괜찮아요]를 누르면 해제 메일이 갑니다)';
+    : '상태: 구조 요청 중 (구조 요청을 낸 폰에서 해제하면 해제 메일이 갑니다)';
   return {
     subject: '[SafeAlert 구조 요청] ' + sc + ' ' + name + (fall ? ' - 넘어짐 감지' : ' - 움직임 없음') +
       ' (기록 ' + no + ')',
@@ -248,7 +248,7 @@ function buildMail(event, sc, id, rec, stillMin) {
       ['상태', done ? badge(auto ? '#fff3e0' : '#e8f5e9', auto ? '#e65100' : '#2e7d32',
           ended + ' (' + esc(fmt(rec.resolvedAt, 'HH:mm:ss')) + ')')
         : badge('#fdecea', '#c62828', '구조 요청 중') +
-          '<br><span style="font-size:12px;color:#666666;">작업자가 [괜찮아요]를 누르면 해제 메일이 갑니다.</span>'],
+          '<br><span style="font-size:12px;color:#666666;">구조 요청을 낸 폰에서 해제하면 해제 메일이 갑니다.</span>'],
       ['기록 번호', esc(no)]
     ]),
     body: [

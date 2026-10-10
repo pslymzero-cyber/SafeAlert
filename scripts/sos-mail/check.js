@@ -200,7 +200,7 @@ assert.strictEqual(t.post({ id: LONG, event: 'resolved' }), 'sent');
 m = t.w.mails[5];
 htmlOk(m.htmlBody);
 for (const s of ['#2e7d32', RES_TITLE, 'WF11', 'Lee', '>KLMNOP<', '2\uBD84 5\uCD08',
-  '\uC791\uC5C5\uC790\uAC00 [\uAD1C\uCC2E\uC544\uC694]\uB85C \uD574\uC81C\uD588\uC2B5\uB2C8\uB2E4.',
+  '\uAD6C\uC870 \uC694\uCCAD\uC744 \uB0B8 \uD3F0\uC5D0\uC11C \uD574\uC81C\uD588\uC2B5\uB2C8\uB2E4.',
   '\uD68C\uC2E0\uD558\uC9C0 \uB9C8\uC2ED\uC2DC\uC624.']) assert.ok(m.htmlBody.includes(s), 'resolved html ' + s);
 assert.ok(m.htmlBody.includes('>\uC0AC\uC5C5\uC7A5<') &&
   m.htmlBody.includes('background:#2e7d32;color:#ffffff;font-weight:bold;padding:2px 8px;">WF11</span> \u00B7 Rack A</td>'),

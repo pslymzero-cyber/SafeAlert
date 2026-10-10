@@ -427,7 +427,7 @@
   function scopeOf(r) { return [r.floor, r.proc].filter(Boolean).join('-'); }
   function placeOf(r) { var s = scopeOf(r); return s ? r.sc + '-' + s : r.sc + ' (층·공정 미지정)'; }
   function nameOf(s) { return s.name || '이름 없음'; }
-  function endedHow(s) { return s.auto ? '응답 없이 자동 종료' : '본인 해제'; }
+  function endedHow(s) { return s.auto ? '응답 없이 자동 종료' : '폰에서 해제'; }
   function isStale(s) { return nowMs() > s.createdAt + STALE_AFTER_MS; }
   function match(sel, v) { return !sel || (sel === '-' ? !v : v === sel); }
   function inScope(r) { return match(st.floor, r.floor) && match(st.proc, r.proc); }
