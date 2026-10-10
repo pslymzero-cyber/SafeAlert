@@ -149,6 +149,9 @@ function handle(p) {
       if (rec.status !== 'active' && rec.status !== 'resolved') return 'not_ready';
     } else if (rec.status !== 'resolved' || typeof rec.resolvedAt !== 'number') {
       return 'not_ready';
+    } else if (rec.reason === 'auto') {
+      // Ended by the app's one-hour limit, not released on the requester's phone: no resolve mail (the app drops the request on this answer)
+      return 'stale';
     }
     var at = event === 'sos' ? rec.createdAt : rec.resolvedAt;
     if (typeof at !== 'number' || now - at > FRESH_MS) return 'stale';

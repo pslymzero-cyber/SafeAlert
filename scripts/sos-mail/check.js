@@ -9,6 +9,7 @@ const NOW = Date.now();
 const SECRET = 'se/cr+t';
 const HOUR = 3600 * 1000;
 let scenes = 0;
+const allMails = [];
 
 function make(o) {
   o = o || {};
@@ -51,7 +52,7 @@ function make(o) {
       }
     },
     MailApp: {
-      sendEmail: (m) => { if (w.sendFail) throw new Error('send failed'); w.mails.push(m); },
+      sendEmail: (m) => { if (w.sendFail) throw new Error('send failed'); w.mails.push(m); allMails.push(m); },
       getRemainingDailyQuota: () => w.quota
     },
     ContentService: {
@@ -94,6 +95,11 @@ const NO_LINE = '\uAE30\uB85D \uBC88\uD638: ';
 const ACTIVE = '\uAD6C\uC870 \uC694\uCCAD \uC911';       // sos still open
 const DONE = '\uD574\uC81C\uB428';                       // resolved
 const RES_TITLE = '\uAD6C\uC870 \uC694\uCCAD \uD574\uC81C';
+const RELEASED_TEXT = '\uAD6C\uC870 \uC694\uCCAD\uC744 \uB0B8 \uD3F0\uC5D0\uC11C \uD574\uC81C\uB410\uC2B5\uB2C8\uB2E4';   // released on the requester's phone
+const RELEASE_HINT = '\uAD6C\uC870 \uC694\uCCAD\uC744 \uB0B8 \uD3F0\uC5D0\uC11C \uD574\uC81C\uD558\uBA74 \uD574\uC81C \uBA54\uC77C\uC774 \uAC11\uB2C8\uB2E4';
+const OLD_BUTTON = '[\uAD1C\uCC2E\uC544\uC694]';
+const OLD_WHO = '\uC791\uC5C5\uC790\uAC00';
+const AUTO_ENDED = '\uC751\uB2F5 \uC5C6\uC774 \uC790\uB3D9 \uC885\uB8CC';
 // html body: tables and inline style only, centred at 600px, no images or emoji
 function htmlOk(h) {
   assert.strictEqual(typeof h, 'string');
@@ -151,6 +157,7 @@ assert.ok(m.body.includes('3\uBD84 \uB3D9\uC548 \uC6C0\uC9C1\uC784 \uC5C6\uC74C'
 assert.ok(m.body.includes('\uBCF4\uD589\uC790'));
 assert.ok(m.body.includes('\uC54C \uC218 \uC5C6\uC74C'));
 assert.ok(!m.body.includes('\uD574\uC81C\uB428'));
+assert.ok(m.body.includes(RELEASE_HINT), 'sos text hint');
 assert.ok(t.w.zones.length > 0 && t.w.zones.every((z) => z === 'Asia/Seoul'));
 htmlOk(m.htmlBody);
 for (const s of ['#c62828', ACTIVE, 'WF11', 'Kim', '>k1<',
@@ -158,6 +165,7 @@ for (const s of ['#c62828', ACTIVE, 'WF11', 'Kim', '>k1<',
   '\uC989\uC2DC \uC791\uC5C5\uC790 \uC0C1\uD0DC\uB97C \uD655\uC778\uD574 \uC8FC\uC2ED\uC2DC\uC624.',
   '\uD68C\uC2E0\uD558\uC9C0 \uB9C8\uC2ED\uC2DC\uC624.']) assert.ok(m.htmlBody.includes(s), 'sos html ' + s);
 for (const s of ['#2e7d32', DONE, RES_TITLE]) assert.ok(!m.htmlBody.includes(s), 'sos html no ' + s);
+assert.ok(m.htmlBody.includes(RELEASE_HINT), 'sos html hint');
 assert.ok(m.htmlBody.includes('>\uC0AC\uC5C5\uC7A5<') &&
   m.htmlBody.includes('background:#c62828;color:#ffffff;font-weight:bold;padding:2px 8px;">WF11</span></td>'), 'sos html site');
 assert.ok(!m.htmlBody.includes('\uB9C8\uC9C0\uB9C9 \uC704\uCE58'), 'sos html no last-location row');
@@ -210,12 +218,21 @@ assert.ok(m.subject.includes('Lee'));
 assert.ok(m.subject.endsWith('(' + NO + 'KLMNOP)'));
 assert.ok(m.body.includes(NO_LINE + 'KLMNOP'));
 assert.ok(m.body.includes('\uAD6C\uC870 \uC694\uCCAD \uAE30\uB85D \uD6C4 2\uBD84 5\uCD08'));
+assert.ok(m.body.includes(RELEASED_TEXT), 'resolved text sentence');
 assert.strictEqual(t.post({ id: LONG, event: 'resolved' }), 'dup');
 assert.strictEqual(t.w.locked, t.w.released);
 
 // stale
 t = make({ db: { k1: Object.assign({}, still, { createdAt: NOW - 3 * HOUR }) } });
 assert.strictEqual(t.post({}), 'stale');
+
+// A record ended by the app's one-hour limit gets no resolve mail
+t = make({ db: { k1: Object.assign({}, fallDone, { reason: 'auto' }) } });
+assert.strictEqual(t.post({}), 'sent');
+assert.ok(t.w.mails[0].body.includes(AUTO_ENDED));
+assert.strictEqual(t.post({ event: 'resolved' }), 'stale');
+assert.strictEqual(t.w.mails.length, 1);
+assert.strictEqual(t.sentKeys().length, 1);
 
 // quota per site+center for sos mails only; resolved mails are not capped
 t = make({ db: { k1: fallDone, k2: still, k3: still }, props: { DAILY_MAX: '1' } });
@@ -365,6 +382,13 @@ t = make({ db: { k1: { name: 'RT-07', role: 'FORKLIFT', trigger: 'fall', created
 assert.strictEqual(t.post({}), 'sent');
 assert.ok(t.w.mails[0].body.includes('\uC791\uC5C5\uC790: RT-07 (Reach Truck)'));
 assert.ok(t.w.mails[0].htmlBody.includes('RT-07 (Reach Truck)'));
+
+assert.ok(allMails.length > 0);
+for (const m of allMails) {
+  for (const part of [m.subject, m.body, m.htmlBody]) {
+    for (const bad of [OLD_BUTTON, OLD_WHO]) assert.ok(!String(part).includes(bad), 'old wording ' + bad);
+  }
+}
 
 console.log('sos-mail check OK (' + scenes + ' scenes)');
 
