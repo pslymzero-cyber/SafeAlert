@@ -189,7 +189,7 @@ class LoneWorkerMonitor(
     fun stop() {
         if (!started) return
         started = false
-        sensors.gyroLog(false, false) // Gyro measurement is turned off only here or when the siren ends
+        sensors.gyroLog(false, false) // Gyro measurement is turned off only here or when the alert ends
         sensors.unregister()
         prefsListener?.let { DevSettings.unregisterOnChange(it) }
         prefsListener = null

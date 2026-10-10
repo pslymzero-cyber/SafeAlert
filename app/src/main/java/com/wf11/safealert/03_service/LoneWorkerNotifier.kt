@@ -83,6 +83,15 @@ class LoneWorkerNotifier(
         /** Label of the own-SOS exit button once the SOS is older than LoneWorkerLogic.RESCUER_BUTTON_MS. */
         const val RESCUER_OK = "구조자 확인"
 
+        /** Label of the exit button on the requester's SOS screen, dialog and notification: rescuer = the rescuer's button (after one minute). */
+        fun sosExitLabel(rescuer: Boolean): String = if (rescuer) RESCUER_OK else "괜찮아요"
+
+        /** Hint that says which button releases the requester's SOS. */
+        fun sosExitHint(rescuer: Boolean): String = if (rescuer) "[${RESCUER_OK}]을 눌러야 해제돼요" else "[괜찮아요]를 눌러야 해제돼요"
+
+        /** Refusal text when something else is tried while the requester's SOS is active. */
+        fun sosExitFirst(rescuer: Boolean): String = if (rescuer) "[${RESCUER_OK}]으로 먼저 해제하세요" else "[괜찮아요]로 먼저 해제하세요"
+
         /** Banner / notification line on the requester's phone while its monitoring stop is pending after the rescuer's release. */
         const val RESCUER_STOP_SOON = "잠시 뒤 이 휴대폰의 감시를 중지합니다"
 
@@ -156,7 +165,7 @@ class LoneWorkerNotifier(
         )
 
     /**
-     * Posts or cancels the notification matching the state. Priority: SOS, checking, ringing peer, resolved, quiet notice (notice).
+     * Posts or cancels the notification matching the state. Priority: SOS, checking, alerting peer, resolved, quiet notice (notice).
      * audible = the peer entries alerting on this phone; the siren of some or all of them may already be off (ringOver).
      * If alertAgain is true and it is a major alert, cancels and re-posts even with the same key.
      * With closesByTurn, the checking hint is TURN_CLOSE_HINT instead of steps.
@@ -184,8 +193,7 @@ class LoneWorkerNotifier(
         lastKey = key
         val (title, text, act) = when {
             mode == LoneWorkerLogic.Mode.SOS ->
-                Triple("구조 요청 중", if (rescuer) "[${RESCUER_OK}]을 눌러야 해제돼요" else "[괜찮아요]를 눌러야 해제돼요",
-                    (if (rescuer) RESCUER_OK else "괜찮아요") to activityPi(REQ_CONFIRM, true))
+                Triple("구조 요청 중", sosExitHint(rescuer), sosExitLabel(rescuer) to activityPi(REQ_CONFIRM, true))
             mode == LoneWorkerLogic.Mode.CHECKING ->
                 Triple("괜찮으세요?", "응답이 없으면 ${SiteScope.audience(DevSettings.floor, DevSettings.proc)}에 구조 요청이 나가요. " + (if (closesByTurn) TURN_CLOSE_HINT else "걸으면 자동으로 닫혀요"), "괜찮아요" to servicePi(REQ_ACK, BleService.ACTION_LW_ACK))
             audible.isNotEmpty() ->

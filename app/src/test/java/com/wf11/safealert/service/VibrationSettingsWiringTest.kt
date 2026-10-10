@@ -32,6 +32,7 @@ class VibrationSettingsWiringTest {
     fun tearDown() {
         DevSettings.vibrationWarningMs = 500L
         DevSettings.vibrationDangerCount = 3
+        VibrationHelper.stopVibration(app) // Ends the one-shot vibration this class leaves in the helper's static state
     }
 
     private fun pattern(): LongArray? =

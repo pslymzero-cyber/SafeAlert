@@ -242,7 +242,7 @@ class LoneWorkerLogicTest {
         assertTrue(ui.substringBefore("\n    }").contains("logic.rescuerButton(t)"))
         val update = src.substring(src.indexOf("notifier.update(")).lineSequence().first()
         assertTrue(update, update.contains("logic.rescuerButton(t)"))
-        assertTrue(repoFile("app/src/main/java/com/wf11/safealert/05_ui/LoneWorkerActivity.kt").contains("LoneWorkerNotifier.RESCUER_OK"))
+        assertTrue(repoFile("app/src/main/java/com/wf11/safealert/05_ui/LoneWorkerActivity.kt").contains("LoneWorkerNotifier.sosExitLabel("))
     }
 
     @Test fun alarm_vibrates_only_for_peer_siren_not_on_the_suspect_device() {
@@ -261,5 +261,34 @@ class LoneWorkerLogicTest {
         r.onPeerBle("P", true, 1_000)
         assertEquals(1, r.audiblePeers().size)
         assertTrue(r.alarmVibrates)
+    }
+
+    @Test fun sos_exit_texts_come_from_one_helper() {
+        assertEquals("괜찮아요", LoneWorkerNotifier.sosExitLabel(false))
+        assertEquals(LoneWorkerNotifier.RESCUER_OK, LoneWorkerNotifier.sosExitLabel(true))
+        assertEquals("[괜찮아요]를 눌러야 해제돼요", LoneWorkerNotifier.sosExitHint(false))
+        assertEquals("[구조자 확인]을 눌러야 해제돼요", LoneWorkerNotifier.sosExitHint(true))
+        assertEquals("[괜찮아요]로 먼저 해제하세요", LoneWorkerNotifier.sosExitFirst(false))
+        assertEquals("[구조자 확인]으로 먼저 해제하세요", LoneWorkerNotifier.sosExitFirst(true))
+        val ui = "app/src/main/java/com/wf11/safealert/05_ui/"
+        for (src in listOf(repoFile(ui + "LoneWorkerActivity.kt"), repoFile(ui + "LoneWorkerUi.kt"), serviceSource("BleService.kt"))) {
+            assertFalse(src.contains("눌러야 해제돼요"))
+            assertFalse(src.contains("먼저 해제하세요"))
+        }
+        val kv = Kv()
+        assertEquals(0L, SosLedger.beganAgoMs(kv, 100_000L))
+        kv.put(mapOf(SosLedger.K_TRIGGER to "still", "a.began" to "40000"))
+        assertEquals(60_000L, SosLedger.beganAgoMs(kv, 100_000L))
+        assertEquals(0L, SosLedger.beganAgoMs(kv, 30_000L))
+    }
+
+    @Test fun open_confirm_dialog_is_rebuilt_when_the_button_becomes_the_rescuers() {
+        val src = repoFile("app/src/main/java/com/wf11/safealert/05_ui/LoneWorkerActivity.kt")
+        val render = src.substring(src.indexOf("if (st.mode == LoneWorkerLogic.Mode.SOS) {"))
+        val before = render.substring(0, render.indexOf("if (pendingConfirm) showConfirm()"))
+        assertTrue(before.contains("confirmRescuer != st.rescuerButton"))
+        assertTrue(before.contains("confirmDialog?.dismiss()"))
+        assertTrue(before.contains("pendingConfirm = true"))
+        assertTrue(sourceBlock(src, "    private fun showConfirm() {").contains("confirmRescuer = rescuer"))
     }
 }

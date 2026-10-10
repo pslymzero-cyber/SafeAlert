@@ -73,6 +73,18 @@ class SosLedger(
         private const val K_AT = "a.at"   // wall-clock time the server confirmed the SOS (survives restarts and reboots)
         private const val K_BEGAN = "a.began"   // wall-clock time the SOS began on this phone (survives restarts and reboots)
         private const val K_PENDING = "r.list"
+
+        /**
+         * Wall-clock ms since the SOS stored in kv began: from a.began; an SOS stored without it counts from a.at (its server
+         * confirmation, never earlier than the start); without both, or without an active SOS, 0. A backward clock step counts
+         * as 0, but a clock that jumped forward before the phone restarted cannot be told from a long SOS, so the rescuer's
+         * button (and the monitoring stop that follows it) can come early then.
+         */
+        fun beganAgoMs(kv: SosKv, wallNowMs: Long): Long {
+            if (kv.get(K_TRIGGER) == null) return 0L
+            val at = kv.get(K_BEGAN)?.toLongOrNull() ?: kv.get(K_AT)?.toLongOrNull() ?: return 0L
+            return (wallNowMs - at).coerceAtLeast(0L)
+        }
         private const val K_EP_LAST = "ep.last"
         private val ACTIVE_KEYS = listOf(
             K_TRIGGER, K_BLE, K_NAME, K_ROLE, K_BEACON, K_RSSI, K_SID, K_EP, K_FLOOR, K_PROC, K_KEY, K_PATH, K_SENT, K_AT, K_BEGAN
@@ -139,15 +151,9 @@ class SosLedger(
     }
 
     /**
-     * Wall-clock ms since the stored SOS began: from a.began; an SOS stored without it counts from a.at (its server
-     * confirmation, never earlier than the start); without both, or without an active SOS, 0. A backward clock step counts as
-     * 0, so the label timing never runs ahead of the real age.
+     * Wall-clock ms since the stored SOS began (see the companion's beganAgoMs).
      */
-    fun beganAgoMs(): Long {
-        if (!hasActive()) return 0L
-        val at = kv.get(K_BEGAN)?.toLongOrNull() ?: kv.get(K_AT)?.toLongOrNull() ?: return 0L
-        return (wallClock() - at).coerceAtLeast(0L)
-    }
+    fun beganAgoMs(): Long = beganAgoMs(kv, wallClock())
 
     /** SOS entered. If a stored SOS (restored) already exists, keep it so no second record is created. */
     fun begin(rec: Record) {

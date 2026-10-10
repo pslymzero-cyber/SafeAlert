@@ -1,6 +1,7 @@
 package com.wf11.safealert.service
 
 import com.wf11.safealert.service.LoneWorkerAlarm.Pattern
+import com.wf11.safealert.service.LoneWorkerLogic.Mode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -162,5 +163,51 @@ class LoneWorkerPeerRingTest {
             .lineSequence().first()
         assertTrue(update, update.contains("audible,"))
         assertEquals(1, Regex("notifier\\.update\\(").findAll(src).count())
+    }
+
+    /** A peer SOS heard during the phone's own SOS waits: its siren time starts when the phone's own SOS is released. */
+    @Test fun sos_heard_during_my_own_sos_sounds_30s_after_i_release() {
+        val l = newLogic(carried = true)
+        l.seenAt(180_000)
+        l.seenAt(300_000)
+        assertEquals(Mode.SOS, l.mode)
+        l.onPeerBle("P", true, 310_000, 1)
+        l.tick(311_000)
+        assertNull(l.peer("P").ringStartMs)
+        l.onPeerBle("P", true, 399_000, 1)
+        l.tick(399_000)
+        assertNull(l.peer("P").ringStartMs)
+        val t = 400_000L
+        assertTrue(l.cancelSos(t))
+        assertEquals(t, l.peer("P").ringStartMs)
+        assertEquals(Pattern.SIREN, siren(l))
+        l.tick(t + 29_999)
+        assertEquals(Pattern.SIREN, siren(l))
+        l.tick(t + 30_000)
+        assertNull(siren(l))
+        assertTrue(l.alarmVibrates)
+    }
+
+    /** Once started the ring time runs in any mode: a check window opened meanwhile does not stop the clock. */
+    @Test fun ring_time_once_started_keeps_running_through_my_check_window() {
+        val l = newLogic(carried = true).apply { stillMs = 10_000L }
+        l.onPeerBle("P", true, 1_000, 1)
+        l.tick(1_000)
+        assertEquals(1_000L, l.peer("P").ringStartMs)
+        // The peer's vibration pauses the no-motion count, so the check window opens a while after the siren started
+        var opened = 0L
+        for (t in 2_000L..30_000L step 1_000L) {
+            l.onPeerBle("P", true, t, 1)
+            if (l.seenAt(t) == Mode.CHECKING && opened == 0L) opened = t
+        }
+        assertTrue("the check window opened inside the ring time", opened in 1L..30_000L)
+        assertEquals(Pattern.CHECK, siren(l))
+        for (t in 31_000L..36_000L step 1_000L) { l.onPeerBle("P", true, t, 1); assertEquals(Mode.CHECKING, l.seenAt(t)) }
+        assertTrue(l.peer("P").ringOver)
+        l.onPeerBle("P", true, 41_000, 1)
+        l.seenAt(41_000)
+        assertTrue(l.ackWorking(41_000))
+        assertNull(siren(l))
+        assertTrue(l.alarmVibrates)
     }
 }

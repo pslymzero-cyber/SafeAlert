@@ -45,6 +45,11 @@ class LoneWorkerSosSync(
             ctx.getSharedPreferences(FILE, Context.MODE_PRIVATE).getString(SosLedger.K_TRIGGER, null) != null
         }.getOrDefault(false)
 
+        /** Whether the stored own SOS is old enough that its exit button is the rescuer's (for screens without a live monitor). */
+        fun storedSosRescuer(ctx: Context): Boolean = runCatching {
+            SosLedger.beganAgoMs(kvOf(ctx), System.currentTimeMillis()) >= LoneWorkerLogic.RESCUER_BUTTON_MS
+        }.getOrDefault(false)
+
         private const val TAG = "SosMail"
         private const val K_TO = "to"
 

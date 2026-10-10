@@ -30,6 +30,7 @@ class LoneWorkerAlarmVibrationTest {
     @Before
     fun setUp() {
         DevSettings.init(app)
+        VibrationHelper.stopVibration(app) // Ends a one-shot vibration another test class left in the helper's static state
         alarm = LoneWorkerAlarm(app) { }
     }
 

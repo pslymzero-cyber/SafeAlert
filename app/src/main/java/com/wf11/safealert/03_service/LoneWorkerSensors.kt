@@ -25,7 +25,7 @@ import kotlin.math.sqrt
  * with the corrected time and whether the app was vibrating then — only steps inside walk-like windows count. Vibration spans
  * are judged on times converted to the elapsed base, for both accelerometer and steps. The step sensor is registered only
  * with the physical activity permission on API 29+.
- * The gyro is registered separately, for measurement logs only, while a peer siren vibrates on this device (not used for
+ * The gyro is registered separately, for measurement logs only, while a peer alert vibrates on this device (not used for
  * judgment).
  * All callbacks run on handler (main).
  */
@@ -164,11 +164,11 @@ class LoneWorkerSensors(
     }
 
     /**
-     * Logs gyro measurements every second, only while a peer siren vibrates on this device. Not used for judgment: only sample
-     * count, mean and max angular velocity (no personal data or location). One registration-result line per siren (GyroGate),
+     * Logs gyro measurements every second, only while a peer alert vibrates on this device. Not used for judgment: only sample
+     * count, mean and max angular velocity (no personal data or location). One registration-result line per alert (GyroGate),
      * plus one line for the remaining bucket when turned off.
-     * Skipped silently without a gyro. Turned off only at siren end and monitor stop (LoneWorkerMonitor.stop) — even if feature
-     * off takes the sensors down, measurement continues while the siren vibrates.
+     * Skipped silently without a gyro. Turned off only at the end of the alert and monitor stop (LoneWorkerMonitor.stop) — even if feature
+     * off takes the sensors down, measurement continues while the alert vibrates.
      */
     fun gyroLog(siren: Boolean, vibrating: Boolean) {
         if (!gyroGate.update(siren, vibrating)) return
@@ -298,11 +298,11 @@ class GyroStats {
 }
 
 /**
- * Gyro measurement request (pure). Registers only while a peer siren vibrates on this device; the registration attempt is
- * logged once per siren, and after a failure (including no gyro) it is not retried during that siren. Resets when the siren ends.
+ * Gyro measurement request (pure). Registers only while a peer alert vibrates on this device; the registration attempt is
+ * logged once per alert, and after a failure (including no gyro) it is not retried during that alert. Resets when the alert ends.
  */
 class GyroGate {
-    /** Registration result for this siren; null if not tried yet. */
+    /** Registration result for this alert; null if not tried yet. */
     private var result: Boolean? = null
 
     /** Whether measurement registration is wanted. */
@@ -318,7 +318,7 @@ class GyroGate {
         return true
     }
 
-    /** Records the registration result; true if it is the first result for this siren (one log line). Turns off on failure. */
+    /** Records the registration result; true if it is the first result for this alert (one log line). Turns off on failure. */
     fun registered(ok: Boolean): Boolean {
         val first = result == null
         result = ok

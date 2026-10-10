@@ -46,6 +46,7 @@ class LoneWorkerActivity : AppCompatActivity() {
     private lateinit var binding: ActivityLoneWorkerBinding
     private var confirmDialog: AlertDialog? = null
     private var pendingConfirm = false
+    private var confirmRescuer = false  // The open confirmation dialog was built for the rescuer's button
     private var waitUntil = 0L   // Service-restore wait deadline (elapsedRealtime); 0 = not waiting
     private var shownMode: LoneWorkerLogic.Mode? = null  // Last drawn screen (null = waiting for restore, buttons hidden)
     private var shownRescuer = false  // Last drawn SOS button read "구조자 확인" (own SOS older than RESCUER_BUTTON_MS)
@@ -79,7 +80,7 @@ class LoneWorkerActivity : AppCompatActivity() {
                     LoneWorkerLogic.Mode.CHECKING ->
                         if (st.closesByTurn) LoneWorkerNotifier.TURN_CLOSE_HINT else "[괜찮아요]를 누르거나 걸으면 닫혀요"
                     LoneWorkerLogic.Mode.SOS ->
-                        if (st.rescuerButton) "[${LoneWorkerNotifier.RESCUER_OK}]을 눌러야 해제돼요" else "[괜찮아요]를 눌러야 해제돼요"
+                        LoneWorkerNotifier.sosExitHint(st.rescuerButton)
                     else -> null
                 }
                 if (hint != null) Toast.makeText(this@LoneWorkerActivity, hint, Toast.LENGTH_SHORT).show() else finish()
@@ -124,13 +125,14 @@ class LoneWorkerActivity : AppCompatActivity() {
     private fun showConfirm() {
         if (confirmDialog?.isShowing == true) return
         val rescuer = shownRescuer
+        confirmRescuer = rescuer
         confirmDialog = AlertDialog.Builder(this)
             .setTitle(if (rescuer) "작업자를 확인하셨나요?" else "정말 괜찮으신가요?")
             .setMessage(
                 if (rescuer) "해제하면 이 휴대폰의 사이렌과 동료 휴대폰의 구조 요청 경보가 꺼지고, 이 휴대폰의 감시가 중지돼요"
                 else "해제하면 동료 휴대폰의 구조 요청 경보도 꺼져요"
             )
-            .setPositiveButton(if (rescuer) LoneWorkerNotifier.RESCUER_OK else "괜찮아요") { _, _ -> LoneWorkerMonitor.current?.cancelSos() }
+            .setPositiveButton(LoneWorkerNotifier.sosExitLabel(rescuer)) { _, _ -> LoneWorkerMonitor.current?.cancelSos() }
             .setNegativeButton("취소", null)
             .show()
     }
@@ -197,7 +199,7 @@ class LoneWorkerActivity : AppCompatActivity() {
                 b.tvLwTitle.text = "구조 요청 중"
                 b.tvLwBody.text = (listOf(listOfNotNull("동료 휴대폰에 구조 요청이 나가고 있어요", st.serverStatus).joinToString("\n")) + peerLines)
                     .joinToString("\n\n")
-                b.btnLwPrimary.text = if (st.rescuerButton) LoneWorkerNotifier.RESCUER_OK else "괜찮아요"
+                b.btnLwPrimary.text = LoneWorkerNotifier.sosExitLabel(st.rescuerButton)
                 ALERT
             }
             LoneWorkerLogic.Mode.CHECKING -> {
@@ -224,6 +226,12 @@ class LoneWorkerActivity : AppCompatActivity() {
         }
         st.alarmFault?.let { b.tvLwBody.text = "${b.tvLwBody.text}\n\n${it}" }
         if (st.mode == LoneWorkerLogic.Mode.SOS) {
+            // The button turns to the rescuer's at the one-minute mark: an open dialog is rebuilt with the rescuer's wording
+            if (confirmDialog?.isShowing == true && confirmRescuer != st.rescuerButton) {
+                confirmDialog?.dismiss()
+                confirmDialog = null
+                pendingConfirm = true
+            }
             if (pendingConfirm) showConfirm()
         } else confirmDialog?.dismiss()
         pendingConfirm = false

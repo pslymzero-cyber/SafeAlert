@@ -788,13 +788,13 @@ class BleService : LifecycleService() {
      */
     private fun requestStop(): Boolean {
         if (loneWorker.sosActive) {
-            // No stop or role switch during an SOS — only the wearer's own "괜찮아요" clears it
+            // No stop or role switch during an SOS — only the exit button on this phone's SOS screen clears it
             Log.d(TAG, "구조 요청 중 정지 요청 무시")
             // Restore the running state the screen already cleared — the next restore and screen return use it
             saveRunningMode(myMode, myId, myCategory)
             val sp = getSharedPreferences("safealert_prefs", MODE_PRIVATE)
             if (sp.getLong("running_since", 0L) == 0L) sp.edit().putLong("running_since", System.currentTimeMillis()).commit()
-            sendStatusBroadcast("[괜찮아요]로 먼저 해제하세요")
+            sendStatusBroadcast(LoneWorkerNotifier.sosExitFirst(loneWorker.rescuerButton))
             return false
         }
         // User stopped explicitly → remove the START_STICKY restore keys synchronously (.commit).

@@ -617,13 +617,23 @@ class LoneWorkerPeerTest {
 
         val l = newLogic(carried = true)
         assertEquals(Mode.CHECKING, l.seenAt(180_000))
-        l.onPeerBle("P", true, 181_000)
-        assertEquals(Mode.CHECKING, l.seenAt(181_000))
+        // Heard again every few seconds while the phone's own check window is open: the siren time does not start
+        for (t in 181_000L..216_000L step 5_000L) {
+            l.onPeerBle("P", true, t)
+            assertEquals(Mode.CHECKING, l.seenAt(t))
+        }
         assertEquals(Pattern.CHECK, Pattern.of(l.mode, l.soundingPeers().isNotEmpty()))
         assertFalse(l.alarmVibrates)
-        l.ackWorking(182_000)
-        l.tick(182_000)
+        // Closed 35 s after the peer was first heard, with no tick after it: the siren sounds its full 30 s from now
+        val t = 217_000L
+        l.ackWorking(t)
         assertEquals(Pattern.SIREN, Pattern.of(l.mode, l.soundingPeers().isNotEmpty()))
+        assertTrue(l.alarmVibrates)
+        assertEquals(t + LoneWorkerPeers.PEER_RING_MS, l.peerRingEndAt())
+        l.tick(t + LoneWorkerPeers.PEER_RING_MS - 1)
+        assertEquals(Pattern.SIREN, Pattern.of(l.mode, l.soundingPeers().isNotEmpty()))
+        l.tick(t + LoneWorkerPeers.PEER_RING_MS)
+        assertNull(Pattern.of(l.mode, l.soundingPeers().isNotEmpty()))
         assertTrue(l.alarmVibrates)
     }
 

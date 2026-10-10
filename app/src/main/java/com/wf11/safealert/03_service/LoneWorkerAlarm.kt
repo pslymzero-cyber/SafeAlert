@@ -71,7 +71,8 @@ class LoneWorkerAlarm(
             /**
              * Sound priority (pure): my SOS → siren, check window → check tone, coworker SOS still inside its ring time while
              * watching → siren, otherwise none. The vibration follows LoneWorkerLogic.alarmVibrates and may go on without the
-             * siren. Adding a Mode causes a compile error here.
+             * siren. A receiving phone that cannot vibrate (suspected fall, no vibrator) has the siren for the ring time only and
+             * then alerts by screen and notification; the siren does not go on for it. Adding a Mode causes a compile error here.
              */
             fun of(mode: LoneWorkerLogic.Mode, peerSounding: Boolean): Pattern? = when (mode) {
                 LoneWorkerLogic.Mode.SOS -> SIREN
@@ -216,10 +217,6 @@ class LoneWorkerAlarm(
             releaseTrack()
             stopFallback()
             playing = null
-            if (!vibrate) {
-                vibrating = false
-                VibrationHelper.stopAlarmLoop(ctx)
-            }
             volumeFault = null
         }
         restoreWaiting = !settleVolume(final)

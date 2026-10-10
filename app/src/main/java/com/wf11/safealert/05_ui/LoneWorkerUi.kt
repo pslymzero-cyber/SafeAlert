@@ -100,16 +100,16 @@ object LoneWorkerUi {
         val mon = LoneWorkerMonitor.current
         if (mon != null) {
             if (!mon.sosActive) return false
-            Toast.makeText(activity, "[괜찮아요]로 먼저 해제하세요", Toast.LENGTH_LONG).show()
+            Toast.makeText(activity, LoneWorkerNotifier.sosExitFirst(mon.rescuerButton), Toast.LENGTH_LONG).show()
             return true
         }
         if (!reviveIfStoredSos(activity)) {
             // Service can't start for missing permissions: if a saved SOS remains, block without clearing the running state
             if (runningMode(activity) == null || !LoneWorkerSosSync.hasStoredSos(activity) || ServiceStartGate.canStart(activity)) return false
-            Toast.makeText(activity, "근처 기기 권한을 허용한 뒤 [괜찮아요]로 먼저 해제하세요", Toast.LENGTH_LONG).show()
+            Toast.makeText(activity, "근처 기기 권한을 허용한 뒤 ${LoneWorkerNotifier.sosExitFirst(LoneWorkerSosSync.storedSosRescuer(activity))}", Toast.LENGTH_LONG).show()
             return true
         }
-        Toast.makeText(activity, "구조 요청을 복원합니다 — [괜찮아요]로 먼저 해제하세요", Toast.LENGTH_LONG).show()
+        Toast.makeText(activity, "구조 요청을 복원합니다 — ${LoneWorkerNotifier.sosExitFirst(LoneWorkerSosSync.storedSosRescuer(activity))}", Toast.LENGTH_LONG).show()
         return true
     }
 

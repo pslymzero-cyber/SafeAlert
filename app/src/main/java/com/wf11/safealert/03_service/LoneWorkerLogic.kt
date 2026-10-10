@@ -206,7 +206,7 @@ class LoneWorkerLogic(var myBleId: String) {
      */
     val closesByTurn: Boolean get() = mode == Mode.CHECKING && trigger == "still" && mounted
 
-    internal val peerStore = LoneWorkerPeers()
+    internal val peerStore = LoneWorkerPeers { mode == Mode.WATCHING }
 
     internal val beacons = BeaconHints()
 
@@ -434,6 +434,7 @@ class LoneWorkerLogic(var myBleId: String) {
         if (mode != Mode.CHECKING) return false
         closeCheck(nowMs)
         clearAccident()
+        peerStore.ring(nowMs) // No tick follows this path in the monitor: peer sirens held back by the check window start now
         return true
     }
 
@@ -446,6 +447,7 @@ class LoneWorkerLogic(var myBleId: String) {
         if (mode != Mode.SOS) return false
         if (byUser && rescuerButton(nowMs)) stopAt = nowMs + RESCUER_STOP_DELAY_MS
         toWatching(nowMs)
+        peerStore.ring(nowMs) // No tick follows this path in the monitor: peer sirens held back by my SOS start now
         return true
     }
 
@@ -687,7 +689,9 @@ class LoneWorkerLogic(var myBleId: String) {
     /**
      * Alarm vibration only for a peer rescue request (with its siren, and alone after the siren's ring time), when a vibrator
      * exists. A device that may need rescue
-     * itself (check window, own SOS, accident suspicion) uses sound and screen only, without vibration.
+     * itself (check window, own SOS, accident suspicion) uses sound and screen only, without vibration. A phone that receives
+     * a peer SOS but cannot vibrate (suspected fall, no vibrator) alerts by screen and notification after the siren's ring
+     * time; the siren is not extended for it, and if its own wearer really fell, that phone's own check window and SOS follow.
      */
     val alarmVibrates: Boolean
         get() = canVibrate && mode == Mode.WATCHING && accidentUntil == Long.MIN_VALUE && peerStore.audible().isNotEmpty()

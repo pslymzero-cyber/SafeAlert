@@ -42,7 +42,7 @@ internal fun LoneWorkerLogic.loopNeeded(sensorsNeedWake: Boolean): Boolean =
 
 /**
  * Whether the wake lock is needed — sensors, an equipment mount while monitoring,
- * checking / SOS, a ringing peer, a passed deadline awaiting judgment, or a monitoring stop pending after a rescuer's release.
+ * checking / SOS, an alerting peer (siren on or off), a passed deadline awaiting judgment, or a monitoring stop pending after a rescuer's release.
  */
 internal fun LoneWorkerLogic.wakeNeeded(sensorsNeedWake: Boolean, nowMs: Long): Boolean =
     sensorsNeedWake || enabled && mounted || mode != LoneWorkerLogic.Mode.WATCHING ||

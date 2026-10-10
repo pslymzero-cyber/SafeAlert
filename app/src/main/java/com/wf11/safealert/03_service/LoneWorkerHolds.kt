@@ -1,10 +1,10 @@
 package com.wf11.safealert.service
 
 /**
- * Pauses no-motion counting while a peer siren vibrates on this device (pure).
+ * Pauses no-motion counting while a peer alert vibrates on this device, also after its siren time is over (pure).
  * Start and end are the first tick that observes them.
- * Cap: once the pause reaches stillMs, the baseline is moved as if the pause ended at the cap time, even if the siren keeps
- * sounding (time accrued before the pause is kept), and it does not pause again until this device's siren vibration turns
+ * Cap: once the pause reaches stillMs, the baseline is moved as if the pause ended at the cap time, even if the alert keeps
+ * going (time accrued before the pause is kept), and it does not pause again until this device's alert vibration turns
  * off once. Turning on again starts a new pause.
  */
 class SirenPause {
