@@ -32,8 +32,10 @@ import com.wf11.safealert.utils.SiteScope
  * check window redraws each time the remaining seconds change (right after each second boundary).
  * There are no snooze/rest buttons, and Back does not close the screen during a check or SOS: the check window
  * closes only via "괜찮아요" or walking (the mounted no-motion window: rotation, shaking or "괜찮아요"),
- * and an SOS closes only via the user's own "괜찮아요". "괜찮아요" on an SOS always goes through the "정말 괜찮으신가요?" confirmation,
- * and "괜찮아요" on the lock-screen notification opens the same confirmation (EXTRA_CONFIRM_OK).
+ * and an SOS closes only via the user's own button: "괜찮아요", or "구조자 확인" once the SOS is old enough
+ * (LoneWorkerLogic.RESCUER_BUTTON_MS). The button on an SOS always goes through a confirmation ("정말 괜찮으신가요?", or
+ * "작업자를 확인하셨나요?" for the rescuer's button), and the lock-screen notification's button opens the same confirmation
+ * (EXTRA_CONFIRM_OK).
  * Taps right after a button's action changes (SETTLE_MS after the screen type or the active
  * peers change) are ignored, so a double tap doesn't hit the changed button.
  * Buttons go to the monitor current at tap time (LoneWorkerMonitor.current); a
@@ -46,6 +48,7 @@ class LoneWorkerActivity : AppCompatActivity() {
     private var pendingConfirm = false
     private var waitUntil = 0L   // Service-restore wait deadline (elapsedRealtime); 0 = not waiting
     private var shownMode: LoneWorkerLogic.Mode? = null  // Last drawn screen (null = waiting for restore, buttons hidden)
+    private var shownRescuer = false  // Last drawn SOS button read "구조자 확인" (own SOS older than RESCUER_BUTTON_MS)
     private var painted: Look? = null
     private val ackGate = PeerAckGate()
     private val retry = Runnable { render() }
@@ -75,7 +78,8 @@ class LoneWorkerActivity : AppCompatActivity() {
                 val hint = when (st?.mode) {
                     LoneWorkerLogic.Mode.CHECKING ->
                         if (st.closesByTurn) LoneWorkerNotifier.TURN_CLOSE_HINT else "[괜찮아요]를 누르거나 걸으면 닫혀요"
-                    LoneWorkerLogic.Mode.SOS -> "[괜찮아요]를 눌러야 해제돼요"
+                    LoneWorkerLogic.Mode.SOS ->
+                        if (st.rescuerButton) "[${LoneWorkerNotifier.RESCUER_OK}]을 눌러야 해제돼요" else "[괜찮아요]를 눌러야 해제돼요"
                     else -> null
                 }
                 if (hint != null) Toast.makeText(this@LoneWorkerActivity, hint, Toast.LENGTH_SHORT).show() else finish()
@@ -119,10 +123,14 @@ class LoneWorkerActivity : AppCompatActivity() {
 
     private fun showConfirm() {
         if (confirmDialog?.isShowing == true) return
+        val rescuer = shownRescuer
         confirmDialog = AlertDialog.Builder(this)
-            .setTitle("정말 괜찮으신가요?")
-            .setMessage("해제하면 동료 휴대폰의 구조 요청 경보도 꺼져요")
-            .setPositiveButton("괜찮아요") { _, _ -> LoneWorkerMonitor.current?.cancelSos() }
+            .setTitle(if (rescuer) "작업자를 확인하셨나요?" else "정말 괜찮으신가요?")
+            .setMessage(
+                if (rescuer) "해제하면 이 휴대폰의 사이렌과 동료 휴대폰의 구조 요청 경보가 꺼져요"
+                else "해제하면 동료 휴대폰의 구조 요청 경보도 꺼져요"
+            )
+            .setPositiveButton(if (rescuer) LoneWorkerNotifier.RESCUER_OK else "괜찮아요") { _, _ -> LoneWorkerMonitor.current?.cancelSos() }
             .setNegativeButton("취소", null)
             .show()
     }
@@ -155,6 +163,7 @@ class LoneWorkerActivity : AppCompatActivity() {
             if (waitUntil == 0L && LoneWorkerUi.reviveIfStoredSos(this)) waitUntil = t + 10_000L
             if (t < waitUntil) {
                 shownMode = null
+                shownRescuer = false
                 paint(ALERT)
                 b.tvLwChip.visibility = View.GONE
                 b.lwRingBox.visibility = View.GONE
@@ -177,6 +186,7 @@ class LoneWorkerActivity : AppCompatActivity() {
         }
         ackGate.onRender(st.peers, SystemClock.elapsedRealtime(), "${st.mode}:${st.peerActive}")
         shownMode = st.mode
+        shownRescuer = st.rescuerButton
         b.btnLwPrimary.visibility = View.VISIBLE
         b.btnLwPeer.visibility = View.GONE
         val own = st.mode != LoneWorkerLogic.Mode.WATCHING
@@ -187,7 +197,7 @@ class LoneWorkerActivity : AppCompatActivity() {
                 b.tvLwTitle.text = "구조 요청 중"
                 b.tvLwBody.text = (listOf(listOfNotNull("동료 휴대폰에 구조 요청이 나가고 있어요", st.serverStatus).joinToString("\n")) + peerLines)
                     .joinToString("\n\n")
-                b.btnLwPrimary.text = "괜찮아요"
+                b.btnLwPrimary.text = if (st.rescuerButton) LoneWorkerNotifier.RESCUER_OK else "괜찮아요"
                 ALERT
             }
             LoneWorkerLogic.Mode.CHECKING -> {

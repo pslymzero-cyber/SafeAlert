@@ -251,6 +251,9 @@ class LoneWorkerSosSync(
     /** How long my SOS's server record has been up, or null without one or before the server confirmed it. */
     fun sosActiveForMs(): Long? = ledger.activeForMs()
 
+    /** How long ago my stored SOS began (wall clock, survives restarts); 0 when unknown or without an SOS. */
+    fun sosBeganAgoMs(): Long = ledger.beganAgoMs()
+
     /**
      * Records the one-hour release of another phone's SOS on the server, on the node the record came from: its writer may
      * be gone, and while the record stays active every phone that starts replays it. Written PEER_RELEASE_DELAY_MS later so

@@ -76,6 +76,29 @@ class SosLedgerTest {
         assertNull(restored.activeForMs())
     }
 
+    // The wall-clock start of my SOS is kept on the phone, so the rescuer's button is timed from it across a restart.
+    @Test fun sos_begin_time_survives_a_restart() {
+        val kv = Kv(); val tr = FakeSosTransport(); var wall = 1_000_000L
+        val l = SosLedger(kv, tr, { now }, wallClock = { wall })
+        assertEquals("SOS 없이는 0", 0L, l.beganAgoMs())
+        l.begin(rec())
+        wall += 45_000
+        assertEquals(45_000L, SosLedger(kv, tr, { now }, wallClock = { wall }).beganAgoMs())
+        wall = 1_000_000L - 5_000
+        assertEquals("벽시계가 뒤로 가면 0", 0L, SosLedger(kv, tr, { now }, wallClock = { wall }).beganAgoMs())
+        l.resolve()
+        assertEquals("해제 뒤에는 0", 0L, l.beganAgoMs())
+    }
+
+    // An SOS stored by a version that kept no start time counts from its server confirmation, else from the restart.
+    @Test fun sos_stored_without_a_begin_time_counts_from_its_server_confirmation_or_from_now() {
+        val tr = FakeSosTransport()
+        val withAt = Kv().apply { m["a.trigger"] = "still"; m["a.at"] = "500000" }
+        assertEquals(45_000L, SosLedger(withAt, tr, { now }, wallClock = { 545_000L }).beganAgoMs())
+        val without = Kv().apply { m["a.trigger"] = "still" }
+        assertEquals(0L, SosLedger(without, tr, { now }, wallClock = { 545_000L }).beganAgoMs())
+    }
+
     @Test fun create_record_carries_episode() {
         val kv = Kv(); val tr = FakeSosTransport(); val l = ledger(kv, tr)
         l.begin(rec())

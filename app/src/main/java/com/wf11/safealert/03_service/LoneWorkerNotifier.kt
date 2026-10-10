@@ -57,8 +57,8 @@ internal fun LoneWorkerPeers.Peer.line(nowMs: Long): String {
  *
  * Major alerts (checking, SOS, peer rescue request) are cancelled and re-posted on every new alert so the heads-up and the
  * full-screen intent show again; when the user swipes one away, deleteIntent reports it and it is re-posted.
- * The SOS notification's "괜찮아요" does not end SOS in the service; it opens the check screen — clearing goes through the
- * screen's confirmation dialog.
+ * The SOS notification's "괜찮아요" (RESCUER_OK after one minute) does not end SOS in the service; it opens the check screen —
+ * clearing goes through the screen's confirmation dialog.
  */
 class LoneWorkerNotifier(
     private val ctx: Context,
@@ -79,6 +79,9 @@ class LoneWorkerNotifier(
 
         /** Status of a peer SOS whose siren time is over (it still alerts by vibration, row and notification). */
         const val RING_OVER = "소리 꺼짐"
+
+        /** Label of the own-SOS exit button once the SOS is older than LoneWorkerLogic.RESCUER_BUTTON_MS. */
+        const val RESCUER_OK = "구조자 확인"
 
         const val TURN_CLOSE_HINT = "회전하거나 ${LoneWorkerLogic.STRONG_RUN_MS / 1000}초 넘게 흔들거나 [괜찮아요]를 누르면 닫혀요"
 
@@ -151,6 +154,7 @@ class LoneWorkerNotifier(
      * audible = the peer entries alerting on this phone; the siren of some or all of them may already be off (ringOver).
      * If alertAgain is true and it is a major alert, cancels and re-posts even with the same key.
      * With closesByTurn, the checking hint is TURN_CLOSE_HINT instead of steps.
+     * rescuer = my own SOS is older than LoneWorkerLogic.RESCUER_BUTTON_MS: its button reads RESCUER_OK instead of "괜찮아요".
      */
     fun update(
         mode: LoneWorkerLogic.Mode,
@@ -158,7 +162,8 @@ class LoneWorkerNotifier(
         audible: List<LoneWorkerPeers.Peer>,
         resolved: List<LoneWorkerPeers.Peer>,
         notice: Pair<String, String>?,
-        alertAgain: Boolean
+        alertAgain: Boolean,
+        rescuer: Boolean
     ) {
         val loud = mode != LoneWorkerLogic.Mode.WATCHING || audible.isNotEmpty()
         val nm = runCatching { ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager }.getOrNull() ?: return
@@ -167,13 +172,14 @@ class LoneWorkerNotifier(
             if (lastKey != null) { nm.cancel(NOTIF_ID); lastKey = null }
             return
         }
-        val key = "${quiet?.first}|${quiet?.second}|$mode|$closesByTurn|${audible.joinToString(",") { it.id + (if (it.ringOver) "~" else "") }}|${resolved.joinToString(",") { it.id }}"
+        val key = "${quiet?.first}|${quiet?.second}|$mode|$closesByTurn|$rescuer|${audible.joinToString(",") { it.id + (if (it.ringOver) "~" else "") }}|${resolved.joinToString(",") { it.id }}"
         val again = loud && alertAgain
         if (key == lastKey && !again) return
         lastKey = key
         val (title, text, act) = when {
             mode == LoneWorkerLogic.Mode.SOS ->
-                Triple("구조 요청 중", "[괜찮아요]를 눌러야 해제돼요", "괜찮아요" to activityPi(REQ_CONFIRM, true))
+                Triple("구조 요청 중", if (rescuer) "[${RESCUER_OK}]을 눌러야 해제돼요" else "[괜찮아요]를 눌러야 해제돼요",
+                    (if (rescuer) RESCUER_OK else "괜찮아요") to activityPi(REQ_CONFIRM, true))
             mode == LoneWorkerLogic.Mode.CHECKING ->
                 Triple("괜찮으세요?", "응답이 없으면 ${SiteScope.audience(DevSettings.floor, DevSettings.proc)}에 구조 요청이 나가요. " + (if (closesByTurn) TURN_CLOSE_HINT else "걸으면 자동으로 닫혀요"), "괜찮아요" to servicePi(REQ_ACK, BleService.ACTION_LW_ACK))
             audible.isNotEmpty() ->

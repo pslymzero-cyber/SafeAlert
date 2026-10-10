@@ -7,6 +7,7 @@ package com.wf11.safealert.service
  * (the caller converts sensor timestamps to this base).
  *
  *   WATCHING --accident 30 s still / no-motion stillMs--> CHECKING --no reply 1 min / responseMs--> SOS --"괜찮아요"--> WATCHING
+ *   (the SOS exit button reads "구조자 확인" once the SOS is RESCUER_BUTTON_MS old)
  *
  * Rule 1 (accident): a single fall signal raises accident suspicion for 5 min from its impact time (no prior-movement condition).
  * If there is no clear movement for 30 s within that time, the accident check window ("fall", 1 min) opens. It does not depend
@@ -33,8 +34,8 @@ package com.wf11.safealert.service
  * waits as well until it moves (MOVED, a turn, a carry or a power change).
  * In a settled safe zone (raw inside for 60 s straight) no-motion is not counted; counting starts when the phone leaves.
  * Settling withdraws an open no-motion check window.
- * Counting also pauses while a peer siren vibrates on this device and continues from the accrued time afterwards (once the
- * pause reaches stillMs counting resumes even if the siren keeps sounding; devices without a vibrator never pause).
+ * Counting also pauses while a peer rescue request vibrates on this device and continues from the accrued time afterwards (once
+ * the pause reaches stillMs counting resumes even if the alarm keeps going; devices without a vibrator never pause).
  *
  * Steps: sensor steps whose covering 1 s accelerometer window is walk-like and outside app vibration spans (WalkingSteps).
  * Clear movement: 5 steps within the last 10 s; without a usable step sensor, walk-like windows lasting 3 s or more. Closing a
@@ -50,7 +51,8 @@ package com.wf11.safealert.service
  * SOS never ends by zone entry, feature off or a power change — only by cancelSos.
  * Post-restart power / zone holds: RestartHold.
  * Peer SOS reception is handled by LoneWorkerPeers as entries per episode (bleId, ep) (a server record and a BLE bit of the
- * same episode are one entry).
+ * same episode are one entry). The siren of a peer entry sounds here for LoneWorkerPeers.PEER_RING_MS per entry; the vibration,
+ * and the count pause that follows it, go on while the entry alerts, siren or not.
  *
  * LoneWorkerSosSync filters out my own server records by author uid, and the BLE scanner never receives its own
  * advertisement — so this class does not filter me out by bleId (phones sharing one equipment ID still alert each other).
@@ -106,6 +108,11 @@ class LoneWorkerLogic(var myBleId: String) {
          * zone report (same rule as BleService's 10 s signal-loss exit).
          */
         const val ZONE_RESUME_HOLD_MS = 10_000L
+        /**
+         * After this long in SOS the exit button is the rescuer's: the worker did not press it in a minute, so whoever does has
+         * arrived to help. The action is the same; only the label differs.
+         */
+        const val RESCUER_BUTTON_MS = 60_000L
     }
 
     /** Changed live from settings (default 3 min / 2 min). No-motion check only — the accident check is fixed at 30 s / 1 min. */
@@ -441,11 +448,12 @@ class LoneWorkerLogic(var myBleId: String) {
     /**
      * Restores from the saved own SOS (after a service restart or process death). Call after start().
      * SOS ends only via cancelSos, so zone settling, feature off and ackWorking never leave it. Held or open check windows are discarded.
+     * agoMs = how long ago the SOS began, so modeSinceMs is when it began and the rescuer's button is timed from then.
      */
-    fun restoreSos(trigger: String, nowMs: Long) {
+    fun restoreSos(trigger: String, nowMs: Long, agoMs: Long = 0L) {
         closeCheck(nowMs)
         this.trigger = trigger
-        toSos(nowMs)
+        toSos(nowMs - agoMs)
     }
 
     /**
@@ -649,7 +657,8 @@ class LoneWorkerLogic(var myBleId: String) {
     }
 
     /**
-     * Alarm vibration only for the peer rescue-request siren, when a vibrator exists. A device that may need rescue
+     * Alarm vibration only for a peer rescue request (with its siren, and alone after the siren's ring time), when a vibrator
+     * exists. A device that may need rescue
      * itself (check window, own SOS, accident suspicion) uses sound and screen only, without vibration.
      */
     val alarmVibrates: Boolean

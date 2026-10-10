@@ -202,6 +202,49 @@ class LoneWorkerLogicTest {
         assertEquals(Mode.WATCHING, l.mode)
     }
 
+    // From RESCUER_BUTTON_MS after the SOS began the own SOS button is the rescuer's; the switch is a time cue for the monitor.
+    @Test fun own_sos_button_turns_to_the_rescuers_after_60s() {
+        val l = newLogic(carried = true)
+        assertFalse(l.rescuerButton(10_000_000))
+        l.toChecking()
+        assertFalse(l.rescuerButton(l.modeSinceMs + 10 * LoneWorkerLogic.RESCUER_BUTTON_MS))
+        l.seenAt(stillMs + responseMs)
+        assertEquals(Mode.SOS, l.mode)
+        val t = l.modeSinceMs
+        assertFalse(l.rescuerButton(t + 59_999))
+        assertTrue(l.rescuerButton(t + 60_000))
+        assertEquals(t + 60_000, l.nextCueAt(t + 1))
+        assertNull(l.nextCueAt(t + 60_000))
+        assertTrue(l.cancelSos(t + 61_000))
+        assertFalse(l.rescuerButton(t + 62_000))
+        assertNull(l.nextCueAt(t + 62_000))
+    }
+
+    // A restored SOS keeps its age: the stored start decides, not the restart.
+    @Test fun restored_sos_counts_the_button_from_when_it_began() {
+        val a = newLogic(carried = true)
+        a.restoreSos("still", 5_000, 45_000)
+        assertFalse(a.rescuerButton(19_999))
+        assertTrue(a.rescuerButton(20_000))
+        val b = newLogic(carried = true)
+        b.restoreSos("still", 5_000, 60_000)
+        assertTrue(b.rescuerButton(5_000))
+        val c = newLogic(carried = true)
+        c.restoreSos("still", 5_000)
+        assertFalse(c.rescuerButton(5_000))
+        assertTrue(c.rescuerButton(65_000))
+    }
+
+    @Test fun own_sos_button_is_wired_through_the_monitor() {
+        val src = serviceSource("LoneWorkerMonitor.kt")
+        assertTrue(src.contains("logic.restoreSos(it, now(), sync.sosBeganAgoMs())"))
+        val ui = src.substring(src.indexOf("return UiState("))
+        assertTrue(ui.substringBefore("\n    }").contains("logic.rescuerButton(t)"))
+        val update = src.substring(src.indexOf("notifier.update(")).lineSequence().first()
+        assertTrue(update, update.contains("logic.rescuerButton(t)"))
+        assertTrue(repoFile("app/src/main/java/com/wf11/safealert/05_ui/LoneWorkerActivity.kt").contains("LoneWorkerNotifier.RESCUER_OK"))
+    }
+
     @Test fun alarm_vibrates_only_for_peer_siren_not_on_the_suspect_device() {
         val l = newLogic(carried = true)
         assertFalse(l.alarmVibrates)

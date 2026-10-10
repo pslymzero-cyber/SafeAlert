@@ -49,8 +49,14 @@ internal fun LoneWorkerLogic.wakeNeeded(sensorsNeedWake: Boolean, nowMs: Long): 
         audiblePeers().isNotEmpty() || waitingToJudge(nowMs)
 
 
+/** Whether my own SOS is old enough that its exit button (screen, dialog, notification) reads "구조자 확인". */
+internal fun LoneWorkerLogic.rescuerButton(nowMs: Long): Boolean =
+    sosActive && nowMs - modeSinceMs >= LoneWorkerLogic.RESCUER_BUTTON_MS
+
 /**
- * Next time a sound or a label changes by time alone (no judgment and no sensor data involved), for the monitor to wake at;
- * null when nothing is due after nowMs.
+ * Next time a sound or a label changes by time alone (no judgment and no sensor data involved), for the monitor to wake at:
+ * a peer siren running out of ring time, or my SOS button turning to the rescuer's; null when nothing is due after nowMs.
  */
-internal fun LoneWorkerLogic.nextCueAt(nowMs: Long): Long? = peerRingEndAt()?.takeIf { it > nowMs }
+internal fun LoneWorkerLogic.nextCueAt(nowMs: Long): Long? =
+    listOfNotNull(peerRingEndAt(), if (sosActive) modeSinceMs + LoneWorkerLogic.RESCUER_BUTTON_MS else null)
+        .filter { it > nowMs }.minOrNull()

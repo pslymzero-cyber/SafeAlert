@@ -38,7 +38,8 @@ class LoneWorkerMonitor(
         val stillMin: Int = 0,          // Minutes until the no-motion check (reason chip text)
         val responseLeftMs: Long = 0L,  // Remaining response time (ms); the screen redraws on second boundaries
         val stepsAvailable: Boolean = true, // Counted by step sensor (else by walk-like runs), for the step hint text
-        val closesByTurn: Boolean = false   // Mounted no-motion window: closes by turn, 3 s shake or "괜찮아요"
+        val closesByTurn: Boolean = false,  // Mounted no-motion window: closes by turn, 3 s shake or "괜찮아요"
+        val rescuerButton: Boolean = false  // Own SOS older than RESCUER_BUTTON_MS: the exit button reads "구조자 확인"
     ) {
         val peerActive: Boolean get() = peers.any { it.active }
         /** Every row shown ended by the one-hour limit, not by its worker. */
@@ -143,7 +144,7 @@ class LoneWorkerMonitor(
         logic.startFrom(t0, zoneInside, plugged, resume.load(t0))
         if (overdue) logic.holdStill(t0)
         // Revive a saved own SOS before the first render — the siren and advertisement bit1 come back on with the same server key
-        sync.restoredTrigger()?.let { logic.restoreSos(it, now()) }
+        sync.restoredTrigger()?.let { logic.restoreSos(it, now(), sync.sosBeganAgoMs()) }
         notifier.createChannel()
         notifier.cancel() // Clear notifications left by a previous process, once
         watchdog.start()
@@ -415,7 +416,8 @@ class LoneWorkerMonitor(
             (logic.stillMs / 60_000L).toInt(),
             left,
             logic.stepsAvailable,
-            logic.closesByTurn
+            logic.closesByTurn,
+            logic.rescuerButton(t)
         )
     }
 
@@ -490,7 +492,7 @@ class LoneWorkerMonitor(
         if (p != null) alarm.play(p, vibrates) else alarm.stop(vibrate = vibrates)
         sensors.gyroLog(audible.isNotEmpty(), vibrates)
 
-        notifier.update(mode, logic.closesByTurn, audible, logic.peers.filter { !it.active && !it.silenced }, notice(), showScreen)
+        notifier.update(mode, logic.closesByTurn, audible, logic.peers.filter { !it.active && !it.silenced }, notice(), showScreen, logic.rescuerButton(t))
         if (showScreen) notifier.openScreen()
         updateWakeLock(false)
         scheduleLoop()
