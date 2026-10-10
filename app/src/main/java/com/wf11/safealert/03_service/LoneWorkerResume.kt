@@ -18,8 +18,8 @@ import kotlin.math.abs
  * On restart the check window is shown again with a fresh response time, and accident suspicion more than 5 min after its
  * trigger is dropped (LoneWorkerLogic.startFrom).
  * If the saved charging flag differs from the current power, a restart power hold applies (RestartHold).
- * "중지" or a user-stop decision clears it via clearOnUserStop. Merely stopping monitoring does not clear it, so it survives a
- * system kill or restart.
+ * "중지" or a user-stop decision clears it via clearOnUserStop. The rescuer's release of the requester's SOS clears it with
+ * clear(). Merely stopping monitoring does not clear it, so it survives a system kill or restart.
  */
 class LoneWorkerResume(private val ctx: Context) {
 
@@ -121,5 +121,14 @@ class LoneWorkerResume(private val ctx: Context) {
             ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
                 .putString(KEY, encode(s, nowMs, System.currentTimeMillis(), boot)).apply()
         }
+    }
+
+    /**
+     * The rescuer's release: clears the run-restore keys and the restart state with commit and empties the save cache, so the
+     * first save of monitoring started afterwards is written again even when its state equals the one saved before.
+     */
+    fun clear() {
+        last = null
+        runCatching { clearOnUserStop(ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()).commit() }
     }
 }

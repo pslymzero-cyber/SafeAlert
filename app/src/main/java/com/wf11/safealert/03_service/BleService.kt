@@ -145,10 +145,6 @@ class BleService : LifecycleService() {
     // Lone-worker no-motion/fall SOS — the constructor only stores references; every entry point is a no-op before start()
     private val loneWorker by lazy {
         LoneWorkerMonitor(this, advertiseSos = { sos, ep, hint -> bleAdvertiser?.updateSos(sos, ep, hint) }, setAlarmVolume = { setAlarmVolumeGuarded(it) },
-            onRescuerRelease = {
-                // The release is already stored: clear the saved running state so a service death in the stop delay does not revive monitoring
-                LoneWorkerResume.clearOnUserStop(getSharedPreferences("safealert_prefs", MODE_PRIVATE).edit()).commit()
-            },
             onRescuerStop = {
                 if (requestStop()) {
                     LoneWorkerMonitor.rescuerStopped = true
@@ -722,6 +718,8 @@ class BleService : LifecycleService() {
                 // A restore lacking start permission also stops here. We may have been launched by a foreground-start request, so if
                 //   possible go foreground first, then drop it.
                 if (savedMode == null && canStart && startForegroundTyped("SafeAlert", "중지됨")) stopForeground(STOP_FOREGROUND_REMOVE)
+                // The service may have died during the stop pending after a rescuer's release: no monitor is left to clear its notification
+                if (savedMode == null) runCatching { (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).cancel(LoneWorkerNotifier.NOTIF_ID) }
                 Log.w(TAG, if (savedMode == null) "복원할 실행 상태 없음 — 중지" else "서비스 시작 권한 없음 — 복원 중지")
                 if (savedMode != null) return failStart(startId, permission = true)
                 stopSelf(startId)
@@ -738,6 +736,7 @@ class BleService : LifecycleService() {
                 // Save the mode: used by onStartCommand to restore after a START_STICKY restart
                 saveRunningMode(myMode, myId, myCategory)
                 loneWorker.keepRunning() // Drops a pending stop after a rescuer's release
+                LoneWorkerMonitor.rescuerStopped = false // A start command handled after the stop must not leave the new monitoring stopped
                 bgStarted = false
                 if (!startForegroundTyped("${categoryRoleName(myCategory)} 실행 중",
                         buildSubText(DevSettings.deviceTx, DevSettings.deviceRx))) return failStart(startId)
@@ -749,6 +748,7 @@ class BleService : LifecycleService() {
                 myCategory = BleConstants.CAT_WALKER   // always walker
                 saveRunningMode(myMode, myId, myCategory)
                 loneWorker.keepRunning() // Drops a pending stop after a rescuer's release
+                LoneWorkerMonitor.rescuerStopped = false // A start command handled after the stop must not leave the new monitoring stopped
                 bgStarted = false
                 if (!startForegroundTyped("보행자 실행 중", buildSubText(DevSettings.walkerTx, DevSettings.walkerRx))) return failStart(startId)
                 applyMode()

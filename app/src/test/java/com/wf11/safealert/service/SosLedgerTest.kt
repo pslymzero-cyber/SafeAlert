@@ -20,7 +20,7 @@ class SosLedgerTest {
     private fun rec(sid: Int = 0) = SosLedger.Record("BLE_ME", "n", "WALKER", "still", null, null, sid)
 
     // An SOS released by the one-hour limit is recorded on the server as automatic, and no resolve mail is reported:
-    //   that mail tells the site the worker pressed "괜찮아요".
+    //   that mail tells the site the SOS was released on the requester's phone.
     @Test fun automatic_release_is_recorded_as_auto_without_a_resolve_mail() {
         val kv = Kv(); val tr = FakeSosTransport(); val seen = ArrayList<String>()
         val l = recording(kv, tr, seen)

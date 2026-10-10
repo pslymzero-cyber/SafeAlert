@@ -24,13 +24,11 @@ class LoneWorkerMonitor(
     private val ctx: Context,
     private val advertiseSos: (Boolean, Int, Int) -> Unit,
     setAlarmVolume: (Int) -> Unit,
-    /** Clears the saved running state once the rescuer's release is stored, so a service death in the stop delay does not revive monitoring. */
-    private val onRescuerRelease: () -> Unit = {},
     /** Stops this phone's monitoring when the delay after the rescuer's release is over. */
-    private val onRescuerStop: () -> Unit = {}
+    private val onRescuerStop: () -> Unit
 ) {
 
-    /** State drawn by the check screen. uiState() returns null when mode is WATCHING and there are no peer rows. */
+    /** State drawn by the check screen. uiState() returns null when mode is WATCHING and there are no peer rows, or a monitoring stop is pending. */
     data class UiState(
         val mode: LoneWorkerLogic.Mode,
         val responseLeftSec: Int,
@@ -206,7 +204,7 @@ class LoneWorkerMonitor(
         lastAudible = emptySet()
         sidLabels.clear()
         sidMissUntil.clear()
-        // Keep the server's active record and the saved own SOS — only the user's own "괜찮아요" clears it
+        // Keep the server's active record and the saved own SOS — only a release on the requester's phone clears it
         logic = LoneWorkerLogic("") // Clear so stale peer entries don't revive on restart
         if (current === this) current = null
         uiListener?.invoke()
@@ -375,16 +373,18 @@ class LoneWorkerMonitor(
         render()
     }
 
-    fun cancelSos() {
+    /** rescuer = the confirm window the user pressed was the rescuer's window (LoneWorkerActivity.showConfirm). */
+    fun cancelSos(rescuer: Boolean) {
         if (!started) return
         val t = now()
-        val released = logic.cancelSos(t, byUser = true)
+        val released = logic.cancelSos(t, rescuer)
         render() // Sends the server release and clears the advertised SOS bit
         val at = logic.stopAt
         if (released && at != null) {
             // The running state is cleared only after the release is stored: the other way round, a death in between leaves
             // a stored SOS with no running state to revive it
-            onRescuerRelease()
+            // (through the resume object, which also empties its save cache)
+            resume.clear()
             handler.removeCallbacks(stopRunnable)
             handler.postDelayed(stopRunnable, (at - t).coerceAtLeast(0L))
         }
@@ -395,7 +395,7 @@ class LoneWorkerMonitor(
     /** The user started monitoring again while a stop after the rescuer's release was pending: the stop is dropped. */
     fun keepRunning() {
         if (!started) return
-        logic.clearStop()
+        logic.clearStop(now())
         handler.removeCallbacks(stopRunnable)
         render()
     }
@@ -430,7 +430,7 @@ class LoneWorkerMonitor(
         if (!started) return null
         val t = now()
         val shown = logic.peers.filter { !it.silenced }  // Resolved entries stay visible until "닫기"
-        if (logic.mode == LoneWorkerLogic.Mode.WATCHING && shown.isEmpty()) return null
+        if (logic.mode == LoneWorkerLogic.Mode.WATCHING && (shown.isEmpty() || logic.stopAt != null)) return null
         val left = logic.responseLeftMs(t)
         return UiState(
             logic.mode,
@@ -514,13 +514,16 @@ class LoneWorkerMonitor(
         lastAudible = ids
 
         // Sound priority: own SOS > check window (check tone, no vibration) > peer siren (only while an entry is inside its ring
-        // time). The vibration follows the alerting entries and goes on after the siren is off.
+        // time). The vibration follows the alerting entries and goes on after the siren is off. While a monitoring stop is
+        // pending the peer list is empty (LoneWorkerLogic.audiblePeers).
         val vibrates = logic.alarmVibrates
         val p = LoneWorkerAlarm.Pattern.of(mode, logic.soundingPeers().isNotEmpty())
         if (p != null) alarm.play(p, vibrates) else alarm.stop(vibrate = vibrates)
         sensors.gyroLog(audible.isNotEmpty(), vibrates)
 
-        notifier.update(mode, logic.closesByTurn, audible, logic.peers.filter { !it.active && !it.silenced }, notice(), showScreen, logic.rescuerButton(t))
+        // A phone with a monitoring stop pending shows no ended rows either: LoneWorkerNotifier.update drops the quiet notice when ended rows exist, which would hide the stop notice
+        val resolved = if (logic.stopAt != null) emptyList() else logic.peers.filter { !it.active && !it.silenced }
+        notifier.update(mode, logic.closesByTurn, audible, resolved, notice(), showScreen, logic.rescuerButton(t))
         if (showScreen) notifier.openScreen()
         updateWakeLock(false)
         scheduleLoop()

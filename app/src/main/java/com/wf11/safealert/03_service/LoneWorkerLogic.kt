@@ -6,7 +6,7 @@ package com.wf11.safealert.service
  * Pure logic with no Android dependency. All times are elapsedRealtime-based ms passed in by the caller
  * (the caller converts sensor timestamps to this base).
  *
- *   WATCHING --accident 30 s still / no-motion stillMs--> CHECKING --no reply 1 min / responseMs--> SOS --"괜찮아요"--> WATCHING
+ *   WATCHING --accident 30 s still / no-motion stillMs--> CHECKING --no reply 1 min / responseMs--> SOS --released on the requester's phone--> WATCHING
  *   (the SOS exit button reads "구조자 확인" once the SOS is RESCUER_BUTTON_MS old)
  *
  * Rule 1 (accident): a single fall signal raises accident suspicion for 5 min from its impact time (no prior-movement condition).
@@ -140,7 +140,11 @@ class LoneWorkerLogic(var myBleId: String) {
         private set
     var modeSinceMs = 0L
         private set
-    /** When this phone stops monitoring after the rescuer's release of its own SOS; null = nothing scheduled. */
+    /**
+     * When this phone stops monitoring after the rescuer's release of its own SOS; null = nothing scheduled. While it is set
+     * the phone neither shows nor sounds a peer SOS (it is about to stop monitoring): audiblePeers is empty and no ring
+     * time starts.
+     */
     var stopAt: Long? = null
         private set
     var zoneSettled = false
@@ -206,7 +210,7 @@ class LoneWorkerLogic(var myBleId: String) {
      */
     val closesByTurn: Boolean get() = mode == Mode.CHECKING && trigger == "still" && mounted
 
-    internal val peerStore = LoneWorkerPeers { mode == Mode.WATCHING }
+    internal val peerStore = LoneWorkerPeers { mode == Mode.WATCHING && stopAt == null }
 
     internal val beacons = BeaconHints()
 
@@ -246,6 +250,8 @@ class LoneWorkerLogic(var myBleId: String) {
         } else {
             clearAccident()
             closeCheck(nowMs)
+            // No tick follows this path in the monitor (applySettings): a peer siren held back by this phone's own check window starts now
+            peerStore.ring(nowMs)
         }
     }
     /**
@@ -440,14 +446,15 @@ class LoneWorkerLogic(var myBleId: String) {
 
     /**
      * Suspicion was already cleared on SOS entry and falls during SOS are discarded, so there is no suspicion to end.
-     * byUser = the exit button on the requester's SOS screen; when it is already the rescuer's button the phone then stops
-     * monitoring after RESCUER_STOP_DELAY_MS. The default (the one-hour automatic release) never schedules a stop.
+     * rescuer = the confirm window the user pressed on the requester's SOS screen was the rescuer's window; only then, and
+     * only while the button is still the rescuer's button, the phone stops monitoring after RESCUER_STOP_DELAY_MS. The
+     * worker's own window and the default (the one-hour automatic release) never schedule a stop.
      */
-    fun cancelSos(nowMs: Long, byUser: Boolean = false): Boolean {
+    fun cancelSos(nowMs: Long, rescuer: Boolean = false): Boolean {
         if (mode != Mode.SOS) return false
-        if (byUser && rescuerButton(nowMs)) stopAt = nowMs + RESCUER_STOP_DELAY_MS
+        if (rescuer && rescuerButton(nowMs)) stopAt = nowMs + RESCUER_STOP_DELAY_MS
         toWatching(nowMs)
-        peerStore.ring(nowMs) // No tick follows this path in the monitor: peer sirens held back by my SOS start now
+        peerStore.ring(nowMs) // No tick follows this path in the monitor: peer sirens held back by my SOS start now (not while a stop is pending: canSound)
         return true
     }
 
@@ -459,9 +466,13 @@ class LoneWorkerLogic(var myBleId: String) {
         return true
     }
 
-    /** Drops a scheduled stop (the user started monitoring again in the meantime). */
-    fun clearStop() {
+    /**
+     * Drops a scheduled stop (the user started monitoring again in the meantime). No tick follows this path in the monitor,
+     * so a peer siren held back by the pending stop starts here.
+     */
+    fun clearStop(nowMs: Long) {
         stopAt = null
+        peerStore.ring(nowMs)
     }
 
     /**
@@ -692,7 +703,8 @@ class LoneWorkerLogic(var myBleId: String) {
      * itself (check window, own SOS, accident suspicion) uses sound and screen only, without vibration. A phone that receives
      * a peer SOS but cannot vibrate (suspected fall, no vibrator) alerts by screen and notification after the siren's ring
      * time; the siren is not extended for it, and if its own wearer really fell, that phone's own check window and SOS follow.
+     * It does not vibrate while a monitoring stop is pending (audiblePeers is empty).
      */
     val alarmVibrates: Boolean
-        get() = canVibrate && mode == Mode.WATCHING && accidentUntil == Long.MIN_VALUE && peerStore.audible().isNotEmpty()
+        get() = canVibrate && mode == Mode.WATCHING && accidentUntil == Long.MIN_VALUE && audiblePeers().isNotEmpty()
 }

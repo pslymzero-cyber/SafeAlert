@@ -69,7 +69,7 @@ class ControlPageParityTest {
 
     // The auto-ended label on the page is the app's own wording (LoneWorkerNotifier.AUTO_ENDED).
     @Test fun ended_reason_label_matches_the_app() {
-        assertTrue(page().contains("s.auto ? '" + LoneWorkerNotifier.AUTO_ENDED + "'"))
+        assertTrue(page().contains("s.auto ? '" + LoneWorkerNotifier.AUTO_ENDED + "' : '폰에서 해제'"))
     }
 
     // The page cleans SOS records with the script's own helpers and reads only settings doGet sends: a renamed or dropped

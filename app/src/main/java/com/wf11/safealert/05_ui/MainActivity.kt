@@ -48,6 +48,7 @@ import com.wf11.safealert.databinding.ActivityMainBinding
 import com.wf11.safealert.databinding.DialogPitSelectBinding
 import com.wf11.safealert.firebase.FirebaseManager
 import com.wf11.safealert.service.BleService
+import com.wf11.safealert.service.LoneWorkerMonitor
 import com.wf11.safealert.utils.UwbCalibrator
 import com.wf11.safealert.utils.UpdateManager
 import com.wf11.safealert.utils.UwbRanger
@@ -644,6 +645,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun startServiceWithCurrentMode() {
         val mode  = currentMode ?: return
+        // A rescuer-stop flag left by the previous monitoring would make the 800 ms poll stop the monitoring started now
+        LoneWorkerMonitor.rescuerStopped = false
         // If a name was entered, use it as the BLE advertising ID (shown on the peer's screen)
         val displayName = prefs.getString("display_name", "")?.trim()
         val id = if (!displayName.isNullOrEmpty()) displayName else myId()

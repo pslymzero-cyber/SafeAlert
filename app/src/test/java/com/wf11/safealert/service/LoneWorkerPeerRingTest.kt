@@ -188,6 +188,18 @@ class LoneWorkerPeerRingTest {
         assertTrue(l.alarmVibrates)
     }
 
+    /** A phone that receives a peer SOS: turning the feature off closes its own check window, and the held-back siren starts then. */
+    @Test fun feature_off_closing_my_check_window_starts_the_held_back_peer_siren() {
+        val l = newLogic(carried = true)
+        assertEquals(Mode.CHECKING, l.seenAt(180_000))
+        l.onPeerBle("P", true, 181_000, 1)
+        assertNull(l.peer("P").ringStartMs)
+        l.setEnabled(false, 182_000)
+        assertEquals(Mode.WATCHING, l.mode)
+        assertEquals(182_000L, l.peer("P").ringStartMs)
+        assertEquals(Pattern.SIREN, siren(l))
+    }
+
     /** Once started the ring time runs in any mode: a check window opened meanwhile does not stop the clock. */
     @Test fun ring_time_once_started_keeps_running_through_my_check_window() {
         val l = newLogic(carried = true).apply { stillMs = 10_000L }

@@ -15,7 +15,8 @@ import com.wf11.safealert.utils.SiteScope
  * - When a server record takes over a BLE entry, the mute is not inherited (it alerts again, now with the name); its siren
  *   sounds again only for what is left of the entry's ring time (see the ring rule).
  * - Ring rule: the siren of an entry sounds on this phone for PEER_RING_MS from when the entry first alerted here with a siren
- *   that could sound (the phone had no check window and no SOS of its own: canSound), per entry.
+ *   that could sound (the phone had no check window, no SOS of its own and no monitoring stop pending after the rescuer's
+ *   release: canSound), per entry.
  *   After that the entry keeps alerting by vibration, row and notification without the siren, so the requester's phone is
  *   the only one that can be found by ear. A takeover inherits the ring time; an entry shown again by the gap rule alerts as
  *   before, its siren only for what is left of the ring time; a different episode or server key is a different entry with its
@@ -46,8 +47,11 @@ import com.wf11.safealert.utils.SiteScope
 /** One peer row used by the screen and the acknowledge gate. id = entry id, epId = episode ID. */
 data class PeerRow(val id: String, val epId: String, val line: String, val active: Boolean, val autoEnded: Boolean = false)
 
-/** canSound = this phone can sound a peer siren now: it is watching, with no check window or SOS of its own. */
-class LoneWorkerPeers(private val canSound: () -> Boolean = { true }) {
+/**
+ * canSound = this phone can sound a peer siren now: it is watching, with no check window or SOS of its own and no
+ * monitoring stop pending after the rescuer's release.
+ */
+class LoneWorkerPeers(private val canSound: () -> Boolean) {
 
     data class Peer(
         val bleId: String,
@@ -411,10 +415,13 @@ fun LoneWorkerLogic.onPeerBle(bleId: String, sos: Boolean, nowMs: Long, episode:
  * delegated from LoneWorkerLogic, kept here due to the 500-line limit.
  */
 fun LoneWorkerLogic.silencePeers(nowMs: Long, targets: Map<String, String>) = peerStore.silence(nowMs, targets)
-/** Peer entries alerting on this phone (siren on or off) — delegated from LoneWorkerLogic, kept here due to the 500-line limit. */
-fun LoneWorkerLogic.audiblePeers(): List<LoneWorkerPeers.Peer> = peerStore.audible()
+/**
+ * Peer entries alerting on this phone (siren on or off) — delegated from LoneWorkerLogic, kept here due to the 500-line limit.
+ * Empty while a monitoring stop is pending after the rescuer's release: a phone about to stop monitoring gives no peer SOS output.
+ */
+fun LoneWorkerLogic.audiblePeers(): List<LoneWorkerPeers.Peer> = if (stopAt != null) emptyList() else peerStore.audible()
 /** Peer entries whose siren sounds (alerting ones still inside their ring time) — delegated from LoneWorkerLogic. */
-fun LoneWorkerLogic.soundingPeers(): List<LoneWorkerPeers.Peer> = peerStore.sounding()
+fun LoneWorkerLogic.soundingPeers(): List<LoneWorkerPeers.Peer> = audiblePeers().filter { !it.ringOver }
 /** When the siren of the first sounding peer entry runs out of ring time — delegated from LoneWorkerLogic. */
 fun LoneWorkerLogic.peerRingEndAt(): Long? = peerStore.ringEndAt()
 /** Server keys of peer SOS released by the one-hour limit — delegated from LoneWorkerLogic. */

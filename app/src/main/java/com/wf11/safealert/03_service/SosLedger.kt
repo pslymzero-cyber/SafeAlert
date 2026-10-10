@@ -15,7 +15,7 @@ interface SosTransport {
     fun sitePath(): String?
     fun newKey(path: String): String
     fun create(path: String, key: String, rec: SosLedger.Record, uid: String, done: (Boolean) -> Unit)
-    /** auto = released by the one-hour limit rather than by "괜찮아요" (recorded on the server as reason auto). */
+    /** auto = released by the one-hour limit rather than on the requester's phone (recorded on the server as reason auto). */
     fun resolve(path: String, key: String, auto: Boolean, done: (Boolean) -> Unit)
     fun read(path: String, key: String, done: (SosLedger.Remote) -> Unit)
 }
@@ -23,7 +23,7 @@ interface SosTransport {
 /**
  * Storage and send state machine for my own SOS. Pure logic with no Android dependency; every entry point is on the main thread.
  *
- * The active slot (a.*) and the pending-resolve list (r.list) are kept separately. Pressing "괜찮아요" empties the active slot
+ * The active slot (a.*) and the pending-resolve list (r.list) are kept separately. Releasing on the requester's phone empties the active slot
  * on the spot, and the resolve is retried from the pending list until confirmed, so a new SOS raised right after an offline
  * resolve is recorded immediately and a late response to the old resolve removes only its own entry.
  *
@@ -37,7 +37,7 @@ interface SosTransport {
  * script then sends the late SOS mail as "해제됨". Already-confirmed records report only the resolve.
  * An SOS whose server record has been up AUTO_RELEASE_MS is released automatically (reason auto on the server); one the
  * server never confirmed is not, since nobody was told about it. Its resolve mail is not sent: that mail tells the site the
- * worker pressed "괜찮아요", which an automatic release is not.
+ * SOS was released on the requester's phone, which an automatic release is not.
  */
 class SosLedger(
     private val kv: SosKv,
@@ -194,7 +194,7 @@ class SosLedger(
     }
 
     /**
-     * Resolve: "괜찮아요", or auto = the one-hour limit. Empties the active slot at once and moves the resolve to the pending
+     * Resolve: released on the requester's phone, or auto = the one-hour limit. Empties the active slot at once and moves the resolve to the pending
      * list.
      */
     fun resolve(auto: Boolean = false) {
@@ -239,7 +239,7 @@ class SosLedger(
 
     /**
      * One create. A refusal of a record carrying floor/process (rules that predate those fields) is retried at once without
-     * them, before any read, but only while this SOS is still the active one: after "괜찮아요" the pending resolve's read
+     * them, before any read, but only while this SOS is still the active one: after the release the pending resolve's read
      * finds the record absent and drops it, so a retry would leave a record nobody resolves. Other failures check whether
      * the record landed late and otherwise back off.
      */

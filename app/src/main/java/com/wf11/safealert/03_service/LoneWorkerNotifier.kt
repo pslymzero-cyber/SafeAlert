@@ -96,7 +96,7 @@ class LoneWorkerNotifier(
         const val RESCUER_STOP_SOON = "잠시 뒤 이 휴대폰의 감시를 중지합니다"
 
         /** Stop notice and toast on the requester's phone once monitoring stopped after the rescuer's release. */
-        const val RESCUER_STOPPED = "구조자 확인으로 감시를 중지했습니다"
+        const val RESCUER_STOPPED = "${RESCUER_OK}으로 감시를 중지했습니다"
 
         const val TURN_CLOSE_HINT = "회전하거나 ${LoneWorkerLogic.STRONG_RUN_MS / 1000}초 넘게 흔들거나 [괜찮아요]를 누르면 닫혀요"
 

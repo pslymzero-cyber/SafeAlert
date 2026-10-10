@@ -21,7 +21,7 @@ import java.util.concurrent.Executors
  * All server-side work for the lone-worker SOS: persisting, uploading and clearing my SOS is delegated to [SosLedger];
  * this class wires SharedPreferences and Firebase into that interface and reconnects peer reception.
  *
- * My SOS ends only with "괜찮아요", so it must survive service stop, role switch, restart and process death.
+ * My SOS ends only when released on the requester's phone (or by the one-hour limit), so it must survive service stop, role switch, restart and process death.
  * The clear is written to the saved path (the path is not rebuilt from the current site code).
  *
  * The constructor only stores references (SharedPreferences and the ledger are created on first use). All entry points are
