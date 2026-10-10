@@ -249,7 +249,7 @@ class LoneWorkerMonitor(
 
     /**
      * Single judge tick. If a passed deadline is waiting for sensor data, requests a flush, and schedules one more tick at the
-     * next deadline (or the LATE_MS backstop if none).
+     * next deadline or the next time-only cue (a peer siren running out of ring time), whichever is earlier.
      */
     private fun tick(t: Long) {
         logic.tick(t)
@@ -258,7 +258,8 @@ class LoneWorkerMonitor(
         if (waiting) sensors.flush()
         dueFrom = if (waiting) t else next ?: Long.MAX_VALUE
         handler.removeCallbacks(deadlineRunnable)
-        next?.let { handler.postDelayed(deadlineRunnable, (it - t).coerceAtLeast(0L)) }
+        listOfNotNull(next, logic.nextCueAt(t)).minOrNull()
+            ?.let { handler.postDelayed(deadlineRunnable, (it - t).coerceAtLeast(0L)) }
     }
 
     /** One judge tick and render at a scheduled deadline or power confirm time. */
@@ -482,10 +483,11 @@ class LoneWorkerMonitor(
         if (ids.any { it !in lastAudible }) showScreen = true
         lastAudible = ids
 
-        // Sound priority: own SOS > check window (check tone, no vibration) > peer siren
+        // Sound priority: own SOS > check window (check tone, no vibration) > peer siren (only while an entry is inside its ring
+        // time). The vibration follows the alerting entries and goes on after the siren is off.
         val vibrates = logic.alarmVibrates
-        val p = LoneWorkerAlarm.Pattern.of(mode, audible.isNotEmpty())
-        if (p != null) alarm.play(p, vibrates) else alarm.stop()
+        val p = LoneWorkerAlarm.Pattern.of(mode, logic.soundingPeers().isNotEmpty())
+        if (p != null) alarm.play(p, vibrates) else alarm.stop(vibrate = vibrates)
         sensors.gyroLog(audible.isNotEmpty(), vibrates)
 
         notifier.update(mode, logic.closesByTurn, audible, logic.peers.filter { !it.active && !it.silenced }, notice(), showScreen)

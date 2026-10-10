@@ -12,7 +12,13 @@ import com.wf11.safealert.utils.SiteScope
  * - 30 s gap rule: with or without a server record, when the advertisement is heard for the first time or again after a
  *   gap of 30 s or more, only the mute is lifted (the start time is kept). Other phones using the same ID and episode are
  *   covered by this rule and the 30 s guard after resolution.
- * - When a server record takes over a BLE entry, the mute is not inherited (it rings again, now with the name).
+ * - When a server record takes over a BLE entry, the mute is not inherited (it alerts again, now with the name); its siren
+ *   sounds again only for what is left of the entry's ring time (see the ring rule).
+ * - Ring rule: the siren of an entry sounds on this phone for PEER_RING_MS from when the entry first alerted here, per entry.
+ *   After that the entry keeps alerting by vibration, row and notification without the siren, so the requester's phone is
+ *   the only one that can be found by ear. A takeover inherits the ring time; an entry shown again by the gap rule alerts as
+ *   before, its siren only for what is left of the ring time; a different episode or server key is a different entry with its
+ *   own ring time.
  * - An untracked server resolve record ends the same-episode BLE entry when the resolve time (converted to this device's
  *   elapsed) is at or after the time that entry was first heard and the advertisement has not been heard for 15 s or more.
  *   A resolve rejected only because the advertisement is heard is kept and re-judged on tick. A replayed old resolve
@@ -75,7 +81,11 @@ class LoneWorkerPeers {
          * entry nor undo an acknowledgement, and adverts going on past the guard do not look like a new hearing after a gap.
          * Null = never ended on air.
          */
-        val endedOnAirMs: Long? = null
+        val endedOnAirMs: Long? = null,
+        /** When this entry first alerted on this phone (null = not yet). Carried over when a server record takes over. */
+        val ringStartMs: Long? = null,
+        /** The entry's PEER_RING_MS are up: its siren stays off. Vibration, row and notification are not affected. */
+        val ringOver: Boolean = false
     ) {
         val fromServer: Boolean get() = key != null
         /** Store key. */
@@ -110,6 +120,11 @@ class LoneWorkerPeers {
         const val PEER_LIVE_AD_MS = 15_000L
         /** Margin added to time comparisons when the server time offset is unknown. */
         const val CLOCK_SLACK_MS = 10_000L
+        /**
+         * How long the siren of a peer SOS sounds on this phone, counted from when the entry first alerted here. After it only
+         * the requester's phone sounds, so it can be found by ear; the vibration is not limited by it.
+         */
+        const val PEER_RING_MS = 30_000L
 
         /**
          * Converts a server resolve time to elapsed time. If the server time is unknown, treats it as wall-clock time and delays it by the margin.
@@ -145,19 +160,24 @@ class LoneWorkerPeers {
     /** Entries the screen and notifications see (quiet ones are left out). */
     val all: Collection<Peer> get() = map.values.filter { !it.quiet }
 
-    /** Change signature of the visible entries (id, active, silenced), without building a list. */
+    /** Change signature of the visible entries (id, active, silenced, ring over), without building a list. */
     fun sig(): Int {
         if (map.isEmpty()) return 0
         var h = 0
         for (p in map.values) {
             if (p.quiet) continue
             h = h * 31 + p.id.hashCode()
-            h = h * 31 + (if (p.active) 1 else 0) + (if (p.silenced) 2 else 0)
+            h = h * 31 + (if (p.active) 1 else 0) + (if (p.silenced) 2 else 0) + (if (p.ringOver) 4 else 0)
         }
         return h
     }
 
     fun onServer(rec: ServerRec, nowMs: Long) {
+        server(rec, nowMs)
+        ring(nowMs)
+    }
+
+    private fun server(rec: ServerRec, nowMs: Long) {
         val (key, bleId, name, role, trigger, beacon, createdAtMs, active, ep) = rec
         val kId = "k:$key"
         val epId = "$bleId#$ep"
@@ -208,7 +228,8 @@ class LoneWorkerPeers {
                 // Already over on air: an out-of-scope record stays quiet; in or out of scope, that SOS's leftover adverts
                 // within the guard time only refresh lastBleMs (no wake, no undoing an acknowledgement). Still heard: it keeps ringing.
                 quiet = !rec.inScope && !b.active,
-                endedOnAirMs = if (!b.active) b.resolvedAtMs else null
+                endedOnAirMs = if (!b.active) b.resolvedAtMs else null,
+                ringStartMs = b.ringStartMs, ringOver = b.ringOver
             )
             return
         }
@@ -221,6 +242,11 @@ class LoneWorkerPeers {
     }
 
     fun onBle(bleId: String, sos: Boolean, nowMs: Long, ep: Int, beacon: String) {
+        ble(bleId, sos, nowMs, ep, beacon)
+        ring(nowMs)
+    }
+
+    private fun ble(bleId: String, sos: Boolean, nowMs: Long, ep: Int, beacon: String) {
         if (!sos) {
             expiredEps.removeAll { it.startsWith("$bleId#") }   // its SOS ended on air: a later one is new
             if (map.values.none { it.bleId == bleId && it.key == null && it.active }) return
@@ -280,9 +306,38 @@ class LoneWorkerPeers {
         }
     }
 
+    /**
+     * Entries alerting on this phone: active, not acknowledged, not quiet — whether their siren is over or not. The vibration,
+     * the no-motion pause that follows it, the wake lock, the screen opening and the notification all follow this list.
+     */
     fun audible(): List<Peer> = map.values.filter { it.active && !it.silenced && !it.quiet }
 
+    /** Entries whose siren sounds on this phone: the alerting ones still inside their ring time. */
+    fun sounding(): List<Peer> = audible().filter { !it.ringOver }
+
+    /** When the first sounding siren runs out of ring time (null = no siren sounds). */
+    fun ringEndAt(): Long? = sounding().mapNotNull { it.ringStartMs }.minOrNull()?.plus(PEER_RING_MS)
+
+    /**
+     * Starts the ring time of every entry that alerts for the first time and ends it once PEER_RING_MS have passed. Runs as the
+     * last step of each clocked entry point so the flags are exact at every event.
+     */
+    private fun ring(nowMs: Long) {
+        if (map.isEmpty()) return
+        for (p in map.values.toList()) {
+            if (!p.active || p.silenced || p.quiet || p.ringOver) continue
+            val start = p.ringStartMs ?: nowMs
+            val over = nowMs - start >= PEER_RING_MS
+            if (p.ringStartMs == null || over) map[p.id] = p.copy(ringStartMs = start, ringOver = over)
+        }
+    }
+
     fun tick(nowMs: Long) {
+        tickEntries(nowMs)
+        ring(nowMs)
+    }
+
+    private fun tickEntries(nowMs: Long) {
         for (p in map.values.toList()) {
             if (p.active && nowMs - p.startMs >= SosLedger.AUTO_RELEASE_MS && (p.key != null || adGone(p, nowMs))) expire(p, nowMs)
         }
@@ -353,5 +408,9 @@ fun LoneWorkerLogic.onPeerBle(bleId: String, sos: Boolean, nowMs: Long, episode:
 fun LoneWorkerLogic.silencePeers(nowMs: Long, targets: Map<String, String>) = peerStore.silence(nowMs, targets)
 /** Ringing peer entries — delegated from LoneWorkerLogic, kept here due to the 500-line limit. */
 fun LoneWorkerLogic.audiblePeers(): List<LoneWorkerPeers.Peer> = peerStore.audible()
+/** Peer entries whose siren sounds (alerting ones still inside their ring time) — delegated from LoneWorkerLogic. */
+fun LoneWorkerLogic.soundingPeers(): List<LoneWorkerPeers.Peer> = peerStore.sounding()
+/** When the siren of the first sounding peer entry runs out of ring time — delegated from LoneWorkerLogic. */
+fun LoneWorkerLogic.peerRingEndAt(): Long? = peerStore.ringEndAt()
 /** Server keys of peer SOS released by the one-hour limit — delegated from LoneWorkerLogic. */
 fun LoneWorkerLogic.takeAutoReleasedPeers(): List<String> = peerStore.takeAutoReleased()

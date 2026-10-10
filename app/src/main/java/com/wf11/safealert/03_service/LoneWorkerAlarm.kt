@@ -52,8 +52,8 @@ object AlarmVolumeShare {
 /**
  * Sound and vibration dedicated to lone-worker check-ins and rescue requests.
  *
- * Vibration is used only for a coworker's rescue-request siren. My own check window and my own SOS
- * (the device suspected to need rescue) use sound and screen only.
+ * Vibration is used only for a coworker's rescue request: together with its siren, and alone once the siren's ring time
+ * is over. My own check window and my own SOS (the device suspected to need rescue) use sound and screen only.
  *
  * Fully separate from the collision alert sound player. Loops code-generated PCM (SirenGenerator) on a
  * static AudioTrack using the USAGE_ALARM stream. Sounds regardless of the app's sound-off setting or
@@ -69,14 +69,14 @@ class LoneWorkerAlarm(
 
         companion object {
             /**
-             * Sound priority (pure): my SOS → siren, check window → check tone, coworker SOS heard while watching → siren,
-             * otherwise none. Vibration only for a coworker siren while watching (LoneWorkerLogic.alarmVibrates).
-             * Adding a Mode causes a compile error here.
+             * Sound priority (pure): my SOS → siren, check window → check tone, coworker SOS still inside its ring time while
+             * watching → siren, otherwise none. The vibration follows LoneWorkerLogic.alarmVibrates and may go on without the
+             * siren. Adding a Mode causes a compile error here.
              */
-            fun of(mode: LoneWorkerLogic.Mode, peerAudible: Boolean): Pattern? = when (mode) {
+            fun of(mode: LoneWorkerLogic.Mode, peerSounding: Boolean): Pattern? = when (mode) {
                 LoneWorkerLogic.Mode.SOS -> SIREN
                 LoneWorkerLogic.Mode.CHECKING -> CHECK
-                LoneWorkerLogic.Mode.WATCHING -> if (peerAudible) SIREN else null
+                LoneWorkerLogic.Mode.WATCHING -> if (peerSounding) SIREN else null
             }
         }
     }
@@ -191,12 +191,12 @@ class LoneWorkerAlarm(
     }
 
     /**
-     * Every 5s: re-applies vibration cancelled elsewhere (coworker siren only) and restores
+     * Every 5s: re-applies vibration cancelled elsewhere (coworker rescue request, with or without its siren) and restores
      * volume lowered by a collision alert. Retries the track while it is failing.
      */
     fun refresh() {
-        val p = playing ?: fallbackFor ?: return
         if (vibrating) vibrate()
+        val p = playing ?: fallbackFor ?: return
         if (playing == null) { play(p, vibrating); return }
         applyVolume(p)
     }
@@ -204,17 +204,22 @@ class LoneWorkerAlarm(
     /**
      * Stops playback and settles the volume. While a restore is deferred, it is re-decided on every periodic call (idle render).
      * final = monitoring stopped (no periodic calls follow): restores without deferring.
+     * vibrate = leave the vibration on (a coworker rescue request whose siren time is over: no sound, vibration only); the
+     * vibration ends up equal to it on every path, so a plain stop ends it.
      */
-    fun stop(final: Boolean = false) {
+    fun stop(final: Boolean = false, vibrate: Boolean = false) {
         AlarmVolumeShare.sosSounding = false
+        setVibration(vibrate)
         val live = playing != null || track != null || fallbackFor != null
         if (!live && !prefs.contains(K_ORIG)) return
         if (live || !restoreWaiting) {
             releaseTrack()
             stopFallback()
             playing = null
-            vibrating = false
-            VibrationHelper.stopAlarmLoop(ctx)
+            if (!vibrate) {
+                vibrating = false
+                VibrationHelper.stopAlarmLoop(ctx)
+            }
             volumeFault = null
         }
         restoreWaiting = !settleVolume(final)

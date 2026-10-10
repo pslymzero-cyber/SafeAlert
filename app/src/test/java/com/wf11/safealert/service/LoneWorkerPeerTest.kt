@@ -619,11 +619,11 @@ class LoneWorkerPeerTest {
         assertEquals(Mode.CHECKING, l.seenAt(180_000))
         l.onPeerBle("P", true, 181_000)
         assertEquals(Mode.CHECKING, l.seenAt(181_000))
-        assertEquals(Pattern.CHECK, Pattern.of(l.mode, l.audiblePeers().isNotEmpty()))
+        assertEquals(Pattern.CHECK, Pattern.of(l.mode, l.soundingPeers().isNotEmpty()))
         assertFalse(l.alarmVibrates)
         l.ackWorking(182_000)
         l.tick(182_000)
-        assertEquals(Pattern.SIREN, Pattern.of(l.mode, l.audiblePeers().isNotEmpty()))
+        assertEquals(Pattern.SIREN, Pattern.of(l.mode, l.soundingPeers().isNotEmpty()))
         assertTrue(l.alarmVibrates)
     }
 
@@ -755,7 +755,7 @@ class LoneWorkerPeerTest {
         }
     }
 
-    // sig() is the change signature of the visible entries (id, active, silenced); quiet entries are left out.
+    // sig() is the change signature of the visible entries (id, active, silenced, ring over); quiet entries are left out.
     @Test fun peer_sig_matches_the_hash_over_visible_entries() {
         val l = meLogic()
         l.srv("K1", "P", 1, true, created = 5L, now = 1_000)
@@ -765,7 +765,7 @@ class LoneWorkerPeerTest {
         var h = 0
         for (p in l.peers) {
             h = h * 31 + p.id.hashCode()
-            h = h * 31 + (if (p.active) 1 else 0) + (if (p.silenced) 2 else 0)
+            h = h * 31 + (if (p.active) 1 else 0) + (if (p.silenced) 2 else 0) + (if (p.ringOver) 4 else 0)
         }
         assertEquals(2, l.peers.size)
         assertEquals(h, l.peerSig())

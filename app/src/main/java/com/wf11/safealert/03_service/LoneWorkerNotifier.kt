@@ -48,7 +48,7 @@ internal fun LoneWorkerPeers.Peer.line(nowMs: Long): String {
     return listOfNotNull(
         displayName(), roleText, scopeLabel.ifEmpty { null }, HHMM.format(Instant.ofEpochMilli(wall).atZone(ZoneId.systemDefault())),
         beacon.ifEmpty { null }?.let { if (fromServer) "마지막 위치: $it" else "${it} 근처" },
-        if (active) "구조 요청" else if (autoEnded) LoneWorkerNotifier.AUTO_ENDED else "해제됨"
+        if (active) (if (ringOver) "구조 요청 · ${LoneWorkerNotifier.RING_OVER}" else "구조 요청") else if (autoEnded) LoneWorkerNotifier.AUTO_ENDED else "해제됨"
     ).joinToString(" · ")
 }
 
@@ -76,6 +76,9 @@ class LoneWorkerNotifier(
          */
         /** Status of a peer SOS ended by the one-hour limit: the row, the notification and the screen title. */
         const val AUTO_ENDED = "응답 없이 자동 종료"
+
+        /** Status of a peer SOS whose siren time is over (it still alerts by vibration, row and notification). */
+        const val RING_OVER = "소리 꺼짐"
 
         const val TURN_CLOSE_HINT = "회전하거나 ${LoneWorkerLogic.STRONG_RUN_MS / 1000}초 넘게 흔들거나 [괜찮아요]를 누르면 닫혀요"
 
@@ -145,6 +148,7 @@ class LoneWorkerNotifier(
 
     /**
      * Posts or cancels the notification matching the state. Priority: SOS, checking, ringing peer, resolved, quiet notice (notice).
+     * audible = the peer entries alerting on this phone; the siren of some or all of them may already be off (ringOver).
      * If alertAgain is true and it is a major alert, cancels and re-posts even with the same key.
      * With closesByTurn, the checking hint is TURN_CLOSE_HINT instead of steps.
      */
@@ -163,7 +167,7 @@ class LoneWorkerNotifier(
             if (lastKey != null) { nm.cancel(NOTIF_ID); lastKey = null }
             return
         }
-        val key = "${quiet?.first}|${quiet?.second}|$mode|$closesByTurn|${audible.joinToString(",") { it.id }}|${resolved.joinToString(",") { it.id }}"
+        val key = "${quiet?.first}|${quiet?.second}|$mode|$closesByTurn|${audible.joinToString(",") { it.id + (if (it.ringOver) "~" else "") }}|${resolved.joinToString(",") { it.id }}"
         val again = loud && alertAgain
         if (key == lastKey && !again) return
         lastKey = key
@@ -173,7 +177,7 @@ class LoneWorkerNotifier(
             mode == LoneWorkerLogic.Mode.CHECKING ->
                 Triple("괜찮으세요?", "응답이 없으면 ${SiteScope.audience(DevSettings.floor, DevSettings.proc)}에 구조 요청이 나가요. " + (if (closesByTurn) TURN_CLOSE_HINT else "걸으면 자동으로 닫혀요"), "괜찮아요" to servicePi(REQ_ACK, BleService.ACTION_LW_ACK))
             audible.isNotEmpty() ->
-                Triple("구조 요청", audible.joinToString(", ") { it.nameWithScope() }, "확인" to servicePi(REQ_SILENCE, BleService.ACTION_LW_SILENCE, audible))
+                Triple(if (audible.all { it.ringOver }) "구조 요청 · ${RING_OVER}" else "구조 요청", audible.joinToString(", ") { it.nameWithScope() }, "확인" to servicePi(REQ_SILENCE, BleService.ACTION_LW_SILENCE, audible))
             quiet != null -> Triple(quiet.first, quiet.second, null)
             else -> Triple(if (resolved.all { it.autoEnded }) AUTO_ENDED else "해제됨",
                 resolved.joinToString(", ") { it.nameWithScope() }, null)

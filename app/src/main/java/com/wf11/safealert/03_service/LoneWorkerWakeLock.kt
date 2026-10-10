@@ -47,3 +47,10 @@ internal fun LoneWorkerLogic.loopNeeded(sensorsNeedWake: Boolean): Boolean =
 internal fun LoneWorkerLogic.wakeNeeded(sensorsNeedWake: Boolean, nowMs: Long): Boolean =
     sensorsNeedWake || enabled && mounted || mode != LoneWorkerLogic.Mode.WATCHING ||
         audiblePeers().isNotEmpty() || waitingToJudge(nowMs)
+
+
+/**
+ * Next time a sound or a label changes by time alone (no judgment and no sensor data involved), for the monitor to wake at;
+ * null when nothing is due after nowMs.
+ */
+internal fun LoneWorkerLogic.nextCueAt(nowMs: Long): Long? = peerRingEndAt()?.takeIf { it > nowMs }
