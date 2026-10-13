@@ -251,7 +251,7 @@
                         <Spinner android:id="@+id/spinner_vib_count" android:layout_width="match_parent"
                             android:layout_height="wrap_content" android:entries="@array/vib_count_labels" />
                         <LinearLayout style="@style/SA.Row">
-                            <TextView style="@style/SA.RowLabel" android:text="경보음 사용" />
+                            <TextView style="@style/SA.RowLabel" android:text="경보 소리 사용 (경고음 · 음성)" />
                             <Switch android:id="@+id/switch_sound" android:layout_width="wrap_content" android:layout_height="wrap_content" />
                         </LinearLayout>
                         <LinearLayout style="@style/SA.Row">

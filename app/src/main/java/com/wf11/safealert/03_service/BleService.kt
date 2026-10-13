@@ -632,6 +632,7 @@ class BleService : LifecycleService() {
         //   Both are singleton objects, so these lambdas hold the service instance → stopAll() must set them to null.
         AlertSoundPlayer.onSoundFault = { reason -> soundFault   = reason; refreshNotification() }
         OverlayManager.onOverlayFault = { reason -> overlayFault = reason; refreshNotification() }
+        AlertVoice.onChange = { refreshNotification() }
         AlertVoice.start(this)
         // A header tap on the collapsed sidebar = work-process (role) change. The sidebar is always shown, so this path is always live.
         //   It goes through MainActivity's confirmation dialog instead of switching at
@@ -2007,6 +2008,7 @@ class BleService : LifecycleService() {
         // If a singleton object keeps holding a lambda that captured the service instance, the service is never
         //   garbage-collected → always detach it, and reset the fault state too.
         AlertSoundPlayer.onSoundFault = null
+        AlertVoice.onChange = null
         AlertVoice.shutdown()
         OverlayManager.onOverlayFault = null
         OverlayManager.onHeaderTap    = null
@@ -2109,15 +2111,18 @@ class BleService : LifecycleService() {
 
     /**
      * Redraws the persistent notification with the current state.
-     * On entering a fault, plays one warning beep so users who don't look at the notification still notice.
-     * (Re-entry safe: faultBeeped is set before playWarning, so if
+     * On entering a fault, plays one warning beep (warningTone, never spoken) so users who don't look at the
+     * notification still notice.
+     * (Re-entry safe: faultBeeped is set before the beep, so if
      *  tone generation fails → onSoundFault → re-entering this function skips the beep and finishes.)
      */
     private fun refreshNotification() {
         if (!isRunning || myMode.isEmpty()) return
 
         val fault        = faultSummary()
-        val fallbackNote = if (AlertSoundPlayer.isUsingMusicFallback) " · 경보음 미디어 대체 중" else ""
+        // Speech down while the setting is on: the beep / siren do the job (not a loss of protection, so no fault).
+        val voiceNote    = if (AlertVoice.degraded && DevSettings.soundEnabled) " · 음성 대신 경고음" else ""
+        val fallbackNote = (if (AlertSoundPlayer.isUsingMusicFallback) " · 경보음 미디어 대체 중" else "") + voiceNote
 
         val title: String
         val body:  String
@@ -2144,7 +2149,7 @@ class BleService : LifecycleService() {
         if (fault != null) {
             if (!faultBeeped) {
                 faultBeeped = true
-                runCatching { AlertSoundPlayer.playWarning(this, voice = false) }
+                runCatching { AlertSoundPlayer.warningTone(this) }
                     .onFailure { Log.w(TAG, "결함 경고음 실패: ${it.message}") }
             }
         } else {

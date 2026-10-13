@@ -229,6 +229,14 @@ internal class Kv : SosKv {
 internal fun repoFile(rel: String): String =
     listOf(File(rel), File("../$rel")).first { it.exists() }.readText().replace("\r\n", "\n")
 
+/**
+ * Code without comments: block comments (KDoc too, several lines) first, then each line from its line-comment mark.
+ * A block opens only at a line start or after white space, so a MIME string such as image-slash-star never swallows
+ * the code behind it (that would make every "must not contain" check pass for nothing).
+ */
+internal fun noComments(s: String): String =
+    s.replace(Regex("(?ms)(^|\\s)/\\*.*?\\*/"), "\$1").lines().joinToString("\n") { it.substringBefore("//") }
+
 /** Source of a file in 03_service. */
 internal fun serviceSource(name: String): String = repoFile("app/src/main/java/com/wf11/safealert/03_service/$name")
 

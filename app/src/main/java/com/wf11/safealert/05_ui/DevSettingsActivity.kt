@@ -234,8 +234,14 @@ class DevSettingsActivity : AppCompatActivity() {
         binding.switchWalkerTx.setOnCheckedChangeListener { _, c -> DevSettings.walkerTx = c }
         binding.switchWalkerRx.setOnCheckedChangeListener { _, c -> DevSettings.walkerRx = c }
         binding.switchVibration.setOnCheckedChangeListener { _, c -> DevSettings.vibrationEnabled = c; updateSectionSummaries() }
-        binding.switchSound.setOnCheckedChangeListener { _, c -> DevSettings.soundEnabled = c; updateSectionSummaries() }
-        binding.switchVoice.setOnCheckedChangeListener { _, c -> DevSettings.voiceAlertEnabled = c; updateSectionSummaries() }
+        // The ongoing notification's "음성 대신 경고음" note depends on both settings -> AlertVoice.changed() redraws it.
+        binding.switchSound.setOnCheckedChangeListener { _, c ->
+            DevSettings.soundEnabled = c; updateSectionSummaries(); AlertVoice.changed()
+        }
+        binding.switchVoice.setOnCheckedChangeListener { _, c ->
+            DevSettings.voiceAlertEnabled = c; updateSectionSummaries()
+            binding.tvVoiceStatus.text = AlertVoice.status; AlertVoice.changed()
+        }
         // Source items — BLE detection settings only shows these values, locked
         binding.seekDevAlarmVolume.setOnSeekBarChangeListener(seekListener { v ->
             DevSettings.alarmVolume = v.coerceIn(50, 100); updateDevAlarmLabels(); updateSectionSummaries()
@@ -470,6 +476,7 @@ class DevSettingsActivity : AppCompatActivity() {
         override fun run() {
             refreshUwbDiag()
             refreshStateDiag()   // Device status gauge
+            binding.tvVoiceStatus.text = AlertVoice.status   // speech state follows the engine / cooldown
             // Echo-deviation stats panel polling is in the BLE detection settings (same 1.2s period).
             uwbDiagHandler.postDelayed(this, 1200L)
         }
@@ -578,7 +585,9 @@ class DevSettingsActivity : AppCompatActivity() {
         binding.secTxrxSummary.text =
             "스캔 ${DevSettings.scanPeriodMs}ms · 광고 ${DevSettings.advertiseInterval}ms"
         binding.secSoundSummary.text =
-            "진동 ${onOff(binding.switchVibration.isChecked)} · 소리 ${onOff(binding.switchSound.isChecked)} · 음성 ${onOff(binding.switchVoice.isChecked)}"
+            "진동 ${onOff(binding.switchVibration.isChecked)} · 소리 ${onOff(binding.switchSound.isChecked)}" +
+            // Speech only exists while the alarm sound is on
+            (if (binding.switchSound.isChecked) " · 음성 ${onOff(binding.switchVoice.isChecked)}" else "")
         binding.secAlertSummary.text =
             "경고 ${DevSettings.rssiWarning} · 위험 ${DevSettings.rssiDanger} dBm · 오프셋 ${binding.seekWalkerEquipBias.progress}/" +
             "${binding.seekWalkerEpjBias.progress}/${binding.seekEquipEquipBias.progress} dB"

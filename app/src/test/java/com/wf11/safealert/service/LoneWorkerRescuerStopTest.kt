@@ -80,8 +80,6 @@ class LoneWorkerRescuerStopTest {
         assertNull(idle.stopAt)
     }
 
-    private fun noComments(s: String) = s.lines().joinToString("\n") { it.substringBefore("//") }
-
     /** The requester's phone: while the monitoring stop is pending it gives no peer SOS output; a new start brings it back. */
     @Test fun pending_stop_holds_back_peer_sos_until_a_new_start() {
         val l = sosLogic()

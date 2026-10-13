@@ -96,15 +96,18 @@ object AlertSoundPlayer {
         }.onFailure { Log.w(TAG, "폴백 음량 보정 실패: ${it.message}") }
     }
 
-    /** voice = false for the system-fault beep, which is never spoken. */
-    fun playWarning(context: Context, voice: Boolean = true) {
-        if (voice && AlertVoice.warning()) return
+    /**
+     * Proximity warning: asks AlertVoice for a spoken sentence, then plays the beep exactly as before unless speech
+     * is proven to be sounding right now (covering). The beep is the baseline; speech never starts or replaces it.
+     */
+    fun playWarning(context: Context) {
+        AlertVoice.say()
+        if (AlertVoice.covering()) return
         warningTone(context)
     }
 
-    // The tone entry points below are what AlertVoice calls when speech fails. They must never ask AlertVoice
-    //   again (speech failing -> tone -> speech ...) and use stopTone, not stopSound, so a speech decision
-    //   cannot silence the tone it just started.
+    // The tone entry point for the beep. It never asks AlertVoice (the system-fault beep in BleService calls it
+    //   directly and is never spoken) and uses stopTone, not stopSound.
     internal fun warningTone(context: Context) {
         if (isPlaying) return
         isPlaying = true
@@ -113,7 +116,7 @@ object AlertSoundPlayer {
             if (tg == null) { isPlaying = false; return }
             enforceFallbackVolume(context)
             tg.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 800)
-            // Keep the ToneGenerator (reused) — released only in stopSound
+            // Keep the ToneGenerator (reused) — released only in stopTone
             warnHandler = Handler(Looper.getMainLooper()).apply { postDelayed(warnReset, 1000) }
         } catch (e: Exception) {
             Log.e(TAG, "경고음 실패: ${e.message}")
@@ -123,13 +126,20 @@ object AlertSoundPlayer {
         }
     }
 
-    /** rapid = TTC rapid approach: speech says so first. */
+    /**
+     * Proximity danger: asks AlertVoice for the repeating spoken sentence (rapid = TTC rapid approach), then starts
+     * the siren exactly as before unless speech is proven to be sounding right now (covering). While covering, the
+     * running siren repeat keeps ticking without sounding, so it comes back by itself when the cover ends.
+     */
     fun playDanger(context: Context, rapid: Boolean = false) {
-        if (AlertVoice.danger(rapid)) {
-            stopTone()  // speech took over from a siren still sounding (e.g. its failure cooldown just ended)
-            return
-        }
+        AlertVoice.loop(rapid)
+        if (AlertVoice.covering()) return
         dangerTone(context)
+    }
+
+    /** Speech is proven: switches off the tone piece sounding right now (repeat and isPlaying are untouched). */
+    internal fun hushForSpeech() {
+        runCatching { toneGenerator?.stopTone() }
     }
 
     internal fun dangerTone(context: Context) {
@@ -158,7 +168,8 @@ object AlertSoundPlayer {
                 if (!isPlaying) return
                 try {
                     // Reuse the existing ToneGenerator (no re-creation → saves CPU/memory)
-                    tg.startTone(ToneGenerator.TONE_CDMA_EMERGENCY_RINGBACK, 400)
+                    // While speech is proven the piece is skipped, the repeat itself keeps going
+                    if (!AlertVoice.covering()) tg.startTone(ToneGenerator.TONE_CDMA_EMERGENCY_RINGBACK, 400)
                 } catch (e: Exception) {
                     Log.e(TAG, "위험음 반복 실패: ${e.message}")
                     toneGenerator = null  // Null only on error

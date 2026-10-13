@@ -78,7 +78,6 @@ class ControlPageParityTest {
         val html = page()
         val g = gs()
         fun flat(s: String) = s.replace(Regex("""\s+"""), "")
-        fun noComments(s: String) = s.lines().joinToString("\n") { it.substringBefore("//") }   // keys only, not words of comments
         assertEquals(flat(g.substringAfter("function str_(v) {").substringBefore("}")), flat(html.substringAfter("function str(v) {").substringBefore("}")))
         assertEquals(flat(g.substringAfter("function code_(v) {").substringBefore("\n}")), flat(html.substringAfter("function code(v) {").substringBefore("}")))
         val sent = Regex("""(\w+):""").findAll(noComments(g.substringAfter("t.fb = JSON.stringify({").substringBefore("})"))).map { it.groupValues[1] }.toSet()
