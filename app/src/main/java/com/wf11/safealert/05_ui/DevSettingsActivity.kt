@@ -476,7 +476,7 @@ class DevSettingsActivity : AppCompatActivity() {
         override fun run() {
             refreshUwbDiag()
             refreshStateDiag()   // Device status gauge
-            binding.tvVoiceStatus.text = AlertVoice.status   // speech state follows the engine / cooldown
+            binding.tvVoiceStatus.text = AlertVoice.status   // voice state follows the clip files / setting / cooldown
             // Echo-deviation stats panel polling is in the BLE detection settings (same 1.2s period).
             uwbDiagHandler.postDelayed(this, 1200L)
         }

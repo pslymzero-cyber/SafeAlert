@@ -2,40 +2,49 @@ package com.wf11.safealert.service
 
 import android.content.Context
 import android.media.AudioAttributes
+import android.media.AudioFormat
+import android.media.AudioTrack
 import android.os.Handler
-import android.os.HandlerThread
 import android.os.Looper
 import android.os.SystemClock
-import android.speech.tts.TextToSpeech
-import android.speech.tts.UtteranceProgressListener
 import android.util.Log
 import androidx.annotation.VisibleForTesting
+import com.wf11.safealert.R
 import com.wf11.safealert.utils.DevSettings
-import java.util.Locale
 
 /**
- * Spoken guidance for proximity alerts, on top of the warning beep / danger siren.
+ * One AudioTrack-sized player for the three recorded clips (the seam the logic is tested through).
+ * play(clip, loopGapMs): starts the clip now, replacing what plays; loopGapMs >= 0 repeats it with that pause
+ * until stop(), a negative value plays it once. It answers false when it could not start. alive is true while the
+ * track reports that it is playing.
+ */
+internal interface ClipPlayer {
+    fun play(clip: Int, loopGapMs: Int): Boolean
+    fun stop()
+    val alive: Boolean
+    fun durationMs(clip: Int): Long
+    fun release()
+}
+
+/**
+ * Spoken guidance for proximity alerts, played from three recorded clips (res/raw: voice_warning, voice_danger,
+ * voice_rapid) by the app itself. The phone's speech engine is not used.
  *
- * The tone is the baseline: AlertSoundPlayer starts the beep / siren exactly as it always did, whatever this
- * object does. Speech only hides the tone (covering) while it is PROVEN to be synthesizing, that is from the
- * first onAudioAvailable (bytes > 0) of the sentence until the sentence ends, or at most MAX_MS of the sentence.
- * Anything that breaks the proof (no audio, the engine died mid-sentence, speak refused, an error) simply lets
- * the tone continue by itself. This object never starts a tone; its only call into the tone side is
- * AlertSoundPlayer.hushForSpeech(), which switches the sounding tone piece off.
+ * The beep / siren is the baseline: AlertSoundPlayer always keeps its repeat running, whatever this object does.
+ * The clip hides the tone (covering) only while it is really playing: the player started it and the track still
+ * reports playing, and for a one-shot clip only until its own end. A player that fails to start gives the tone at
+ * once, in the same call; one that dies while playing gives the tone on the next 600 ms tick of the siren repeat.
+ * This object never starts a tone; its only call into the tone side is AlertSoundPlayer.hushForSpeech(), which
+ * switches the sounding tone piece off.
  *
- * onStart is NOT a proof: engines send it before any sound. speak() returning SUCCESS only means "queued".
- *
- * Threads: all state lives on the main thread. Every call into the engine (create, speak, stop, shutdown,
- * setLanguage, voice lookup) runs on the worker thread (io), so a hung engine binder never blocks the main
- * thread; results come back through the main handler and carry the generation / utterance id so stale ones drop.
- *
- * Only the three fixed phrases below are ever handed to the engine, and only a voice that is on the device
- * (not network, not marked not-installed, Korean) is used.
+ * Phases (all on the main thread): WARNING = the warning sentence once; RAPID = the rapid-approach sentence once,
+ * then DANGER after a pause; DANGER = the danger sentence repeated until stop(). The length of a clip is read from
+ * its file, so replacing the three files changes nothing in the code.
  *
  * Known limits (intended): the rapid-approach hold-off is one clock for all devices, so a rapid approach of
- * another device within RAPID_HOLDOFF_MS of the last one skips the phrase (siren and rapid vibration stay).
- * If a real engine never delivers onAudioAvailable, speech cannot hide the tone and both are heard together
- * (safe, but messy) - to be checked on the device.
+ * another device within RAPID_HOLDOFF_MS of the last one skips the phrase (siren and rapid vibration stay), and
+ * stop() does not clear it. alive is the track state on the app side, so a fault inside the audio server is only
+ * seen through the return codes of play.
  */
 object AlertVoice {
 
@@ -44,266 +53,176 @@ object AlertVoice {
     const val RAPID = "작업자가 급접근 중입니다"
 
     const val STATUS_IDLE = "감시를 시작하면 확인됩니다"
-    const val STATUS_CHECKING = "음성 엔진 확인 중"
-    const val STATUS_NO_ENGINE = "이 기기에서는 음성 엔진을 쓸 수 없어 경고음 · 사이렌으로 울립니다"
-    const val STATUS_NO_KOREAN = "이 기기에는 기기 안에서 쓸 한국어 음성이 없어 경고음 · 사이렌으로 울립니다"
+    const val STATUS_NO_FILES = "음성 파일을 읽지 못해 경고음 · 사이렌으로 울립니다"
     const val STATUS_OFF = "음성 안내 꺼짐 — 경고음 · 사이렌으로 울립니다"
     const val STATUS_COOLING = "음성 재생에 실패해 경고음 · 사이렌으로 울립니다(잠시 뒤 다시 시도)"
     const val STATUS_READY = "음성 안내 사용 가능"
 
-    enum class State { IDLE, CHECKING, READY, NO_ENGINE, NO_KOREAN }
+    internal const val CLIP_WARNING = 0
+    internal const val CLIP_DANGER = 1
+    internal const val CLIP_RAPID = 2
 
-    private enum class Want { NONE, ONCE, LOOP }
-
-    private class Spoken(val id: String, val text: String, val requestedAt: Long) {
-        var provedAt = NONE
-    }
+    private enum class Phase { NONE, WARNING, RAPID, DANGER }
 
     private const val TAG = "AlertVoice"
-    private const val START_WATCH_MS = 1500L
-    private const val MAX_DANGER_MS = 3500L
-    private const val MAX_WARNING_MS = 6000L
-    private const val MIN_SPOKEN_MS = 400L
-    private const val REPEAT_GAP_MS = 400L
-    private const val NEXT_GRACE_MS = 800L
+    internal const val REPEAT_GAP_MS = 400
+    private const val NEXT_GRACE_MS = 300L
     private const val RAPID_HOLDOFF_MS = 5000L
     private const val COOL_MS = 60000L
     private const val CHURN_MIN_MS = 700L
     private const val CHURN_BACKOFF_MS = 1200L
-    private const val RETRY_INIT_MS = 300000L
     private const val NONE = -1L
 
     /** Called when the state or the degraded flag may have changed (the ongoing notification follows it). */
     var onChange: (() -> Unit)? = null
 
-    @Volatile var state = State.IDLE
-        private set
-
-    /** Test seam: where engine calls run. Default = the worker thread (dropped when there is none). */
+    /** Test seam: how the player is made. null = the clip files could not be read. */
     @VisibleForTesting
-    internal var io: (() -> Unit) -> Unit = { block -> workHandler?.post(block) }
+    internal var playerFactory: (Context) -> ClipPlayer? = { TrackPlayer.create(it) }
 
     private val handler by lazy { Handler(Looper.getMainLooper()) }
-    private var worker: HandlerThread? = null
-    @Volatile private var workHandler: Handler? = null
-
-    /** The engine; touched only inside io blocks (the worker thread orders create -> configure -> shutdown). */
-    @Volatile private var ttsRef: TextToSpeech? = null
     private var appCtx: Context? = null
-    private var gen = 0
-    private var seq = 0
+    private var started = false
+    private var player: ClipPlayer? = null
 
-    private var want = Want.NONE
-    private var cur: Spoken? = null
+    private var phase = Phase.NONE
     private var rapidPending = false
+    private var delayed = false
     private var lastRapidAt = NONE
+    private var startedAt = 0L
+    private var clipEnd = 0L
     private var coverUntil = 0L
-    @Volatile private var coolUntil = 0L
-    private var failCount = 0
+    private var coolUntil = 0L
     private var churnUntil = 0L
-    private var nextScheduled = false
 
-    /** Binder thread only: the last utterance id whose first audio was already reported. */
-    @Volatile private var lastAudioId: String? = null
+    /** End of a one-shot clip (WARNING: back to NONE; RAPID: the danger repeat follows). */
+    private val advance = Runnable {
+        when (phase) {
+            Phase.WARNING -> { phase = Phase.NONE; coverUntil = 0L }
+            Phase.RAPID -> startDanger()
+            else -> {}
+        }
+    }
 
-    private val startWatch = Runnable {
-        val c = cur
-        if (c != null && c.provedAt == NONE) failed("시작 안 됨", false)
-    }
-    private val endWatch = Runnable {
-        if (cur != null) failed("끝나지 않음", false)
-    }
-    private val coolEnd = Runnable { changed() }
-    private val retryInit = Runnable {
-        if (state == State.NO_ENGINE || state == State.NO_KOREAN) begin()
-    }
-    private val nextSentence = Runnable {
-        nextScheduled = false
-        if (want != Want.LOOP) return@Runnable
+    /** A start that was held back by the flicker guard. */
+    private val delayedStart = Runnable {
+        delayed = false
+        if (phase != Phase.NONE) return@Runnable
         if (!usable()) { halt(); return@Runnable }
-        if (cur != null) return@Runnable
-        speakNext(true)
-    }
-
-    private val listener = object : UtteranceProgressListener() {
-        override fun onStart(utteranceId: String?) {}
-        override fun onDone(utteranceId: String?) { post { onFinished(utteranceId) } }
-        @Deprecated("Deprecated in Java")
-        override fun onError(utteranceId: String?) { post { onBroken(utteranceId) } }
-        override fun onStop(utteranceId: String?, interrupted: Boolean) { post { onBroken(utteranceId) } }
-        override fun onAudioAvailable(utteranceId: String?, audio: ByteArray?) {
-            // One call per buffer on a binder thread: only the first non-empty one of a sentence goes to main.
-            if (utteranceId == null || audio == null || audio.isEmpty() || utteranceId == lastAudioId) return
-            lastAudioId = utteranceId
-            post { onProof(utteranceId) }
-        }
-    }
-
-    private fun post(block: () -> Unit) { handler.post { block() } }
-    private fun now() = SystemClock.elapsedRealtime()
-
-    // ---- lifecycle -------------------------------------------------------------------------------------
-
-    /** Starts the worker and creates the engine (asynchronous). Never throws: a failure leaves the tones alone. */
-    fun start(context: Context) {
-        if (state != State.IDLE) return
-        appCtx = context.applicationContext
-        worker = HandlerThread("AlertVoice").also {
-            it.start()
-            workHandler = Handler(it.looper)
-        }
         begin()
     }
 
-    fun shutdown() {
-        if (state == State.IDLE && worker == null) return
-        for (r in listOf(startWatch, endWatch, nextSentence, retryInit, coolEnd)) handler.removeCallbacks(r)
-        nextScheduled = false
-        want = Want.NONE
-        rapidPending = false
-        cur = null
-        coverUntil = 0L
-        coolUntil = 0L
-        churnUntil = 0L
-        failCount = 0
-        lastRapidAt = NONE
-        gen++
-        io { dropEngine() }
-        worker?.quitSafely()
-        worker = null
-        workHandler = null
-        state = State.IDLE
+    /** The cooldown is over: bring the player back if it could not be rebuilt (once per cooldown), then redraw. */
+    private val coolEnd = object : Runnable {
+        override fun run() {
+            if (started && player == null) {
+                player = makePlayer()
+                if (player == null) handler.postDelayed(this, COOL_MS)
+            }
+            changed()
+        }
+    }
+
+    private fun now() = SystemClock.elapsedRealtime()
+
+    private fun makePlayer(): ClipPlayer? {
+        val ctx = appCtx ?: return null
+        return runCatching { playerFactory(ctx) }.getOrNull()
+    }
+
+    // ---- lifecycle -------------------------------------------------------------------------------------
+
+    /** Reads the clips and prepares the player. Never throws: a failure leaves the tones alone. */
+    fun start(context: Context) {
+        if (started) return
+        appCtx = context.applicationContext
+        started = true
+        player = makePlayer()
         changed()
     }
 
-    /** Fresh engine (also the rebuild after an engine fault). Cooldown and the rapid clock are kept. */
-    private fun begin() {
-        val app = appCtx ?: return
-        val g = ++gen
-        setState(State.CHECKING)
-        io {
-            dropEngine()
-            val t = runCatching { TextToSpeech(app) { code -> post { onInit(g, code) } } }.getOrNull()
-            ttsRef = t
-            if (t == null) post { onInit(g, TextToSpeech.ERROR) }
-        }
-    }
-
-    /** io only. */
-    private fun dropEngine() {
-        val t = ttsRef
-        ttsRef = null
-        if (t != null) runCatching { t.shutdown() }
-    }
-
-    private fun onInit(g: Int, code: Int) {
-        if (g != gen || state != State.CHECKING) return
-        if (code != TextToSpeech.SUCCESS) {
-            io { dropEngine() }
-            unusable(State.NO_ENGINE)
-            return
-        }
-        io {
-            val t = ttsRef
-            val result = if (t == null) State.NO_ENGINE else configure(t)
-            if (result != State.READY) dropEngine()
-            post { configured(g, result) }
-        }
-    }
-
-    /** io only. Korean, on the device, then the audio attributes (alarm stream); fixed speed and pitch. */
-    private fun configure(t: TextToSpeech): State {
-        val lang = runCatching { t.setLanguage(Locale.KOREAN) }.getOrDefault(TextToSpeech.LANG_NOT_SUPPORTED)
-        if (lang < TextToSpeech.LANG_AVAILABLE) return State.NO_KOREAN
-        val v = runCatching { t.voice }.getOrNull()
-        if (v != null) {
-            val network = runCatching { v.isNetworkConnectionRequired }.getOrDefault(false)
-            val missing = runCatching { v.features?.contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED) == true }
-                .getOrDefault(false)
-            val korean = runCatching { v.locale?.language == "ko" }.getOrDefault(true)
-            if (network || missing || !korean) return State.NO_KOREAN
-        }
-        runCatching {
-            t.setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_ALARM)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                    .build()
-            )
-        }
-        runCatching { t.setSpeechRate(1.0f) }
-        runCatching { t.setPitch(1.0f) }
-        runCatching { t.setOnUtteranceProgressListener(listener) }
-        return State.READY
-    }
-
-    private fun configured(g: Int, result: State) {
-        if (g != gen || state != State.CHECKING) return
-        if (result == State.READY) setState(State.READY) else unusable(result)
-    }
-
-    private fun unusable(s: State) {
-        setState(s)
-        handler.removeCallbacks(retryInit)
-        handler.postDelayed(retryInit, RETRY_INIT_MS)
-    }
-
-    private fun setState(s: State) {
-        if (state == s) return
-        state = s
+    fun shutdown() {
+        if (!started) return
+        for (r in listOf(advance, delayedStart, coolEnd)) handler.removeCallbacks(r)
+        val p = player
+        player = null
+        if (p != null) runCatching { p.stop(); p.release() }
+        phase = Phase.NONE
+        rapidPending = false
+        delayed = false
+        coverUntil = 0L
+        coolUntil = 0L
+        churnUntil = 0L
+        lastRapidAt = NONE
+        started = false
         changed()
     }
 
     fun changed() { runCatching { onChange?.invoke() } }
 
-    // ---- requests (main thread, never wait for the engine) ---------------------------------------------
+    // ---- requests (main thread) ------------------------------------------------------------------------
 
-    /** One warning sentence. Never cuts a danger repeat or a sentence in progress. */
+    /** One warning sentence. Never cuts a clip in progress. */
     fun say() {
         if (!usable()) { halt(); return }
-        if (want == Want.LOOP || cur != null) return
-        if (now() < churnUntil) return
-        want = Want.ONCE
-        speak(WARNING, false)
+        settle()
+        if (phase != Phase.NONE || delayed) return
+        val t = now()
+        if (t < churnUntil) return
+        val p = player ?: return
+        if (!playOk(p, CLIP_WARNING, -1)) { failed("경고 재생 시작 안 됨"); return }
+        val d = p.durationMs(CLIP_WARNING)
+        phase = Phase.WARNING
+        startedAt = t
+        clipEnd = t + d
+        coverUntil = clipEnd
+        after(advance, d)
+        hush()
     }
 
     /**
-     * Danger sentence repeating until stop(). Called again every few seconds while the alert lasts: a sentence in
-     * progress (or a scheduled next one) is never restarted. A warning sentence is replaced at once (escalation);
-     * a rapid approach speaks RAPID first and replaces a danger sentence only when the last RAPID is older than
-     * RAPID_HOLDOFF_MS.
+     * Danger sentence repeating until stop(). Called again every few seconds while the alert lasts: a repeat that
+     * is running is never restarted. A warning sentence is replaced at once (escalation); a rapid approach plays
+     * RAPID first and replaces a running danger repeat only when the last RAPID is older than RAPID_HOLDOFF_MS.
+     * A player found dead in the middle of a clip is a failure (cooldown, new player).
      */
     fun loop(rapid: Boolean) {
         if (!usable()) { halt(); return }
+        settle()
         val t = now()
-        want = Want.LOOP
+        if (dead()) { failed("재생 중 멈춤"); return }
         if (rapid && (lastRapidAt == NONE || t - lastRapidAt >= RAPID_HOLDOFF_MS)) rapidPending = true
-        val c = cur
-        if (c != null) {
-            if (c.text == WARNING || (rapidPending && c.text == DANGER)) speakNext(false)
-            return
+        when (phase) {
+            Phase.WARNING -> begin()
+            Phase.RAPID -> {}
+            Phase.DANGER -> if (rapidPending) begin()
+            Phase.NONE -> {
+                if (delayed) return
+                if (t < churnUntil) {
+                    delayed = true
+                    after(delayedStart, churnUntil - t)
+                    return
+                }
+                begin()
+            }
         }
-        if (nextScheduled) return
-        if (t < churnUntil) { scheduleNext(churnUntil - t); return }
-        speakNext(false)
     }
 
     /**
-     * Called from every decision frame: returns at once unless something is wanted or being spoken. A sentence cut
-     * within CHURN_MIN_MS of its request means the judgement is flickering: speech stays off for CHURN_BACKOFF_MS
-     * (the tone alone covers that time).
+     * Called from every decision frame: returns at once unless something is playing or held back. A clip cut within
+     * CHURN_MIN_MS of its start means the judgement is flickering: speech stays off for CHURN_BACKOFF_MS (the tone
+     * alone covers that time).
      */
     fun stop() {
-        if (want == Want.NONE && cur == null && !nextScheduled) return
-        val c = cur
-        if (c != null && now() - c.requestedAt < CHURN_MIN_MS) churnUntil = now() + CHURN_BACKOFF_MS
+        if (phase == Phase.NONE && !delayed) return
+        if (phase != Phase.NONE && now() - startedAt < CHURN_MIN_MS) churnUntil = now() + CHURN_BACKOFF_MS
         halt()
     }
 
-    /** True while speech is proven to be sounding: the tone side then does not start a new piece. */
+    /** True while a clip is really playing: the tone side then does not start a new piece. */
     fun covering(): Boolean {
-        val u = coverUntil
-        return u != 0L && now() < u
+        if (phase == Phase.NONE) return false
+        return now() < coverUntil && !dead()
     }
 
     // ---- state text ------------------------------------------------------------------------------------
@@ -312,142 +231,244 @@ object AlertVoice {
 
     /** Why speech is (not) available; shown in the developer settings. */
     val status: String
-        get() = when (state) {
-            State.IDLE -> STATUS_IDLE
-            State.CHECKING -> STATUS_CHECKING
-            State.NO_ENGINE -> STATUS_NO_ENGINE
-            State.NO_KOREAN -> STATUS_NO_KOREAN
-            State.READY -> when {
-                !DevSettings.voiceAlertEnabled -> STATUS_OFF
-                cooling() -> STATUS_COOLING
-                else -> STATUS_READY
-            }
+        get() = when {
+            !started -> STATUS_IDLE
+            player == null -> STATUS_NO_FILES
+            !DevSettings.voiceAlertEnabled -> STATUS_OFF
+            cooling() -> STATUS_COOLING
+            else -> STATUS_READY
         }
 
-    /** The setting is on but the tones are doing the job (no engine, no Korean voice, or cooling after a failure). */
+    /** The setting is on but the tones are doing the job (clip files not read, or cooling after a failure). */
     val degraded: Boolean
-        get() = when (state) {
-            State.NO_ENGINE, State.NO_KOREAN -> DevSettings.voiceAlertEnabled
-            State.READY -> cooling() && DevSettings.voiceAlertEnabled
-            else -> false
-        }
+        get() = started && DevSettings.voiceAlertEnabled && (player == null || cooling())
 
     // ---- internals -------------------------------------------------------------------------------------
 
-    /** Evaluation order matters: pure JVM tests reach here with no engine and no settings. */
+    /** Evaluation order matters: pure JVM tests reach here with no player and no settings. */
     private fun usable() =
-        state == State.READY && DevSettings.voiceAlertEnabled && !AlarmVolumeShare.sosSounding && now() >= coolUntil
+        player != null && DevSettings.voiceAlertEnabled && !AlarmVolumeShare.sosSounding && now() >= coolUntil
 
-    /** Stops everything wanted or spoken (not a failure: no cooldown, no churn guard). */
-    private fun halt() {
-        if (want == Want.NONE && cur == null && !nextScheduled) return
-        val had = cur != null
-        want = Want.NONE
-        rapidPending = false
-        coverUntil = 0L
-        cur = null
-        nextScheduled = false
-        handler.removeCallbacks(startWatch)
-        handler.removeCallbacks(endWatch)
-        handler.removeCallbacks(nextSentence)
-        if (had) io { runCatching { ttsRef?.stop() } }
+    /**
+     * The clip that should be playing is not. A repeat must always be playing; a one-shot clip only has to be
+     * playing inside its own length (some devices leave a finished static track in a stopped state, which is
+     * normal and must not look like a failure in the pause that follows RAPID).
+     */
+    private fun dead(): Boolean {
+        val p = player ?: return false
+        return when (phase) {
+            Phase.NONE -> false
+            Phase.DANGER -> !p.alive
+            else -> now() < clipEnd && !p.alive
+        }
     }
 
-    private fun scheduleNext(delayMs: Long) {
-        nextScheduled = true
-        handler.removeCallbacks(nextSentence)
-        handler.postDelayed(nextSentence, delayMs)
+    /** A finished warning is over even if its timer was late. */
+    private fun settle() {
+        if (phase == Phase.WARNING && now() >= clipEnd) { phase = Phase.NONE; coverUntil = 0L }
     }
 
-    private fun speakNext(continuation: Boolean) {
-        val text = if (rapidPending) {
+    private fun playOk(p: ClipPlayer, clip: Int, gap: Int) = runCatching { p.play(clip, gap) }.getOrDefault(false)
+
+    private fun after(r: Runnable, ms: Long) {
+        handler.removeCallbacks(r)
+        handler.postDelayed(r, ms)
+    }
+
+    private fun hush() { AlertSoundPlayer.hushForSpeech() }
+
+    /** Starts RAPID (when pending) or the danger repeat, replacing a warning clip. */
+    private fun begin() {
+        val p = player ?: return
+        val t = now()
+        if (rapidPending) {
             rapidPending = false
-            lastRapidAt = now()
-            RAPID
-        } else DANGER
-        speak(text, continuation)
-    }
-
-    /** A new sentence is not proven yet (coverUntil 0, the tone plays); only a repeat continuation keeps it. */
-    private fun speak(text: String, continuation: Boolean) {
-        val id = "av${++seq}"
-        handler.removeCallbacks(startWatch)
-        handler.removeCallbacks(endWatch)
-        handler.removeCallbacks(nextSentence)
-        nextScheduled = false
-        cur = Spoken(id, text, now())
-        if (!continuation) coverUntil = 0L
-        handler.postDelayed(startWatch, START_WATCH_MS)
-        val g = gen
-        io {
-            val t = ttsRef
-            val code = if (t == null) TextToSpeech.ERROR
-            else runCatching { t.speak(text, TextToSpeech.QUEUE_FLUSH, null, id) }.getOrDefault(TextToSpeech.ERROR)
-            if (code != TextToSpeech.SUCCESS) post { onRejected(g, id) }
-        }
-    }
-
-    private fun onRejected(g: Int, id: String) {
-        if (g != gen || cur?.id != id) return
-        failed("speak 거부", true)
-    }
-
-    private fun maxMs(text: String) = if (text == WARNING) MAX_WARNING_MS else MAX_DANGER_MS
-
-    /** First audio of the current sentence: speech is real now, so it hides the tone for at most maxMs. */
-    private fun onProof(id: String) {
-        val c = cur ?: return
-        if (c.id != id || c.provedAt != NONE) return
-        val t = now()
-        val max = maxMs(c.text)
-        c.provedAt = t
-        coverUntil = t + max
-        handler.removeCallbacks(startWatch)
-        handler.removeCallbacks(endWatch)
-        handler.postDelayed(endWatch, max)
-        AlertSoundPlayer.hushForSpeech()
-    }
-
-    private fun onFinished(id: String?) {
-        val c = cur ?: return
-        if (id == null || c.id != id) return
-        handler.removeCallbacks(startWatch)
-        handler.removeCallbacks(endWatch)
-        val t = now()
-        if (c.provedAt == NONE || t - c.provedAt < MIN_SPOKEN_MS) { failed("소리 없이 끝남", false); return }
-        failCount = 0
-        cur = null
-        if (want == Want.LOOP) {
-            coverUntil = t + REPEAT_GAP_MS + NEXT_GRACE_MS
-            scheduleNext(REPEAT_GAP_MS)
+            if (!playOk(p, CLIP_RAPID, -1)) { failed("급접근 재생 시작 안 됨"); return }
+            val d = p.durationMs(CLIP_RAPID)
+            phase = Phase.RAPID
+            startedAt = t
+            lastRapidAt = t
+            clipEnd = t + d
+            coverUntil = clipEnd + REPEAT_GAP_MS + NEXT_GRACE_MS
+            after(advance, d + REPEAT_GAP_MS)
+            hush()
         } else {
-            want = Want.NONE
-            coverUntil = 0L
+            if (!playOk(p, CLIP_DANGER, REPEAT_GAP_MS)) { failed("위험 재생 시작 안 됨"); return }
+            handler.removeCallbacks(advance)
+            phase = Phase.DANGER
+            startedAt = t
+            coverUntil = Long.MAX_VALUE
+            hush()
         }
     }
 
-    private fun onBroken(id: String?) {
-        val c = cur ?: return
-        if (id == null || c.id != id) return
-        failed("엔진 오류", false)
+    /** RAPID is over: the danger repeat follows (its start time is not a new request, startedAt stays). */
+    private fun startDanger() {
+        val p = player
+        if (p == null || !usable()) { halt(); return }
+        if (!playOk(p, CLIP_DANGER, REPEAT_GAP_MS)) { failed("위험 재생 시작 안 됨"); return }
+        phase = Phase.DANGER
+        coverUntil = Long.MAX_VALUE
+        hush()
     }
 
-    /** The tone is already the baseline, so a failure only drops the sentence and keeps speech off for COOL_MS. */
-    private fun failed(reason: String, rebuild: Boolean) {
-        cur = null
+    /** Stops everything wanted or playing (not a failure: no cooldown, no churn guard). */
+    private fun halt() {
+        if (phase == Phase.NONE && !delayed) { rapidPending = false; return }
+        phase = Phase.NONE
+        rapidPending = false
+        delayed = false
         coverUntil = 0L
-        nextScheduled = false
-        handler.removeCallbacks(startWatch)
-        handler.removeCallbacks(endWatch)
-        handler.removeCallbacks(nextSentence)
-        io { runCatching { ttsRef?.stop() } }
-        failCount++
+        handler.removeCallbacks(advance)
+        handler.removeCallbacks(delayedStart)
+        player?.let { p -> runCatching { p.stop() } }
+    }
+
+    /**
+     * The tone is already the baseline, so a failure only drops the clip, keeps speech off for COOL_MS and builds a
+     * new player (the old one is released).
+     */
+    private fun failed(reason: String) {
+        halt()
         coolUntil = now() + COOL_MS
-        if (want == Want.ONCE) want = Want.NONE
+        val old = player
+        player = null
+        if (old != null) runCatching { old.stop(); old.release() }
+        player = makePlayer()
         Log.w(TAG, "음성 실패(${reason}) — ${COOL_MS / 1000}초간 경고음 · 사이렌만")
         handler.removeCallbacks(coolEnd)
         handler.postDelayed(coolEnd, COOL_MS)
-        if (rebuild || failCount >= 2) begin()
         changed()
+    }
+}
+
+/** The real player: one static AudioTrack per clip, the danger track holds its pause as trailing silence. */
+internal class TrackPlayer private constructor(
+    private val tracks: List<AudioTrack>,
+    private val durations: LongArray,
+    private val frames: IntArray,
+) : ClipPlayer {
+
+    private var current: AudioTrack? = null
+    private var released = false
+
+    override fun play(clip: Int, loopGapMs: Int): Boolean {
+        if (released || clip !in tracks.indices) return false
+        // The pause of a repeat is part of the danger track, so only that pair is valid.
+        if (loopGapMs != (if (clip == AlertVoice.CLIP_DANGER) AlertVoice.REPEAT_GAP_MS else -1)) return false
+        val t = tracks[clip]
+        return runCatching {
+            current?.stop()
+            current = null
+            t.stop()
+            if (t.reloadStaticData() != AudioTrack.SUCCESS) return@runCatching false
+            if (loopGapMs >= 0 && t.setLoopPoints(0, frames[clip], -1) != AudioTrack.SUCCESS) {
+                return@runCatching false
+            }
+            t.play()
+            current = t
+            t.playState == AudioTrack.PLAYSTATE_PLAYING
+        }.getOrDefault(false)
+    }
+
+    override fun stop() {
+        runCatching { current?.stop() }
+        current = null
+    }
+
+    override val alive: Boolean
+        get() = !released && runCatching { current?.playState == AudioTrack.PLAYSTATE_PLAYING }.getOrDefault(false)
+
+    override fun durationMs(clip: Int): Long = durations.getOrElse(clip) { 0L }
+
+    override fun release() {
+        released = true
+        current = null
+        for (t in tracks) runCatching { t.stop() }
+        for (t in tracks) runCatching { t.release() }
+    }
+
+    internal class Wav(val sampleRate: Int, val pcm: ByteArray) {
+        val frames get() = pcm.size / 2
+        val durationMs get() = frames * 1000L / sampleRate
+    }
+
+    companion object {
+        private val CLIP_RES = intArrayOf(R.raw.voice_warning, R.raw.voice_danger, R.raw.voice_rapid)
+
+        /** null = a file could not be read or is not 16 bit mono PCM (the tracks built so far are released). */
+        fun create(context: Context): TrackPlayer? {
+            val built = ArrayList<AudioTrack>()
+            val p = runCatching { build(context, built) }.getOrNull()
+            if (p == null) for (t in built) runCatching { t.release() }
+            return p
+        }
+
+        private fun build(context: Context, built: MutableList<AudioTrack>): TrackPlayer? {
+            val wavs = CLIP_RES.map { id ->
+                parseWav(context.resources.openRawResource(id).use { it.readBytes() }) ?: return null
+            }
+            val frames = IntArray(wavs.size)
+            for ((clip, w) in wavs.withIndex()) {
+                val pcm = if (clip == AlertVoice.CLIP_DANGER) {
+                    w.pcm + ByteArray(w.sampleRate * AlertVoice.REPEAT_GAP_MS / 1000 * 2)
+                } else w.pcm
+                frames[clip] = pcm.size / 2
+                val t = AudioTrack.Builder()
+                    .setAudioAttributes(
+                        AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_ALARM)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                            .build()
+                    )
+                    .setAudioFormat(
+                        AudioFormat.Builder()
+                            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                            .setSampleRate(w.sampleRate)
+                            .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                            .build()
+                    )
+                    .setBufferSizeInBytes(pcm.size)
+                    .setTransferMode(AudioTrack.MODE_STATIC)
+                    .build()
+                built += t
+                if (t.write(pcm, 0, pcm.size) != pcm.size || t.state != AudioTrack.STATE_INITIALIZED) return null
+            }
+            return TrackPlayer(ArrayList(built), LongArray(wavs.size) { wavs[it].durationMs }, frames)
+        }
+
+        /** RIFF / WAVE chunks; only 16 bit mono PCM is accepted. A size that runs past the file fails the parse. */
+        fun parseWav(b: ByteArray): Wav? {
+            if (b.size < 12 || String(b, 0, 4, Charsets.US_ASCII) != "RIFF" ||
+                String(b, 8, 4, Charsets.US_ASCII) != "WAVE") return null
+            var pos = 12
+            var rate = 0
+            var data: ByteArray? = null
+            var fmtOk = false
+            while (pos + 8 <= b.size) {
+                val id = String(b, pos, 4, Charsets.US_ASCII)
+                val size = le32(b, pos + 4)
+                val body = pos + 8
+                if (size < 0 || size > b.size - body) return null
+                when (id) {
+                    "fmt " -> {
+                        if (size < 16) return null
+                        rate = le32(b, body + 4)
+                        fmtOk = le16(b, body) == 1 && le16(b, body + 2) == 1 && le16(b, body + 14) == 16 && rate > 0
+                        if (!fmtOk) return null
+                    }
+                    "data" -> data = b.copyOfRange(body, body + size)
+                }
+                pos = body + size + (size and 1)
+            }
+            val d = data ?: return null
+            if (!fmtOk || d.size < 2) return null
+            return Wav(rate, if (d.size % 2 == 0) d else d.copyOf(d.size - 1))
+        }
+
+        private fun le16(b: ByteArray, i: Int) = (b[i].toInt() and 0xFF) or ((b[i + 1].toInt() and 0xFF) shl 8)
+
+        /** Negative when the top bit is set, which every caller treats as too large. */
+        private fun le32(b: ByteArray, i: Int) = le16(b, i) or (le16(b, i + 2) shl 16)
     }
 }

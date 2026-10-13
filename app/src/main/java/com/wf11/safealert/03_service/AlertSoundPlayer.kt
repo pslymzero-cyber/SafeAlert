@@ -97,8 +97,8 @@ object AlertSoundPlayer {
     }
 
     /**
-     * Proximity warning: asks AlertVoice for a spoken sentence, then plays the beep exactly as before unless speech
-     * is proven to be sounding right now (covering). The beep is the baseline; speech never starts or replaces it.
+     * Proximity warning: asks AlertVoice for a spoken sentence, then plays the beep exactly as before unless the
+     * recording is playing right now (covering). If the recording could not start, the beep sounds in this same call.
      */
     fun playWarning(context: Context) {
         AlertVoice.say()
@@ -127,17 +127,21 @@ object AlertSoundPlayer {
     }
 
     /**
-     * Proximity danger: asks AlertVoice for the repeating spoken sentence (rapid = TTC rapid approach), then starts
-     * the siren exactly as before unless speech is proven to be sounding right now (covering). While covering, the
-     * running siren repeat keeps ticking without sounding, so it comes back by itself when the cover ends.
+     * Proximity danger: asks AlertVoice for the repeating spoken sentence (rapid = TTC rapid approach), then keeps
+     * the siren repeat running. The recording covers from the very call that starts it, so returning at the first
+     * call would leave nothing under it: the siren repeat is started anyway and its pieces are skipped without
+     * sound while the recording is playing (see the repeat below). Only when the covered repeat already runs, a
+     * re-entry leaves it alone. If the recording dies, the next 600 ms tick of that repeat sounds the siren.
      */
     fun playDanger(context: Context, rapid: Boolean = false) {
         AlertVoice.loop(rapid)
-        if (AlertVoice.covering()) return
+        if (AlertVoice.covering() && sirenRunning()) return
         dangerTone(context)
     }
 
-    /** Speech is proven: switches off the tone piece sounding right now (repeat and isPlaying are untouched). */
+    private fun sirenRunning() = isPlaying && repeatRunnable != null
+
+    /** A recording started playing: switches off the tone piece sounding right now (repeat and isPlaying are untouched). */
     internal fun hushForSpeech() {
         runCatching { toneGenerator?.stopTone() }
     }
@@ -168,7 +172,7 @@ object AlertSoundPlayer {
                 if (!isPlaying) return
                 try {
                     // Reuse the existing ToneGenerator (no re-creation → saves CPU/memory)
-                    // While speech is proven the piece is skipped, the repeat itself keeps going
+                    // While the recording plays the piece is skipped, the repeat itself keeps going
                     if (!AlertVoice.covering()) tg.startTone(ToneGenerator.TONE_CDMA_EMERGENCY_RINGBACK, 400)
                 } catch (e: Exception) {
                     Log.e(TAG, "위험음 반복 실패: ${e.message}")
