@@ -16,6 +16,7 @@ import androidx.core.uwb.UwbManager
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 import com.wf11.safealert.BuildConfig
+import com.wf11.safealert.service.AlertVoice
 import com.wf11.safealert.service.BleService
 import com.wf11.safealert.service.CalibrationEngine
 import com.wf11.safealert.service.DeviceStateRegistry
@@ -71,6 +72,7 @@ class DevSettingsActivity : AppCompatActivity() {
         binding.spinnerVibWarning.setSelection(vibWarningIndex(DevSettings.vibrationWarningMs))
         binding.spinnerVibCount.setSelection(vibCountIndex(DevSettings.vibrationDangerCount))
         binding.switchSound.isChecked = DevSettings.soundEnabled
+        binding.switchVoice.isChecked = DevSettings.voiceAlertEnabled
         // Items BLE detection settings also shows — same dev_settings prefs, so the values stay in sync automatically
         binding.seekDevAlarmVolume.progress = DevSettings.alarmVolume.coerceIn(50, 100)
         binding.seekDevWarnRssi.progress    = (-DevSettings.rssiWarning).coerceIn(30, 100)
@@ -233,6 +235,7 @@ class DevSettingsActivity : AppCompatActivity() {
         binding.switchWalkerRx.setOnCheckedChangeListener { _, c -> DevSettings.walkerRx = c }
         binding.switchVibration.setOnCheckedChangeListener { _, c -> DevSettings.vibrationEnabled = c; updateSectionSummaries() }
         binding.switchSound.setOnCheckedChangeListener { _, c -> DevSettings.soundEnabled = c; updateSectionSummaries() }
+        binding.switchVoice.setOnCheckedChangeListener { _, c -> DevSettings.voiceAlertEnabled = c; updateSectionSummaries() }
         // Source items — BLE detection settings only shows these values, locked
         binding.seekDevAlarmVolume.setOnSeekBarChangeListener(seekListener { v ->
             DevSettings.alarmVolume = v.coerceIn(50, 100); updateDevAlarmLabels(); updateSectionSummaries()
@@ -575,7 +578,7 @@ class DevSettingsActivity : AppCompatActivity() {
         binding.secTxrxSummary.text =
             "스캔 ${DevSettings.scanPeriodMs}ms · 광고 ${DevSettings.advertiseInterval}ms"
         binding.secSoundSummary.text =
-            "진동 ${onOff(binding.switchVibration.isChecked)} · 소리 ${onOff(binding.switchSound.isChecked)}"
+            "진동 ${onOff(binding.switchVibration.isChecked)} · 소리 ${onOff(binding.switchSound.isChecked)} · 음성 ${onOff(binding.switchVoice.isChecked)}"
         binding.secAlertSummary.text =
             "경고 ${DevSettings.rssiWarning} · 위험 ${DevSettings.rssiDanger} dBm · 오프셋 ${binding.seekWalkerEquipBias.progress}/" +
             "${binding.seekWalkerEpjBias.progress}/${binding.seekEquipEquipBias.progress} dB"
@@ -606,6 +609,7 @@ class DevSettingsActivity : AppCompatActivity() {
     // Poll UWB diagnostics only while the screen is shown — start in onResume / stop in onPause (saves battery/resources)
     override fun onResume() {
         super.onResume()
+        binding.tvVoiceStatus.text = AlertVoice.status
         uwbDiagHandler.removeCallbacks(uwbDiagPoller)
         uwbDiagHandler.post(uwbDiagPoller)
     }

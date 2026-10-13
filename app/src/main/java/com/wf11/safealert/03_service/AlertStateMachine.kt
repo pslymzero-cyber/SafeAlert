@@ -59,6 +59,7 @@ class AlertStateMachine(
         fun stopVibration()
         fun playDanger()
         fun playWarning()
+        fun playRapidApproach() = playDanger()   // TTC rapid approach: speech names it first; tones play the same siren
     }
 
     private val TAG = "AlertStateMachine"
@@ -1788,7 +1789,7 @@ class AlertStateMachine(
                     if (fx.myCategory == BleConstants.CAT_FORKLIFT) fx.vibrateDanger()
                     else fx.vibrateRapidApproach()
                 }
-                if (DevSettings.soundEnabled)     fx.playDanger()
+                if (DevSettings.soundEnabled)     fx.playRapidApproach()
                 fx.activeSoundLevel = BleConstants.LEVEL_DANGER   // sync siren level
                 fx.updateFloatingOverlay()
                 fx.sendAlertBroadcast(deviceId, BleConstants.LEVEL_DANGER)

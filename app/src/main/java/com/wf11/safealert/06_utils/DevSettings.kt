@@ -18,6 +18,7 @@ object DevSettings {
     private const val KEY_VIBRATION_WARNING_MS  = "vibration_warning_ms"
     private const val KEY_VIBRATION_DANGER_COUNT= "vibration_danger_count"
     private const val KEY_SOUND_ENABLED         = "sound_enabled"
+    private const val KEY_VOICE_ALERT_ENABLED   = "voice_alert_enabled"
     private const val KEY_AUTO_SAVE_ALERTS      = "auto_save_alerts"
 
     // ── Kalman filter strength presets ──────────────────────────────────────
@@ -154,6 +155,11 @@ object DevSettings {
     var soundEnabled: Boolean
         get() = prefs.getBoolean(KEY_SOUND_ENABLED, true)
         set(v) = prefs.edit().putBoolean(KEY_SOUND_ENABLED, v).apply()
+
+    /** Spoken guidance instead of the warning beep / danger siren. Off or unavailable = the tones play. */
+    var voiceAlertEnabled: Boolean
+        get() = prefs.getBoolean(KEY_VOICE_ALERT_ENABLED, true)
+        set(v) = prefs.edit().putBoolean(KEY_VOICE_ALERT_ENABLED, v).apply()
 
     // Firebase settings
     /** Root of every server path. Fixed: sites are told apart by their site code; a root left in prefs by an older build is ignored. */

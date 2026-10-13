@@ -233,7 +233,7 @@
                     <LinearLayout android:id="@+id/sec_sound_header" style="@style/SA.SectionHeader">
                         <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
                             <TextView style="@style/SA.SectionTitle" android:text="소리·진동 세부" />
-                            <TextView android:id="@+id/sec_sound_summary" style="@style/SA.SectionSummary" android:text="진동 ON · 소리 ON" />
+                            <TextView android:id="@+id/sec_sound_summary" style="@style/SA.SectionSummary" android:text="진동 ON · 소리 ON · 음성 ON" />
                         </LinearLayout>
                         <ImageView android:id="@+id/sec_sound_chevron" style="@style/SA.Chevron" android:contentDescription="펼침/접힘" />
                     </LinearLayout>
@@ -254,6 +254,11 @@
                             <TextView style="@style/SA.RowLabel" android:text="경보음 사용" />
                             <Switch android:id="@+id/switch_sound" android:layout_width="wrap_content" android:layout_height="wrap_content" />
                         </LinearLayout>
+                        <LinearLayout style="@style/SA.Row">
+                            <TextView style="@style/SA.RowLabel" android:text="음성 안내 사용" />
+                            <Switch android:id="@+id/switch_voice" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                        </LinearLayout>
+                        <TextView android:id="@+id/tv_voice_status" style="@style/SA.Hint" android:layout_marginTop="1dp" />
 
                     </LinearLayout>
                 </LinearLayout>

@@ -96,7 +96,16 @@ object AlertSoundPlayer {
         }.onFailure { Log.w(TAG, "폴백 음량 보정 실패: ${it.message}") }
     }
 
-    fun playWarning(context: Context) {
+    /** voice = false for the system-fault beep, which is never spoken. */
+    fun playWarning(context: Context, voice: Boolean = true) {
+        if (voice && AlertVoice.warning()) return
+        warningTone(context)
+    }
+
+    // The tone entry points below are what AlertVoice calls when speech fails. They must never ask AlertVoice
+    //   again (speech failing -> tone -> speech ...) and use stopTone, not stopSound, so a speech decision
+    //   cannot silence the tone it just started.
+    internal fun warningTone(context: Context) {
         if (isPlaying) return
         isPlaying = true
         try {
@@ -114,8 +123,17 @@ object AlertSoundPlayer {
         }
     }
 
-    fun playDanger(context: Context) {
-        stopSound()
+    /** rapid = TTC rapid approach: speech says so first. */
+    fun playDanger(context: Context, rapid: Boolean = false) {
+        if (AlertVoice.danger(rapid)) {
+            stopTone()  // speech took over from a siren still sounding (e.g. its failure cooldown just ended)
+            return
+        }
+        dangerTone(context)
+    }
+
+    internal fun dangerTone(context: Context) {
+        stopTone()
         isPlaying = true
 
         // If obtaining the tone were outside the try, an exception thrown here would reach the service and kill
@@ -154,6 +172,11 @@ object AlertSoundPlayer {
     }
 
     fun stopSound() {
+        AlertVoice.stop()
+        stopTone()
+    }
+
+    private fun stopTone() {
         isPlaying = false
         repeatRunnable?.let { repeatHandler?.removeCallbacks(it) }
         repeatHandler = null

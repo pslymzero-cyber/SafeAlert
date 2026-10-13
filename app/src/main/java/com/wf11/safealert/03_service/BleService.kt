@@ -508,6 +508,7 @@ class BleService : LifecycleService() {
         override fun stopVibration() = VibrationHelper.stopVibration(this@BleService)
         override fun playDanger() = AlertSoundPlayer.playDanger(this@BleService)
         override fun playWarning() = AlertSoundPlayer.playWarning(this@BleService)
+        override fun playRapidApproach() = AlertSoundPlayer.playDanger(this@BleService, rapid = true)
     }, uwbDist)
 
     // Judgment state is owned by AlertStateMachine - the fields below alias the same instances (for reflection tests and remaining call sites)
@@ -631,6 +632,7 @@ class BleService : LifecycleService() {
         //   Both are singleton objects, so these lambdas hold the service instance → stopAll() must set them to null.
         AlertSoundPlayer.onSoundFault = { reason -> soundFault   = reason; refreshNotification() }
         OverlayManager.onOverlayFault = { reason -> overlayFault = reason; refreshNotification() }
+        AlertVoice.start(this)
         // A header tap on the collapsed sidebar = work-process (role) change. The sidebar is always shown, so this path is always live.
         //   It goes through MainActivity's confirmation dialog instead of switching at
         //   once — an accidental tap in a pocket would mean a monitoring gap.
@@ -2005,6 +2007,7 @@ class BleService : LifecycleService() {
         // If a singleton object keeps holding a lambda that captured the service instance, the service is never
         //   garbage-collected → always detach it, and reset the fault state too.
         AlertSoundPlayer.onSoundFault = null
+        AlertVoice.shutdown()
         OverlayManager.onOverlayFault = null
         OverlayManager.onHeaderTap    = null
         systemFault  = null
@@ -2141,7 +2144,7 @@ class BleService : LifecycleService() {
         if (fault != null) {
             if (!faultBeeped) {
                 faultBeeped = true
-                runCatching { AlertSoundPlayer.playWarning(this) }
+                runCatching { AlertSoundPlayer.playWarning(this, voice = false) }
                     .onFailure { Log.w(TAG, "결함 경고음 실패: ${it.message}") }
             }
         } else {
