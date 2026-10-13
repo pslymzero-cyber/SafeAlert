@@ -98,16 +98,22 @@ object AlertSoundPlayer {
 
     /**
      * Proximity warning: asks AlertVoice for a spoken sentence, then plays the beep exactly as before unless the
-     * recording is playing right now (covering). If the recording could not start, the beep sounds in this same call.
+     * recording is being rendered right now (covering). If the recording could not start, the beep sounds in this
+     * same call. A covered warning still obtains the tone generator (no tone is started), so a tone fault is
+     * cleared, or raised, while warnings are spoken.
      */
     fun playWarning(context: Context) {
         AlertVoice.say()
-        if (AlertVoice.covering()) return
+        if (AlertVoice.covering()) {
+            getOrCreateTone()
+            return
+        }
         warningTone(context)
     }
 
-    // The tone entry point for the beep. It never asks AlertVoice (the system-fault beep in BleService calls it
-    //   directly and is never spoken) and uses stopTone, not stopSound.
+    // The tone entry point for the beep. It never asks AlertVoice for speech: the system-fault beep in BleService and
+    //   the late beep of AlertVoice (its one look at a warning sentence) call it directly. It uses stopTone, not
+    //   stopSound.
     internal fun warningTone(context: Context) {
         if (isPlaying) return
         isPlaying = true
@@ -130,8 +136,9 @@ object AlertSoundPlayer {
      * Proximity danger: asks AlertVoice for the repeating spoken sentence (rapid = TTC rapid approach), then keeps
      * the siren repeat running. The recording covers from the very call that starts it, so returning at the first
      * call would leave nothing under it: the siren repeat is started anyway and its pieces are skipped without
-     * sound while the recording is playing (see the repeat below). Only when the covered repeat already runs, a
-     * re-entry leaves it alone. If the recording dies, the next 600 ms tick of that repeat sounds the siren.
+     * sound while the recording is being rendered (see the repeat below). Only when the covered repeat already runs,
+     * a re-entry leaves it alone. A recording whose sound stops is noticed by covering() on the next tick of that
+     * repeat (about RENDER_LAG_MS plus one tick): it stops the clip and that tick sounds the siren.
      */
     fun playDanger(context: Context, rapid: Boolean = false) {
         AlertVoice.loop(rapid)
@@ -172,7 +179,7 @@ object AlertSoundPlayer {
                 if (!isPlaying) return
                 try {
                     // Reuse the existing ToneGenerator (no re-creation → saves CPU/memory)
-                    // While the recording plays the piece is skipped, the repeat itself keeps going
+                    // While the recording is rendered the piece is skipped, the repeat itself keeps going
                     if (!AlertVoice.covering()) tg.startTone(ToneGenerator.TONE_CDMA_EMERGENCY_RINGBACK, 400)
                 } catch (e: Exception) {
                     Log.e(TAG, "위험음 반복 실패: ${e.message}")

@@ -21,6 +21,7 @@ import org.robolectric.annotation.Config
 import org.robolectric.annotation.Implementation
 import org.robolectric.annotation.Implements
 import org.robolectric.shadows.ShadowAudioTrack
+import org.robolectric.shadows.ShadowSystemClock
 import java.time.Duration
 
 /** What the recording tone generator saw. */
@@ -55,19 +56,17 @@ class RecordingTone {
     }
 }
 
-/** A player that records its calls and answers what the test says. A finished one-shot clip stays alive, like a static track. */
+/** A player that records its calls (the clip numbers) and answers what the test says; alive stays true until the test changes it. */
 internal class FakePlayer(private val lengths: LongArray = longArrayOf(3_660, 1_440, 1_990)) : ClipPlayer {
-    class Call(val clip: Int, val gap: Int)
-
-    val calls = mutableListOf<Call>()
+    val calls = mutableListOf<Int>()
     var playResult = true
     var playThrows = false
     var stops = 0
     var released = false
     override var alive = false
 
-    override fun play(clip: Int, loopGapMs: Int): Boolean {
-        calls += Call(clip, loopGapMs)
+    override fun play(clip: Int): Boolean {
+        calls += clip
         if (playThrows) throw IllegalStateException("scripted")
         alive = playResult
         return playResult
@@ -101,6 +100,7 @@ abstract class VoiceTestBase {
         AlertVoice.shutdown()
         AlertSoundPlayer.stopSound()
         DevSettings.init(app)
+        DevSettings.soundEnabled = true
         DevSettings.voiceAlertEnabled = true
         AlarmVolumeShare.sosSounding = false
         AlertVoice.onChange = null
@@ -124,12 +124,12 @@ abstract class VoiceTestBase {
 
     protected fun ready() { AlertVoice.start(app); idle() }
     internal fun player() = made.last()
-    internal fun clips() = player().calls.map { it.clip to it.gap }
+    internal fun clips() = player().calls.toList()
 }
 
 /**
  * The tone is the baseline (same instant, same code as before); a recording hides it only while the player really
- * plays it. The players are fakes, the tone generator records, and the clock is the looper's.
+ * renders it. The players are fakes, the tone generator records, and the clock is the looper's.
  */
 class AlertVoiceTest : VoiceTestBase() {
 
@@ -137,7 +137,7 @@ class AlertVoiceTest : VoiceTestBase() {
     private val CD = AlertVoice.CLIP_DANGER
     private val CR = AlertVoice.CLIP_RAPID
 
-    /** A call that must play the tone and ask no player for anything (not started, no files, setting off, rescue siren). */
+    /** A call that must play the tone and ask no player for anything (not started, no player, setting off, rescue siren). */
     private fun toneOnly() {
         val b = beeps()
         val s = sirens()
@@ -156,10 +156,10 @@ class AlertVoiceTest : VoiceTestBase() {
         toneOnly()
     }
 
-    @Test fun `음성 파일을 읽지 못하면 경고음과 사이렌만 나고 재생 요청이 없다`() {
+    @Test fun `재생기를 만들지 못하면 경고음과 사이렌만 나고 재생 요청이 없다`() {
         makeNext = { null }
         ready()
-        assertEquals(AlertVoice.STATUS_NO_FILES, AlertVoice.status)
+        assertEquals(AlertVoice.STATUS_NOT_READY, AlertVoice.status)
         assertTrue(AlertVoice.degraded)
         toneOnly()
     }
@@ -179,8 +179,9 @@ class AlertVoiceTest : VoiceTestBase() {
     @Test fun `경고는 문장을 한 번 재생하고 그 호출에서 삑이 없고 끝난 뒤에 다시 안내한다`() {
         ready()
         AlertSoundPlayer.playWarning(app)
-        assertEquals(listOf(CW to -1), clips())
+        assertEquals(listOf(CW), clips())
         assertEquals(0, beeps())
+        assertEquals("a covered warning still obtains the tone generator", 1, toneObjects())
         assertTrue(AlertVoice.covering())
 
         idleFor(2_000)
@@ -191,7 +192,7 @@ class AlertVoiceTest : VoiceTestBase() {
         idleFor(1_700)  // 3.7 s after the start: the sentence is over
         assertFalse(AlertVoice.covering())
         AlertSoundPlayer.playWarning(app)
-        assertEquals(listOf(CW to -1, CW to -1), clips())
+        assertEquals(listOf(CW, CW), clips())
         assertEquals(0, beeps())
     }
 
@@ -199,7 +200,7 @@ class AlertVoiceTest : VoiceTestBase() {
         ready()
         AlertSoundPlayer.playDanger(app)
         idle()
-        assertEquals(listOf(CD to AlertVoice.REPEAT_GAP_MS), clips())
+        assertEquals(listOf(CD), clips())
         assertTrue(AlertVoice.covering())
         assertEquals(0, sirens())
         assertEquals(1, toneObjects())
@@ -224,27 +225,38 @@ class AlertVoiceTest : VoiceTestBase() {
         ready()
         AlertSoundPlayer.playDanger(app, rapid = true)
         idle()
-        assertEquals(listOf(CR to -1), clips())
+        assertEquals(listOf(CR), clips())
         idleFor(1_989 + 399)
         assertEquals(1, player().calls.size)
         assertEquals(0, sirens())
         assertTrue(AlertVoice.covering())
         idleFor(2)
-        assertEquals(listOf(CR to -1, CD to AlertVoice.REPEAT_GAP_MS), clips())
+        assertEquals(listOf(CR, CD), clips())
         idleFor(3_000)
         assertEquals(0, sirens())
         assertTrue(AlertVoice.covering())
     }
 
-    @Test fun `급접근 문장은 5초 안에는 끼어들지 않고 5초 뒤에는 위험 반복을 교체한다`() {
+    @Test fun `급접근 문장은 끝까지 나온 뒤 시작부터 5초 안에는 끼어들지 않고 5초 뒤에는 위험 반복을 교체한다`() {
         ready()
         AlertSoundPlayer.playDanger(app, rapid = true)
         idleFor(3_000)  // the danger repeat runs since 2.39 s
         AlertSoundPlayer.playDanger(app, rapid = true)
-        assertEquals(listOf(CR to -1, CD to AlertVoice.REPEAT_GAP_MS), clips())
-        idleFor(2_200)  // 5.2 s after the last RAPID
+        assertEquals(listOf(CR, CD), clips())
+        idleFor(2_200)  // 5.2 s after the start of the RAPID sentence
         AlertSoundPlayer.playDanger(app, rapid = true)
-        assertEquals(listOf(CR to -1, CD to AlertVoice.REPEAT_GAP_MS, CR to -1), clips())
+        assertEquals(listOf(CR, CD, CR), clips())
+    }
+
+    @Test fun `급접근 문장이 나오는 동안 들어온 급접근 요청은 쌓이지 않아 문장 뒤 위험 반복에서 급접근이 다시 나오지 않는다`() {
+        ready()
+        AlertSoundPlayer.playDanger(app, rapid = true)
+        idleFor(500)
+        AlertSoundPlayer.playDanger(app, rapid = true)  // during the sentence: nothing is queued
+        idleFor(2_000)
+        AlertSoundPlayer.playDanger(app)
+        idleFor(1_000)
+        assertEquals(listOf(CR, CD), clips())
     }
 
     @Test fun `경고 재생 중 급접근이 오면 즉시 급접근 문장으로 교체한다`() {
@@ -252,7 +264,7 @@ class AlertVoiceTest : VoiceTestBase() {
         AlertSoundPlayer.playWarning(app)
         idleFor(500)
         AlertSoundPlayer.playDanger(app, rapid = true)
-        assertEquals(listOf(CW to -1, CR to -1), clips())
+        assertEquals(listOf(CW, CR), clips())
         assertEquals(0, beeps())
     }
 
@@ -275,19 +287,85 @@ class AlertVoiceTest : VoiceTestBase() {
         assertTrue(player().calls.isEmpty())
     }
 
+    // ---- what a started clip does to a sounding tone ----------------------------------------------------
+
+    @Test fun `경고 문장은 먼저 울린 결함 삑을 끊지 않고 위험 문장은 울리던 사이렌 조각을 끈다`() {
+        ready()
+        AlertSoundPlayer.warningTone(app)  // the one-time system-fault beep
+        idleFor(200)
+        AlertSoundPlayer.playWarning(app)
+        assertEquals(listOf(CW), clips())
+        assertFalse("a warning sentence must not cut the fault beep", Rec.tones.contains("stop"))
+
+        AlertSoundPlayer.stopSound()
+        idleFor(2_000)
+        DevSettings.voiceAlertEnabled = false
+        AlertSoundPlayer.playDanger(app)  // a siren piece is sounding
+        idle()
+        assertEquals(1, sirens())
+        DevSettings.voiceAlertEnabled = true
+        AlertSoundPlayer.playDanger(app)  // re-entry: the danger clip starts
+        assertEquals(listOf(CW, CD), clips())
+        assertEquals("stop", Rec.tones.last())
+
+        AlertSoundPlayer.stopSound()
+        idleFor(2_000)
+        Rec.clear()
+        AlertSoundPlayer.playDanger(app, rapid = true)
+        idleFor(2_389)
+        assertEquals("the hand-over from RAPID to DANGER has not happened yet", 0, Rec.tones.count { it == "stop" })
+        idleFor(1)
+        assertEquals("the hand-over hushes the tone once", 1, Rec.tones.count { it == "stop" })
+    }
+
+    @Test fun `위험 반복 중의 경고 요청은 재생기를 건드리지 않는다`() {
+        ready()
+        AlertSoundPlayer.playDanger(app)
+        idleFor(1_000)
+        AlertSoundPlayer.playWarning(app)
+        assertEquals(1, player().calls.size)
+        assertEquals(0, player().stops)
+        assertEquals(0, beeps())
+    }
+
+    @Test fun `혼자 끝난 경고 문장은 재생기를 한 번 멈춘다`() {
+        ready()
+        AlertSoundPlayer.playWarning(app)
+        idleFor(3_660)
+        assertEquals(1, player().stops)
+        idleFor(2_000)
+        assertFalse(AlertVoice.covering())
+        assertEquals(1, player().stops)
+    }
+
+    @Test fun `가림은 타이머가 돌지 않아도 시각만으로 끝난다`() {
+        ready()
+        AlertSoundPlayer.playWarning(app)
+        ShadowSystemClock.advanceBy(Duration.ofMillis(3_659))  // the looper does not run
+        assertTrue(AlertVoice.covering())
+        ShadowSystemClock.advanceBy(Duration.ofMillis(1))
+        assertFalse(AlertVoice.covering())
+
+        AlertSoundPlayer.stopSound()
+        idle()
+        AlertSoundPlayer.playDanger(app, rapid = true)
+        ShadowSystemClock.advanceBy(Duration.ofMillis(1_990 + 400 + 299))
+        assertTrue(AlertVoice.covering())
+        ShadowSystemClock.advanceBy(Duration.ofMillis(1))
+        assertFalse(AlertVoice.covering())
+    }
+
     // ---- the recorded files ----------------------------------------------------------------------------
 
     private fun wav(id: Int) = TrackPlayer.parseWav(app.resources.openRawResource(id).use { it.readBytes() })
 
-    @Test fun `res raw 의 음성 파일 3개는 16비트 모노 24000Hz 이고 길이가 문장에 맞다`() {
-        val warning = wav(R.raw.voice_warning)
-        val danger = wav(R.raw.voice_danger)
-        val rapid = wav(R.raw.voice_rapid)
-        assertNotNull(warning); assertNotNull(danger); assertNotNull(rapid)
-        for (w in listOf(warning!!, danger!!, rapid!!)) assertEquals(24_000, w.sampleRate)
-        assertTrue("warning ${warning.durationMs}", warning.durationMs in 3_400..3_900)
-        assertTrue("danger ${danger.durationMs}", danger.durationMs in 1_300..1_600)
-        assertTrue("rapid ${rapid.durationMs}", rapid.durationMs in 1_800..2_200)
+    @Test fun `res raw 의 음성 파일 3개는 16비트 모노이고 길이가 0점5초에서 6초 사이다`() {
+        for (id in listOf(R.raw.voice_warning, R.raw.voice_danger, R.raw.voice_rapid)) {
+            val w = wav(id)
+            assertNotNull(w)
+            assertTrue("rate ${w!!.sampleRate}", w.sampleRate in 8_000..48_000)
+            assertTrue("length ${w.durationMs}", w.durationMs in 500..6_000)
+        }
     }
 
     @Test fun `WAV 해석은 형식이 틀리거나 크기가 파일을 넘으면 null 이다`() {
@@ -320,57 +398,106 @@ class AlertVoiceTest : VoiceTestBase() {
         assertNull(TrackPlayer.parseWav(ByteArray(5)))
     }
 
-    // ---- the real player on Robolectric's AudioTrack shadow -------------------------------------------
+    // ---- the real player: the playback position is the proof ---------------------------------------------
 
-    @Test fun `실제 재생기는 파일 3개로 만들어지고 재생 중 상태와 정지를 따른다`() {
+    @Test fun `재생 위치 판정은 지연 허용 안에서는 참이고 위치가 시계를 못 따라오면 거짓이다`() {
+        val rate = 24_000
+        val total = 87_840
+        fun once(head: Long, ms: Long) = TrackPlayer.keepsUp(head, ms, rate, total, repeats = false)
+        fun repeat(head: Long, ms: Long, len: Int = 44_040) = TrackPlayer.keepsUp(head, ms, rate, len, repeats = true)
+        assertTrue("inside the lag, nothing rendered yet", once(0, 400))
+        assertTrue("on time", once(24_000, 1_000))
+        assertFalse("frozen for the lag plus 100 ms", once(24_000, 1_600))
+        assertFalse("nothing rendered after 600 ms", once(0, 600))
+        assertTrue("a finished one-shot long after its end", once(total.toLong(), 60_000))
+        assertFalse("a one-shot that stopped short of its end", once(75_839, 60_000))
+        assertTrue("a repeat far past its own length with the head on time", repeat(1_440_000, 60_000))
+        assertFalse("a repeat whose head froze at its length", repeat(44_040, 60_000))
+    }
+
+    @Test fun `실제 재생기는 파일 3개로 만들어지고 재생 상태와 정지를 따른다`() {
         val p = TrackPlayer.create(app)
         assertNotNull(p)
         p!!
-        assertTrue(p.durationMs(CW) in 3_400..3_900)
-        assertTrue(p.durationMs(CD) in 1_300..1_600)
-        assertTrue(p.durationMs(CR) in 1_800..2_200)
+        for (c in listOf(CW, CD, CR)) assertTrue("clip $c ${p.durationMs(c)}", p.durationMs(c) in 500..6_000)
         assertFalse(p.alive)
 
-        assertTrue(p.play(CW, -1))
+        assertTrue(p.play(CW))
         assertTrue(p.alive)
-        assertTrue(p.play(CD, AlertVoice.REPEAT_GAP_MS))  // replaces the warning, repeats
+        assertTrue(p.play(CD))  // replaces the warning, repeats
         assertTrue(p.alive)
-        assertTrue(p.play(CR, -1))
-        assertTrue(p.play(CD, AlertVoice.REPEAT_GAP_MS))  // played again after a stop and reload
+        assertTrue(p.play(CR))
+        assertTrue(p.play(CD))  // played again after a stop and reload
         p.stop()
         assertFalse(p.alive)
 
-        // only the pairs the tracks were built for
-        assertFalse(p.play(CD, -1))
-        assertFalse(p.play(CW, AlertVoice.REPEAT_GAP_MS))
-        assertFalse(p.play(7, -1))
+        assertFalse(p.play(7))
 
         p.release()
         assertFalse(p.alive)
-        assertFalse(p.play(CW, -1))
+        assertFalse(p.play(CW))
+    }
+
+    /**
+     * Under Robolectric the shadow's playbackHeadPosition is the number of frames written to the track (the whole
+     * clip, from the start, and it does not move with the clock). So a one-shot always looks fully rendered, and the
+     * danger repeat is alive until the clock passes its length (sentence + REPEAT_GAP_MS) + RENDER_LAG_MS.
+     */
+    @Test fun `실제 재생기는 재생 직후 살아 있고 위험 반복은 재생 위치가 시계를 따라오지 못하면 죽은 것으로 본다`() {
+        val p = TrackPlayer.create(app)!!
+        assertTrue(p.play(CD))
+        assertTrue("alive right after play", p.alive)
+        val lifeMs = p.durationMs(CD) + AlertVoice.REPEAT_GAP_MS + AlertVoice.RENDER_LAG_MS
+        idleFor(lifeMs - 20)
+        assertTrue("still inside sentence + pause + lag", p.alive)
+        idleFor(40)
+        assertFalse("the position fell behind the clock", p.alive)
+
+        assertTrue(p.play(CD))  // a new start time
+        assertTrue(p.alive)
+
+        assertTrue(p.play(CW))
+        idleFor(60_000)
+        assertTrue("a one-shot that was rendered to its end is over, not dead", p.alive)
+        p.stop()
+        assertFalse(p.alive)
+        p.release()
     }
 
     @Test fun `실제 재생기는 재생 시작에서 예외가 나도 밖으로 새지 않고 거짓을 돌려준다`() {
         val p = TrackPlayer.create(app)!!
         ShadowAudioTrack.enableIllegalStateOnPlay(true)
-        assertFalse(p.play(CW, -1))
+        assertFalse(p.play(CW))
         assertFalse(p.alive)
         p.release()
     }
 
     // ---- wiring (comments stripped) --------------------------------------------------------------------
 
-    @Test fun `배선 - 음성 객체는 엔진 의존이 없고 톤 쪽으로는 hushForSpeech 만 부른다`() {
+    @Test fun `배선 - 음성 객체는 엔진 의존이 없고 톤 쪽으로는 정해진 세 진입점만 부른다`() {
         val voice = noComments(serviceSource("AlertVoice.kt"))
         // anchors: the things that must be there, so the "must not" checks below cannot pass on an empty body
         for (must in listOf(
             "AlertSoundPlayer.hushForSpeech()", "R.raw.voice_warning", "R.raw.voice_danger", "R.raw.voice_rapid",
-            "USAGE_ALARM", "CONTENT_TYPE_SPEECH", "MODE_STATIC", "reloadStaticData", "setLoopPoints",
+            "USAGE_ALARM", "CONTENT_TYPE_SPEECH", "MODE_STATIC", "reloadStaticData", "setLoopPoints(0, frames[clip], -1)",
+            "playbackHeadPosition",
         )) assertTrue(must, voice.contains(must))
         for (never in listOf(
-            "android.speech", "TextToSpeech", "dangerTone(", "warningTone(", "playWarning(", "playDanger(", "stopSound(",
+            "android.speech", "TextToSpeech", "playWarning(", "playDanger(", "stopSound(", "playState",
         )) assertFalse("AlertVoice has $never", voice.contains(never))
-        assertEquals(1, Regex("AlertSoundPlayer\\.").findAll(voice).count())
+        val refs = Regex("AlertSoundPlayer\\.(\\w+\\()").findAll(voice).map { it.groupValues[1] }.toList()
+        assertTrue(refs.isNotEmpty())
+        assertTrue("tone-side calls: $refs", refs.all { it == "hushForSpeech(" || it == "warningTone(" || it == "dangerTone(" })
+        assertEquals("the late beep is called in one place", 1, refs.count { it == "warningTone(" })
+        assertTrue(sourceBlock(voice, "private val proof").contains("AlertSoundPlayer.warningTone("))
+        val dangerCalls = refs.count { it == "dangerTone(" }
+        assertTrue(dangerCalls >= 1)
+        assertEquals(
+            "the siren is started directly only where the hand-over from RAPID cannot start",
+            dangerCalls, Regex("AlertSoundPlayer\\.dangerTone\\(").findAll(sourceBlock(voice, "private fun startDanger()")).count(),
+        )
+        // say() does not hush: it must not cut the one-time fault beep
+        assertFalse(sourceBlock(voice, "fun say()").contains("hush()"))
     }
 
     @Test fun `배선 - 급접근 호출과 시작 정리 알림 톤 진입점 설정 화면 매니페스트 변경 사항 문구`() {
@@ -398,9 +525,12 @@ class AlertVoiceTest : VoiceTestBase() {
         val asp = noComments(serviceSource("AlertSoundPlayer.kt"))
         assertTrue(asp.contains("if (!AlertVoice.covering()) tg.startTone(ToneGenerator.TONE_CDMA_EMERGENCY_RINGBACK, 400)"))
         val warningEntry = sourceBlock(asp, "fun playWarning(")
-        assertTrue(warningEntry.contains("AlertVoice.say()"))
-        assertTrue(warningEntry.contains("if (AlertVoice.covering()) return"))
-        assertTrue(warningEntry.contains("warningTone(context)"))
+        val say = warningEntry.indexOf("AlertVoice.say()")
+        val covering = warningEntry.indexOf("AlertVoice.covering()")
+        val tone = warningEntry.indexOf("getOrCreateTone()")
+        val beep = warningEntry.indexOf("warningTone(context)")
+        assertTrue("say, covering, getOrCreateTone, warningTone in this order: $warningEntry", say in 0 until covering)
+        assertTrue(covering < tone && tone < beep)
         val dangerEntry = sourceBlock(asp, "fun playDanger(")
         assertTrue(dangerEntry.contains("AlertVoice.loop(rapid)"))
         assertTrue(dangerEntry.contains("if (AlertVoice.covering() && sirenRunning()) return"))
@@ -439,20 +569,30 @@ class AlertVoiceTest : VoiceTestBase() {
 
     // ---- the real judgement ----------------------------------------------------------------------------
 
-    @Test fun `실제 판정에 정속 접근 프레임을 넣으면 급접근 재생 요청이 기록된다`() {
+    @Test fun `실제 판정에 정속 접근 프레임을 넣으면 처음 시작되는 음성이 급접근 문장 한 번이다`() {
         val service = BleServiceTestHarness.newService()
         DevSettings.soundEnabled = true  // the harness silences the sound; this test needs the real path
         try {
             ready()
             BleServiceTestHarness.resetBetweenTests(service)
+            val frames = mutableListOf<List<Int>>()
+            var seen = 0
             for (f in 0 until 50) {
                 BleServiceTestHarness.callProcessAlert(
                     service, "AA:BB:CC:DD:09:14", minOf(-90 + (f * 3) / 2, -45), nowMs = 1_000_000L + f * 120L,
                 )
                 idle()
+                val all = made.flatMap { it.calls }
+                frames += all.drop(seen)
+                seen = all.size
             }
-            val rapid = made.sumOf { p -> p.calls.count { it.clip == CR } }
-            assertTrue("급접근 문장 재생 요청: ${made.map { p -> p.calls.map { it.clip } }}", rapid >= 1)
+            // The judgement may legitimately sound a warning first; what matters is that the rapid sentence comes
+            //   as one request in the frame where it first appears, with no danger clip started before it.
+            val at = frames.indexOfFirst { CR in it }
+            assertTrue("급접근 문장 재생 요청 없음, 프레임별 새 재생 요청: $frames", at >= 0)
+            assertEquals("프레임별 새 재생 요청: $frames", listOf(CR), frames[at])
+            assertFalse("급접근 앞에 위험 문장: $frames", frames.take(at).any { CD in it })
+            assertEquals("프레임별 새 재생 요청: $frames", 1, frames.sumOf { f -> f.count { it == CR } })
         } finally {
             DevSettings.soundEnabled = false
         }
