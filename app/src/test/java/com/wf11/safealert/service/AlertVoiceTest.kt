@@ -359,12 +359,12 @@ class AlertVoiceTest : VoiceTestBase() {
 
     private fun wav(id: Int) = TrackPlayer.parseWav(app.resources.openRawResource(id).use { it.readBytes() })
 
-    @Test fun `res raw 의 음성 파일 3개는 16비트 모노이고 길이가 0점5초에서 6초 사이다`() {
+    @Test fun `res raw 의 음성 파일 3개는 16비트 모노이고 길이가 0점3초에서 6초 사이다`() {
         for (id in listOf(R.raw.voice_warning, R.raw.voice_danger, R.raw.voice_rapid)) {
             val w = wav(id)
             assertNotNull(w)
             assertTrue("rate ${w!!.sampleRate}", w.sampleRate in 8_000..48_000)
-            assertTrue("length ${w.durationMs}", w.durationMs in 500..6_000)
+            assertTrue("length ${w.durationMs}", w.durationMs in 300..6_000)
         }
     }
 
@@ -419,7 +419,7 @@ class AlertVoiceTest : VoiceTestBase() {
         val p = TrackPlayer.create(app)
         assertNotNull(p)
         p!!
-        for (c in listOf(CW, CD, CR)) assertTrue("clip $c ${p.durationMs(c)}", p.durationMs(c) in 500..6_000)
+        for (c in listOf(CW, CD, CR)) assertTrue("clip $c ${p.durationMs(c)}", p.durationMs(c) in 300..6_000)
         assertFalse(p.alive)
 
         assertTrue(p.play(CW))

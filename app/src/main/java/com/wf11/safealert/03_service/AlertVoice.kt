@@ -31,9 +31,11 @@ internal interface ClipPlayer {
  * Spoken guidance for proximity alerts, played from three recorded clips (res/raw: voice_warning, voice_danger,
  * voice_rapid) by the app itself. The phone's speech engine is not used.
  *
- * Provenance: the three clips were recorded on a PC from the read-aloud voice of Microsoft Edge ("선히 Online
- * (Natural)"). The terms for redistributing them are NOT confirmed: replace them with licensed or own recordings
- * (res/raw, 16 bit mono PCM WAV, the length is read from the file) before a release.
+ * Provenance: the three clips were generated with Azure AI Speech on a paid Standard S0 resource (voice
+ * ko-KR-SunHiNeural, 2026-10-15), decoded from the exported MP3 to 16 bit mono PCM WAV at 48 kHz and level-matched.
+ * The Microsoft Product Terms let paid-tier customers use the audio output of prebuilt neural voices, including for
+ * commercial purposes. To change a phrase, replace its file in res/raw (16 bit mono PCM WAV; the length is read
+ * from the file).
  *
  * The beep / siren is the baseline: AlertSoundPlayer always keeps its repeat running, whatever this object does.
  * A clip hides the tone (covering) only while it is really being rendered. The proof is the playback position
@@ -58,9 +60,9 @@ internal interface ClipPlayer {
  */
 object AlertVoice {
 
-    const val WARNING = "주변에 작업자가 있습니다. 주의해 주세요"
-    const val DANGER = "충돌에 주의해 주세요"
-    const val RAPID = "작업자가 급접근 중입니다"
+    const val WARNING = "주의"
+    const val DANGER = "위험"
+    const val RAPID = "충돌주의"
 
     const val STATUS_IDLE = "감시를 시작하면 확인됩니다"
     const val STATUS_SOUND_OFF = "경보 소리 꺼짐 — 음성도 나지 않습니다"
