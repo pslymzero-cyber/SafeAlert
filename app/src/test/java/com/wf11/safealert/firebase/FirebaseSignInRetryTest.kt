@@ -7,32 +7,12 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * Regression for the anonymous sign-in health-check retry — checks 4 cases through the internal decision overload: duplicate
+ * Regression for the anonymous sign-in health-check retry — checks 4 cases (3 tests; in-progress guard, retry after completion and no call when already signed in share one test) through the internal decision overload: duplicate
  * blocked while in progress, retry after completion, no call when already signed in, flag released on exception.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class FirebaseSignInRetryTest {
-
-    @Test
-    fun `진행 중이면 두 번째 호출은 signIn 을 부르지 않는다`() {
-        var signInCalls = 0
-        var pendingDone: (() -> Unit)? = null
-        val signIn: (onDone: () -> Unit) -> Unit = { onDone ->
-            signInCalls++
-            pendingDone = onDone
-        }
-        val isSignedIn: () -> Boolean = { false }
-
-        FirebaseConfig.ensureSignedIn(isSignedIn, signIn)
-        FirebaseConfig.ensureSignedIn(isSignedIn, signIn)
-
-        try {
-            assertEquals(1, signInCalls)
-        } finally {
-            pendingDone?.invoke()
-        }
-    }
 
     @Test
     fun `완료 후 다시 호출하면 signIn 이 재호출된다`() {
@@ -42,28 +22,27 @@ class FirebaseSignInRetryTest {
             signInCalls++
             pendingDone = onDone
         }
-        val isSignedIn: () -> Boolean = { false }
+        var signedIn = true
+        val isSignedIn: () -> Boolean = { signedIn }
 
+        // 이미 로그인돼 있으면 signIn 을 부르지 않는다
         FirebaseConfig.ensureSignedIn(isSignedIn, signIn)
-        pendingDone?.invoke()
-        FirebaseConfig.ensureSignedIn(isSignedIn, signIn)
+        assertEquals("이미 로그인돼 있으면 signIn 을 부르지 않는다", 0, signInCalls)
 
+        signedIn = false
         try {
-            assertEquals(2, signInCalls)
+            // 진행 중이면 두 번째 호출은 signIn 을 부르지 않는다
+            FirebaseConfig.ensureSignedIn(isSignedIn, signIn)
+            FirebaseConfig.ensureSignedIn(isSignedIn, signIn)
+            assertEquals("진행 중이면 두 번째 호출은 signIn 을 부르지 않는다", 1, signInCalls)
+
+            // 완료 후 다시 호출하면 재호출된다
+            pendingDone?.invoke()
+            FirebaseConfig.ensureSignedIn(isSignedIn, signIn)
+            assertEquals("완료 후 다시 호출하면 signIn 이 재호출된다", 2, signInCalls)
         } finally {
             pendingDone?.invoke()
         }
-    }
-
-    @Test
-    fun `이미 로그인돼 있으면 signIn 을 부르지 않는다`() {
-        var signInCalls = 0
-        val signIn: (onDone: () -> Unit) -> Unit = { signInCalls++ }
-        val isSignedIn: () -> Boolean = { true }
-
-        FirebaseConfig.ensureSignedIn(isSignedIn, signIn)
-
-        assertEquals(0, signInCalls)
     }
 
     @Test

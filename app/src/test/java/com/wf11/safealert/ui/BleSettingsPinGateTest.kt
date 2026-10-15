@@ -60,11 +60,8 @@ class BleSettingsPinGateTest {
             assertFalse("잠긴 컨트롤은 터치를 부모로 넘긴다", activity.findViewById<View>(id).onTouchEvent(down))
         }
         down.recycle()
-    }
 
-    @Test
-    fun `잠긴 동안 수신 강도 묶음이나 UWB 행이나 필터 강도를 누르면 PIN 창이 뜬다`() {
-        val activity = Robolectric.buildActivity(BleSettingsActivity::class.java).setup().get()
+        // 잠긴 동안 수신 강도 묶음이나 UWB 행이나 필터 강도를 누르면 PIN 창이 뜬다
         for (id in listOf(R.id.group_beacon_gain, R.id.row_uwb, R.id.rg_kalman_preset)) {
             ShadowDialog.reset()
             activity.findViewById<View>(id).performClick()
@@ -90,13 +87,11 @@ class BleSettingsPinGateTest {
         for (id in listOf(R.id.group_beacon_gain, R.id.row_uwb, R.id.rg_kalman_preset)) {
             assertFalse(activity.findViewById<View>(id).isClickable)
         }
-    }
 
-    @Test
-    fun `UWB 하드웨어가 없으면 PIN 을 맞혀도 UWB 스위치는 꺼져 있다`() {
+        // UWB 하드웨어가 없으면 PIN 을 맞혀도 UWB 스위치는 꺼져 있다
         uwbHardware(false)
-        val sw = unlockedActivity().findViewById<View>(R.id.sw_uwb)
-        assertFalse("미지원 기기는 PIN 뒤에도 꺼져 있다", sw.isEnabled)
-        assertTrue("터치는 행이 아니라 스위치가 받는다", sw.isClickable)
+        val noUwbSw = unlockedActivity().findViewById<View>(R.id.sw_uwb)
+        assertFalse("미지원 기기는 PIN 뒤에도 꺼져 있다", noUwbSw.isEnabled)
+        assertTrue("터치는 행이 아니라 스위치가 받는다", noUwbSw.isClickable)
     }
 }

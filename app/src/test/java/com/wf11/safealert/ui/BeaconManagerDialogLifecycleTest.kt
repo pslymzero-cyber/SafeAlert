@@ -5,6 +5,7 @@ import com.wf11.safealert.utils.BeaconRegistry
 import com.wf11.safealert.utils.DevSettings
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -38,13 +39,21 @@ class BeaconManagerDialogLifecycleTest {
     fun destroyedActivity_setsLoaded_showsNoDialog() {
         val controller = Robolectric.buildActivity(BeaconManagerActivity::class.java)
         val activity = controller.get()
-        controller.setup().pause().stop().destroy()
+        controller.setup()
+
+        // positive control on the same activity: while alive, the loaded sets show a dialog
+        activity.onBeaconSetsLoaded(listOf(meta))
+        val live = ShadowAlertDialog.getLatestAlertDialog()
+        assertTrue("살아 있는 액티비티는 대화상자를 띄워야 한다", live != null)
+
+        controller.pause().stop().destroy()
         assertTrue(activity.isDestroyed)
         assertFalse(activity.isFinishing)
 
         activity.onBeaconSetsLoaded(listOf(meta))
 
-        assertNull(ShadowAlertDialog.getLatestAlertDialog())
+        // the latest dialog is still the one from the live step: the destroyed activity showed no new one
+        assertSame(live, ShadowAlertDialog.getLatestAlertDialog())
     }
 
     @Test
@@ -56,16 +65,5 @@ class BeaconManagerDialogLifecycleTest {
         activity.onBeaconSetDownloaded(meta, validJson)
 
         assertNull(ShadowAlertDialog.getLatestAlertDialog())
-    }
-
-    @Test
-    fun liveActivity_setsLoaded_showsDialog() {
-        val controller = Robolectric.buildActivity(BeaconManagerActivity::class.java)
-        val activity = controller.get()
-        controller.setup()
-
-        activity.onBeaconSetsLoaded(listOf(meta))
-
-        assertTrue(ShadowAlertDialog.getLatestAlertDialog() != null)
     }
 }

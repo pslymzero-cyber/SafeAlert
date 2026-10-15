@@ -17,30 +17,35 @@ class PeerAckGateTest {
     private fun rows(vararg ids: String, activeIds: Set<String> = ids.toSet()) =
         ids.map { row(it, it in activeIds) }
 
-    private fun ids(r: List<PeerRow>?) = r?.map { it.epId }
+    private fun ids(r: List<PeerRow>?) = r?.map { it.id }
+
+    /** render [first] @0 -> tap @800 (settled, draws [first]) -> render [second] @1000 -> each tap: time to the ids it returns (null = ignored). */
+    private class Row(
+        val label: String, val first: List<PeerRow>, val second: List<PeerRow>, val taps: List<Pair<Long, List<String>?>>
+    )
 
     @Test fun tap_within_settle_after_change_is_ignored() {
-        val g = PeerAckGate()
-        g.onRender(rows("A#1"), 0L)
-        assertEquals(listOf("A#1"), ids(g.onTap(800L)))
-        g.onRender(rows("A#1", "B#2"), 1_000L)
-        assertNull(g.onTap(1_500L))
-        assertEquals(listOf("A#1", "B#2"), ids(g.onTap(1_000L + PeerAckGate.SETTLE_MS)))
-    }
-
-    @Test fun same_active_set_with_new_shown_ids_does_not_restart_delay() {
-        val g = PeerAckGate()
-        g.onRender(rows("A#1"), 0L)
-        g.onRender(rows("A#1", "R#2", activeIds = setOf("A#1")), 1_000L)
-        assertEquals(listOf("A#1", "R#2"), ids(g.onTap(1_100L)))
-    }
-
-    @Test fun lost_active_ids_restart_delay() {
-        val g = PeerAckGate()
-        g.onRender(rows("A#1", "B#2"), 0L)
-        g.onRender(rows("A#1", "B#2", activeIds = setOf("A#1")), 1_000L)
-        assertNull(g.onTap(1_200L))
-        assertEquals(listOf("A#1", "B#2"), ids(g.onTap(1_700L)))
+        val table = listOf(
+            Row("활성 집합이 바뀌면 설정 지연", rows("A#1"), rows("A#1", "B#2"),
+                listOf(1_500L to null, 1_000L + PeerAckGate.SETTLE_MS to listOf("b:A#1", "b:B#2"))),
+            // same active set with new shown ids does not restart the delay
+            Row("활성 집합이 같고 비활성 행만 늘면 지연 재시작 없음", rows("A#1"),
+                rows("A#1", "R#2", activeIds = setOf("A#1")), listOf(1_100L to listOf("b:A#1", "b:R#2"))),
+            Row("활성이던 id 를 잃으면 지연 재시작", rows("A#1", "B#2"), rows("A#1", "B#2", activeIds = setOf("A#1")),
+                listOf(1_200L to null, 1_700L to listOf("b:A#1", "b:B#2"))),
+            // new item with the same epId but another key opens the window (compare PeerRow.id, not epId)
+            Row("같은 epId 의 새 키 항목은 지연을 연다", listOf(row("X#1", key = "K1")),
+                listOf(row("X#1", key = "K1"), row("X#1", key = "K2")),
+                listOf(1_500L to null, 1_700L to listOf("k:K1", "k:K2")))
+        )
+        for ((i, r) in table.withIndex()) {
+            val at = "row $i ${r.label}"
+            val g = PeerAckGate()
+            g.onRender(r.first, 0L)
+            assertEquals("$at: 처음 그린 행은 800ms 뒤 탭이 통과", r.first.map { it.id }, ids(g.onTap(800L)))
+            g.onRender(r.second, 1_000L)
+            for ((t, want) in r.taps) assertEquals("$at: tap@$t", want, ids(g.onTap(t)))
+        }
     }
 
     @Test fun tap_with_no_rows_drawn_silences_no_one() {
@@ -60,17 +65,8 @@ class PeerAckGateTest {
         assertFalse(g.settled(1_300L))
         assertNull(g.onTap(1_300L))
         assertTrue(g.settled(1_700L))
-        assertEquals(listOf("A#1"), ids(g.onTap(1_700L)))
+        assertEquals(listOf("b:A#1"), ids(g.onTap(1_700L)))
         g.onRender(rows("A#1"), 1_800L, "WATCHING:true")
         assertTrue(g.settled(1_800L))
-    }
-
-    @Test fun new_item_with_same_epid_opens_settle_window() {
-        val g = PeerAckGate()
-        g.onRender(listOf(row("X#1", key = "K1")), 0L)
-        assertEquals(listOf("k:K1"), g.onTap(800L)?.map { it.id })
-        g.onRender(listOf(row("X#1", key = "K1"), row("X#1", key = "K2")), 1_000L)
-        assertNull(g.onTap(1_500L))
-        assertEquals(listOf("k:K1", "k:K2"), g.onTap(1_700L)?.map { it.id })
     }
 }

@@ -70,62 +70,45 @@ class EchoCalibGlobalPathSimTest {
         }
     }
 
-    /**
-     * Antisymmetric fold — samples the peer node took of me are sign-flipped, offsetting the antisymmetry.
-     */
-    @Test
-    fun 양방향_fold_상쇄() {
-        val a = node("A", MY, "B" to stat(3.0, 100))
-        val b = node("B", PEER, "A" to stat(-3.0, 100))
-        val r = FirebaseManager.aggregateEchoPriors(listOf(a, b), MY, IQR_GATE, CAP)
-        assertEquals(3.0, r[PEER]!!.first, 1e-9)
-        assertEquals(200, r[PEER]!!.second)
-    }
-
-    /** Spread gate — samples over the iqr gate are still filtered out with the global path. */
-    @Test
-    fun 산포게이트_유지() {
-        val a = node("A", MY, "B" to stat(3.0, 100, iqr = 99.0))
-        val r = FirebaseManager.aggregateEchoPriors(listOf(a, node("B", PEER)), MY, IQR_GATE, CAP)
-        assertTrue("노이즈 표본은 제외", r.isEmpty())
-    }
+    /** One aggregateEchoPriors call per row. mean / n = null: that row does not check the value. empty: the result must be empty. */
+    private class AggRow(
+        val label: String, val nodes: List<EchoCalibNode>, val mean: Double?, val n: Int?, val empty: Boolean = false
+    )
 
     /**
-     * One extreme node with n=500000 + 3 normal nodes (n=cap).
-     *  With an n-weighted mean, (2×9000 + 40×500000)/509000 ≈ 39.3dB — the extreme value takes over the result.
-     *  With the weight cap + weighted median, one extreme value cannot move the result.
+     * Single aggregateEchoPriors call variants (aggregation rules).
+     *  One extreme node with n=500000 + 3 normal nodes (n=cap): with an n-weighted mean, (2x9000 + 40x500000)/509000
+     *  = 39.3dB, the extreme value takes over the result; with the weight cap + weighted median it cannot move it.
+     *  Antisymmetric fold: samples the peer node took of me are sign-flipped, offsetting the antisymmetry.
+     *  Spread gate: samples over the iqr gate are still filtered out with the global path.
+     *  Two samples of equal weight give the midpoint of the two values (weightedMedian exact-half branch).
+     *  A device alone in its model pair: a huge n stops exactly at the cap (= the gate, so it still passes), and an n
+     *  just under the cap stays as is (so it still falls short). The gate comparison itself is not exercised here.
      */
     @Test
     fun 극단값_노드_하나는_결과를_끌지_못한다() {
         val normal = (1..3).map { node("A$it", MY, "B" to stat(2.0, CAP)) }
         val extreme = node("X", MY, "B" to stat(40.0, 500_000))
-        val r = FirebaseManager.aggregateEchoPriors(normal + extreme + node("B", PEER), MY, IQR_GATE, CAP)
-        val (m, n) = r[PEER]!!
-        assertEquals("정상 노드 값 그대로", 2.0, m, 1e-9)
-        assertEquals("Σn 은 같은 비중의 합(게이트 3000 통과)", 4 * CAP, n)
-    }
-
-    /** Two samples of equal weight give the midpoint of the two values — same as the mean. */
-    @Test
-    fun 표본_2개면_두_값의_가운데() {
-        val r = FirebaseManager.aggregateEchoPriors(listOf(
-            node("A1", MY, "B" to stat(2.0, CAP)),
-            node("A2", MY, "B" to stat(4.0, CAP)),
-            node("B", PEER)), MY, IQR_GATE, CAP)
-        assertEquals(3.0, r[PEER]!!.first, 1e-9)
-    }
-
-    /**
-     * A device alone in its model pair: a huge n stops exactly at the cap (= the gate, so it still passes), and an n just
-     * under the cap stays as is (so it still falls short). The gate comparison itself is not exercised here.
-     */
-    @Test
-    fun 혼자인_기기의_표본_합은_상한에서_멈추고_상한_아래는_그대로() {
-        val big = FirebaseManager.aggregateEchoPriors(
-            listOf(node("A", MY, "B" to stat(3.0, 500_000)), node("B", PEER)), MY, IQR_GATE, CAP)
-        assertEquals(CAP, big[PEER]!!.second)
-        val small = FirebaseManager.aggregateEchoPriors(
-            listOf(node("A", MY, "B" to stat(3.0, 2_999)), node("B", PEER)), MY, IQR_GATE, CAP)
-        assertEquals(2_999, small[PEER]!!.second)
+        val rows = listOf(
+            AggRow("극단값 하나 + 정상 3개", normal + extreme + node("B", PEER), mean = 2.0, n = 4 * CAP),
+            AggRow("양방향 fold 상쇄", listOf(node("A", MY, "B" to stat(3.0, 100)), node("B", PEER, "A" to stat(-3.0, 100))),
+                mean = 3.0, n = 200),
+            AggRow("산포 게이트 유지", listOf(node("A", MY, "B" to stat(3.0, 100, iqr = 99.0)), node("B", PEER)),
+                mean = null, n = null, empty = true),
+            AggRow("표본 2개면 가운데", listOf(node("A1", MY, "B" to stat(2.0, CAP)), node("A2", MY, "B" to stat(4.0, CAP)),
+                node("B", PEER)), mean = 3.0, n = null),
+            AggRow("혼자인 기기 n 500000 은 상한에서 멈춤", listOf(node("A", MY, "B" to stat(3.0, 500_000)), node("B", PEER)),
+                mean = null, n = CAP),
+            AggRow("혼자인 기기 n 2999 는 그대로", listOf(node("A", MY, "B" to stat(3.0, 2_999)), node("B", PEER)),
+                mean = null, n = 2_999),
+        )
+        for ((i, row) in rows.withIndex()) {
+            val at = "row $i ${row.label}"
+            val r = FirebaseManager.aggregateEchoPriors(row.nodes, MY, IQR_GATE, CAP)
+            if (row.empty) { assertTrue("$at: 노이즈 표본은 제외", r.isEmpty()); continue }
+            val (m, n) = r[PEER]!!
+            row.mean?.let { assertEquals("$at: 결과 평균", it, m, 1e-9) }
+            row.n?.let { assertEquals("$at: Σn", it, n) }
+        }
     }
 }

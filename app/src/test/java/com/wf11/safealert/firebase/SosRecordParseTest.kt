@@ -39,17 +39,12 @@ class SosRecordParseTest {
         assertTrue(r.active)
     }
 
-    @Test
-    fun resolved_isNotActive() {
-        val r = SosRemote.parseSosRecord("k", valid().apply { put("status", "resolved") })
-        assertFalse(r!!.active)
-    }
-
-    /** resolvedAt (server time of the resolve) is read as a number; absent or not a number = 0. */
+    /** resolvedAt (server time of the resolve) is read as a number; absent or not a number = 0. A "resolved" status is not active. */
     @Test
     fun resolvedAt_isReadOrZero() {
         val r = SosRemote.parseSosRecord("k", valid().apply { put("status", "resolved"); put("resolvedAt", 1780000600000L) })
-        assertEquals(1780000600000L, r!!.resolvedAt)
+        assertFalse("status resolved 는 active 가 아니다", r!!.active)
+        assertEquals(1780000600000L, r.resolvedAt)
         assertEquals(0L, SosRemote.parseSosRecord("k", valid())!!.resolvedAt)
         assertEquals(0L, SosRemote.parseSosRecord("k", valid().apply { put("resolvedAt", "x") })!!.resolvedAt)
     }
@@ -84,16 +79,21 @@ class SosRecordParseTest {
         assertEquals("", r2.beacon)
         assertNull(r2.beaconRssi)
         assertEquals(1780000000000L, r2.createdAt)
-    }
 
-    @Test
-    fun payload_beaconRssiOnlyInsideRuleRange() {
-        fun p(rssi: Int?) = SosRemote.recordPayload("id", "n", "WALKER", "still", "GATE-A", rssi, "u1", 1L)
-        assertFalse(p(-151).containsKey("beaconRssi"))
-        assertFalse(p(21).containsKey("beaconRssi"))
-        assertFalse(p(null).containsKey("beaconRssi"))
-        assertEquals(-150, p(-150)["beaconRssi"])
-        assertEquals(20, p(20)["beaconRssi"])
+        // floor / proc: valid values kept, absent = "", over-long = ""
+        val fp = SosRemote.parseSosRecord("k", valid().apply { put("floor", "1F"); put("proc", "OB") })!!
+        assertEquals("1F", fp.floor)
+        assertEquals("OB", fp.proc)
+        val none = SosRemote.parseSosRecord("k", valid())!!
+        assertEquals("", none.floor)
+        assertEquals("", none.proc)
+        assertEquals("", SosRemote.parseSosRecord("k", valid().apply { put("floor", "toolong") })!!.floor)
+
+        // ep: in-range read, absent / out-of-range / non-number = 0
+        assertEquals(7, SosRemote.parseSosRecord("k", valid().apply { put("ep", 7L) })!!.ep)
+        assertEquals(0, SosRemote.parseSosRecord("k", valid())!!.ep)
+        assertEquals(0, SosRemote.parseSosRecord("k", valid().apply { put("ep", 300L) })!!.ep)
+        assertEquals(0, SosRemote.parseSosRecord("k", valid().apply { put("ep", "7") })!!.ep)
     }
 
     @Test
@@ -109,41 +109,30 @@ class SosRecordParseTest {
         assertEquals("active", m["status"])
         assertEquals("u1", m["uid"])
         assertEquals("GATE-A", SosRemote.recordPayload("id", "n", "R", "still", "GATE-A", null, "u", 1L)["beacon"])
-    }
 
-    @Test
-    fun floorAndProc_parseWithAndWithout_invalidIsEmpty() {
-        val r = SosRemote.parseSosRecord("k", valid().apply { put("floor", "1F"); put("proc", "OB") })!!
-        assertEquals("1F", r.floor)
-        assertEquals("OB", r.proc)
-        val none = SosRemote.parseSosRecord("k", valid())!!
-        assertEquals("", none.floor)
-        assertEquals("", none.proc)
-        assertEquals("", SosRemote.parseSosRecord("k", valid().apply { put("floor", "toolong") })!!.floor)
-    }
+        // beaconRssi only inside the rule range
+        fun p(rssi: Int?) = SosRemote.recordPayload("id", "n", "WALKER", "still", "GATE-A", rssi, "u1", 1L)
+        assertFalse(p(-151).containsKey("beaconRssi"))
+        assertFalse(p(21).containsKey("beaconRssi"))
+        assertFalse(p(null).containsKey("beaconRssi"))
+        assertEquals(-150, p(-150)["beaconRssi"])
+        assertEquals(20, p(20)["beaconRssi"])
 
-    @Test
-    fun payload_floorAndProc_onlyWhenSetAndValid() {
-        fun p(f: String, pr: String) = SosRemote.recordPayload("id", "n", "WALKER", "still", null, null, "u1", 1L, 0, f, pr)
-        val set = p("1F", "OB")
+        // floor / proc only when set and valid
+        fun pf(f: String, pr: String) = SosRemote.recordPayload("id", "n", "WALKER", "still", null, null, "u1", 1L, 0, f, pr)
+        val set = pf("1F", "OB")
         assertEquals("1F", set["floor"])
         assertEquals("OB", set["proc"])
-        for (m in listOf(p("", ""), p("bad!", "toolong"))) {
-            assertFalse(m.containsKey("floor"))
-            assertFalse(m.containsKey("proc"))
+        for (e in listOf(pf("", ""), pf("bad!", "toolong"))) {
+            assertFalse(e.containsKey("floor"))
+            assertFalse(e.containsKey("proc"))
         }
-    }
 
-    @Test
-    fun episode_round_trips_and_out_of_range_is_dropped() {
+        // ep: in-range written, 0 / 256 / default dropped
         assertEquals(7, SosRemote.recordPayload("id", "n", "WALKER", "still", null, null, "u1", 1L, 7)["ep"])
         assertFalse(SosRemote.recordPayload("id", "n", "WALKER", "still", null, null, "u1", 1L, 0).containsKey("ep"))
         assertFalse(SosRemote.recordPayload("id", "n", "WALKER", "still", null, null, "u1", 1L, 256).containsKey("ep"))
         assertFalse(SosRemote.recordPayload("id", "n", "WALKER", "still", null, null, "u1", 1L).containsKey("ep"))
-        assertEquals(7, SosRemote.parseSosRecord("k", valid().apply { put("ep", 7L) })!!.ep)
-        assertEquals(0, SosRemote.parseSosRecord("k", valid())!!.ep)
-        assertEquals(0, SosRemote.parseSosRecord("k", valid().apply { put("ep", 300L) })!!.ep)
-        assertEquals(0, SosRemote.parseSosRecord("k", valid().apply { put("ep", "7") })!!.ep)
     }
 
     // A worker who fell before the crew's phones started is still waiting for rescue: a phone that starts (or restarts

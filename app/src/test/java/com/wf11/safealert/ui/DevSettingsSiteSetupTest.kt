@@ -9,6 +9,7 @@ import android.widget.EditText
 import android.widget.Switch
 import android.widget.TextView
 import com.wf11.safealert.R
+import com.wf11.safealert.service.DeviceStateRegistry
 import com.wf11.safealert.utils.DevSettings
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -80,7 +81,11 @@ class DevSettingsSiteSetupTest {
 
     @Test
     fun `사업장마다 맞추는 송수신·소리·경보 기준은 바로 보이고 판정 내부값은 숨김 옵션에 있다`() {
+        DeviceStateRegistry.live = null
         val a = screen()
+        idle()
+        assertEquals("서비스 정지 상태에서 상태 요약이 서비스 정지를 보인다", "서비스 정지",
+            a.findViewById<TextView>(R.id.sec_state_summary).text.toString())
         for (id in listOf(R.id.et_dev_site_code, R.id.et_sos_mail_to, R.id.cb_sos_all_site, R.id.switch_lone_worker, R.id.et_lw_still_min,
                           R.id.et_lw_response_min, R.id.seek_dev_alarm_volume)) {
             assertTrue("현장 설정은 바로 보인다", a.findViewById<View>(id).isShown)
@@ -98,46 +103,26 @@ class DevSettingsSiteSetupTest {
         for (id in listOf(R.id.sec_param_header, R.id.sec_coop_header, R.id.sec_uwbadv_header, R.id.sec_state_header)) {
             assertFalse("판정 내부값·협력·UWB 고급·상태는 숨김", a.findViewById<View>(id).isShown)
         }
+        // The hidden options open on the 7th tap on the version when each tap comes within 3 s of the previous one (slow
+        //   taps are fine); a longer pause starts the count again.
         val version = a.findViewById<TextView>(R.id.tv_app_version)
-        repeat(7) { version.performClick() }
-        assertTrue("버전 7번이면 숨은 구역이 나온다", a.findViewById<View>(R.id.sec_param_header).isShown)
-    }
-
-    // The hidden options open on the 7th tap on the version when each tap comes within 3 s of the previous one (slow taps
-    //   are fine); a longer pause starts the count again.
-    @Test
-    fun `버전을 3초 안 간격으로 7번 누르면 숨김 옵션이 열린다`() {
-        val a = screen()
-        val version = a.findViewById<TextView>(R.id.tv_app_version)
-        val hidden = a.findViewById<View>(R.id.hidden_advanced_group)
         repeat(6) { version.performClick(); idle(2_900) }
         idle(200)   // 3.1 s since the 6th tap: the count starts again
         version.performClick()
-        assertEquals(View.GONE, hidden.visibility)
+        assertEquals("3초를 넘기면 세기가 처음부터 다시 시작한다", View.GONE, hidden.visibility)
         repeat(6) { idle(2_900); version.performClick() }
-        assertEquals(View.VISIBLE, hidden.visibility)
-    }
-
-    @Test
-    fun `사업장 칸을 비우면 감시 시작 때 넣은 사업장으로 돌아간다`() {
-        DevSettings.siteCode = "OTHER"
-        screen().enterSite("")
-        answer(AlertDialog.BUTTON_POSITIVE)
-        assertEquals("HOME1", DevSettings.siteCode)
-    }
-
-    @Test
-    fun `영문·숫자가 없는 사업장 코드는 받지 않는다`() {
-        val a = screen()
-        a.enterSite("물류센터")
-        assertNull("확인 창도 뜨지 않는다", ShadowDialog.getLatestDialog())
-        assertEquals("HOME1", DevSettings.siteCode)
-        assertEquals("HOME1", a.findViewById<EditText>(R.id.et_dev_site_code).text.toString())
+        assertEquals("버전을 3초 안 간격으로 7번 누르면 숨김 옵션이 열린다", View.VISIBLE, hidden.visibility)
+        assertTrue("버전 7번이면 숨은 구역이 나온다", a.findViewById<View>(R.id.sec_param_header).isShown)
     }
 
     @Test
     fun `사업장은 확인해야 바뀐다`() {
         val a = screen()
+        // 영문·숫자가 없는 사업장 코드는 받지 않는다
+        a.enterSite("물류센터")
+        assertNull("확인 창도 뜨지 않는다", ShadowDialog.getLatestDialog())
+        assertEquals("HOME1", DevSettings.siteCode)
+        assertEquals("HOME1", a.findViewById<EditText>(R.id.et_dev_site_code).text.toString())
         a.enterSite("new2")
         answer(AlertDialog.BUTTON_NEGATIVE)
         assertEquals("취소하면 그대로", "HOME1", DevSettings.siteCode)
@@ -146,6 +131,10 @@ class DevSettingsSiteSetupTest {
         answer(AlertDialog.BUTTON_POSITIVE)
         assertEquals("NEW2", DevSettings.siteCode)
         assertEquals("감시 시작 사업장은 그대로", "HOME1", DevSettings.homeSiteCode)
+        // 사업장 칸을 비우면 감시 시작 때 넣은 사업장으로 돌아간다
+        a.enterSite("")
+        answer(AlertDialog.BUTTON_POSITIVE)
+        assertEquals("빈 칸은 감시 시작 사업장으로 돌아간다", "HOME1", DevSettings.siteCode)
     }
 
     @Test
@@ -195,10 +184,9 @@ class DevSettingsSiteSetupTest {
         DevSettings.siteCode = "OTHER"
         assertEquals("", DevSettings.floor)
         assertEquals("", DevSettings.proc)
-    }
 
-    @Test
-    fun `기본값 초기화는 감시 시작 사업장이면 층·공정을 남기고 아니면 비운다`() {
+        // 기본값 초기화는 감시 시작 사업장이면 층·공정을 남기고 아니면 비운다
+        DevSettings.siteCode = "HOME1"
         DevSettings.floor = "1F"
         DevSettings.proc = "OB"
         DevSettings.sosAllSite = true

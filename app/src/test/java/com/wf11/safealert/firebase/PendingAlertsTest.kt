@@ -26,19 +26,14 @@ class PendingAlertsTest {
         val q = PendingAlerts(prefs)
         q.add("https://x.firebaseio.com/wf11/alerts/WF11/20260927/a", rec(1))
         q.add("https://x.firebaseio.com/wf11/alerts/WF11/20260927/b", rec(2))
-        val out = q.drain()
+        // 앱이 다시 켜져도 보류분이 남는다: 상태는 prefs 에만 있으므로 새 인스턴스로 꺼낸다
+        val out = PendingAlerts(prefs).drain()
         assertEquals(listOf("a", "b"), out.map { it.first.substringAfterLast('/') })
         val (_, d) = out[0]
         assertEquals(1_790_000_000_001L, (d["timestamp"] as Number).toLong())
         assertEquals(-61, (d["rssi"] as Number).toInt())
         assertEquals("WF11-CB-01", d["deviceId"])
         assertEquals("꺼낸 뒤에는 비어 있다", 0, q.size())
-    }
-
-    @Test
-    fun `앱이 다시 켜져도 보류분이 남는다`() {
-        PendingAlerts(prefs).add("https://x.firebaseio.com/wf11/alerts/20260927/a", rec(1))
-        assertEquals(1, PendingAlerts(prefs).drain().size)
     }
 
     @Test

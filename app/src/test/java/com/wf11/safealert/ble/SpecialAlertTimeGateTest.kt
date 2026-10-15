@@ -121,24 +121,11 @@ class SpecialAlertTimeGateTest {
 
     // ─────────────────────────────── First detection while reversing ───────────────────────────────
 
-    /** A first-detection special alert goes through the same confirmation as a normal alert: never before IDLE. */
-    @Test
-    fun firstDetectionReverseNeverAlertsBeforeIdle() {
-        for ((name, seq) in firstDetectionApproaches) {
-            val rev = sum(runSeq(REV, seq, 150))
-            val idle = sum(runSeq(IDLE, seq, 150))
-            assertNotNull("$name: 후진 기기도 경보가 떠야 한다", rev.alert)
-            assertNotNull("$name: 후진 기기도 DANGER 에 도달해야 한다", rev.danger)
-            assertTrue("$name: 후진 첫 경보가 IDLE 보다 빠르다 rev=${rev.alert!!.f} idle=${idle.alert!!.f}",
-                rev.alert.f >= idle.alert.f)
-            assertTrue("$name: 후진 DANGER 가 IDLE 보다 빠르다 rev=${rev.danger!!.f} idle=${idle.danger!!.f}",
-                rev.danger.f >= idle.danger.f)
-        }
-    }
-
     /**
      * A forklift heard first while already reversing still gets its special alert in every approach, and the frame it
      * fires on shows a confirmation (2-frame streak or Time-Gate). The only test where reverse is on from the first frame.
+     * The same REV run also pins that a first-detection special alert goes through the same confirmation as a normal
+     * alert: never before IDLE (alert and DANGER).
      */
     @Test
     fun reverseFromFirstDetectionGetsSpecialAlertAfterConfirmation() {
@@ -151,6 +138,14 @@ class SpecialAlertTimeGateTest {
             trFire.filter { sp != null && it.f in (sp.f - 3)..sp.f }.forEach { out("firstDetection-trace seq=$name ${it.fmt()}") }
             if (sp == null) fails += "$name: 특수경보 미발령"
             else if (sp.before == null && route(sp).startsWith("none")) fails += "$name: 확인 근거 없이 첫 감지 특수경보 ${sp.fmt()}"
+            // never before IDLE (merged from firstDetectionReverseNeverAlertsBeforeIdle)
+            val idle = sum(runSeq(IDLE, seq, 150))
+            if (fire.alert == null) fails += "$name: 후진 기기도 경보가 떠야 한다"
+            if (fire.danger == null) fails += "$name: 후진 기기도 DANGER 에 도달해야 한다"
+            if (fire.alert != null && idle.alert != null && fire.alert.f < idle.alert.f)
+                fails += "$name: 후진 첫 경보가 IDLE 보다 빠르다 rev=${fire.alert.f} idle=${idle.alert.f}"
+            if (fire.danger != null && idle.danger != null && fire.danger.f < idle.danger.f)
+                fails += "$name: 후진 DANGER 가 IDLE 보다 빠르다 rev=${fire.danger.f} idle=${idle.danger.f}"
         }
         assertTrue(fails.joinToString(" | "), fails.isEmpty())
     }

@@ -45,6 +45,11 @@ class SiteScopeTest {
         assertEquals("WF11-1F-OB", SiteScope.label("WF11", "1F", "OB"))
         assertEquals("WF11-OB", SiteScope.label("WF11", "", "OB"))
         assertEquals("WF11", SiteScope.label("WF11", "", ""))
+        // audience: the same "leave out empty parts" rule, shown to the person who sends the SOS
+        assertEquals("같은 사업장", SiteScope.audience("", ""))
+        assertEquals("같은 층·공정(1F-OB)", SiteScope.audience("1F", "OB"))
+        assertEquals("같은 층(1F)", SiteScope.audience("1F", ""))
+        assertEquals("같은 공정(OB)", SiteScope.audience("", "OB"))
     }
 
     @Test
@@ -59,12 +64,5 @@ class SiteScopeTest {
         assertEquals(mapOf("a" to 1), SiteScope.withoutScope(mapOf("a" to 1, "floor" to "1F", "proc" to "OB")))
         assertEquals(mapOf("a" to 1), SiteScope.withoutScope(mapOf("a" to 1, "proc" to "OB")))
         assertNull(SiteScope.withoutScope(mapOf("a" to 1)))
-    }
-
-    @Test fun audience_names_who_receives_my_sos() {
-        assertEquals("같은 사업장", SiteScope.audience("", ""))
-        assertEquals("같은 층·공정(1F-OB)", SiteScope.audience("1F", "OB"))
-        assertEquals("같은 층(1F)", SiteScope.audience("1F", ""))
-        assertEquals("같은 공정(OB)", SiteScope.audience("", "OB"))
     }
 }

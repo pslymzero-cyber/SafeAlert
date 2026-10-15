@@ -28,26 +28,21 @@ class PinLockoutTest {
         return r
     }
 
+    /** The lock lifetime in one flow: 5 wrong entries lock, a correct PIN during the lock is not judged, the lock lifts after 10 minutes. */
     @Test
     fun 다섯번_연속으로_틀리면_10분_잠긴다() {
         assertEquals(Result.Wrong(1), failTimes(4, t0))
         assertEquals(Result.Locked(LOCK_MS), lockout.submit(false, t0))
         assertEquals(LOCK_MS, lockout.remainingLockMs(t0))
         assertEquals("제출 한 번에 저장은 한 번(잠금 포함)", 5, store.saves)
-    }
 
-    @Test
-    fun 잠금_중에는_맞는_PIN도_판정하지_않는다() {
-        failTimes(5, t0)
+        // 잠금 중에는 맞는 PIN도 판정하지 않는다
         val mid = t0.plus(60_000L)
         assertEquals(Result.Locked(LOCK_MS - 60_000L), lockout.submit(true, mid))
         assertEquals("잠금 중 입력이 실패로 쌓이지 않는다", 0, store.s.fails)
         assertEquals(LOCK_MS - 60_000L, lockout.remainingLockMs(mid))
-    }
 
-    @Test
-    fun 잠금은_10분_뒤_풀리고_다시_5회를_시도할_수_있다() {
-        failTimes(5, t0)
+        // 잠금은 10분 뒤 풀리고 다시 5회를 시도할 수 있다
         val after = t0.plus(LOCK_MS)
         assertEquals(0L, lockout.remainingLockMs(after))
         assertEquals(Result.Wrong(4), lockout.submit(false, after))
