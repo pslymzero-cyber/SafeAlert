@@ -23,44 +23,52 @@ class LoneWorkerChargeTest {
     private val stillMs = 180_000L
     private val responseMs = 120_000L
 
+    /**
+     * The start wait (Rest.WAIT) ends at the first distinct motion after the start: 5 walking-shaped steps within 10 s
+     * after the floor (a step exactly at the floor does not count), without a step sensor a 3 s walking run, or 1 min of
+     * sensor silence; the still count runs from there. Rows: a start with no charger, fed in order.
+     */
     @Test fun start_without_charging_waits_for_first_distinct_motion() {
-        val l = newLogic()
-        assertEquals(Rest.WAIT, l.rest)
-        assertEquals(Mode.WATCHING, l.modeAt(600_000))
-        l.walk(600_000, 5)
-        assertEquals(Rest.NONE, l.rest)
-        assertEquals(Mode.WATCHING, l.seenAt(600_000 + stillMs - 1))
-        assertEquals(Mode.CHECKING, l.seenAt(600_000 + stillMs))
-        assertEquals("still", l.trigger)
-    }
-
-    @Test fun four_steps_do_not_end_the_wait() {
-        val l = newLogic()
-        l.walk(10_000, 4)
-        assertEquals(Rest.WAIT, l.rest)
-        assertEquals(Mode.WATCHING, l.modeAt(600_000))
-    }
-
-    @Test fun without_step_sensor_3s_strong_motion_ends_the_wait() {
-        val l = newLogic()
-        l.stepsAvailable = false
-        l.strongRun(10_000, 2)
-        assertEquals(Rest.WAIT, l.rest)
-        l.strongRun(20_000, 3)
-        assertEquals(Rest.NONE, l.rest)
-        assertEquals(Mode.CHECKING, l.seenAt(22_000 + stillMs))
-    }
-
-    @Test fun unplug_waits_for_first_distinct_motion() {
-        val l = newLogic(charging = true)
-        assertEquals(Rest.DOCKED, l.rest)
-        l.walk(9_000, 4)
-        l.reportPower(false, 10_000)
-        assertEquals(Rest.WAIT, l.rest)
-        l.step(11_000)
-        assertEquals(Rest.WAIT, l.rest)
-        l.walk(15_000, 5)
-        assertEquals(Rest.NONE, l.rest)
+        val still = stillMs // the class value, not the logic's own stillMs inside a row
+        fun row(name: String, stepSensor: Boolean = true, body: LoneWorkerLogic.(String) -> Unit) {
+            val l = newLogic()
+            if (!stepSensor) l.stepsAvailable = false
+            l.body(name)
+        }
+        row("5 steps at 10 min") { m ->
+            assertEquals(m, Rest.WAIT, rest)
+            assertEquals(m, Mode.WATCHING, modeAt(600_000))
+            walk(600_000, 5)
+            assertEquals(m, Rest.NONE, rest)
+            assertEquals(m, Mode.WATCHING, seenAt(600_000 + still - 1))
+            assertEquals(m, Mode.CHECKING, seenAt(600_000 + still))
+            assertEquals(m, "still", trigger)
+        }
+        row("4 steps do not end the wait") { m ->
+            walk(10_000, 4)
+            assertEquals(m, Rest.WAIT, rest)
+            assertEquals(m, Mode.WATCHING, modeAt(600_000))
+        }
+        row("no step sensor: 2 s run waits, 3 s run ends it", stepSensor = false) { m ->
+            strongRun(10_000, 2)
+            assertEquals(m, Rest.WAIT, rest)
+            strongRun(20_000, 3)
+            assertEquals(m, Rest.NONE, rest)
+            assertEquals(m, Mode.CHECKING, seenAt(22_000 + still))
+        }
+        row("sensor silence counts from there") { m ->
+            sensorSilent(100_000)
+            assertEquals(m, Rest.NONE, rest)
+            assertEquals(m, Mode.WATCHING, seenAt(100_000 + still - 1))
+            assertEquals(m, Mode.CHECKING, seenAt(100_000 + still))
+        }
+        // start floor = 0: a step at exactly 0 does not count; 5 steps spanning exactly 10 s do
+        row("5 steps spanning exactly 10 s, the first at the floor") { m ->
+            for (t in listOf(0L, 2_500L, 5_000L, 7_500L, 10_000L)) step(t)
+            assertEquals(m, Rest.WAIT, rest)
+            step(12_500)
+            assertEquals(m, Rest.NONE, rest)
+        }
     }
 
     /**
@@ -82,6 +90,16 @@ class LoneWorkerChargeTest {
         for (i in 0..4) early.step(9_300L + i * 400)
         early.reportPower(false, 10_000)
         assertEquals(Rest.WAIT, early.rest)
+        // an unplug waits for the first distinct motion: 4 steps before it and one after are not 5 fresh steps
+        val wait = newLogic(charging = true)
+        assertEquals(Rest.DOCKED, wait.rest)
+        wait.walk(9_000, 4)
+        wait.reportPower(false, 10_000)
+        assertEquals(Rest.WAIT, wait.rest)
+        wait.step(11_000)
+        assertEquals(Rest.WAIT, wait.rest)
+        wait.walk(15_000, 5)
+        assertEquals(Rest.NONE, wait.rest)
     }
 
     /** Four steps after the unplug edge and one after the fall check opened: carried, the check stays open. */
@@ -167,23 +185,15 @@ class LoneWorkerChargeTest {
         }
     }
 
-    @Test fun sensor_silence_ends_wait_and_counts_from_there() {
-        val l = newLogic()
-        l.sensorSilent(100_000)
-        assertEquals(Rest.NONE, l.rest)
-        assertEquals(Mode.WATCHING, l.seenAt(100_000 + stillMs - 1))
-        assertEquals(Mode.CHECKING, l.seenAt(100_000 + stillMs))
-    }
-
-    @Test fun charging_without_steps_is_docked_and_never_checks_still() {
-        val l = newLogic(charging = true)
-        l.walk(10_000, 9)
-        assertEquals(Rest.DOCKED, l.rest)
-        for (t in 60_000L..3_600_000L step 60_000L) assertEquals(Mode.WATCHING, l.modeAt(t))
-    }
-
-    /** Ten walking-shaped steps within 30 s while charging carry the device: the still count runs. */
+    /**
+     * Ten walking-shaped steps within 30 s while charging carry the device: the still count runs. Nine steps do not:
+     * the device stays docked and never checks still.
+     */
     @Test fun charging_with_ten_steps_is_carried_and_still_check_opens() {
+        val docked = newLogic(charging = true)
+        docked.walk(10_000, 9)
+        assertEquals(Rest.DOCKED, docked.rest)
+        for (t in 60_000L..3_600_000L step 60_000L) assertEquals("9 steps: docked at $t", Mode.WATCHING, docked.modeAt(t))
         val l = carriedWhileCharging()
         assertEquals(Rest.NONE, l.rest)
         assertEquals(Mode.WATCHING, l.seenAt(10_000 + stillMs - 1))
@@ -219,21 +229,9 @@ class LoneWorkerChargeTest {
             phases = listOf(Phase(Rest.DOCKED) { shuffle(10_000, 10) }, Phase(Rest.DOCKED) { shuffle(20_000, 20) })),
         CarryRow("9 steps before the plug, 1 after", charging = false, stepSensor = true,
             phases = listOf(Phase(null) { walk(9_000, 9) }, Phase(null) { reportPower(true, 10_000) },
-                Phase(Rest.DOCKED) { step(11_000) }))))
-
-    @Test fun replug_resets_step_carry() {
-        val l = carriedWhileCharging()
-        l.reportPower(false, 20_000)
-        assertEquals(Rest.WAIT, l.rest)
-        l.reportPower(true, 30_000)
-        assertEquals(Rest.DOCKED, l.rest)
-    }
-
-    /**
-     * No step sensor: carrying while charging = 5 walking-shaped windows within the last 30 s, not necessarily in a
-     * row, all started after the plug. With a step sensor, windows alone do not carry.
-     */
-    @Test fun fallback_charging_carry_needs_5_walking_windows_within_30s_after_the_plug() = checkCarry(listOf(
+                Phase(Rest.DOCKED) { step(11_000) })),
+        // no step sensor: carrying while charging = 5 walking-shaped windows within the last 30 s, not necessarily in a
+        // row, all started after the plug. With a step sensor, windows alone do not carry.
         CarryRow("5 windows within 30 s", charging = true, stepSensor = false,
             phases = listOf(Phase(Rest.DOCKED) { strongWindows(5_000, 11_000, 17_000, 23_000) },
                 Phase(Rest.NONE) { strongWindows(29_000) })),
@@ -250,6 +248,14 @@ class LoneWorkerChargeTest {
                 Phase(Rest.DOCKED) { strongWindows(11_000) },
                 Phase(Rest.DOCKED) { strongWindows(14_000, 16_000, 18_000) },
                 Phase(Rest.NONE) { strongWindows(20_000) }))))
+
+    @Test fun replug_resets_step_carry() {
+        val l = carriedWhileCharging()
+        l.reportPower(false, 20_000)
+        assertEquals(Rest.WAIT, l.rest)
+        l.reportPower(true, 30_000)
+        assertEquals(Rest.DOCKED, l.rest)
+    }
 
     @Test fun real_plug_withdraws_open_still_check() {
         val l = newLogic()
@@ -268,6 +274,13 @@ class LoneWorkerChargeTest {
         assertEquals(Rest.WAIT, l.rest)
         assertEquals(Mode.CHECKING, l.modeAt(10_000 + stillMs + responseMs - 1))
         assertEquals(Mode.SOS, l.seenAt(10_000 + stillMs + responseMs))
+        // the same for a fall check: an unplug during it keeps it running to the SOS
+        val f = fallRuleOnly(charging = true)
+        f.onAccident(10_000)
+        assertEquals(Mode.CHECKING, f.seenAt(40_000))
+        f.reportPower(false, 45_000)
+        assertEquals(Mode.CHECKING, f.seenAt(99_999))
+        assertEquals(Mode.SOS, f.seenAt(100_000))
     }
 
     // -- PowerDebounce (2 s) --
@@ -296,18 +309,17 @@ class LoneWorkerChargeTest {
         }
     }
 
-    /** The logic's settlePower tells whether it confirmed and applied a change, once. */
-    @Test fun settle_power_applies_a_confirmed_change_once() {
-        val l = newLogic(charging = true)
-        l.powerRaw(false, 10_000)
-        assertFalse(l.settlePower(10_000 + PowerDebounce.DEBOUNCE_MS - 1))
-        assertTrue(l.settlePower(10_000 + PowerDebounce.DEBOUNCE_MS))
-        assertEquals(Rest.WAIT, l.rest)
-        assertFalse(l.settlePower(20_000))
-    }
-
-    /** A change already stable for 2 s is reported before a later raw value, with or without a tick in between. */
+    /**
+     * A change already stable for 2 s is reported before a later raw value, with or without a tick in between. The
+     * logic's settlePower tells whether it confirmed and applied a change, once.
+     */
     @Test fun stable_power_change_is_applied_before_a_later_raw() {
+        val s = newLogic(charging = true)
+        s.powerRaw(false, 10_000)
+        assertFalse(s.settlePower(10_000 + PowerDebounce.DEBOUNCE_MS - 1))
+        assertTrue(s.settlePower(10_000 + PowerDebounce.DEBOUNCE_MS))
+        assertEquals(Rest.WAIT, s.rest)
+        assertFalse(s.settlePower(20_000))
         val l = newLogic(charging = true)
         l.powerRaw(false, 10_000)
         assertEquals(10_000 + PowerDebounce.CONFIRM_MS, l.nextCheckAt(10_000))

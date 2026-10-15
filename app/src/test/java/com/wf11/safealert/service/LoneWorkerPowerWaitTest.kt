@@ -65,19 +65,10 @@ class LoneWorkerPowerWaitTest {
         assertEquals(Mode.WATCHING, c.seenAt(180_500 + PowerDebounce.DEBOUNCE_MS))
     }
 
-    /** A dropped power wait lets the deadline be judged with the power before it, the response counted from the opening. */
-    @Test fun dropped_power_wait_judges_in_the_power_state_before_it() {
-        val l = newLogic(carried = true)
-        l.powerRaw(true, 179_500)
-        assertEquals(Mode.WATCHING, l.seenAt(180_000))
-        assertTrue(l.powerRaw(false, 180_400))
-        assertEquals(Mode.CHECKING, l.seenAt(180_400))
-        assertEquals("still", l.trigger)
-        assertEquals(l.responseMs, l.responseLeftMs(180_400))
-        assertEquals(Rest.NONE, l.rest)
-    }
-
-    /** A power wait keeps the CPU awake but asks for a flush only when data up to the deadline is missing. */
+    /**
+     * A power wait keeps the CPU awake but asks for a flush only when data up to the deadline is missing. A dropped
+     * power wait lets the deadline be judged with the power before it, the response counted from the opening.
+     */
     @Test fun power_wait_keeps_the_cpu_awake_but_flushes_only_for_missing_data() {
         val l = newLogic(carried = true)
         l.powerRaw(true, 179_500)
@@ -93,6 +84,15 @@ class LoneWorkerPowerWaitTest {
         assertEquals(Mode.WATCHING, d.modeAt(180_000))
         assertTrue(d.waitingToJudge(180_000))
         assertTrue(d.waitingOnSensors(180_000))
+        // the wait drops: the deadline is judged with the power before it
+        val p = newLogic(carried = true)
+        p.powerRaw(true, 179_500)
+        assertEquals(Mode.WATCHING, p.seenAt(180_000))
+        assertTrue(p.powerRaw(false, 180_400))
+        assertEquals(Mode.CHECKING, p.seenAt(180_400))
+        assertEquals("still", p.trigger)
+        assertEquals(p.responseMs, p.responseLeftMs(180_400))
+        assertEquals(Rest.NONE, p.rest)
     }
 
     /**
@@ -112,10 +112,8 @@ class LoneWorkerPowerWaitTest {
         f.step(32_500)
         assertEquals(Mode.CHECKING, f.seenAt(33_000))
         assertEquals("fall", f.trigger)
-    }
 
-    /** Carried on the dock, the unplug starts 1 s before the still deadline: the deadline waits, the reported unplug is a wait, no check. */
-    @Test fun unplug_started_before_the_still_deadline_rests_instead_of_checking() {
+        // carried on the dock, the unplug starts 1 s before the still deadline: the deadline waits, the reported unplug is a wait, no check
         val l = carriedWhileCharging()
         val open = 10_000 + l.stillMs
         l.powerRaw(false, open - 1_000)

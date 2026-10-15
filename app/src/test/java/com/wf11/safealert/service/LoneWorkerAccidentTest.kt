@@ -19,21 +19,18 @@ class LoneWorkerAccidentTest {
 
     private val late = LoneWorkerLogic.LATE_MS
 
-    /** A fall alone opens the suspicion; 30 s without distinct motion after it opens the accident check. */
-    @Test fun fall_opens_accident_check_after_30s_without_distinct_motion() {
+    /**
+     * A fall alone opens the suspicion; 30 s without distinct motion after it opens the accident check, which left
+     * unanswered for 1 min becomes SOS (the setting responseMs is not used for a fall check).
+     */
+    @Test fun accident_check_unanswered_for_1min_becomes_sos() {
         val l = fallRuleOnly()
+        l.responseMs = 600_000L
         l.onAccident(6_000)
         assertEquals(Mode.WATCHING, l.modeAt(18_000))
         assertEquals(Mode.WATCHING, l.seenAt(35_999))
         assertEquals(Mode.CHECKING, l.seenAt(36_000))
         assertEquals("fall", l.trigger)
-    }
-
-    @Test fun accident_check_unanswered_for_1min_becomes_sos() {
-        val l = fallRuleOnly()
-        l.responseMs = 600_000L
-        l.onAccident(6_000)
-        assertEquals(Mode.CHECKING, l.seenAt(36_000))
         assertEquals(60_000L, l.responseLeftMs(36_000))
         assertEquals(Mode.CHECKING, l.seenAt(95_999))
         assertEquals(Mode.SOS, l.seenAt(96_000))
@@ -51,7 +48,7 @@ class LoneWorkerAccidentTest {
     @Test fun fall_is_ignored_when_docked_at_the_impact() {
         class Row(val name: String, val fallAt: Long, val seen: List<Pair<Long, Mode>>, val trigger: String? = null,
                   val charging: Boolean = false, val zoneInside: Boolean = false, val zoneEnteredAt: Long? = null,
-                  val power: Pair<Boolean, Long>? = null,
+                  val power: Pair<Boolean, Long>? = null, val zoneExitAt: Long? = null,
                   val shape: MotionAnalyzer.FallShape = MotionAnalyzer.FallShape.ANY)
         fun watching(from: Long, to: Long) = (from..to step 10_000L).map { it to Mode.WATCHING }
         for (r in listOf(
@@ -60,6 +57,11 @@ class LoneWorkerAccidentTest {
             // a full-shape fall (long drop, hard impact, big tilt) is ignored the same way
             Row("charging, zone entered 1 s before, full-shape fall", 6_000, watching(40_000, 400_000),
                 charging = true, zoneEnteredAt = 5_000, shape = MotionAnalyzer.FallShape(400, 5.0, 90.0)),
+            // the zone exit confirmed within 12 s of the impact uses the outside rule, so the fall counts; later it does not
+            Row("charging, zone entered 1 s before, exit 2 s after the impact", 6_000, listOf(36_000L to Mode.CHECKING), "fall",
+                charging = true, zoneEnteredAt = 5_000, zoneExitAt = 8_000, shape = MotionAnalyzer.FallShape(400, 5.0, 90.0)),
+            Row("charging, zone entered 1 s before, exit 15 s after the impact", 6_000, watching(40_000, 400_000),
+                charging = true, zoneEnteredAt = 5_000, zoneExitAt = 21_000, shape = MotionAnalyzer.FallShape(400, 5.0, 90.0)),
             Row("charging outside the zone", 20_000, listOf(50_000L to Mode.CHECKING), charging = true),
             Row("plug 10 s before", 20_000, watching(50_000, 330_000), power = true to 10_000L),
             Row("plug 10.001 s before", 20_000, listOf(50_000L to Mode.CHECKING), power = true to 9_999L),
@@ -74,6 +76,7 @@ class LoneWorkerAccidentTest {
                 charging = true, power = false to 100_000L))) {
             val l = fallRuleOnly(charging = r.charging, zoneInside = r.zoneInside)
             r.zoneEnteredAt?.let { l.onZone(true, it) }
+            r.zoneExitAt?.let { l.onZone(false, it) }
             r.power?.let { (on, at) -> l.reportPower(on, at) }
             l.onAccident(r.fallAt, r.shape)
             for ((t, want) in r.seen) assertEquals("${r.name}: seen at $t", want, l.seenAt(t))
@@ -95,25 +98,16 @@ class LoneWorkerAccidentTest {
         assertEquals(Mode.WATCHING, s.mode)
         s.reportPower(true, 50_000)
         for (t in 60_000L..400_000L step 10_000L) assertEquals(Mode.WATCHING, s.seenAt(t))
+        // a real plug with the accident check still open closes it and ends the suspicion
+        val c = fallRuleOnly()
+        c.onAccident(10_000)
+        assertEquals(Mode.CHECKING, c.seenAt(40_000))
+        c.reportPower(true, 50_000)
+        assertEquals(Mode.WATCHING, c.mode)
+        for (t in 60_000L..400_000L step 10_000L) assertEquals(Mode.WATCHING, c.seenAt(t))
     }
 
-    @Test fun real_plug_during_accident_check_closes_it_and_ends_suspicion() {
-        val l = fallRuleOnly()
-        l.onAccident(10_000)
-        assertEquals(Mode.CHECKING, l.seenAt(40_000))
-        l.reportPower(true, 50_000)
-        assertEquals(Mode.WATCHING, l.mode)
-        for (t in 60_000L..400_000L step 10_000L) assertEquals(Mode.WATCHING, l.seenAt(t))
-    }
-
-    @Test fun unplug_during_accident_check_keeps_it_running_to_sos() {
-        val l = fallRuleOnly(charging = true)
-        l.onAccident(10_000)
-        assertEquals(Mode.CHECKING, l.seenAt(40_000))
-        l.reportPower(false, 45_000)
-        assertEquals(Mode.CHECKING, l.seenAt(99_999))
-        assertEquals(Mode.SOS, l.seenAt(100_000))
-    }
+    // the unplug during an accident check: LoneWorkerChargeTest.unplug_during_still_check_keeps_it_running_to_sos
 
     @Test fun power_changes_during_sos_do_not_end_sos() {
         val l = fallRuleOnly()
@@ -173,6 +167,10 @@ class LoneWorkerAccidentTest {
         assertEquals(Mode.WATCHING, l.modeAt(103_000))
     }
 
+    /**
+     * The accident check's opening (40 s) and its SOS (100 s) wait for the sensor data that covers them, at most LATE_MS;
+     * data that covers the deadline judges it at once, but only when the accelerometer and the step sensor both arrived.
+     */
     @Test fun sos_waits_for_sensor_data_up_to_6s() {
         val l = fallRuleOnly()
         l.onAccident(10_000)
@@ -180,31 +178,29 @@ class LoneWorkerAccidentTest {
         assertEquals(Mode.CHECKING, l.modeAt(100_000))
         assertEquals(Mode.CHECKING, l.modeAt(100_000 + late - 1))
         assertEquals(Mode.SOS, l.modeAt(100_000 + late))
-    }
 
-    @Test fun sos_fires_at_deadline_when_data_covers_it() {
-        val l = fallRuleOnly()
-        l.onAccident(10_000)
-        assertEquals(Mode.CHECKING, l.seenAt(40_000))
-        assertEquals(Mode.CHECKING, l.seenAt(99_999))
-        // accelerometer covers the deadline but the step sensor has not been flushed yet
-        l.onWindow(MotionAnalyzer.Window(100_000, false))
-        assertEquals(Mode.CHECKING, l.modeAt(100_000))
-        l.stepsFlushed(100_000)
-        assertEquals(Mode.SOS, l.modeAt(100_000))
-    }
-
-    @Test fun accident_check_open_waits_for_sensor_data() {
-        val l = fallRuleOnly()
-        l.onAccident(10_000)
-        assertEquals(Mode.WATCHING, l.modeAt(40_000))
-        assertEquals(Mode.WATCHING, l.modeAt(40_000 + late - 1))
-        assertEquals(Mode.CHECKING, l.modeAt(40_000 + late))
-        assertEquals(60_000L, l.responseLeftMs(40_000 + late))
+        // the opening waits the same way
+        val open = fallRuleOnly()
+        open.onAccident(10_000)
+        assertEquals(Mode.WATCHING, open.modeAt(40_000))
+        assertEquals(Mode.WATCHING, open.modeAt(40_000 + late - 1))
+        assertEquals(Mode.CHECKING, open.modeAt(40_000 + late))
+        assertEquals(60_000L, open.responseLeftMs(40_000 + late))
 
         val seen = fallRuleOnly()
         seen.onAccident(10_000)
         assertEquals(Mode.CHECKING, seen.seenAt(40_000))
+
+        // data that covers the SOS deadline fires it at the deadline
+        val data = fallRuleOnly()
+        data.onAccident(10_000)
+        assertEquals(Mode.CHECKING, data.seenAt(40_000))
+        assertEquals(Mode.CHECKING, data.seenAt(99_999))
+        // accelerometer covers the deadline but the step sensor has not been flushed yet
+        data.onWindow(MotionAnalyzer.Window(100_000, false))
+        assertEquals(Mode.CHECKING, data.modeAt(100_000))
+        data.stepsFlushed(100_000)
+        assertEquals(Mode.SOS, data.modeAt(100_000))
     }
 
     @Test fun fall_check_replacing_a_still_check_counts_steps_from_the_switch() {
@@ -223,28 +219,29 @@ class LoneWorkerAccidentTest {
         assertEquals("fall", l.trigger)
     }
 
+    /**
+     * Walking every 25 s keeps the check closed until the 5 min suspicion ends; a new fall inside it (at 100 s) moves
+     * the end of the suspicion, so the check opens 30 s after the last walk (315 s).
+     */
     @Test fun still_period_must_complete_within_5min() {
-        val l = fallRuleOnly()
-        l.onAccident(10_000)
-        for (last in 35_000L..285_000L step 25_000L) {
-            l.walk(last, 5)
-            assertEquals(Mode.WATCHING, l.modeAt(last))
+        for (secondFall in listOf(false, true)) {
+            val m = "secondFall=$secondFall"
+            val l = fallRuleOnly()
+            l.onAccident(10_000)
+            for (last in 35_000L..285_000L step 25_000L) {
+                l.walk(last, 5)
+                assertEquals("$m: walk at $last", Mode.WATCHING, l.modeAt(last))
+                if (secondFall && last == 85_000L) l.onAccident(100_000)
+            }
+            if (secondFall) {
+                assertEquals(m, Mode.WATCHING, l.seenAt(314_999))
+                assertEquals(m, Mode.CHECKING, l.seenAt(315_000))
+            } else {
+                assertEquals(m, Mode.WATCHING, l.seenAt(310_000))
+                assertEquals(m, Mode.WATCHING, l.seenAt(320_000))
+                assertEquals(m, Mode.WATCHING, l.seenAt(400_000))
+            }
         }
-        assertEquals(Mode.WATCHING, l.seenAt(310_000))
-        assertEquals(Mode.WATCHING, l.seenAt(320_000))
-        assertEquals(Mode.WATCHING, l.seenAt(400_000))
-    }
-
-    @Test fun new_trigger_during_suspicion_extends_window() {
-        val l = fallRuleOnly()
-        l.onAccident(10_000)
-        for (last in 35_000L..285_000L step 25_000L) {
-            l.walk(last, 5)
-            assertEquals(Mode.WATCHING, l.modeAt(last))
-            if (last == 85_000L) l.onAccident(100_000)
-        }
-        assertEquals(Mode.WATCHING, l.seenAt(314_999))
-        assertEquals(Mode.CHECKING, l.seenAt(315_000))
     }
 
     @Test fun sporadic_single_steps_never_close_accident_check() {
@@ -258,12 +255,21 @@ class LoneWorkerAccidentTest {
         assertEquals(Mode.SOS, l.seenAt(100_000))
     }
 
+    /** [OK] on an accident check, and on a still check with a fall window open, closes it and ends the suspicion. */
     @Test fun ok_closes_accident_check_and_ends_suspicion() {
         val l = fallRuleOnly()
         l.onAccident(10_000)
         assertEquals(Mode.CHECKING, l.seenAt(40_000))
         assertEquals(true, l.ackWorking(45_000))
         for (t in 50_000L..400_000L step 10_000L) assertEquals(Mode.WATCHING, l.seenAt(t))
+
+        val s = fallRuleOnly()
+        s.stillMs = 180_000L
+        assertEquals(Mode.CHECKING, s.seenAt(180_000))
+        assertEquals("still", s.trigger)
+        s.onAccident(190_000)
+        assertEquals(true, s.ackWorking(195_000))
+        for (t in 200_000L..370_000L step 5_000L) assertEquals(Mode.WATCHING, s.seenAt(t))
     }
 
     @Test fun steps_close_accident_check_and_watching_continues_until_5min() {
@@ -279,22 +285,25 @@ class LoneWorkerAccidentTest {
         for (t in 290_000L..400_000L step 10_000L) assertEquals(Mode.WATCHING, l.seenAt(t))
     }
 
-    @Test fun ok_on_still_check_also_ends_accident_suspicion() {
-        val l = fallRuleOnly()
-        l.stillMs = 180_000L
-        assertEquals(Mode.CHECKING, l.seenAt(180_000))
-        assertEquals("still", l.trigger)
-        l.onAccident(190_000)
-        assertEquals(true, l.ackWorking(195_000))
-        for (t in 200_000L..370_000L step 5_000L) assertEquals(Mode.WATCHING, l.seenAt(t))
-    }
-
+    /**
+     * A fall during an open still check: the earlier deadline wins (a fall at 175 s: its check at 205 s replaces the still
+     * check, SOS at 265 s; a fall at 215 s cannot beat the still check, whose SOS stays due at 300 s). The pending
+     * queries (nextCheckAt, waitingOnSensors, dueNow) show a deadline that cannot beat the still check is not pending.
+     */
     @Test fun earlier_deadline_wins_when_accident_fires_during_still_check() {
         val l = fallRuleOnly()
         l.stillMs = 180_000L
         assertEquals(Mode.CHECKING, l.seenAt(180_000))
         assertEquals("still", l.trigger)
         l.onAccident(175_000)
+        assertEquals(205_000L, l.nextCheckAt(190_000))
+        assertTrue(l.waitingOnSensors(205_000))
+        assertFalse(l.dueNow(205_000))
+        l.sensed(205_000)
+        assertTrue(l.dueNow(205_000))
+        assertEquals(Mode.CHECKING, l.modeAt(205_000))
+        assertEquals("fall", l.trigger)
+        assertFalse(l.dueNow(205_000))
         assertEquals(Mode.CHECKING, l.seenAt(205_000))
         assertEquals("fall", l.trigger)
         assertEquals(Mode.CHECKING, l.seenAt(264_999))
@@ -302,63 +311,20 @@ class LoneWorkerAccidentTest {
 
         val later = fallRuleOnly()
         later.stillMs = 180_000L
-        later.seenAt(180_000)
+        assertEquals(Mode.CHECKING, later.seenAt(180_000))
         later.onAccident(215_000)
-        later.seenAt(245_000)
+        assertEquals(300_000L, later.nextCheckAt(230_000))
+        assertFalse(later.waitingOnSensors(245_000))
+        later.sensed(245_000)
+        assertFalse(later.dueNow(245_000))
+        assertEquals(Mode.CHECKING, later.modeAt(245_000))
         assertEquals("still", later.trigger)
         assertEquals(Mode.SOS, later.seenAt(300_000))
         assertEquals("still", later.trigger)
     }
 
-    @Test fun accident_deadline_that_cannot_beat_still_check_is_not_pending() {
-        val l = fallRuleOnly()
-        l.stillMs = 180_000L
-        assertEquals(Mode.CHECKING, l.seenAt(180_000))
-        l.onAccident(215_000)
-        assertEquals(300_000L, l.nextCheckAt(230_000))
-        assertFalse(l.waitingOnSensors(245_000))
-        l.sensed(245_000)
-        assertFalse(l.dueNow(245_000))
-        assertEquals(Mode.CHECKING, l.modeAt(245_000))
-        assertEquals("still", l.trigger)
-
-        val early = fallRuleOnly()
-        early.stillMs = 180_000L
-        early.seenAt(180_000)
-        early.onAccident(175_000)
-        assertEquals(205_000L, early.nextCheckAt(190_000))
-        assertTrue(early.waitingOnSensors(205_000))
-        assertFalse(early.dueNow(205_000))
-        early.sensed(205_000)
-        assertTrue(early.dueNow(205_000))
-        assertEquals(Mode.CHECKING, early.modeAt(205_000))
-        assertEquals("fall", early.trigger)
-        assertFalse(early.dueNow(205_000))
-    }
-
-    @Test fun sos_in_progress_ignores_new_triggers() {
-        val l = fallRuleOnly()
-        l.restoreSos("still", 1_000)
-        l.onAccident(10_000)
-        assertEquals(Mode.SOS, l.seenAt(40_000))
-        l.cancelSos(41_000)
-        for (t in 50_000L..400_000L step 10_000L) assertEquals(Mode.WATCHING, l.seenAt(t))
-    }
-
-    @Test fun disabled_ignores_accident_and_withdraws_accident_check() {
-        val off = fallRuleOnly()
-        off.setEnabled(false, 0)
-        off.onAccident(10_000)
-        assertEquals(Mode.WATCHING, off.seenAt(40_000))
-
-        val chk = fallRuleOnly()
-        chk.onAccident(10_000)
-        assertEquals(Mode.CHECKING, chk.seenAt(40_000))
-        chk.setEnabled(false, 41_000)
-        assertEquals(Mode.WATCHING, chk.mode)
-        chk.setEnabled(true, 42_000)
-        for (t in 50_000L..400_000L step 10_000L) assertEquals(Mode.WATCHING, chk.seenAt(t))
-    }
+    // An SOS in progress ignores a new fall: LoneWorkerLogicTest.restore_sos_survives_settle_disable_and_ack.
+    // Disabled: no fall check opens, an open one is withdrawn: LoneWorkerLogicTest.disabled_never_checks_and_cancels_open_check_but_keeps_sos.
 
     /** A second fall while a fall check is open neither reopens nor moves that check: SOS stays due 60 s after it opened. */
     @Test fun second_fall_during_open_fall_check_does_not_move_it() {

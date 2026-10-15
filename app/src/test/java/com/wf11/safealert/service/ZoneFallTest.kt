@@ -68,24 +68,31 @@ class ZoneFallTest {
 
     // -- analyzer shape --
 
+    /**
+     * The analyzer's fall shape. Rows: the trace (one FALL each), then the expected drop ms, peak G and posture change;
+     * a posture the analyzer cannot know (the trace starts with the fall) is null, and a low G older than one second
+     * is not counted in the drop.
+     */
     @Test fun standard_fall_shape() {
-        val a = MotionAnalyzer()
-        assertEquals(1, a.fall(3000, 260).size)
-        assertEquals(260L, a.fallShape.freeFallMs)
-        assertEquals(3.059, a.fallShape.peakG, 0.01)
-        assertEquals(90.0, a.fallShape.postureDeg!!, 1.0)
-    }
-
-    @Test fun peak_is_max_in_impact_window() {
-        val a = MotionAnalyzer()
-        assertEquals(1, a.fall(3000, 260, listOf(26f, 40f, 30f)).size)
-        assertEquals(4.079, a.fallShape.peakG, 0.01)
-    }
-
-    @Test fun unknown_pre_fall_posture_is_null() {
-        val a = MotionAnalyzer()
-        assertEquals(1, a.fall(0, 300).size)
-        assertNull(a.fallShape.postureDeg)
+        class Row(val name: String, val run: MotionAnalyzer.() -> List<Long>, val freeFallMs: Long? = null,
+                  val peakG: Double? = null, val postureDeg: Double? = null, val postureUnknown: Boolean = false)
+        for (r in listOf(
+            Row("standard fall", { fall(3000, 260) }, freeFallMs = 260, peakG = 3.059, postureDeg = 90.0),
+            Row("peak is the max in the impact window", { fall(3000, 260, listOf(26f, 40f, 30f)) }, peakG = 4.079),
+            Row("unknown pre-fall posture", { fall(0, 300) }, postureUnknown = true),
+            Row("low G older than one second", {
+                trace(
+                    seg(0, 1000, still), seg(1000, 1200, freeFall), seg(1200, 3000, still), seg(3000, 3100, freeFall),
+                    seg(3100, 3160, impact), seg(3160, 18_160, lying)
+                )
+            }, freeFallMs = 100))) {
+            val a = MotionAnalyzer()
+            assertEquals("${r.name}: one fall", 1, r.run(a).size)
+            r.freeFallMs?.let { assertEquals("${r.name}: drop", it, a.fallShape.freeFallMs) }
+            r.peakG?.let { assertEquals("${r.name}: peak", it, a.fallShape.peakG, 0.01) }
+            r.postureDeg?.let { assertEquals("${r.name}: posture", it, a.fallShape.postureDeg!!, 1.0) }
+            if (r.postureUnknown) assertNull("${r.name}: posture", a.fallShape.postureDeg)
+        }
     }
 
     /** Zone impact thresholds by sensor range: MotionAnalyzerTest.impact_threshold_by_sensor_range_and_setting. */
@@ -100,26 +107,23 @@ class ZoneFallTest {
 
     /**
      * Inside a settled zone a fall counts only when its drop, impact and tilt reach the zone settings; an unknown tilt
-     * counts as reached. Rows: the fall shape, the zone settings, whether the fall counts.
+     * counts as reached. Rows: the fall shape, the zone settings, whether the fall counts, and for the full fall that
+     * its unanswered check becomes SOS 60 s after it opened (190 s).
      */
     @Test fun zone_fall_counts_only_past_the_drop_impact_and_tilt_settings() {
-        class Row(val name: String, val shape: FallShape, val zone: ZoneFall, val counts: Boolean)
+        class Row(val name: String, val shape: FallShape, val zone: ZoneFall, val counts: Boolean, val sos: Boolean = false)
         for (r in listOf(
+            Row("full fall (250, 3.0, 70 deg)", FallShape(250, 3.0, 70.0), ZoneFall(), true, sos = true),
             Row("drop 60 ms", FallShape(60, 3.0, 90.0), ZoneFall(), false),
             Row("tilt 50 deg", FallShape(250, 3.0, 50.0), ZoneFall(), false),
             Row("tilt unknown", FallShape(250, 3.0, null), ZoneFall(), true),
             Row("impact 3.0 G, setting 4.0 G", FallShape(300, 3.0, 90.0), ZoneFall(impactG = 4.0), false),
             Row("impact 4.2 G, setting 4.0 G", FallShape(300, 4.2, 90.0), ZoneFall(impactG = 4.0), true))) {
             val l = zoneFall(r.shape, r.zone)
+            if (r.sos) assertTrue("${r.name}: settled", l.zoneSettled)
             if (r.counts) assertChecking(l, r.name) else assertDiscarded(l, r.name)
+            if (r.sos) assertEquals("${r.name}: SOS", Mode.SOS, l.seenAt(190_000))
         }
-    }
-
-    @Test fun zone_full_fall_counts() {
-        val l = zoneFall(FallShape(250, 3.0, 70.0))
-        assertTrue(l.zoneSettled)
-        assertChecking(l)
-        assertEquals(Mode.SOS, l.seenAt(190_000))
     }
 
     // -- drop length, posture, zone state at the impact, zone impact threshold --
@@ -143,34 +147,8 @@ class ZoneFallTest {
         assertDiscarded(zoneFall(brief.fallShape))
     }
 
-    @Test fun zone_entered_after_impact_uses_outside_rule() {
-        val l = fallRuleOnly()
-        l.onZone(true, 105_000)
-        l.onAccident(100_000, FallShape(60, 2.6, 46.0))
-        assertEquals(Mode.WATCHING, l.seenAt(129_999))
-        assertEquals(Mode.CHECKING, l.seenAt(130_000))
-        assertEquals("fall", l.trigger)
-    }
-
-    /**
-     * Charging and inside the zone at the impact (6 s) ignores the fall, also when the exit is confirmed 15 s after it;
-     * an exit confirmed within 12 s uses the outside rule, so the fall counts.
-     */
-    @Test fun charging_in_zone_at_the_impact_is_ignored_unless_the_exit_is_within_12s() {
-        for ((exit, counts) in listOf(8_000L to true, 21_000L to false)) {
-            val m = "exit at $exit"
-            val l = fallRuleOnly(charging = true)
-            l.onZone(true, 5_000)
-            l.onZone(false, exit)
-            l.onAccident(6_000, FallShape(400, 5.0, 90.0))
-            if (counts) {
-                assertEquals(m, Mode.CHECKING, l.seenAt(36_000))
-                assertEquals(m, "fall", l.trigger)
-            } else {
-                for (t in 40_000L..400_000L step 10_000L) assertEquals(m, Mode.WATCHING, l.seenAt(t))
-            }
-        }
-    }
+    // Charging and inside the zone at the impact, with the exit confirmed within or after 12 s:
+    // LoneWorkerAccidentTest.fall_is_ignored_when_docked_at_the_impact (rows with zoneExitAt).
 
     @Test fun zone_history_keeps_state_in_effect() {
         val h = ZoneHistory()
@@ -185,25 +163,7 @@ class ZoneFallTest {
         assertEquals(false, h.insideAt(500))
     }
 
-    @Test fun low_g_older_than_one_second_not_counted() {
-        val a = MotionAnalyzer()
-        val falls = a.trace(
-            seg(0, 1000, still), seg(1000, 1200, freeFall), seg(1200, 3000, still), seg(3000, 3100, freeFall),
-            seg(3100, 3160, impact), seg(3160, 18_160, lying)
-        )
-        assertEquals(1, falls.size)
-        assertEquals(100L, a.fallShape.freeFallMs)
-    }
-
-    @Test fun nan_posture_is_not_a_fall() {
-        val nan = floatArrayOf(Float.NaN, 0f, 0f)
-        val a = MotionAnalyzer()
-        val falls = a.trace(
-            seg(0, 3000, still), seg(3000, 3300, freeFall), seg(3300, 3360, impact),
-            seg(3360, 8300, lying), seg(8300, 8320, nan), seg(8320, 18_360, lying)
-        )
-        assertEquals(0, falls.size)
-    }
+    // A NaN posture sample is not a fall: MotionAnalyzerTest.each_fall_rule_alone_breaks_the_fall.
 
     // -- zone exit lag --
 
@@ -224,6 +184,13 @@ class ZoneFallTest {
             l.onAccident(100_000, short)
             if (outside) assertChecking(l, m) else assertDiscarded(l, m)
         }
+        // a zone entered after the impact is judged by the zone state at the impact: the outside rule
+        val e = fallRuleOnly()
+        e.onZone(true, 105_000)
+        e.onAccident(100_000, short)
+        assertEquals("entered after the impact", Mode.WATCHING, e.seenAt(129_999))
+        assertEquals("entered after the impact", Mode.CHECKING, e.seenAt(130_000))
+        assertEquals("entered after the impact", "fall", e.trigger)
     }
 
     /** The restored zone is held until 10 s; the FALL (processed 12 s after the impact) sees that hold end as the exit. */

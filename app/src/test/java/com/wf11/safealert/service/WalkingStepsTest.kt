@@ -1,6 +1,5 @@
 package com.wf11.safealert.service
 
-import com.wf11.safealert.service.LoneWorkerLogic.Rest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -11,7 +10,7 @@ import org.junit.Test
  * Walking-shaped steps: a step counts only when the closed 1 s accelerometer window covering its
  * time (end - 1000 <= t < end) is walking-shaped and the app was not vibrating at that time.
  * floor = the time after which steps or windows count (a start, an unplug edge, a check opening); a step exactly
- * at the floor does not count. steps_ tests call WalkingSteps directly, logic_ tests go through LoneWorkerLogic.
+ * at the floor does not count. The start-wait distinct-motion rule through LoneWorkerLogic is a row of LoneWorkerChargeTest.
  */
 class WalkingStepsTest {
 
@@ -32,13 +31,11 @@ class WalkingStepsTest {
         assertNull(w.onStep(1_700, false))
         assertEquals(listOf(1_200L, 1_700L), w.onWindow(2_000, true))
         assertEquals(2, w.stepsIn(0, 10_000))
-    }
-
-    @Test fun step_before_its_window_is_dropped_when_the_window_is_not_walking() {
-        val w = WalkingSteps()
-        w.onStep(1_200, false)
-        assertEquals(emptyList<Long>(), w.onWindow(2_000, false))
-        assertEquals(0, w.stepsIn(0, 10_000))
+        // the same early step is dropped when its window closes not walking-shaped
+        val d = WalkingSteps()
+        d.onStep(1_200, false)
+        assertEquals(emptyList<Long>(), d.onWindow(2_000, false))
+        assertEquals(0, d.stepsIn(0, 10_000))
     }
 
     @Test fun step_after_its_window_closed_is_judged_by_the_recorded_window() {
@@ -89,15 +86,6 @@ class WalkingStepsTest {
         assertEquals(3, w.stepsIn(1_000, 11_000))
         assertEquals(2, w.stepsIn(1_001, 11_000))
         assertEquals(2, w.stepsIn(1_000, 10_999))
-    }
-
-    @Test fun logic_distinct_motion_needs_5_steps_after_the_floor_within_10s_inclusive() {
-        // start floor = 0: a step at exactly 0 does not count; 5 steps spanning exactly 10 s do
-        val l = newLogic()
-        for (t in listOf(0L, 2_500L, 5_000L, 7_500L, 10_000L)) l.step(t)
-        assertEquals(Rest.WAIT, l.rest)
-        l.step(12_500)
-        assertEquals(Rest.NONE, l.rest)
     }
 
     @Test fun strong_in_counts_walking_windows_started_and_ended_inside() {

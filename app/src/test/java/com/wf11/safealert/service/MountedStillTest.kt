@@ -25,54 +25,45 @@ class MountedStillTest {
         assertEquals(m, "still", trigger)
     }
 
-    @Test fun mounted_still_check_opens_after_still_ms() {
-        val l = mounted()
-        assertEquals(Rest.NONE, l.rest)
-        l.opensAt(180_000)
-        assertEquals(120_000L, l.responseLeftMs(180_000))
-    }
-
-    /** MOVED and a turn both restart the mounted count: the check opens stillMs after them. */
+    /**
+     * What starts or restarts the mounted count: the check opens stillMs after it. MOVED and a turn (while mounted), the
+     * plug-in of an equipment device, the switch to the equipment role on the charger. A turn does nothing when not mounted
+     * (a carried device, or equipment off the charger): the check opens at 180 s.
+     * Rows: the device, the starting event, when the check opens.
+     */
     @Test fun moved_or_turn_restarts_the_mounted_count() {
-        class Row(val name: String, val restart: LoneWorkerLogic.() -> Unit)
-        for (r in listOf(Row("MOVED at 100 s") { onMoved(100_000) }, Row("turn at 100 s") { onTurn(100_000) })) {
-            val l = mounted()
+        class Row(val name: String, val make: () -> LoneWorkerLogic, val restart: LoneWorkerLogic.() -> Unit,
+                  val opensAt: Long)
+        for (r in listOf(
+            Row("MOVED at 100 s", { mounted() }, { onMoved(100_000) }, 280_000),
+            Row("turn at 100 s", { mounted() }, { onTurn(100_000) }, 280_000),
+            Row("plug-in at 400 s", { newLogic().apply { setEquipment(true, 0L) } }, {
+                reportPower(true, 400_000)
+                assertEquals("plug-in at 400 s", Mode.WATCHING, seenAt(400_000 + PowerDebounce.CONFIRM_MS))
+            }, 580_000),
+            Row("role switch at 300 s", { newLogic(charging = true) }, {
+                assertEquals("role switch at 300 s", Mode.WATCHING, seenAt(300_000))
+                setEquipment(true, 300_000)
+            }, 480_000),
+            Row("turn, carried device", { newLogic(carried = true) }, { onTurn(100_000) }, 180_000),
+            Row("turn, equipment off the charger", { newLogic(carried = true).apply { setEquipment(true, 0L) } },
+                { onTurn(100_000) }, 180_000))) {
+            val l = r.make()
             r.restart(l)
-            l.opensAt(280_000, r.name)
+            l.opensAt(r.opensAt, r.name)
         }
-    }
-
-    // A mount whose SOS ended by the one-hour limit waits as well: no new check while the equipment stands still, and a
-    //   turn starts the count again.
-    @Test fun mount_after_an_sos_ended_by_the_limit_waits_for_a_turn() {
-        val l = mounted()
-        l.opensAt(180_000)
-        assertEquals(Mode.SOS, l.seenAt(300_000))
-        l.cancelSos(400_000)
-        l.holdStill(400_000)
-        assertEquals(Rest.WAIT, l.rest)
-        assertEquals(Mode.WATCHING, l.seenAt(2_200_000))
-        l.onTurn(2_300_000)
-        l.opensAt(2_480_000)
     }
 
     /** A mounted still window closes on a turn or on [OK] (a 3 s shake: strong_run_closes_mounted_still_check). */
     @Test fun turn_or_ack_closes_mounted_still_check() {
         val l = mounted()
+        assertEquals(Rest.NONE, l.rest)
         l.opensAt(180_000)
+        assertEquals(120_000L, l.responseLeftMs(180_000))
         l.onTurn(200_000)
         assertEquals(Mode.WATCHING, l.mode)
         l.opensAt(380_000)
         assertTrue(l.ackWorking(390_000))
-        assertEquals(Mode.WATCHING, l.mode)
-    }
-
-    @Test fun strong_run_closes_mounted_still_check() {
-        val l = mounted()
-        l.opensAt(180_000)
-        l.strongWindows(182_000, 183_000)
-        assertEquals(Mode.CHECKING, l.mode)
-        l.strongWindows(184_000)
         assertEquals(Mode.WATCHING, l.mode)
     }
 
@@ -82,54 +73,35 @@ class MountedStillTest {
         step(183_100); step(183_400)
     }
 
-    @Test fun steps_do_not_close_mounted_still_check() {
+    /**
+     * A mounted still window closes on a 3 s run of walking-level windows (181..184 s), not on steps: steps during a shake
+     * move the step floor but not the shake-close floor, and steps alone do not close it (a carried device's do).
+     */
+    @Test fun strong_run_closes_mounted_still_check() {
         val l = mounted()
         l.opensAt(180_000)
-        l.stepsWithoutRun()
+        l.strongWindows(182_000, 183_000)
         assertEquals(Mode.CHECKING, l.mode)
-        assertEquals("still", l.trigger)
+        l.strongWindows(184_000)
+        assertEquals(Mode.WATCHING, l.mode)
+
+        val s = mounted()
+        s.opensAt(180_000)
+        s.step(181_100); s.step(181_400); s.step(181_700); s.step(182_100); s.step(182_400)
+        assertEquals("steps during a shake", Mode.CHECKING, s.mode)
+        s.strongWindows(184_000)
+        assertEquals("steps during a shake", Mode.WATCHING, s.mode)
+
+        val steps = mounted()
+        steps.opensAt(180_000)
+        steps.stepsWithoutRun()
+        assertEquals("steps alone", Mode.CHECKING, steps.mode)
+        assertEquals("steps alone", "still", steps.trigger)
 
         val c = newLogic(carried = true)
         c.opensAt(180_000)
         c.stepsWithoutRun()
-        assertEquals(Mode.WATCHING, c.mode)
-    }
-
-    @Test fun settled_zone_counts_nothing_when_mounted() {
-        val l = newLogic(charging = true, zoneInside = true).apply { setEquipment(true, 0L) }
-        for (t in 60_000L..600_000L step 10_000L) assertEquals(Mode.WATCHING, l.seenAt(t))
-    }
-
-    @Test fun plug_in_starts_mounted_count() {
-        val l = newLogic().apply { setEquipment(true, 0L) }
-        l.reportPower(true, 400_000)
-        assertEquals(Mode.WATCHING, l.seenAt(400_000 + PowerDebounce.CONFIRM_MS))
-        l.opensAt(580_000)
-    }
-
-    @Test fun role_switch_starts_count_at_switch() {
-        val l = newLogic(charging = true)
-        assertEquals(Mode.WATCHING, l.seenAt(300_000))
-        l.setEquipment(true, 300_000)
-        l.opensAt(480_000)
-    }
-
-    @Test fun turn_ignored_when_not_mounted() {
-        for (l in listOf(newLogic(carried = true), newLogic(carried = true).apply { setEquipment(true, 0L) })) {
-            l.onTurn(100_000)
-            assertEquals(Mode.CHECKING, l.seenAt(180_000))
-            assertEquals("still", l.trigger)
-        }
-    }
-
-    @Test fun turn_keeps_fall_check_open() {
-        val l = mounted()
-        l.onAccident(10_000)
-        assertEquals(Mode.CHECKING, l.seenAt(40_000))
-        assertEquals("fall", l.trigger)
-        l.onTurn(50_000)
-        assertEquals(Mode.CHECKING, l.mode)
-        assertEquals("fall", l.trigger)
+        assertEquals("carried control", Mode.WATCHING, c.mode)
     }
 
     /** An equipment device on the charger is not carried by steps or by strong windows; turns keep counting. */
@@ -150,34 +122,25 @@ class MountedStillTest {
         b.opensAt(280_000)
     }
 
-    /** Steps during a shake move the step floor but not the shake-close floor (3 s run 181..184 s). */
-    @Test fun steps_during_shake_do_not_block_mounted_close() {
-        val l = mounted()
-        l.opensAt(180_000)
-        l.step(181_100); l.step(181_400); l.step(181_700); l.step(182_100); l.step(182_400)
-        assertEquals(Mode.CHECKING, l.mode)
-        l.strongWindows(184_000)
-        assertEquals(Mode.WATCHING, l.mode)
-    }
-
-    /** A turn stamped after a passed SOS deadline (still waiting on sensor data) does not cancel the SOS. */
+    /**
+     * A closing input stamped after a passed SOS deadline (still waiting on sensor data) does not cancel the SOS: a turn,
+     * or a mounted shake run that ends after it. Rows: the input, when the SOS is seen.
+     */
     @Test fun turn_after_passed_sos_deadline_does_not_cancel_sos() {
-        val l = mounted()
-        l.opensAt(180_000)
-        l.sensed(299_000)
-        assertEquals(Mode.CHECKING, l.modeAt(300_500))
-        l.onTurn(301_500)
-        assertEquals(Mode.CHECKING, l.mode)
-        assertEquals(Mode.SOS, l.seenAt(302_000))
-    }
-
-    /** A mounted shake run that ends after a passed SOS deadline does not cancel the SOS. */
-    @Test fun shake_after_passed_sos_deadline_does_not_cancel_sos() {
-        val l = mounted()
-        l.opensAt(180_000)
-        l.strongWindows(301_000, 302_000, 303_000)
-        assertEquals(Mode.CHECKING, l.mode)
-        assertEquals(Mode.SOS, l.seenAt(304_000))
+        class Row(val name: String, val input: LoneWorkerLogic.() -> Unit, val sosAt: Long)
+        for (r in listOf(
+            Row("turn", {
+                sensed(299_000)
+                assertEquals("turn", Mode.CHECKING, modeAt(300_500))
+                onTurn(301_500)
+            }, 302_000),
+            Row("shake run", { strongWindows(301_000, 302_000, 303_000) }, 304_000))) {
+            val l = mounted()
+            l.opensAt(180_000)
+            r.input(l)
+            assertEquals("${r.name}: still checking", Mode.CHECKING, l.mode)
+            assertEquals("${r.name}: SOS", Mode.SOS, l.seenAt(r.sosAt))
+        }
     }
 
     /** Only a mounted still window says it closes by turning, shaking or the ack; the text has one source. */
@@ -192,6 +155,10 @@ class MountedStillTest {
         assertEquals(Mode.CHECKING, f.seenAt(40_000))
         assertEquals("fall", f.trigger)
         assertFalse(f.closesByTurn)
+        // a turn does not close the fall check
+        f.onTurn(50_000)
+        assertEquals(Mode.CHECKING, f.mode)
+        assertEquals("fall", f.trigger)
 
         val c = newLogic(carried = true)
         c.opensAt(180_000)

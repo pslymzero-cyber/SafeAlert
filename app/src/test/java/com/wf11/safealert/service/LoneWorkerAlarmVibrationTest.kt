@@ -43,6 +43,11 @@ class LoneWorkerAlarmVibrationTest {
     fun vibration_goes_on_without_the_siren_and_a_plain_stop_ends_it() {
         alarm.stop(vibrate = true)
         assertTrue("no siren, vibration only", vibrating())
+        // the 5 s refresh re-applies a vibration that was cancelled while no siren plays
+        app.getSystemService(Vibrator::class.java).cancel()
+        assertFalse("cancelled", vibrating())
+        alarm.refresh()
+        assertTrue("refresh re-applies the vibration", vibrating())
         alarm.stop()
         assertFalse("a plain stop ends the vibration", vibrating())
 
@@ -51,14 +56,5 @@ class LoneWorkerAlarmVibrationTest {
         assertTrue("the siren time ends, the vibration stays", vibrating())
         alarm.stop()
         assertFalse(vibrating())
-    }
-
-    @Test
-    fun refresh_reapplies_the_vibration_while_no_siren_plays() {
-        alarm.stop(vibrate = true)
-        app.getSystemService(Vibrator::class.java).cancel()
-        assertFalse(vibrating())
-        alarm.refresh()
-        assertTrue(vibrating())
     }
 }
