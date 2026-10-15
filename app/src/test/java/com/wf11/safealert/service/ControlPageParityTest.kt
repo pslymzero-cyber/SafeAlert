@@ -29,6 +29,8 @@ class ControlPageParityTest {
         val procs = html.substringAfter("var PROCS = [").substringBefore("];")
         assertEquals(SiteScope.FLOORS, quoted(floors))
         assertEquals(SiteScope.PROCS, quoted(procs))
+        // The auto-ended label on the page is the app's own wording (LoneWorkerNotifier.AUTO_ENDED).
+        assertTrue("auto-ended label", html.contains("s.auto ? '" + LoneWorkerNotifier.AUTO_ENDED + "' : '폰에서 해제'"))
     }
 
     // The code rule (floor / process) and the one-hour release are the app's, and the rule is the mail script's too.
@@ -62,21 +64,13 @@ class ControlPageParityTest {
         assertFalse("옛 표기 '미상'", html.contains("미상"))
     }
 
-    // The tab title is set by doGet only: a script-set title would replace it with the latest SOS count in a hidden tab.
-    @Test fun page_does_not_set_the_tab_title() {
-        assertFalse(page().contains("document.title"))
-    }
-
-    // The auto-ended label on the page is the app's own wording (LoneWorkerNotifier.AUTO_ENDED).
-    @Test fun ended_reason_label_matches_the_app() {
-        assertTrue(page().contains("s.auto ? '" + LoneWorkerNotifier.AUTO_ENDED + "' : '폰에서 해제'"))
-    }
-
     // The page cleans SOS records with the script's own helpers and reads only settings doGet sends: a renamed or dropped
     // one would fall back silently (no equipment names, every floor/process blank, no stale note).
     @Test fun page_helpers_and_settings_match_code_gs() {
         val html = page()
         val g = gs()
+        // The tab title is set by doGet only: a script-set title would replace it with the latest SOS count in a hidden tab.
+        assertFalse("the page must not set the tab title", html.contains("document.title"))
         fun flat(s: String) = s.replace(Regex("""\s+"""), "")
         assertEquals(flat(g.substringAfter("function str_(v) {").substringBefore("}")), flat(html.substringAfter("function str(v) {").substringBefore("}")))
         assertEquals(flat(g.substringAfter("function code_(v) {").substringBefore("\n}")), flat(html.substringAfter("function code(v) {").substringBefore("}")))

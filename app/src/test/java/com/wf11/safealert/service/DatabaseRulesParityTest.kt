@@ -30,9 +30,16 @@ class DatabaseRulesParityTest {
             SosLedger.AUTO_RELEASE_MS
         assertTrue(w, Regex(Regex.escape(auto) + "(?!\\d)").containsMatchIn(w))
         assertTrue(w.contains("data.child('uid').val() === auth.uid ||"))
-        for (f in listOf("uid", "name", "role", "trigger", "beacon", "beaconRssi", "ep")) {
+        // floor / process are unchanged on resolve as well (listed with the other fixed fields)
+        for (f in listOf("uid", "name", "role", "trigger", "beacon", "beaconRssi", "ep", "floor", "proc")) {
             assertTrue(f, w.contains("newData.child('$f').val() === data.child('$f').val()"))
         }
+        // Floor / process: the same pattern as the app's SiteScope in sos, hb and alerts (two fields each); there is no
+        //   site list node (the lists are built into the app).
+        val s = repoFile("database.rules.json")
+        val rule = ".matches(/${SiteScope.CODE_PATTERN}/)"
+        assertTrue(rule, Regex(Regex.escape(rule)).findAll(s).count() >= 6)
+        assertTrue("sites 노드가 없어야 한다", !s.contains("\"sites\""))
     }
 
     @Test fun gap_key_rule_matches_max_gaps() {
@@ -41,21 +48,8 @@ class DatabaseRulesParityTest {
             assertEquals("g/$n", n < LoneWorkerHeartbeat.MAX_GAPS, re.matches(n.toString()))
         }
         assertTrue(!re.matches("-1") && !re.matches("00"))
-    }
 
-    // Floor / process: the same pattern as the app's SiteScope in sos, hb and alerts (two fields each), unchanged on
-    //   resolve; there is no site list node (the lists are built into the app).
-    @Test fun floor_proc_rules_match_the_app_pattern() {
-        val s = repoFile("database.rules.json")
-        val rule = ".matches(/${SiteScope.CODE_PATTERN}/)"
-        assertTrue(rule, Regex(Regex.escape(rule)).findAll(s).count() >= 6)
-        for (k in listOf("floor", "proc")) {
-            assertTrue(k, sosWrite().contains("newData.child('$k').val() === data.child('$k').val()"))
-        }
-        assertTrue("sites 노드가 없어야 한다", !s.contains("\"sites\""))
-    }
-
-    @Test fun hb_rules_clock_slack_and_g_object() {
+        // the hb clock slack and the g object
         val hb = hbBlock()
         assertEquals(4, Regex("""<= now \+ 60000(?!\d)""").findAll(hb).count())
         assertEquals(0, Regex("""<= now(?! \+ 60000(?!\d))""").findAll(hb).count())

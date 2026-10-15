@@ -41,17 +41,21 @@ class SosMailTest {
         assertEquals(1, posts.size)
         assertEquals(form1, posts[0].form)
         assertEquals(listOf("WF11"), asked)
+        assertEquals("queue filled", listOf(true), queue)
 
         l.resolve()
         tr.resolves[0].cb(true)
         assertEquals(1, posts.size)
 
         posts[0].done(sent)
+        assertEquals("the resolved mail goes right after the SOS is done, before any tick", 2, posts.size)
+        assertTrue(posts[1].form.contains("event=resolved"))
         m.tick()
         assertEquals(2, posts.size)
         assertEquals(form1.replace("event=sos", "event=resolved"), posts[1].form)
         posts[1].done("{\"ok\":true,\"code\":\"dup\"}")
         assertNull(kv.m[SosMail.K_LIST])
+        assertEquals("queue emptied", false, queue.last())
     }
 
     @Test fun nothing_before_server_confirm_and_read_fallbacks() {
@@ -177,6 +181,8 @@ class SosMailTest {
         val kv = Kv(); val m = mail(kv)
         val t0 = now
         m.enqueue(SosMail.EVENT_SOS, "root/sos/WF11", "k1", 3)
+        m.tick(); m.tick()
+        assertEquals("in flight: not sent twice", 1, posts.size)
         posts[0].done(null)
         now = t0 + 9_000; m.tick()
         assertEquals(1, posts.size)
@@ -192,13 +198,7 @@ class SosMailTest {
         assertNull(kv.m[SosMail.K_LIST])
     }
 
-    @Test fun in_flight_is_not_sent_twice() {
-        val kv = Kv(); val m = mail(kv)
-        m.enqueue(SosMail.EVENT_SOS, "root/sos/WF11", "k1", 3)
-        m.tick(); m.tick()
-        assertEquals(1, posts.size)
-    }
-
+    // Giving up after 2 hours keeps the address row: the mail may have gone out, so its resolve must follow.
     @Test fun gives_up_after_2_hours_or_clock_back() {
         val kv = Kv(); val m = mail(kv)
         val t0 = now
@@ -210,12 +210,17 @@ class SosMailTest {
         now = t0 + 2 * 3_600_000L + 1; m.tick()
         assertEquals(2, posts.size)
         assertNull(kv.m[SosMail.K_LIST])
+        assertTrue("a given-up SOS keeps its address row", kv.m[SosMail.K_ADDR]!!.startsWith("k1\t"))
+        m.enqueue(SosMail.EVENT_RESOLVED, "root/sos/WF11", "k1", 3)
+        assertEquals("the resolve of a given-up SOS is still sent", 3, posts.size)
+        assertTrue(posts[2].form.contains("id=k1&event=resolved&"))
+        posts[2].done(sent)
 
         now = t0
         m.enqueue(SosMail.EVENT_SOS, "root/sos/WF11", "k2", 3)
-        posts[2].done(null)
+        posts[3].done(null)
         now = t0 - 120_000; m.tick()
-        assertEquals(3, posts.size)
+        assertEquals(4, posts.size)
         assertNull(kv.m[SosMail.K_LIST])
     }
 
@@ -258,26 +263,6 @@ class SosMailTest {
         assertEquals(listOf(false, true, true, false), got)
         m.tick()
         assertEquals(4, got.size)
-    }
-
-    @Test fun resolved_goes_right_after_sos_is_done() {
-        val kv = Kv(); val m = mail(kv)
-        m.enqueue(SosMail.EVENT_SOS, "root/sos/WF11", "k1", 3)
-        m.enqueue(SosMail.EVENT_RESOLVED, "root/sos/WF11", "k1", 3)
-        assertEquals(1, posts.size)
-        posts[0].done(sent)
-        assertEquals(2, posts.size)
-        assertTrue(posts[1].form.contains("event=resolved"))
-    }
-
-    @Test fun on_queue_true_when_filled_false_when_emptied() {
-        val kv = Kv(); val m = mail(kv)
-        m.tick()
-        assertTrue(queue.isEmpty())
-        m.enqueue(SosMail.EVENT_SOS, "root/sos/WF11", "k1", 3)
-        assertEquals(listOf(true), queue)
-        posts[0].done(sent)
-        assertEquals(listOf(true, false), queue)
     }
 
     @Test fun restart_resumes_from_storage_and_skips_broken_lines() {
@@ -386,30 +371,9 @@ class SosMailTest {
         assertEquals(1, posts.size)
         assertNull(kv.m[SosMail.K_LIST])
         assertNull(kv.m[SosMail.K_ADDR])
+        // the dropped SOS forgot its address, so a later resolve for it is not queued
+        m.enqueue(SosMail.EVENT_RESOLVED, "root/sos/WF11", "k1", 3)
+        assertEquals("a resolve for a dropped SOS is not queued", 1, posts.size)
     }
 
-    @Test fun dropped_sos_forgets_its_address_so_a_later_resolve_is_not_queued() {
-        val kv = Kv(); val m = mail(kv)
-        m.enqueue(SosMail.EVENT_SOS, "root/sos/WF11", "k3", 3)
-        posts[0].done("{\"code\":\"not_allowed\"}")
-        assertNull(kv.m[SosMail.K_LIST])
-        assertNull(kv.m[SosMail.K_ADDR])
-        m.enqueue(SosMail.EVENT_RESOLVED, "root/sos/WF11", "k3", 3)
-        assertEquals(1, posts.size)
-    }
-
-    // Giving up after 2 hours keeps the address row: the mail may have gone out, so its resolve must follow.
-    @Test fun given_up_sos_keeps_its_address_so_a_later_resolve_is_sent() {
-        val kv = Kv(); val m = mail(kv)
-        val t0 = now
-        m.enqueue(SosMail.EVENT_SOS, "root/sos/WF11", "k2", 3)
-        posts[0].done(null)
-        now = t0 + SosMail.GIVE_UP_MS + 1; m.tick()
-        assertEquals(1, posts.size)
-        assertNull(kv.m[SosMail.K_LIST])
-        assertTrue(kv.m[SosMail.K_ADDR]!!.startsWith("k2\t"))
-        m.enqueue(SosMail.EVENT_RESOLVED, "root/sos/WF11", "k2", 3)
-        assertEquals(2, posts.size)
-        assertTrue(posts[1].form.contains("id=k2&event=resolved&"))
-    }
 }

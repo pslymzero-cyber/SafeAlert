@@ -28,6 +28,12 @@ class ServiceStartTest {
             assertEquals(nearby.toSet(), r.toSet())
             assertFalse(r.contains(Manifest.permission.ACCESS_FINE_LOCATION))
         }
+        // the screen asks for every start permission, and fine location
+        for (sdk in listOf(30, 31, 34)) {
+            val s = ServiceStartGate.screenPermissions(sdk).toSet()
+            assertTrue("sdk $sdk: screen permissions contain every start permission", s.containsAll(ServiceStartGate.required(sdk).toList()))
+            assertTrue("sdk $sdk: screen permissions contain fine location", s.contains(Manifest.permission.ACCESS_FINE_LOCATION))
+        }
     }
 
     @Test
@@ -37,6 +43,11 @@ class ServiceStartTest {
         assertEquals(cd, ServiceStartGate.fgsType(30, false))
         assertEquals(cd, ServiceStartGate.fgsType(31, true))
         assertEquals(cd, ServiceStartGate.fgsType(34, true))
+        // the matching retype rule: fine location granted later needs a retype only on API 29-30
+        assertTrue(ServiceStartGate.needsRetype(29, cd, true))
+        assertTrue(ServiceStartGate.needsRetype(30, cd, true))
+        assertFalse(ServiceStartGate.needsRetype(30, cd or loc, true))
+        assertFalse(ServiceStartGate.needsRetype(31, cd, true))
     }
 
     /** One userStopped case: exits are (reason, time ms); since = the last start (0 = no start key), updatedAt = the update time. */
@@ -90,15 +101,6 @@ class ServiceStartTest {
     }
 
     @Test
-    fun screen_permissions_contain_every_start_permission() {
-        for (sdk in listOf(30, 31, 34)) {
-            val s = ServiceStartGate.screenPermissions(sdk).toSet()
-            assertTrue(s.containsAll(ServiceStartGate.required(sdk).toList()))
-            assertTrue(s.contains(Manifest.permission.ACCESS_FINE_LOCATION))
-        }
-    }
-
-    @Test
     fun started_at_falls_back_to_running_since_only_on_api34() {
         assertEquals(7_000L, BootRestoreReceiver.startedAt(0L, 7_000L, 34))
         assertEquals(0L, BootRestoreReceiver.startedAt(0L, 7_000L, 33))
@@ -123,11 +125,4 @@ class ServiceStartTest {
         assertEquals(2, asked)
     }
 
-    @Test
-    fun retype_needed_when_fine_granted_later_only_on_api29_30() {
-        assertTrue(ServiceStartGate.needsRetype(29, cd, true))
-        assertTrue(ServiceStartGate.needsRetype(30, cd, true))
-        assertFalse(ServiceStartGate.needsRetype(30, cd or loc, true))
-        assertFalse(ServiceStartGate.needsRetype(31, cd, true))
-    }
 }

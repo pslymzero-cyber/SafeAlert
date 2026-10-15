@@ -65,15 +65,20 @@ class AlertVoiceFailureTest : VoiceTestBase() {
         assertTrue("the siren repeat keeps sounding", sirens() >= 3)
         assertEquals(listOf(CD), first.calls)
         assertEquals(1, factoryCalls)
-    }
 
-    @Test fun `급접근 재생을 시작하지 못해도 같은 호출에서 사이렌이 난다`() {
-        ready()
-        player().playResult = false
+        // the same failure on the RAPID sentence, after the cooldown (relative counts: the steps share the test)
+        AlertSoundPlayer.stopSound()
+        idleFor(60_000)
+        assertEquals("the new player after the cooldown", 2, factoryCalls)
+        assertEquals(AlertVoice.STATUS_READY, AlertVoice.status)
+        val second = player()
+        second.playResult = false
+        val s = sirens()
         AlertSoundPlayer.playDanger(app, rapid = true)
         idle()
-        assertTrue(sirens() >= 1)
+        assertTrue("RAPID start failure: the siren sounds in the same call", sirens() > s)
         assertTrue(AlertVoice.degraded)
+        assertEquals(listOf(CR), second.calls)
     }
 
     @Test fun `재생 요청이 예외를 던져도 밖으로 새지 않고 실패로 처리된다`() {
@@ -133,7 +138,16 @@ class AlertVoiceFailureTest : VoiceTestBase() {
 
     @Test fun `경고 문장이 소리로 나오지 않으면 시작 0점6초 뒤에 삑이 한 번 난다`() {
         ready()
+        // a stop that comes before the 0.6 s look: no confirmation beep, even though the clip is dead
         AlertSoundPlayer.playWarning(app)
+        player().alive = false
+        idleFor(300)
+        AlertSoundPlayer.stopSound()
+        idleFor(2_000)  // past the 1.2 s flicker protection
+        assertEquals("stop before the look: no beep", 0, beeps())
+
+        val stops0 = player().stops
+        AlertSoundPlayer.playWarning(app)  // the same player: a dead sentence now has to be caught by the look
         assertEquals("the beep is not started in the call", 0, beeps())
         player().alive = false
         idleFor(AlertVoice.PROOF_MS - 1)
@@ -141,45 +155,9 @@ class AlertVoiceFailureTest : VoiceTestBase() {
         idleFor(1)
         assertEquals(1, beeps())
         assertEquals(AlertVoice.STATUS_COOLING, AlertVoice.status)
-        assertEquals(1, player().stops)
+        assertEquals(stops0 + 1, player().stops)
         idleFor(3_000)
         assertEquals(1, beeps())
-    }
-
-    @Test fun `소리 정지가 먼저 오거나 음성이 멀쩡하면 확인 삑이 없다`() {
-        ready()
-        AlertSoundPlayer.playWarning(app)
-        player().alive = false
-        idleFor(300)
-        AlertSoundPlayer.stopSound()
-        idleFor(2_000)
-        assertEquals(0, beeps())
-
-        AlertSoundPlayer.playWarning(app)  // the same player, healthy again
-        idleFor(3_700)
-        assertEquals(0, beeps())
-        assertEquals(listOf(CW, CW), player().calls)
-    }
-
-    @Test fun `급접근 문장이 끝난 뒤 틈에서는 소리가 끝나 있어도 실패로 보지 않고 위험 반복이 예정대로 시작된다`() {
-        ready()
-        AlertSoundPlayer.playDanger(app, rapid = true)
-        idleFor(2_000)  // 10 ms past the end of RAPID, inside the 0.4 s pause
-        player().alive = false  // a finished one-shot is over, not dead
-        AlertSoundPlayer.playDanger(app, rapid = true)  // re-entry in the pause
-        idle()
-        assertEquals(AlertVoice.STATUS_READY, AlertVoice.status)
-        assertFalse(AlertVoice.degraded)
-        assertEquals(1, factoryCalls)
-        assertTrue("the pause is covered by time alone", AlertVoice.covering())
-        assertEquals(0, sirens())
-
-        idleFor(400)
-        assertEquals(listOf(CR, CD), player().calls)
-        assertTrue(AlertVoice.covering())
-        idleFor(1_500)
-        assertEquals(0, sirens())
-        assertEquals(AlertVoice.STATUS_READY, AlertVoice.status)
     }
 
     @Test fun `급접근 문장 도중에 소리가 멈추면 실패로 처리된다`() {
@@ -194,34 +172,7 @@ class AlertVoiceFailureTest : VoiceTestBase() {
     }
 
     @Test fun `재생기를 다시 만들지 못해도 냉각이 끝날 때마다 다시 만들어 음성이 돌아온다`() {
-        ready()
-        player().playResult = false
-        makeNext = { null }
-        AlertSoundPlayer.playWarning(app)
-        assertEquals(1, beeps())
-        assertEquals("no rebuild in the failing call", 1, factoryCalls)
-        assertEquals(1, made.size)
-        assertEquals(AlertVoice.STATUS_COOLING, AlertVoice.status)
-        assertTrue(AlertVoice.degraded)
-
-        idleFor(60_000)  // the cooldown is over: one more try, which fails again
-        assertEquals(2, factoryCalls)
-        assertEquals(AlertVoice.STATUS_NOT_READY, AlertVoice.status)
-        assertTrue(AlertVoice.degraded)
-
-        makeNext = { FakePlayer() }
-        idleFor(60_000)  // the next cycle
-        assertEquals(3, factoryCalls)
-        assertEquals(2, made.size)
-        assertEquals(AlertVoice.STATUS_READY, AlertVoice.status)
-        assertFalse(AlertVoice.degraded)
-        AlertSoundPlayer.stopSound()
-        AlertSoundPlayer.playWarning(app)
-        assertEquals(listOf(CW), player().calls)
-        assertEquals(1, beeps())
-    }
-
-    @Test fun `감시 시작 때 재생기를 만들지 못하면 60초 뒤에 다시 만든다`() {
+        // step 1: the player could not be made when the watch started; it is made again 60 s later
         makeNext = { null }
         ready()
         assertEquals(AlertVoice.STATUS_NOT_READY, AlertVoice.status)
@@ -230,13 +181,43 @@ class AlertVoiceFailureTest : VoiceTestBase() {
 
         makeNext = { FakePlayer() }
         idleFor(59_999)
-        assertEquals(1, factoryCalls)
+        assertEquals("start failure: no retry before 60 s", 1, factoryCalls)
         idleFor(1)
         assertEquals(2, factoryCalls)
         assertEquals(AlertVoice.STATUS_READY, AlertVoice.status)
         assertFalse(AlertVoice.degraded)
         AlertSoundPlayer.playWarning(app)
         assertEquals(listOf(CW), player().calls)
+        idleFor(3_700)  // the sentence is over before the next step starts a new warning
+
+        // step 2: the player fails, and the rebuild fails too; the cooldown end tries again every time
+        val f0 = factoryCalls
+        val m0 = made.size
+        val b0 = beeps()
+        player().playResult = false
+        makeNext = { null }
+        AlertSoundPlayer.playWarning(app)
+        assertEquals("failure: the beep sounds", b0 + 1, beeps())
+        assertEquals("no rebuild in the failing call", f0, factoryCalls)
+        assertEquals(m0, made.size)
+        assertEquals(AlertVoice.STATUS_COOLING, AlertVoice.status)
+        assertTrue(AlertVoice.degraded)
+
+        idleFor(60_000)  // the cooldown is over: one more try, which fails again
+        assertEquals(f0 + 1, factoryCalls)
+        assertEquals(AlertVoice.STATUS_NOT_READY, AlertVoice.status)
+        assertTrue(AlertVoice.degraded)
+
+        makeNext = { FakePlayer() }
+        idleFor(60_000)  // the next cycle
+        assertEquals(f0 + 2, factoryCalls)
+        assertEquals(m0 + 1, made.size)
+        assertEquals(AlertVoice.STATUS_READY, AlertVoice.status)
+        assertFalse(AlertVoice.degraded)
+        AlertSoundPlayer.stopSound()
+        AlertSoundPlayer.playWarning(app)
+        assertEquals(listOf(CW), player().calls)
+        assertEquals("the voice is back: no beep", b0 + 1, beeps())
     }
 
     @Test fun `되풀이로 끊기면 1점2초 동안 재생을 요청하지 않고 매 호출에서 톤이 난다`() {
@@ -256,16 +237,17 @@ class AlertVoiceFailureTest : VoiceTestBase() {
 
         idleFor(300)  // 1.3 s after the cut: the held-back request starts, and the cut RAPID is asked again
         assertEquals(listOf(CR, CR), player().calls)
-    }
 
-    @Test fun `급접근 문장이 중간에 끊기면 5초 간격을 쓰지 않아 다음 급접근 요청에서 다시 나온다`() {
-        ready()
-        AlertSoundPlayer.playDanger(app, rapid = true)
-        idleFor(100)
+        // the RAPID asked again is cut at 0.2 s as well; the danger request held back by the flicker rule must not
+        //   start once the sound has been stopped in the meantime
+        idleFor(200)
         AlertSoundPlayer.stopSound()
-        idleFor(1_300)
-        AlertSoundPlayer.playDanger(app, rapid = true)
-        assertEquals(listOf(CR, CR), player().calls)
+        AlertSoundPlayer.playDanger(app)
+        idle()
+        idleFor(300)
+        AlertSoundPlayer.stopSound()
+        idleFor(3_000)
+        assertEquals("the held-back danger repeat does not start after a stop", listOf(CR, CR), player().calls)
     }
 
     @Test fun `경고 0점3초 뒤 위험으로 올라가면 그 호출에서 위험 문장이 시작되고 0점7초 안에 끊긴 위험 문장은 1점2초 미뤄진다`() {
@@ -316,55 +298,53 @@ class AlertVoiceFailureTest : VoiceTestBase() {
         assertEquals("not a failure: no rebuild", 2, factoryCalls)
     }
 
-    @Test fun `끊김 보호로 미뤄 둔 위험 반복은 그 사이 소리가 멈추면 시작하지 않는다`() {
+    @Test fun `경고·위험 중 설정을 끄거나 구조 요청 사이렌이 켜지면 다음 요청에서 음성을 멈추고 톤이 나며 냉각 없이 돌아온다`() {
         ready()
-        AlertSoundPlayer.playDanger(app, rapid = true)
-        idleFor(200)
-        AlertSoundPlayer.stopSound()
-        AlertSoundPlayer.playDanger(app)
-        idle()
-        idleFor(300)
-        AlertSoundPlayer.stopSound()
-        idleFor(3_000)
-        assertEquals(1, player().calls.size)
-    }
+        // step 1: a warning sentence is playing and the setting goes off; the next warning request stops it with a beep
+        AlertSoundPlayer.playWarning(app)
+        DevSettings.voiceAlertEnabled = false
+        idleFor(500)
+        AlertSoundPlayer.playWarning(app)
+        assertTrue("warning + setting off: the player stops", player().stops >= 1)
+        assertEquals("warning + setting off: the beep sounds", 1, beeps())
 
-    @Test fun `반복 중 음성 설정을 끄면 다음 재진입에서 재생을 멈추고 사이렌이 나며 냉각 없이 다시 켜면 바로 재생한다`() {
-        ready()
+        // step 2: the danger repeat plays, the setting goes off; the next re-entry stops it with a siren; no cooldown
+        DevSettings.voiceAlertEnabled = true
+        val s1 = sirens()
         AlertSoundPlayer.playDanger(app)
         idle()
-        assertEquals(0, sirens())
+        assertEquals("danger + setting back on: the clip plays without a siren", s1, sirens())
+        assertEquals(listOf(CW, CD), clips())
+        val stops2 = player().stops
         DevSettings.voiceAlertEnabled = false
         AlertSoundPlayer.playDanger(app)
         idle()
-        assertTrue(player().stops >= 1)
-        assertTrue(sirens() >= 1)
-        assertEquals(AlertVoice.STATUS_OFF, AlertVoice.status)
+        assertTrue("danger + setting off: the player stops", player().stops > stops2)
+        assertTrue("danger + setting off: the siren sounds", sirens() > s1)
+        assertEquals("danger + setting off", AlertVoice.STATUS_OFF, AlertVoice.status)
         assertFalse(AlertVoice.degraded)
         assertEquals("no rebuild: it was not a failure", 1, factoryCalls)
 
         DevSettings.voiceAlertEnabled = true
         AlertSoundPlayer.playDanger(app)  // the next re-entry plays at once
         idle()
-        assertEquals(2, player().calls.size)
-        val s = sirens()
+        assertEquals("danger + setting back on: plays at once", listOf(CW, CD, CD), clips())
+        val s2 = sirens()
         idleFor(1_200)
-        assertEquals("the repeat is silent again", s, sirens())
-    }
+        assertEquals("the repeat is silent again", s2, sirens())
 
-    @Test fun `반복 중 구조 요청 사이렌이 켜지면 같은 방식으로 재생을 멈추고 끝나면 바로 돌아온다`() {
-        ready()
-        AlertSoundPlayer.playDanger(app)
-        idle()
+        // step 3: the rescue siren starts during the danger repeat; the next re-entry stops the voice, the siren sounds
+        val stops3 = player().stops
         AlarmVolumeShare.sosSounding = true
         AlertSoundPlayer.playDanger(app)
         idle()
-        assertTrue(player().stops >= 1)
-        assertTrue(sirens() >= 1)
+        assertTrue("danger + rescue siren: the player stops", player().stops > stops3)
+        assertTrue("danger + rescue siren: the siren sounds", sirens() > s2)
         AlarmVolumeShare.sosSounding = false
         AlertSoundPlayer.playDanger(app)
         idle()
-        assertEquals(2, player().calls.size)
+        assertEquals("danger + rescue siren over: back at once", listOf(CW, CD, CD, CD), clips())
+        assertEquals("no rebuild at any step", 1, factoryCalls)
     }
 
     @Test fun `반복 중 구조 요청 사이렌이 켜지거나 음성 설정을 끄면 재진입 없이 다음 틱에서 음성이 멈추고 사이렌이 난다`() {
@@ -387,16 +367,6 @@ class AlertVoiceFailureTest : VoiceTestBase() {
         assertEquals(2, player().stops)
         assertEquals(2, sirens())
         assertEquals(AlertVoice.STATUS_OFF, AlertVoice.status)
-    }
-
-    @Test fun `경고 중에 설정을 끄면 다음 경고 호출에서 재생을 멈추고 삑이 난다`() {
-        ready()
-        AlertSoundPlayer.playWarning(app)
-        DevSettings.voiceAlertEnabled = false
-        idleFor(500)
-        AlertSoundPlayer.playWarning(app)
-        assertTrue(player().stops >= 1)
-        assertEquals(1, beeps())
     }
 
     @Test fun `상태 문구 6종과 degraded 와 onChange`() {

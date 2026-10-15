@@ -32,21 +32,20 @@ class SirenGeneratorTest {
         return crossings / 2.0 / ((to - from).toDouble() / SAMPLE_RATE)
     }
 
-    @Test fun wail_freq_stays_in_range_and_reaches_both_ends() {
-        var lo = Double.MAX_VALUE
-        var hi = 0.0
+    @Test fun wail_pcm_windows_follow_the_sweep() {
+        // the frequency function stays in range and reaches both ends
+        var flo = Double.MAX_VALUE
+        var fhi = 0.0
         var t = 0.0
         while (t < SirenGenerator.WAIL_CYCLE_MS / 1000.0) {
             val f = SirenGenerator.wailFreqAt(t)
-            assertTrue(f >= WAIL_LOW_HZ - 1e-6 && f <= WAIL_HIGH_HZ + 1e-6)
-            lo = minOf(lo, f); hi = maxOf(hi, f)
+            assertTrue("wailFreqAt($t)=$f", f >= WAIL_LOW_HZ - 1e-6 && f <= WAIL_HIGH_HZ + 1e-6)
+            flo = minOf(flo, f); fhi = maxOf(fhi, f)
             t += 0.001
         }
-        assertTrue(lo <= WAIL_LOW_HZ + 1.0)
-        assertTrue(hi >= WAIL_HIGH_HZ - 1.0)
-    }
+        assertTrue("lowest frequency $flo", flo <= WAIL_LOW_HZ + 1.0)
+        assertTrue("highest frequency $fhi", fhi >= WAIL_HIGH_HZ - 1.0)
 
-    @Test fun wail_pcm_windows_follow_the_sweep() {
         val pcm = SirenGenerator.wailCycle()
         val win = SAMPLE_RATE / 10
         var from = 0
@@ -62,14 +61,12 @@ class SirenGeneratorTest {
         val quarter = (WAIL_HIGH_HZ - WAIL_LOW_HZ) / 4
         assertTrue("lowest window hz=$lo", lo < WAIL_LOW_HZ + quarter)
         assertTrue("highest window hz=$hi", hi > WAIL_HIGH_HZ - quarter)
-    }
 
-    @Test fun wail_amplitude_is_bounded_and_loud_enough() {
-        val pcm = SirenGenerator.wailCycle()
+        // the amplitude is bounded and loud enough
         val target = Math.round(AMPLITUDE * 32767).toInt()
         var peak = 0
         for (s in pcm) {
-            assertTrue(s.toInt() != Short.MIN_VALUE.toInt())
+            assertTrue("sample at full negative scale", s.toInt() != Short.MIN_VALUE.toInt())
             peak = maxOf(peak, abs(s.toInt()))
         }
         assertTrue("peak=$peak", abs(peak - target) <= 1)
@@ -101,13 +98,12 @@ class SirenGeneratorTest {
         val toneEnd = SAMPLE_RATE * SirenGenerator.BEEP_ON_MS / 1000
         val hz = zeroCrossHz(pcm, 0, toneEnd)
         assertTrue("hz=$hz", hz >= BEEP_HZ * 0.95 && hz <= BEEP_HZ * 1.05)
-    }
 
-    @Test fun check_beep_is_clearly_quieter_than_the_siren() {
+        // the check beep is clearly quieter than the siren
         fun peakOf(a: ShortArray): Int = a.maxOf { abs(it.toInt()) }
         val wailPeak = peakOf(SirenGenerator.wailCycle())
-        val beepPeak = peakOf(SirenGenerator.checkBeepCycle())
-        assertTrue(beepPeak <= Math.round(SirenGenerator.BEEP_AMPLITUDE * 32767) + 1)
-        assertTrue(beepPeak <= 0.6 * wailPeak)
+        val beepPeak = peakOf(pcm)
+        assertTrue("beep peak $beepPeak", beepPeak <= Math.round(SirenGenerator.BEEP_AMPLITUDE * 32767) + 1)
+        assertTrue("beep peak $beepPeak vs siren peak $wailPeak", beepPeak <= 0.6 * wailPeak)
     }
 }

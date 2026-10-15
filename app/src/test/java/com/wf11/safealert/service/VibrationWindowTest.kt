@@ -15,6 +15,18 @@ class VibrationWindowTest {
         assertTrue(w.covers(1_000L))
         assertTrue(w.covers(1_700L))
         assertFalse(w.covers(1_701L))
+
+        // a later one-shot keeps the earlier interval for late samples
+        w.oneShot(1_300L, 500L)
+        assertFalse("second one-shot: before the first", w.covers(999L))
+        assertTrue("second one-shot: the earlier interval is kept", w.covers(1_100L))
+        assertTrue("second one-shot: covers to its end plus grace", w.covers(2_000L))
+        assertFalse("second one-shot: past its grace", w.covers(2_001L))
+
+        // segments older than ten seconds are pruned
+        w.oneShot(20_000L, 100L)
+        assertFalse("pruned after ten seconds", w.covers(1_100L))
+        assertTrue(w.covers(20_050L))
     }
 
     @Test
@@ -32,17 +44,6 @@ class VibrationWindowTest {
         assertTrue(w.covers(5_200L))
         assertFalse(w.covers(5_201L))
         assertFalse(w.covers(4_950L))
-    }
-
-    @Test
-    fun later_one_shot_keeps_the_earlier_interval_for_late_samples() {
-        val w = VibrationWindow()
-        w.oneShot(1_000L, 500L)
-        w.oneShot(1_300L, 500L)
-        assertFalse(w.covers(999L))
-        assertTrue(w.covers(1_100L))
-        assertTrue(w.covers(2_000L))
-        assertFalse(w.covers(2_001L))
     }
 
     @Test
@@ -71,15 +72,5 @@ class VibrationWindowTest {
         assertFalse(w.covers(2_500L))
         assertTrue(w.covers(250L))      // a finished segment is untouched (not stretched to the cut)
         assertFalse(w.covers(500L))
-    }
-
-    @Test
-    fun segments_older_than_ten_seconds_are_pruned() {
-        val w = VibrationWindow()
-        w.oneShot(0L, 500L)
-        assertTrue(w.covers(100L))
-        w.oneShot(20_000L, 100L)
-        assertFalse(w.covers(100L))
-        assertTrue(w.covers(20_050L))
     }
 }

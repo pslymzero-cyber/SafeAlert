@@ -28,6 +28,11 @@ class SosLedgerTest {
         tr.creates[0].cb(true)
         l.resolve(auto = true)
         assertEquals(listOf(true), tr.autos)
+        // A confirmed automatic release waiting for the server is stored the way a version without automatic release
+        //   reads a confirmed resolve (three fields, the third not "0"), so rolling back still resends it.
+        val f = kv.m.getValue("r.list").split('\t')
+        assertEquals("older version reads three fields", 3, f.size)
+        assertNotEquals("older version reads a confirmed resolve", "0", f[2])
         tr.resolves[0].cb(true)
         assertEquals(listOf("${SosMail.EVENT_SOS}:k1"), seen)
     }
@@ -43,19 +48,6 @@ class SosLedgerTest {
         tr.reads.last().cb(Remote.ERROR)
         ledger(kv, tr).tick()
         assertEquals(listOf(true, true), tr.autos)
-    }
-
-    // A confirmed automatic release waiting for the server is stored the way a version without automatic release reads a
-    //   confirmed resolve (three fields, the third not "0"), so rolling back still resends it.
-    @Test fun confirmed_automatic_release_stays_readable_by_an_older_version() {
-        val kv = Kv(); val tr = FakeSosTransport()
-        val l = ledger(kv, tr)
-        l.begin(rec())
-        tr.creates[0].cb(true)
-        l.resolve(auto = true)
-        val f = kv.m.getValue("r.list").split('\t')
-        assertEquals(3, f.size)
-        assertNotEquals("0", f[2])
     }
 
     // My SOS's age counts from the server's confirmation (one nobody was told about never ages), on the elapsed clock
@@ -88,29 +80,18 @@ class SosLedgerTest {
         assertEquals("벽시계가 뒤로 가면 0", 0L, SosLedger(kv, tr, { now }, wallClock = { wall }).beganAgoMs())
         l.resolve()
         assertEquals("해제 뒤에는 0", 0L, l.beganAgoMs())
-    }
 
-    // An SOS stored by a version that kept no start time counts from its server confirmation, else from the restart.
-    @Test fun sos_stored_without_a_begin_time_counts_from_its_server_confirmation_or_from_now() {
-        val tr = FakeSosTransport()
+        // An SOS stored by a version that kept no start time counts from its server confirmation, else from the restart.
         val withAt = Kv().apply { m["a.trigger"] = "still"; m["a.at"] = "500000" }
-        assertEquals(45_000L, SosLedger(withAt, tr, { now }, wallClock = { 545_000L }).beganAgoMs())
+        assertEquals("old format with a confirmation time", 45_000L, SosLedger(withAt, tr, { now }, wallClock = { 545_000L }).beganAgoMs())
         val without = Kv().apply { m["a.trigger"] = "still" }
-        assertEquals(0L, SosLedger(without, tr, { now }, wallClock = { 545_000L }).beganAgoMs())
-    }
-
-    @Test fun create_record_carries_episode() {
-        val kv = Kv(); val tr = FakeSosTransport(); val l = ledger(kv, tr)
-        l.begin(rec())
-        assertEquals(1, tr.recs[0].ep)
-        l.resolve()
-        l.begin(rec())
-        assertEquals(2, tr.recs[1].ep)
+        assertEquals("old format without any time", 0L, SosLedger(without, tr, { now }, wallClock = { 545_000L }).beganAgoMs())
     }
 
     @Test fun offline_ok_then_new_sos_starts_at_once_and_late_acks_touch_only_their_slot() {
         val kv = Kv(); val tr = FakeSosTransport(); val l = ledger(kv, tr)
         l.begin(rec())
+        assertEquals("create record carries the episode", 1, tr.recs[0].ep)
         assertEquals(1, tr.creates.size)
         val a = tr.creates[0]
         assertEquals("k1", a.key)
@@ -123,6 +104,7 @@ class SosLedgerTest {
 
         l.begin(rec())
         assertEquals(2, tr.creates.size)
+        assertEquals("create record carries the next episode", 2, tr.recs[1].ep)
         val b = tr.creates[1]
         assertEquals("k2", b.key)
         assertEquals(2, l.episode())
@@ -231,20 +213,6 @@ class SosLedgerTest {
         assertFalse(l.resolveFailing())
     }
 
-    @Test fun pending_resolves_survive_restart() {
-        val kv = Kv(); val tr = FakeSosTransport(); val l = ledger(kv, tr)
-        l.begin(rec())
-        tr.creates[0].cb(true)
-        l.resolve()
-        kv.m["r.list"] = "junk\n" + kv.m.getValue("r.list")
-
-        val tr2 = FakeSosTransport(); val l2 = ledger(kv, tr2)
-        assertFalse(l2.hasActive())
-        l2.tick()
-        assertEquals(1, tr2.resolves.size)
-        assertEquals("k1", tr2.resolves[0].key)
-    }
-
     // Mail queue is written before a.sent / pending removal, so a death in between is recovered by the re-check
     @Test fun on_saved_runs_before_sent_mark_and_pending_drop() {
         val kv = Kv(); val tr = FakeSosTransport()
@@ -314,9 +282,14 @@ class SosLedgerTest {
         tr.creates[0].cb(true)
         l.resolve()
         assertEquals("root/site\tk1", kv.m["r.list"])
+        kv.m["r.list"] = "junk\n" + kv.m.getValue("r.list")  // a pending resolve survives a restart, junk line or not
         val seen = ArrayList<String>()
         val tr2 = FakeSosTransport(); val l2 = recording(kv, tr2, seen)
-        l2.tick(); tr2.resolves[0].cb(true)
+        assertFalse("restart: the resolved SOS is not active", l2.hasActive())
+        l2.tick()
+        assertEquals(1, tr2.resolves.size)
+        assertEquals("k1", tr2.resolves[0].key)
+        tr2.resolves[0].cb(true)
         assertEquals(listOf("resolved:k1"), seen)
 
         val kv3 = Kv(); val tr3 = FakeSosTransport(); val seen3 = ArrayList<String>()

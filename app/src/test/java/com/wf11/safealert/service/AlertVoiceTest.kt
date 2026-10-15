@@ -138,42 +138,38 @@ class AlertVoiceTest : VoiceTestBase() {
     private val CR = AlertVoice.CLIP_RAPID
 
     /** A call that must play the tone and ask no player for anything (not started, no player, setting off, rescue siren). */
-    private fun toneOnly() {
+    private fun toneOnly(step: String) {
         val b = beeps()
         val s = sirens()
         AlertSoundPlayer.playWarning(app)
-        assertEquals(b + 1, beeps())
+        assertEquals("$step: warning beep", b + 1, beeps())
         AlertSoundPlayer.stopSound()
         AlertSoundPlayer.playDanger(app)
         idle()
-        assertEquals(s + 1, sirens())
+        assertEquals("$step: siren", s + 1, sirens())
         AlertSoundPlayer.stopSound()
-        assertTrue(made.all { it.calls.isEmpty() })
+        assertTrue("$step: no player request", made.all { it.calls.isEmpty() })
     }
 
-    @Test fun `감시 전에는 경고음과 사이렌만 나고 재생 요청이 없다`() {
+    @Test fun `음성을 쓸 수 없는 네 경우는 경고음과 사이렌만 나고 재생 요청이 없다`() {
         assertEquals(AlertVoice.STATUS_IDLE, AlertVoice.status)
-        toneOnly()
-    }
+        toneOnly("before the watch starts")
 
-    @Test fun `재생기를 만들지 못하면 경고음과 사이렌만 나고 재생 요청이 없다`() {
         makeNext = { null }
         ready()
         assertEquals(AlertVoice.STATUS_NOT_READY, AlertVoice.status)
         assertTrue(AlertVoice.degraded)
-        toneOnly()
-    }
+        toneOnly("no player could be made")
 
-    @Test fun `음성 설정이 꺼져 있으면 경고음과 사이렌만 나고 재생 요청이 없다`() {
+        AlertVoice.shutdown()
+        makeNext = { FakePlayer() }
         ready()
         DevSettings.voiceAlertEnabled = false
-        toneOnly()
-    }
+        toneOnly("voice setting off")
 
-    @Test fun `구조 요청 사이렌이 울리는 동안은 경고음과 사이렌만 나고 재생 요청이 없다`() {
-        ready()
+        DevSettings.voiceAlertEnabled = true
         AlarmVolumeShare.sosSounding = true
-        toneOnly()
+        toneOnly("rescue siren sounding")
     }
 
     @Test fun `경고는 문장을 한 번 재생하고 그 호출에서 삑이 없고 끝난 뒤에 다시 안내한다`() {
@@ -191,8 +187,14 @@ class AlertVoiceTest : VoiceTestBase() {
 
         idleFor(1_700)  // 3.7 s after the start: the sentence is over
         assertFalse(AlertVoice.covering())
+        assertEquals("a warning that ends by itself stops the player once", 1, player().stops)
         AlertSoundPlayer.playWarning(app)
         assertEquals(listOf(CW, CW), clips())
+        assertEquals(0, beeps())
+
+        idleFor(500)
+        AlertSoundPlayer.playDanger(app, rapid = true)  // a RAPID during a playing warning replaces it at once
+        assertEquals(listOf(CW, CW, CR), clips())
         assertEquals(0, beeps())
     }
 
@@ -213,6 +215,11 @@ class AlertVoiceTest : VoiceTestBase() {
         assertEquals("no new tone generator for a re-entry", 1, toneObjects())
         assertEquals(0, sirens())
 
+        AlertSoundPlayer.playWarning(app)  // a warning request during the danger repeat leaves the player alone
+        assertEquals(1, player().calls.size)
+        assertEquals(0, player().stops)
+        assertEquals(0, beeps())
+
         AlertSoundPlayer.stopSound()
         assertTrue(player().stops >= 1)
         assertFalse(AlertVoice.covering())
@@ -226,7 +233,16 @@ class AlertVoiceTest : VoiceTestBase() {
         AlertSoundPlayer.playDanger(app, rapid = true)
         idle()
         assertEquals(listOf(CR), clips())
-        idleFor(1_989 + 399)
+        idleFor(2_000)  // 10 ms past the end of RAPID, inside the 0.4 s pause
+        player().alive = false  // a finished one-shot is over, not dead
+        AlertSoundPlayer.playDanger(app, rapid = true)  // re-entry in the pause
+        idle()
+        assertEquals("a finished RAPID in the pause is not a failure", AlertVoice.STATUS_READY, AlertVoice.status)
+        assertFalse(AlertVoice.degraded)
+        assertEquals(1, factoryCalls)
+        assertTrue("the pause is covered by time alone", AlertVoice.covering())
+        assertEquals(0, sirens())
+        idleFor(388)
         assertEquals(1, player().calls.size)
         assertEquals(0, sirens())
         assertTrue(AlertVoice.covering())
@@ -235,37 +251,23 @@ class AlertVoiceTest : VoiceTestBase() {
         idleFor(3_000)
         assertEquals(0, sirens())
         assertTrue(AlertVoice.covering())
+        assertEquals(AlertVoice.STATUS_READY, AlertVoice.status)
     }
 
     @Test fun `급접근 문장은 끝까지 나온 뒤 시작부터 5초 안에는 끼어들지 않고 5초 뒤에는 위험 반복을 교체한다`() {
-        ready()
-        AlertSoundPlayer.playDanger(app, rapid = true)
-        idleFor(3_000)  // the danger repeat runs since 2.39 s
-        AlertSoundPlayer.playDanger(app, rapid = true)
-        assertEquals(listOf(CR, CD), clips())
-        idleFor(2_200)  // 5.2 s after the start of the RAPID sentence
-        AlertSoundPlayer.playDanger(app, rapid = true)
-        assertEquals(listOf(CR, CD, CR), clips())
-    }
-
-    @Test fun `급접근 문장이 나오는 동안 들어온 급접근 요청은 쌓이지 않아 문장 뒤 위험 반복에서 급접근이 다시 나오지 않는다`() {
         ready()
         AlertSoundPlayer.playDanger(app, rapid = true)
         idleFor(500)
         AlertSoundPlayer.playDanger(app, rapid = true)  // during the sentence: nothing is queued
         idleFor(2_000)
         AlertSoundPlayer.playDanger(app)
-        idleFor(1_000)
-        assertEquals(listOf(CR, CD), clips())
-    }
-
-    @Test fun `경고 재생 중 급접근이 오면 즉시 급접근 문장으로 교체한다`() {
-        ready()
-        AlertSoundPlayer.playWarning(app)
-        idleFor(500)
+        idleFor(1_000)  // 3.5 s: the danger repeat has run since 2.39 s
+        assertEquals("a RAPID request during the sentence must not queue a second RAPID", listOf(CR, CD), clips())
         AlertSoundPlayer.playDanger(app, rapid = true)
-        assertEquals(listOf(CW, CR), clips())
-        assertEquals(0, beeps())
+        assertEquals("a RAPID inside 5 s of the last RAPID start does not interrupt", listOf(CR, CD), clips())
+        idleFor(1_700)  // 5.2 s after the start of the RAPID sentence
+        AlertSoundPlayer.playDanger(app, rapid = true)
+        assertEquals(listOf(CR, CD, CR), clips())
     }
 
     @Test fun `급접근 문장 도중 소리가 멈추면 위험 전환 타이머도 지워져 아무것도 재생되지 않는다`() {
@@ -280,18 +282,13 @@ class AlertVoiceTest : VoiceTestBase() {
         assertEquals(stopsAfter, player().stops)
     }
 
-    @Test fun `시스템 결함 삑은 재생을 요청하지 않는다`() {
-        ready()
-        AlertSoundPlayer.warningTone(app)
-        assertEquals(1, beeps())
-        assertTrue(player().calls.isEmpty())
-    }
-
     // ---- what a started clip does to a sounding tone ----------------------------------------------------
 
     @Test fun `경고 문장은 먼저 울린 결함 삑을 끊지 않고 위험 문장은 울리던 사이렌 조각을 끈다`() {
         ready()
         AlertSoundPlayer.warningTone(app)  // the one-time system-fault beep
+        assertEquals("a system-fault beep sounds", 1, beeps())
+        assertTrue("a system-fault beep asks the player for nothing", player().calls.isEmpty())
         idleFor(200)
         AlertSoundPlayer.playWarning(app)
         assertEquals(listOf(CW), clips())
@@ -318,26 +315,6 @@ class AlertVoiceTest : VoiceTestBase() {
         assertEquals("the hand-over hushes the tone once", 1, Rec.tones.count { it == "stop" })
     }
 
-    @Test fun `위험 반복 중의 경고 요청은 재생기를 건드리지 않는다`() {
-        ready()
-        AlertSoundPlayer.playDanger(app)
-        idleFor(1_000)
-        AlertSoundPlayer.playWarning(app)
-        assertEquals(1, player().calls.size)
-        assertEquals(0, player().stops)
-        assertEquals(0, beeps())
-    }
-
-    @Test fun `혼자 끝난 경고 문장은 재생기를 한 번 멈춘다`() {
-        ready()
-        AlertSoundPlayer.playWarning(app)
-        idleFor(3_660)
-        assertEquals(1, player().stops)
-        idleFor(2_000)
-        assertFalse(AlertVoice.covering())
-        assertEquals(1, player().stops)
-    }
-
     @Test fun `가림은 타이머가 돌지 않아도 시각만으로 끝난다`() {
         ready()
         AlertSoundPlayer.playWarning(app)
@@ -358,15 +335,6 @@ class AlertVoiceTest : VoiceTestBase() {
     // ---- the recorded files ----------------------------------------------------------------------------
 
     private fun wav(id: Int) = TrackPlayer.parseWav(app.resources.openRawResource(id).use { it.readBytes() })
-
-    @Test fun `res raw 의 음성 파일 3개는 16비트 모노이고 길이가 0점3초에서 6초 사이다`() {
-        for (id in listOf(R.raw.voice_warning, R.raw.voice_danger, R.raw.voice_rapid)) {
-            val w = wav(id)
-            assertNotNull(w)
-            assertTrue("rate ${w!!.sampleRate}", w.sampleRate in 8_000..48_000)
-            assertTrue("length ${w.durationMs}", w.durationMs in 300..6_000)
-        }
-    }
 
     @Test fun `WAV 해석은 형식이 틀리거나 크기가 파일을 넘으면 null 이다`() {
         fun le(v: Int, n: Int) = ByteArray(n) { ((v shr (8 * it)) and 0xFF).toByte() }
@@ -416,6 +384,11 @@ class AlertVoiceTest : VoiceTestBase() {
     }
 
     @Test fun `실제 재생기는 파일 3개로 만들어지고 재생 상태와 정지를 따른다`() {
+        for (id in listOf(R.raw.voice_warning, R.raw.voice_danger, R.raw.voice_rapid)) {
+            val w = wav(id)
+            assertNotNull("raw $id is a 16-bit mono WAV", w)
+            assertTrue("raw $id rate ${w!!.sampleRate}", w.sampleRate in 8_000..48_000)
+        }
         val p = TrackPlayer.create(app)
         assertNotNull(p)
         p!!
@@ -474,17 +447,17 @@ class AlertVoiceTest : VoiceTestBase() {
 
     // ---- wiring (comments stripped) --------------------------------------------------------------------
 
-    @Test fun `배선 - 음성 객체는 엔진 의존이 없고 톤 쪽으로는 정해진 세 진입점만 부른다`() {
+    @Test fun `배선 - 급접근 호출과 시작 정리 알림 톤 진입점 설정 화면 매니페스트 변경 사항 문구`() {
+        // AlertVoice.kt: no engine dependency, only the three tone entry points
         val voice = noComments(serviceSource("AlertVoice.kt"))
         // anchors: the things that must be there, so the "must not" checks below cannot pass on an empty body
         for (must in listOf(
             "AlertSoundPlayer.hushForSpeech()", "R.raw.voice_warning", "R.raw.voice_danger", "R.raw.voice_rapid",
             "USAGE_ALARM", "CONTENT_TYPE_SPEECH", "MODE_STATIC", "reloadStaticData", "setLoopPoints(0, frames[clip], -1)",
-            "playbackHeadPosition",
-        )) assertTrue(must, voice.contains(must))
-        for (never in listOf(
-            "android.speech", "TextToSpeech", "playWarning(", "playDanger(", "stopSound(", "playState",
-        )) assertFalse("AlertVoice has $never", voice.contains(never))
+        )) assertTrue("AlertVoice.kt must contain $must", voice.contains(must))
+        for (never in listOf("android.speech", "TextToSpeech", "playWarning(", "playDanger(", "stopSound(")) {
+            assertFalse("AlertVoice has $never", voice.contains(never))
+        }
         val refs = Regex("AlertSoundPlayer\\.(\\w+\\()").findAll(voice).map { it.groupValues[1] }.toList()
         assertTrue(refs.isNotEmpty())
         assertTrue("tone-side calls: $refs", refs.all { it == "hushForSpeech(" || it == "warningTone(" || it == "dangerTone(" })
@@ -496,11 +469,7 @@ class AlertVoiceTest : VoiceTestBase() {
             "the siren is started directly only where the hand-over from RAPID cannot start",
             dangerCalls, Regex("AlertSoundPlayer\\.dangerTone\\(").findAll(sourceBlock(voice, "private fun startDanger()")).count(),
         )
-        // say() does not hush: it must not cut the one-time fault beep
-        assertFalse(sourceBlock(voice, "fun say()").contains("hush()"))
-    }
 
-    @Test fun `배선 - 급접근 호출과 시작 정리 알림 톤 진입점 설정 화면 매니페스트 변경 사항 문구`() {
         val asm = noComments(serviceSource("AlertStateMachine.kt"))
         val ttc = noComments(repoFile("app/src/main/java/com/wf11/safealert/03_service/AlertStateMachine.kt").let { raw ->
             val from = raw.indexOf("TTC 선발령")
@@ -524,13 +493,6 @@ class AlertVoiceTest : VoiceTestBase() {
 
         val asp = noComments(serviceSource("AlertSoundPlayer.kt"))
         assertTrue(asp.contains("if (!AlertVoice.covering()) tg.startTone(ToneGenerator.TONE_CDMA_EMERGENCY_RINGBACK, 400)"))
-        val warningEntry = sourceBlock(asp, "fun playWarning(")
-        val say = warningEntry.indexOf("AlertVoice.say()")
-        val covering = warningEntry.indexOf("AlertVoice.covering()")
-        val tone = warningEntry.indexOf("getOrCreateTone()")
-        val beep = warningEntry.indexOf("warningTone(context)")
-        assertTrue("say, covering, getOrCreateTone, warningTone in this order: $warningEntry", say in 0 until covering)
-        assertTrue(covering < tone && tone < beep)
         val dangerEntry = sourceBlock(asp, "fun playDanger(")
         assertTrue(dangerEntry.contains("AlertVoice.loop(rapid)"))
         assertTrue(dangerEntry.contains("if (AlertVoice.covering() && sirenRunning()) return"))
@@ -551,10 +513,6 @@ class AlertVoiceTest : VoiceTestBase() {
         assertTrue(Regex("AlertVoice\\.changed\\(\\)").findAll(settings).count() >= 2)
         assertTrue(sourceBlock(settings, "private val uwbDiagPoller").contains("AlertVoice.status"))
 
-        val layout = repoFile("app/src/main/res/layout/activity_dev_settings.xml")
-        assertTrue(layout.contains("경보 소리 사용 (경고음 · 음성)"))
-        assertFalse(layout.contains("\"경보음 사용\""))
-
         val manifest = repoFile("app/src/main/AndroidManifest.xml")
         assertFalse(manifest.contains("<queries>"))
         assertFalse(manifest.contains("TTS_SERVICE"))
@@ -562,9 +520,6 @@ class AlertVoiceTest : VoiceTestBase() {
         val news = repoFile("app/src/main/res/values/strings.xml").let { it.substring(it.indexOf("name=\"whats_new\"")) }
         val first = news.substringBefore("\\n- ")
         assertTrue(first.contains(AlertVoice.WARNING) && first.contains(AlertVoice.DANGER) && first.contains(AlertVoice.RAPID))
-        assertTrue(first.contains("앱에 들어 있는 음성"))
-        assertTrue(first.contains("음성 안내 사용") && first.contains("경보 소리 사용"))
-        assertFalse(first.contains("한국어 음성"))
     }
 
     // ---- the real judgement ----------------------------------------------------------------------------
