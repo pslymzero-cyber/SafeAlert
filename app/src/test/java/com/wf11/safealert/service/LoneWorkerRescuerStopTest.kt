@@ -34,50 +34,39 @@ class LoneWorkerRescuerStopTest {
         assertFalse(l.takeStop(at))
         assertNull(l.stopAt)
         assertTrue(LoneWorkerLogic.RESCUER_STOP_DELAY_MS >= LoneWorkerPeers.PEER_BLE_FALL_MS)
-    }
 
-    @Test fun own_release_inside_the_first_minute_asks_for_no_stop() {
-        val l = sosLogic()
-        val t = l.modeSinceMs + LoneWorkerLogic.RESCUER_BUTTON_MS - 1
-        assertTrue(l.cancelSos(t, rescuer = true))
-        assertNull(l.stopAt)
-        assertFalse(l.takeStop(t))
-        assertFalse(l.takeStop(t + 10 * LoneWorkerLogic.RESCUER_STOP_DELAY_MS))
-    }
+        // One ms inside the first minute: the button is still the worker's, no stop
+        val early = sosLogic()
+        val e = early.modeSinceMs + LoneWorkerLogic.RESCUER_BUTTON_MS - 1
+        assertTrue("-1 ms", early.cancelSos(e, rescuer = true))
+        assertNull("-1 ms", early.stopAt)
+        assertFalse("-1 ms", early.takeStop(e))
+        assertFalse("-1 ms", early.takeStop(e + 10 * LoneWorkerLogic.RESCUER_STOP_DELAY_MS))
 
-    @Test fun one_hour_auto_release_asks_for_no_stop() {
-        val l = sosLogic()
-        val t = l.modeSinceMs + 3_600_000L
-        assertTrue(l.cancelSos(t))
-        l.holdStill(t)
-        assertNull(l.stopAt)
-        assertFalse(l.takeStop(t + 10 * LoneWorkerLogic.RESCUER_STOP_DELAY_MS))
-        val block = sourceBlock(noComments(serviceSource("LoneWorkerMonitor.kt")), "    private fun releaseOldSos() {")
-        assertTrue(block.contains("logic.cancelSos(t)"))
-        assertFalse(block.contains("rescuer"))
-    }
-
-    @Test fun restored_sos_older_than_a_minute_asks_for_the_stop_when_released() {
+        // A restored SOS counts its age: 61 s asks for the stop, 59 s does not
         val now = 500_000L
         val old = newLogic(carried = true).apply { restoreSos("still", now, 61_000) }
-        assertTrue(old.cancelSos(now, rescuer = true))
-        assertEquals(now + LoneWorkerLogic.RESCUER_STOP_DELAY_MS, old.stopAt)
+        assertTrue("restored 61 s", old.cancelSos(now, rescuer = true))
+        assertEquals("restored 61 s", now + LoneWorkerLogic.RESCUER_STOP_DELAY_MS, old.stopAt)
         val young = newLogic(carried = true).apply { restoreSos("still", now, 59_000) }
-        assertTrue(young.cancelSos(now, rescuer = true))
-        assertNull(young.stopAt)
-    }
+        assertTrue("restored 59 s", young.cancelSos(now, rescuer = true))
+        assertNull("restored 59 s", young.stopAt)
 
-    @Test fun pending_stop_keeps_the_phone_awake_and_a_new_start_cancels_it() {
-        val l = sosLogic()
-        val t = l.modeSinceMs + LoneWorkerLogic.RESCUER_BUTTON_MS
-        l.cancelSos(t, rescuer = true)
-        assertTrue(l.wakeNeeded(false, t))
-        l.clearStop(t)
-        assertFalse(l.wakeNeeded(false, t))
-        assertFalse(l.takeStop(t + LoneWorkerLogic.RESCUER_STOP_DELAY_MS))
-        val idle = newLogic(carried = true)
-        assertFalse(idle.cancelSos(1_000, rescuer = true))
-        assertNull(idle.stopAt)
+        // The worker's own window after the first minute (rescuer = false): the button reads rescuer's, still no stop
+        val own = sosLogic()
+        val w = own.modeSinceMs + LoneWorkerLogic.RESCUER_BUTTON_MS + 5
+        assertTrue("worker's window", own.rescuerButton(w))
+        assertTrue("worker's window", own.cancelSos(w, rescuer = false))
+        assertNull("worker's window", own.stopAt)
+        assertFalse("worker's window", own.takeStop(w + 10 * LoneWorkerLogic.RESCUER_STOP_DELAY_MS))
+
+        // The one-hour automatic release (default, holdStill) never schedules a stop either
+        val auto = sosLogic()
+        val h = auto.modeSinceMs + 3_600_000L
+        assertTrue("one-hour release", auto.cancelSos(h))
+        auto.holdStill(h)
+        assertNull("one-hour release", auto.stopAt)
+        assertFalse("one-hour release", auto.takeStop(h + 10 * LoneWorkerLogic.RESCUER_STOP_DELAY_MS))
     }
 
     /** The requester's phone: while the monitoring stop is pending it gives no peer SOS output; a new start brings it back. */
@@ -105,20 +94,15 @@ class LoneWorkerRescuerStopTest {
         assertEquals(1, l.audiblePeers().size)
         assertEquals(1, l.soundingPeers().size)
         assertTrue(l.alarmVibrates)
-    }
-
-    /** The requester's phone: only the rescuer confirm window schedules the stop, not the worker's own window. */
-    @Test fun release_from_the_workers_dialog_after_a_minute_asks_for_no_stop() {
-        val l = sosLogic()
-        val t = l.modeSinceMs + LoneWorkerLogic.RESCUER_BUTTON_MS + 5
-        assertTrue(l.rescuerButton(t))
-        assertTrue(l.cancelSos(t, rescuer = false))
-        assertNull(l.stopAt)
-        assertFalse(l.takeStop(t + 10 * LoneWorkerLogic.RESCUER_STOP_DELAY_MS))
-        val activity = noComments(repoFile("app/src/main/java/com/wf11/safealert/05_ui/LoneWorkerActivity.kt"))
-        assertTrue(sourceBlock(activity, "    private fun showConfirm() {").contains("LoneWorkerMonitor.current?.cancelSos(rescuer)"))
-        val cancel = sourceBlock(noComments(serviceSource("LoneWorkerMonitor.kt")), "    fun cancelSos(rescuer: Boolean) {")
-        assertTrue(cancel.contains("logic.cancelSos(t, rescuer)"))
+        // A new start cancelled the stop for good; the phone stays awake only for the ringing peer
+        assertFalse(l.takeStop(t + LoneWorkerLogic.RESCUER_STOP_DELAY_MS))
+        assertTrue(l.wakeNeeded(false, t + 2_000))
+        l.ackAll(t + 2_500)
+        assertFalse(l.wakeNeeded(false, t + 2_500))
+        // Nothing to stop while idle
+        val idle = newLogic(carried = true)
+        assertFalse(idle.cancelSos(1_000, rescuer = true))
+        assertNull(idle.stopAt)
     }
 
     /** The wiring is pinned on the code without comments, so a comment cannot satisfy a check. */
@@ -128,6 +112,10 @@ class LoneWorkerRescuerStopTest {
         val main = noComments(repoFile("app/src/main/java/com/wf11/safealert/05_ui/MainActivity.kt"))
         val cancel = sourceBlock(monitor, "    fun cancelSos(rescuer: Boolean) {")
         assertTrue(cancel.contains("logic.cancelSos(t, rescuer)"))
+        // The one-hour automatic release passes no rescuer flag
+        val oldSos = sourceBlock(monitor, "    private fun releaseOldSos() {")
+        assertTrue(oldSos.contains("logic.cancelSos(t)"))
+        assertFalse(oldSos.contains("rescuer"))
         assertTrue(cancel.contains("resume.clear()"))
         assertTrue(cancel.contains("handler.postDelayed(stopRunnable"))
         assertTrue(cancel.indexOf("render()") in 0 until cancel.indexOf("resume.clear()"))
@@ -163,7 +151,9 @@ class LoneWorkerRescuerStopTest {
         assertTrue(launchAt > resetAt)
         assertTrue(main.contains("if (LoneWorkerUi.takeRescuerStop(this@MainActivity) && currentMode != null) stopServiceImmediately(tellService = false)"))
         val activity = noComments(repoFile("app/src/main/java/com/wf11/safealert/05_ui/LoneWorkerActivity.kt"))
-        assertTrue(sourceBlock(activity, "    private fun showConfirm() {").contains("감시가 중지돼요"))
+        val confirm = sourceBlock(activity, "    private fun showConfirm() {")
+        assertTrue(confirm.contains("LoneWorkerMonitor.current?.cancelSos(rescuer)"))
+        assertTrue(confirm.contains("감시가 중지돼요"))
         assertEquals("구조자 확인으로 감시를 중지했습니다", LoneWorkerNotifier.RESCUER_STOPPED)
     }
 }

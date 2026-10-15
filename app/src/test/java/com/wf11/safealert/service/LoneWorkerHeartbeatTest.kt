@@ -267,20 +267,20 @@ class LoneWorkerHeartbeatTest {
         assertNull(g.kv.m[LoneWorkerHeartbeat.K_CARRY])
         g.adv(5 * min); hb.tick(true, "WALKER"); g.r.writes.last().done(true)
         assertEquals(0, g.gaps().size)
-    }
 
-    @Test fun rejected_refresh_drops_carry_and_next_session_starts_fresh() {
-        hb.tick(true, "WALKER")
-        r.writes[0].done(true)
-        for (i in 0 until 8) { adv(5 * min); hb.tick(true, "WALKER") }
-        r.writes[1].done(false)
-        assertNull(kv.m[LoneWorkerHeartbeat.K_CARRY])
-        adv(5 * min); hb.tick(true, "WALKER")
-        val start = r.writes.last()
+        // (e) the same rejection while carrying on without a stop: the carry is dropped, the next session starts fresh
+        g = Rig()
+        hb = g.hb()
+        hb.tick(true, "WALKER"); g.r.writes[0].done(true)
+        for (i in 0 until 8) { g.adv(5 * min); hb.tick(true, "WALKER") }
+        g.r.writes[1].done(false)
+        assertNull(g.kv.m[LoneWorkerHeartbeat.K_CARRY])
+        g.adv(5 * min); hb.tick(true, "WALKER")
+        val start = g.r.writes.last()
         assertEquals("s2", start.key)
         assertEquals(setOf("uid", "role", "start", "last"), start.fields.keys)
         start.done(true)
-        assertEquals(0, gaps().size)
+        assertEquals(0, g.gaps().size)
     }
 
     @Test fun carry_needs_same_center_same_uid_within_15_minutes_of_last_sent_stamp() {
@@ -337,15 +337,15 @@ class LoneWorkerHeartbeatTest {
         assertEquals(3, r.writes.size)
         assertEquals(mapOf<String, Any>("last" to s0 + 5 * min), r.writes[2].fields)
         assertEquals(r.writes[0].key, r.writes[2].key)
-    }
 
-    // The session ended while the scoped start was still in flight: its refusal must not create a session nobody ends.
-    @Test fun refused_scoped_start_after_end_is_not_retried() {
-        r.scope = mapOf("floor" to "1F")
-        hb.tick(true, "WALKER")
-        hb.end()
-        val before = r.writes.size
-        r.writes[0].done(false)
-        assertEquals(before, r.writes.size)
+        // The session ended while the scoped start was still in flight: its refusal must not create a session nobody ends.
+        val late = Rig()
+        late.r.scope = mapOf("floor" to "1F")
+        val lateHb = late.hb()
+        lateHb.tick(true, "WALKER")
+        lateHb.end()
+        val before = late.r.writes.size
+        late.r.writes[0].done(false)
+        assertEquals("refused after end", before, late.r.writes.size)
     }
 }

@@ -1,6 +1,5 @@
 package com.wf11.safealert.service
 
-import android.content.SharedPreferences
 import com.wf11.safealert.service.LoneWorkerLogic.Mode
 import com.wf11.safealert.service.LoneWorkerLogic.Rest
 import org.junit.Assert.assertEquals
@@ -43,18 +42,18 @@ class LoneWorkerResumeTest : RestartKit() {
         assertEquals(Mode.CHECKING, l.mode)
         assertEquals("fall", l.trigger)
         assertEquals(LoneWorkerLogic.ACCIDENT_RESPONSE_MS, l.responseLeftMs(5_000))
+
+        // The same for an open no-motion check
+        val oldStill = newLogic(carried = true)
+        assertEquals(Mode.CHECKING, oldStill.seenAt(180_000))
+        assertEquals("still", oldStill.trigger)
+        val s = reboot(oldStill, savedAt = 200_000, now = 5_000, wallGap = 20_000)
+        assertEquals("still check", Mode.CHECKING, s.mode)
+        assertEquals("still check", "still", s.trigger)
+        assertEquals("still check", s.responseMs, s.responseLeftMs(5_000))
     }
 
-    @Test fun restore_reopens_still_check_with_full_response() {
-        val old = newLogic(carried = true)
-        assertEquals(Mode.CHECKING, old.seenAt(180_000))
-        assertEquals("still", old.trigger)
-        val l = reboot(old, savedAt = 200_000, now = 5_000, wallGap = 20_000)
-        assertEquals(Mode.CHECKING, l.mode)
-        assertEquals("still", l.trigger)
-        assertEquals(l.responseMs, l.responseLeftMs(5_000))
-    }
-
+    /** A fall suspicion saved at 10 s (impact 1 s): dropped when older than 5 min at the restart, kept below, and a power change in the downtime is a real plug. */
     @Test fun restore_drops_suspicion_older_than_5min() {
         val old = newLogic()
         old.onAccident(1_000)
@@ -62,30 +61,34 @@ class LoneWorkerResumeTest : RestartKit() {
         val l = reboot(old, savedAt = 10_000, now = 5_000, wallGap = 300_000)
         assertNull(l.snapshot(5_000).accidentUntil)
         assertEquals(Mode.WATCHING, l.seenAt(65_000))
-    }
 
-    @Test fun restore_keeps_suspicion_within_5min() {
-        val old = newLogic()
-        old.onAccident(1_000)
         // restarted 119 s after the trigger: the 30 s deadline has passed, sensor data after it is gone
-        val l = reboot(old, savedAt = 10_000, now = 5_000, wallGap = 110_000)
-        assertNotNull(l.snapshot(5_000).accidentUntil)
-        assertEquals(Mode.CHECKING, l.modeAt(5_000 + LoneWorkerLogic.LATE_MS))
-        assertEquals("fall", l.trigger)
-    }
+        val kept = reboot(old, savedAt = 10_000, now = 5_000, wallGap = 110_000)
+        assertNotNull("within 5 min", kept.snapshot(5_000).accidentUntil)
+        assertEquals("within 5 min", Mode.CHECKING, kept.modeAt(5_000 + LoneWorkerLogic.LATE_MS))
+        assertEquals("within 5 min", "fall", kept.trigger)
 
-    @Test fun restore_keeps_carried_latch_while_charging() {
-        val old = newLogic(charging = true)
-        assertEquals(Rest.DOCKED, old.rest)
-        old.walk(10_000, 10)
-        assertEquals(Rest.NONE, old.rest)
-        val l = reboot(old, savedAt = 12_000, now = 5_000, wallGap = 20_000, charging = true)
-        assertEquals(Rest.NONE, l.rest)
+        // charged during the downtime: a real plug, the suspicion ends
+        val carried = newLogic(carried = true)
+        carried.onAccident(1_000)
+        assertNotNull(carried.snapshot(10_000).accidentUntil)
+        val docked = reboot(carried, savedAt = 10_000, now = 5_000, wallGap = 20_000, charging = true)
+        assertEquals("charged in downtime", Rest.DOCKED, docked.rest)
+        assertNull("charged in downtime", docked.snapshot(5_000).accidentUntil)
+        assertEquals("charged in downtime", Mode.WATCHING, docked.seenAt(65_000))
     }
 
     @Test fun restore_keeps_wait_and_still_base() {
         val waiting = reboot(newLogic(), savedAt = 10_000, now = 5_000, wallGap = 20_000)
         assertEquals(Rest.WAIT, waiting.rest)
+
+        // carried while charging stays carried across the restart
+        val charging = newLogic(charging = true)
+        assertEquals(Rest.DOCKED, charging.rest)
+        charging.walk(10_000, 10)
+        assertEquals(Rest.NONE, charging.rest)
+        val kept = reboot(charging, savedAt = 12_000, now = 5_000, wallGap = 20_000, charging = true)
+        assertEquals("carried while charging", Rest.NONE, kept.rest)
 
         val old = newLogic(carried = true)
         old.onMoved(50_000)
@@ -97,16 +100,6 @@ class LoneWorkerResumeTest : RestartKit() {
         assertEquals(Mode.WATCHING, l.modeAt(due - 1))
         assertEquals(Mode.CHECKING, l.seenAt(due))
         assertEquals("still", l.trigger)
-    }
-
-    @Test fun power_change_during_downtime_applies_as_real_change() {
-        val old = newLogic(carried = true)
-        old.onAccident(1_000)
-        assertNotNull(old.snapshot(10_000).accidentUntil)
-        val l = reboot(old, savedAt = 10_000, now = 5_000, wallGap = 20_000, charging = true)
-        assertEquals(Rest.DOCKED, l.rest)
-        assertNull(l.snapshot(5_000).accidentUntil)
-        assertEquals(Mode.WATCHING, l.seenAt(65_000))
     }
 
     @Test fun format_sos_is_not_saved_as_check() {
@@ -126,18 +119,17 @@ class LoneWorkerResumeTest : RestartKit() {
         l.onZone(true, 8_000)
         for (t in 8_000L..205_000L step 1_000L) assertEquals(Mode.WATCHING, l.seenAt(t))
         assertTrue(l.zoneSettled)
-    }
 
-    @Test fun zone_restored_without_report_leaves_after_hold() {
-        val l = reboot(settledInZone(), savedAt = 100_000, now = 5_000, wallGap = 20_000)
-        for (t in 5_000L..14_000L step 1_000L) assertEquals(Mode.WATCHING, l.seenAt(t))
-        assertTrue(l.zoneSettled)
+        // Without a zone report the zone is left after the hold
+        val silent = reboot(settledInZone(), savedAt = 100_000, now = 5_000, wallGap = 20_000)
+        for (t in 5_000L..14_000L step 1_000L) assertEquals("no report", Mode.WATCHING, silent.seenAt(t))
+        assertTrue("no report", silent.zoneSettled)
         // no zone report within ZONE_RESUME_HOLD_MS: left the zone at restart + 10 s, counting starts there
-        assertEquals(Mode.WATCHING, l.seenAt(15_000))
-        assertFalse(l.zoneSettled)
-        for (t in 16_000L..194_000L step 1_000L) assertEquals(Mode.WATCHING, l.seenAt(t))
-        assertEquals(Mode.CHECKING, l.seenAt(195_000))
-        assertEquals("still", l.trigger)
+        assertEquals("no report", Mode.WATCHING, silent.seenAt(15_000))
+        assertFalse("no report", silent.zoneSettled)
+        for (t in 16_000L..194_000L step 1_000L) assertEquals("no report", Mode.WATCHING, silent.seenAt(t))
+        assertEquals("no report", Mode.CHECKING, silent.seenAt(195_000))
+        assertEquals("no report", "still", silent.trigger)
     }
 
     @Test fun zone_restored_unsettled_settles_on_saved_entry_time() {
@@ -169,36 +161,29 @@ class LoneWorkerResumeTest : RestartKit() {
         assertEquals(Mode.CHECKING, l.seenAt(211_000))
         assertEquals("still", l.trigger)
         assertFalse(l.zoneSettled)
-    }
 
-    @Test fun zone_hold_expiry_keeps_still_count() {
-        val old = newLogic(carried = true)
-        old.onMoved(100_000)
-        old.onZone(true, 100_000)
-        assertEquals(Mode.WATCHING, old.seenAt(150_000))
-        assertFalse(old.zoneSettled)
-        // no zone report: left at the hold end without settling, still counted from 100 s
-        val l = reboot(old, savedAt = 150_000, now = 200_000, wallGap = 50_000, bootNow = boot)
-        assertEquals(Mode.WATCHING, l.seenAt(211_000))
-        assertFalse(l.zoneSettled)
-        assertEquals(Mode.WATCHING, l.seenAt(279_000))
-        assertEquals(Mode.CHECKING, l.seenAt(280_000))
-        assertEquals("still", l.trigger)
-    }
+        // An outside report during the zone hold leaves the zone and keeps the open check and its deadline
+        val outside = reboot(old, savedAt = 150_000, now = 200_000, wallGap = 50_000, bootNow = boot)
+        assertEquals("outside report", Mode.CHECKING, outside.mode)
+        assertEquals("outside report", "still", outside.trigger)
+        outside.onZone(false, 205_000)
+        assertEquals("outside report", Mode.CHECKING, outside.mode)
+        assertEquals("outside report", "still", outside.trigger)
+        assertFalse("outside report", outside.zoneSettled)
+        assertEquals("outside report", outside.responseMs - 5_000, outside.responseLeftMs(205_000))
 
-    @Test fun zone_hold_outside_report_keeps_open_check() {
-        val old = newLogic(carried = true)
-        old.onZone(true, 100_000)
-        assertEquals(Mode.WATCHING, old.seenAt(150_000))
-        val l = reboot(old, savedAt = 150_000, now = 200_000, wallGap = 50_000, bootNow = boot)
-        assertEquals(Mode.CHECKING, l.mode)
-        assertEquals("still", l.trigger)
-        // an outside report during the zone hold leaves the zone and keeps the open check and its deadline
-        l.onZone(false, 205_000)
-        assertEquals(Mode.CHECKING, l.mode)
-        assertEquals("still", l.trigger)
-        assertFalse(l.zoneSettled)
-        assertEquals(l.responseMs - 5_000, l.responseLeftMs(205_000))
+        // Hold expiry with the still count started at 100 s (no zone report: left at the hold end without settling)
+        val moved = newLogic(carried = true)
+        moved.onMoved(100_000)
+        moved.onZone(true, 100_000)
+        assertEquals(Mode.WATCHING, moved.seenAt(150_000))
+        assertFalse(moved.zoneSettled)
+        val expiry = reboot(moved, savedAt = 150_000, now = 200_000, wallGap = 50_000, bootNow = boot)
+        assertEquals("hold expiry", Mode.WATCHING, expiry.seenAt(211_000))
+        assertFalse("hold expiry", expiry.zoneSettled)
+        assertEquals("hold expiry", Mode.WATCHING, expiry.seenAt(279_000))
+        assertEquals("hold expiry", Mode.CHECKING, expiry.seenAt(280_000))
+        assertEquals("hold expiry", "still", expiry.trigger)
     }
 
     // -- clock changes --
@@ -277,35 +262,13 @@ class LoneWorkerResumeTest : RestartKit() {
             assertEquals(m, Mode.CHECKING, l.seenAt(39_000))
             assertEquals(m, "fall", l.trigger)
         }
-    }
-
-    @Test fun power_change_at_restart_applies_after_debounce() {
-        val l = restart(accidentCheck(), savedAt = 41_000, now = 5_000, wallGap = 20_000, charging = true)
-        // the restored accident check is not shown before the plug is confirmed, even with sensor data, then the plug drops it
-        assertEquals(Mode.WATCHING, l.seenAt(5_000))
-        assertEquals(Mode.WATCHING, l.seenAt(5_000 + PowerDebounce.DEBOUNCE_MS - 1))
-        assertEquals(Mode.WATCHING, l.seenAt(5_000 + PowerDebounce.CONFIRM_MS))
-        assertEquals(Rest.DOCKED, l.rest)
-        assertNull(l.snapshot(5_000 + PowerDebounce.CONFIRM_MS).accidentHold)
-    }
-
-    @Test fun power_restart_on_dock_after_dead_battery_opens_no_check() {
-        // still since 0, restarted 10 min later on the dock: the still deadline has long passed
-        val l = reboot(newLogic(carried = true), savedAt = 100_000, now = 5_000, wallGap = 600_000, charging = true)
-        assertEquals(listOf(Mode.WATCHING, Mode.WATCHING), beforePower)
-        assertEquals(Mode.WATCHING, l.mode)
-        assertEquals(Rest.DOCKED, l.rest)
-        assertEquals("", l.snapshot(5_000 + PowerDebounce.CONFIRM_MS).check)
-    }
-
-    @Test fun power_restart_after_power_bank_unplug_waits_without_check() {
-        val old = carriedWhileCharging()
-        assertEquals(Rest.NONE, old.rest)
-        val l = reboot(old, savedAt = 12_000, now = 5_000, wallGap = 600_000)
-        assertEquals(listOf(Mode.WATCHING, Mode.WATCHING), beforePower)
-        assertEquals(Mode.WATCHING, l.mode)
-        assertEquals(Rest.WAIT, l.rest)
-        assertEquals(Mode.WATCHING, l.seenAt(300_000))
+        // No bounce: the restored accident check is not shown before the plug is confirmed, even with sensor data, then the plug drops it
+        val plain = restart(accidentCheck(), savedAt = 41_000, now = 5_000, wallGap = 20_000, charging = true)
+        assertEquals("no bounce", Mode.WATCHING, plain.seenAt(5_000))
+        assertEquals("no bounce", Mode.WATCHING, plain.seenAt(5_000 + PowerDebounce.DEBOUNCE_MS - 1))
+        assertEquals("no bounce", Mode.WATCHING, plain.seenAt(5_000 + PowerDebounce.CONFIRM_MS))
+        assertEquals("no bounce", Rest.DOCKED, plain.rest)
+        assertNull("no bounce", plain.snapshot(5_000 + PowerDebounce.CONFIRM_MS).accidentHold)
     }
 
     @Test fun power_restored_check_waits_for_power_then_opens_with_full_response() {
@@ -340,25 +303,6 @@ class LoneWorkerResumeTest : RestartKit() {
             val bad = f.toMutableList().also { it[i] = "x" + it[i] }.joinToString("|")
             assertNull(bad, LoneWorkerResume.decode(bad, 100_000, wall0, boot))
         }
-    }
-
-    @Test fun format_clear_on_user_stop_removes_resume_and_running_keys() {
-        val removed = ArrayList<String>()
-        val editor = object : SharedPreferences.Editor {
-            override fun putString(key: String?, value: String?) = this
-            override fun putStringSet(key: String?, values: MutableSet<String>?) = this
-            override fun putInt(key: String?, value: Int) = this
-            override fun putLong(key: String?, value: Long) = this
-            override fun putFloat(key: String?, value: Float) = this
-            override fun putBoolean(key: String?, value: Boolean) = this
-            override fun remove(key: String?): SharedPreferences.Editor { removed.add(key!!); return this }
-            override fun clear() = this
-            override fun commit() = true
-            override fun apply() {}
-        }
-        val back = LoneWorkerResume.clearOnUserStop(editor)
-        assertEquals(editor, back)
-        assertEquals(setOf("running_mode", "running_since", "running_category", LoneWorkerResume.KEY), removed.toSet())
     }
 
     @Test fun format_save_skips_still_only_change_unless_counting_outside_settled_zone() {
@@ -403,27 +347,15 @@ class LoneWorkerResumeTest : RestartKit() {
         assertEquals(Mode.WATCHING, l.seenAt(154_999))
         assertEquals(Mode.CHECKING, l.seenAt(155_000))
         assertEquals("still", l.trigger)
-    }
 
-    /** A v2 state (no mounted field) restored into a mounted device counts from the restart. */
-    @Test fun mount_old_format_state_counts_from_restart() {
-        val s = LoneWorkerResume.decode("v2|7|110000|1000000000||||1|0|0|0|", 5_000, wall0 + 20_000, 8)
-        assertNotNull(s)
-        val l = mountedRestart(s!!)
-        assertEquals(Mode.WATCHING, l.seenAt(184_999))
-        assertEquals(Mode.CHECKING, l.seenAt(185_000))
-        assertEquals("still", l.trigger)
-    }
-
-    /** Source check: the monitor sets the equipment mode before startFrom, the order mountedRestart models. */
-    @Test fun source_monitor_sets_equipment_before_restoring_state() {
+        // Source check: the monitor sets the equipment mode before startFrom, the order mountedRestart models
         val start = sourceBlock(serviceSource("LoneWorkerMonitor.kt"), "fun start(bleId: String")
         val eq = start.indexOf("logic.setEquipment(")
         assertTrue(eq >= 0)
         assertTrue(eq < start.indexOf("logic.startFrom("))
     }
 
-    /** v2 strings still restore the open window and the accident suspicion. */
+    /** v2 strings still restore the open window and the accident suspicion; a v2 state (no mounted field) in a mounted device counts from the restart. */
     @Test fun format_v2_state_still_restores_checks_and_suspicion() {
         val s = LoneWorkerResume.decode("v2|7|40000|1000000000|1000|301000|fall|0|1|1000|0|", 5_000, wall0 + 20_000, 8)
         assertNotNull(s)
@@ -434,6 +366,14 @@ class LoneWorkerResumeTest : RestartKit() {
         assertEquals(Mode.CHECKING, l.modeAt(5_000))
         assertEquals("fall", l.trigger)
         assertEquals(60_000L, l.responseLeftMs(5_000))
+
+        // The same v2 string restored into a mounted device
+        val mountedV2 = LoneWorkerResume.decode("v2|7|110000|1000000000||||1|0|0|0|", 5_000, wall0 + 20_000, 8)
+        assertNotNull("mounted device", mountedV2)
+        val m = mountedRestart(mountedV2!!)
+        assertEquals("mounted device", Mode.WATCHING, m.seenAt(184_999))
+        assertEquals("mounted device", Mode.CHECKING, m.seenAt(185_000))
+        assertEquals("mounted device", "still", m.trigger)
     }
 
     // -- peer siren pause --
@@ -446,18 +386,12 @@ class LoneWorkerResumeTest : RestartKit() {
         val l = reboot(old, savedAt = 230_000, now = 5_000, wallGap = 0)
         for (t in 5_000L..124_000L step 1_000L) assertEquals(Mode.WATCHING, l.seenAt(t))
         assertEquals(Mode.CHECKING, l.seenAt(125_000))
-    }
 
-    /**
-     * A siren that goes on after a restart starts a new pause with a new cap. Restart base -55 s (60 s
-     * still), pause at 8 s (63 s still), cap at 188 s moves the base to 125 s, deadline 305 s.
-     */
-    @Test fun siren_after_restart_starts_a_new_pause() {
-        val old = newLogic(carried = true)
-        old.peerSiren(60_000L, 230_000L)
-        val l = reboot(old, savedAt = 230_000, now = 5_000, wallGap = 0)
-        l.peerSiren(8_000L, 304_000L)
-        assertEquals(Mode.CHECKING, l.seenAt(305_000))
-        assertEquals("still", l.trigger)
+        // A siren that goes on after a restart starts a new pause with a new cap. Restart base -55 s (60 s
+        // still), pause at 8 s (63 s still), cap at 188 s moves the base to 125 s, deadline 305 s.
+        val again = reboot(old, savedAt = 230_000, now = 5_000, wallGap = 0)
+        again.peerSiren(8_000L, 304_000L)
+        assertEquals("siren after restart", Mode.CHECKING, again.seenAt(305_000))
+        assertEquals("siren after restart", "still", again.trigger)
     }
 }

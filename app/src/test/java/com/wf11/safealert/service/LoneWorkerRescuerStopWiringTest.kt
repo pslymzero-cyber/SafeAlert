@@ -5,6 +5,7 @@ import com.wf11.safealert.support.BleServiceTestHarness
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -24,15 +25,21 @@ class LoneWorkerRescuerStopWiringTest {
     @Test fun rescuer_release_clear_makes_the_next_save_write_again() {
         val app = RuntimeEnvironment.getApplication()
         val sp = app.getSharedPreferences("safealert_prefs", Context.MODE_PRIVATE)
-        sp.edit().putString("running_mode", "WALKER").putLong("running_since", 1L).putInt("running_category", 0).commit()
+        sp.edit().putString("running_mode", "WALKER").putLong("running_since", 1L).putInt("running_category", 0)
+            .putString("other_setting", "kept").commit()
         val resume = LoneWorkerResume(app)
         val s = LoneWorkerResume.State(null, null, "", false, false, 0L, false, null)
         resume.save(s, 1_000)
         assertNotNull(sp.getString(LoneWorkerResume.KEY, null))
         resume.clear()
         keys.forEach { assertFalse(it, sp.contains(it)) }
+        // exactly those four keys go: any other setting survives a user stop
+        assertEquals(setOf("other_setting"), sp.all.keys)
         resume.save(s, 2_000)
         assertNotNull(sp.getString(LoneWorkerResume.KEY, null))
+        // clearOnUserStop hands back the same editor it was given (the caller commits)
+        val editor = sp.edit()
+        assertSame(editor, LoneWorkerResume.clearOnUserStop(editor))
     }
 
     @Test fun stop_request_during_an_sos_is_refused_and_saves_the_running_state_again() {

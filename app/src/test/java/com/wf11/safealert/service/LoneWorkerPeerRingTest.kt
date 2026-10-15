@@ -23,12 +23,17 @@ class LoneWorkerPeerRingTest {
     @Test fun ble_sos_siren_stops_30s_after_first_hearing_and_the_vibration_goes_on() {
         val l = meLogic()
         l.onPeerBle("P", true, 1_000, 1)
+        // The siren end is scheduled and changes the signature
+        assertEquals(31_000L, l.nextCueAt(5_000))
+        val before = l.peerSig()
         l.tick(30_999)
         assertEquals(Pattern.SIREN, siren(l))
         assertEquals(1, l.soundingPeers().size)
         assertTrue(l.alarmVibrates)
         l.tick(31_000)
         assertNull(siren(l))
+        assertNotEquals(before, l.peerSig())
+        assertNull(l.nextCueAt(31_000))
         assertTrue(l.soundingPeers().isEmpty())
         assertTrue(l.alarmVibrates)
         assertEquals(1, l.audiblePeers().size)
@@ -40,29 +45,21 @@ class LoneWorkerPeerRingTest {
         l.tick(301_000)
         assertNull(siren(l))
         assertTrue(l.alarmVibrates)
-    }
-
-    @Test fun server_sos_siren_stops_30s_after_it_arrived() {
-        val l = meLogic()
-        l.srv("K1", "P", 1, true, created = 5L, now = 1_000)
-        l.tick(30_999)
-        assertEquals(Pattern.SIREN, siren(l))
-        l.tick(31_000)
-        assertNull(siren(l))
-        assertTrue(l.alarmVibrates)
-        assertEquals(1, l.audiblePeers().size)
-    }
-
-    @Test fun acknowledge_stops_the_vibration_after_the_siren_went_off() {
-        val l = meLogic()
-        l.onPeerBle("P", true, 1_000, 1)
-        l.tick(31_000)
-        assertNull(siren(l))
-        assertTrue(l.alarmVibrates)
-        l.ackAll(40_000)
+        // Acknowledging stops the vibration after the siren went off
+        l.ackAll(302_000)
         assertFalse(l.alarmVibrates)
         assertTrue(l.audiblePeers().isEmpty())
         assertTrue(l.peer("P").silenced)
+
+        // A server SOS rings the same 30 s from when it arrived
+        val s = meLogic()
+        s.srv("K1", "P", 1, true, created = 5L, now = 1_000)
+        s.tick(30_999)
+        assertEquals("server", Pattern.SIREN, siren(s))
+        s.tick(31_000)
+        assertNull("server", siren(s))
+        assertTrue("server", s.alarmVibrates)
+        assertEquals("server", 1, s.audiblePeers().size)
     }
 
     @Test fun server_takeover_keeps_the_ring_time_of_its_bluetooth_entry() {
@@ -92,11 +89,14 @@ class LoneWorkerPeerRingTest {
         val l = meLogic()
         l.onPeerBle("P", true, 1_000, 1)
         l.ackAll(1_100)
+        l.onPeerBle("P", true, 20_000, 1)
+        assertEquals(0, l.audiblePeers().size)
         l.onPeerBle("P", true, 50_000, 1)
         assertFalse(l.peer("P").silenced)
         assertEquals(1, l.audiblePeers().size)
         assertTrue(l.alarmVibrates)
         assertNull(siren(l))
+        assertEquals(1_000L, l.peer("P").firstSeenMs)
     }
 
     @Test fun acknowledged_row_heard_inside_its_ring_time_sounds_only_for_the_rest() {
@@ -126,33 +126,6 @@ class LoneWorkerPeerRingTest {
         l.tick(70_000)
         assertNull(siren(l))
         assertTrue(l.alarmVibrates)
-    }
-
-    @Test fun out_of_scope_record_starts_its_ring_when_heard_on_air() {
-        val l = meLogic()
-        l.srv("K1", "P", 1, true, created = 5L, now = 1_000, inScope = false)
-        for (t in listOf(1_000L, 31_000L, 100_000L - 1)) {
-            l.tick(t)
-            assertTrue(l.audiblePeers().isEmpty())
-            assertNull(siren(l))
-            assertFalse(l.alarmVibrates)
-        }
-        l.onPeerBle("P", true, 100_000, 1)
-        assertEquals(Pattern.SIREN, siren(l))
-        assertTrue(l.alarmVibrates)
-        l.tick(130_000)
-        assertNull(siren(l))
-        assertTrue(l.alarmVibrates)
-    }
-
-    @Test fun siren_end_is_scheduled_and_changes_the_signature() {
-        val l = meLogic()
-        l.onPeerBle("P", true, 1_000, 1)
-        assertEquals(31_000L, l.nextCueAt(5_000))
-        val before = l.peerSig()
-        l.tick(31_000)
-        assertNotEquals(before, l.peerSig())
-        assertNull(l.nextCueAt(31_000))
     }
 
     @Test fun monitor_takes_the_siren_from_sounding_peers_and_keeps_the_vibration() {
@@ -186,18 +159,6 @@ class LoneWorkerPeerRingTest {
         l.tick(t + 30_000)
         assertNull(siren(l))
         assertTrue(l.alarmVibrates)
-    }
-
-    /** A phone that receives a peer SOS: turning the feature off closes its own check window, and the held-back siren starts then. */
-    @Test fun feature_off_closing_my_check_window_starts_the_held_back_peer_siren() {
-        val l = newLogic(carried = true)
-        assertEquals(Mode.CHECKING, l.seenAt(180_000))
-        l.onPeerBle("P", true, 181_000, 1)
-        assertNull(l.peer("P").ringStartMs)
-        l.setEnabled(false, 182_000)
-        assertEquals(Mode.WATCHING, l.mode)
-        assertEquals(182_000L, l.peer("P").ringStartMs)
-        assertEquals(Pattern.SIREN, siren(l))
     }
 
     /** Once started the ring time runs in any mode: a check window opened meanwhile does not stop the clock. */

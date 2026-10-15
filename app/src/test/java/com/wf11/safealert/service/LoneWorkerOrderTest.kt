@@ -47,7 +47,11 @@ class LoneWorkerOrderTest : RestartKit() {
         }
     }
 
-    /** A change at the restart is applied first even when the saved still deadline has passed. */
+    /**
+     * A change at the restart is applied first even when the saved still deadline has passed: a phone restarted on the
+     * dock after a dead battery (plugged) or after a power bank unplug (unplugged) opens no check and, unplugged, waits
+     * for the first distinct motion. Each row restarts once without ticks and once through the monitor's ticks (reboot).
+     */
     @Test fun restart_change_is_not_deferred_by_an_old_deadline() {
         for (plugged in listOf(true, false)) {
             val m = "plugged=$plugged"
@@ -57,6 +61,13 @@ class LoneWorkerOrderTest : RestartKit() {
             val l = restart(old, savedAt = 100_000, now = 5_000, wallGap = 300_000, charging = plugged)
             assertEquals(m, Mode.WATCHING, l.seenAt(5_000 + RestartHold.POWER_HOLD_MS + 1_000))
             assertEquals(m, if (plugged) Rest.DOCKED else Rest.WAIT, l.rest)
+
+            val r = reboot(old, savedAt = 100_000, now = 5_000, wallGap = 600_000, charging = plugged)
+            assertEquals("$m reboot", listOf(Mode.WATCHING, Mode.WATCHING), beforePower)
+            assertEquals("$m reboot", Mode.WATCHING, r.mode)
+            assertEquals("$m reboot", if (plugged) Rest.DOCKED else Rest.WAIT, r.rest)
+            assertEquals("$m reboot", "", r.snapshot(5_000 + PowerDebounce.CONFIRM_MS).check)
+            assertEquals("$m reboot", Mode.WATCHING, r.seenAt(300_000))
         }
     }
 

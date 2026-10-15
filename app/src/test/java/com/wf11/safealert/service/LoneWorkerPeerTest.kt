@@ -58,15 +58,18 @@ class LoneWorkerPeerTest {
         assertEquals("서버 시각을 모르면 이 폰 시계로 끝내지 않는다", 1, l.audiblePeers().size)
         l.tick(now + SosLedger.AUTO_RELEASE_MS)
         assertTrue(l.audiblePeers().isEmpty())
-    }
 
-    // A record marked released by the one-hour limit (reason auto) also shows as ended without an answer, not as cleared.
-    @Test fun server_auto_release_shows_as_ended_without_an_answer() {
-        val l = meLogic()
-        l.srv("K1", "P", 1, true, created = 5L, now = 1_000)
-        l.srv("K1", "P", 1, false, created = 5L, now = 2_000, auto = true)
-        assertFalse(l.peer("P").active)
-        assertTrue(l.peer("P").autoEnded)
+        // A quiet (out-of-scope) entry runs the same one-hour release without ever showing: a replayed record ...
+        val q = meLogic()
+        q.srv("K2", "Q", 1, true, created = 5L, now = now, serverNow = 5L + SosLedger.AUTO_RELEASE_MS, inScope = false)
+        assertEquals("out of scope, replayed", listOf("K2"), q.takeAutoReleasedPeers())
+        assertTrue("out of scope, replayed", q.peers.isEmpty())
+        // ... and a live one that ran out here
+        val o = meLogic()
+        o.srv("K1", "P", 1, true, created = 5L, now = 1_000, serverNow = 5L, inScope = false)
+        o.tick(1_000 + SosLedger.AUTO_RELEASE_MS)
+        assertEquals("out of scope, live", listOf("K1"), o.takeAutoReleasedPeers())
+        assertTrue("out of scope, live", o.peers.isEmpty())
     }
 
     // An old sender (episode 0) cannot tell one SOS from its next, so an hour-old record never blocks its adverts on air:
@@ -124,6 +127,13 @@ class LoneWorkerPeerTest {
         m.onPeerBle("P", false, 13_000)
         m.tick(13_000)
         assertTrue(m.peer("P").autoEnded)
+
+        // A server-backed entry released by the one-hour limit (reason auto) shows as ended without an answer, not as cleared
+        val n = meLogic()
+        n.srv("K1", "P", 1, true, created = 5L, now = 1_000)
+        n.srv("K1", "P", 1, false, created = 5L, now = 2_000, auto = true)
+        assertFalse("server-backed", n.peer("P").active)
+        assertTrue("server-backed", n.peer("P").autoEnded)
     }
 
     // -- one phone per entry: server records, BLE edges, episodes --
@@ -149,6 +159,13 @@ class LoneWorkerPeerTest {
         l.srv("k2", "P", 0, false, 4_000, 4_000, name = "Hong", beacon = "B1")
         assertFalse(l.peers.single { it.key == "k2" }.active)
         assertTrue(l.peers.single { it.key == "k3" }.active)
+
+        // A resolved entry is pruned RESOLVED_KEEP_MS after its resolve (k1 resolved at 2,000), the active one stays
+        l.tick(2_000 + LoneWorkerPeers.RESOLVED_KEEP_MS - 1)
+        assertTrue("k1 before keep time", l.peers.any { it.key == "k1" })
+        l.tick(2_000 + LoneWorkerPeers.RESOLVED_KEEP_MS)
+        assertTrue("k1 at keep time", l.peers.none { it.key == "k1" })
+        assertTrue("k3 stays", l.peers.single { it.key == "k3" }.active)
     }
 
     @Test fun ble_only_peer_is_resolved_after_10s_of_false() {
@@ -170,6 +187,12 @@ class LoneWorkerPeerTest {
         m.onPeerBle("P", false, 2_000)
         m.tick(12_000)
         assertFalse(m.peer("P").active)
+
+        // A phone that is only silent (no false edges) stays active: losing the device resolves nothing
+        val lost = newLogic(carried = true)
+        lost.onPeerBle("P", true, 1_000)
+        lost.tick(500_000)
+        assertTrue("device lost", lost.peer("P").active)
     }
 
     /**
@@ -187,13 +210,6 @@ class LoneWorkerPeerTest {
         l.onPeerBle("P", false, 2_000 + LoneWorkerPeers.PEER_BLE_FALL_MS)
         assertFalse(l.peers.single { it.key == null }.active)
         assertTrue(l.peers.single { it.key == "k1" }.active)
-    }
-
-    @Test fun device_lost_leaves_peer_active() {
-        val l = newLogic(carried = true)
-        l.onPeerBle("P", true, 1_000)
-        l.tick(500_000)
-        assertTrue(l.peer("P").active)
     }
 
     @Test fun stale_ble_edge_right_after_resolve_is_ignored_then_new_episode_revives() {
@@ -220,18 +236,20 @@ class LoneWorkerPeerTest {
         val a = m.audiblePeers().single()
         assertEquals(1, a.episode)
         assertNull(a.key)
+
+        // An [OK] right after the resolve keeps the guard: silent while the stale edge lasts, rings once it is over
+        val k = resolved()
+        k.ackAll(2_100)
+        assertEquals("ack after resolve", 1, k.peers.size)
+        assertTrue("ack after resolve", k.peer("P").silenced)
+        k.onPeerBle("P", true, 2_500, 1)
+        assertEquals("ack after resolve", 0, k.audiblePeers().size)
+        assertEquals("ack after resolve", 1, k.peers.size)
+        k.onPeerBle("P", true, 32_100, 1)
+        assertEquals("ack after resolve", 1, k.audiblePeers().size)
     }
 
-    @Test fun resolved_peers_are_pruned_after_keep_time() {
-        val l = newLogic(carried = true)
-        l.srv("k1", "P", 0, true, 1_000, 1_000, name = "Hong", beacon = "B1")
-        l.srv("k1", "P", 0, false, 2_000, 2_000, name = "Hong", beacon = "B1")
-        l.tick(2_000 + LoneWorkerPeers.RESOLVED_KEEP_MS - 1)
-        assertEquals(1, l.peers.size)
-        l.tick(2_000 + LoneWorkerPeers.RESOLVED_KEEP_MS)
-        assertTrue(l.peers.isEmpty())
-    }
-
+    /** Two server keys of one phone are two entries: the one acknowledged first stays silent, the other is active and audible, in either arrival order. */
     @Test fun new_server_key_is_a_new_audible_episode() {
         val l = newLogic(carried = true)
         l.srv("k1", "P", 0, true, 1_000, 1_000)
@@ -239,16 +257,16 @@ class LoneWorkerPeerTest {
         l.srv("k2", "P", 0, true, 2_000, 2_000)
         assertEquals(2, l.peers.size)
         assertEquals("k2", l.audiblePeers().single().key)
-    }
 
-    @Test fun older_record_does_not_touch_newer_entry() {
-        val l = newLogic(carried = true)
-        l.srv("k2", "P", 0, true, 3_000, 3_000)
-        l.ackAll(3_001)
-        l.srv("k1", "P", 0, true, 1_000, 3_500)
-        assertEquals(2, l.peers.size)
-        assertTrue(l.peers.single { it.key == "k2" }.silenced)
-        assertTrue(l.peers.single { it.key == "k1" }.active)
+        // The older record arrives after the newer one was acknowledged: it does not touch the newer entry
+        val o = newLogic(carried = true)
+        o.srv("k2", "P", 0, true, 3_000, 3_000)
+        o.ackAll(3_001)
+        o.srv("k1", "P", 0, true, 1_000, 3_500)
+        assertEquals("older record", 2, o.peers.size)
+        assertTrue("older record", o.peers.single { it.key == "k2" }.silenced)
+        assertTrue("older record", o.peers.single { it.key == "k1" }.active)
+        assertEquals("older record", "k1", o.audiblePeers().single().key)
     }
 
     @Test fun record_without_episode_never_adopts_or_ends_ble_entry() {
@@ -268,14 +286,13 @@ class LoneWorkerPeerTest {
         m.srv("k1", "P", 0, false, 1_500, 5_000)
         assertFalse(m.peers.single { it.key == "k1" }.active)
         assertTrue(m.audiblePeers().isEmpty())
-    }
 
-    @Test fun untracked_resolved_record_is_ignored_and_first_ble_edge_alarms() {
-        val l = newLogic(carried = true)
-        l.srv("k9", "P", 0, false, 1_000, 1_000, name = "Hong", beacon = "B1")
-        assertTrue(l.peers.isEmpty())
-        l.onPeerBle("P", true, 2_000)
-        assertEquals(1, l.audiblePeers().size)
+        // A resolved record nobody tracked is ignored; the first BLE edge after it alarms
+        val u = newLogic(carried = true)
+        u.srv("k9", "P", 0, false, 1_000, 1_000, name = "Hong", beacon = "B1")
+        assertTrue("untracked record", u.peers.isEmpty())
+        u.onPeerBle("P", true, 2_000)
+        assertEquals("untracked record", 1, u.audiblePeers().size)
     }
 
     @Test fun new_ble_episode_number_is_a_new_audible_episode() {
@@ -370,18 +387,17 @@ class LoneWorkerPeerTest {
         b.srv("k0", "P", 3, false, 900, 1_400)
         assertFalse(b.peer("P", 3).active)
         assertTrue(b.peer("P", 4).active)
-    }
 
-    @Test fun stale_ble_entry_does_not_swallow_new_server_episode() {
-        val l = meLogic()
-        l.onPeerBle("P", true, 1_000, 3)
-        l.ackAll(1_100)
-        l.srv("k5", "P", 5, true, 5_000, 5_000)
-        val a = l.audiblePeers().single()
-        assertEquals("k5", a.key)
-        assertEquals(5, a.episode)
-        assertTrue(l.peer("P", 3).active)
-        assertTrue(l.peer("P", 3).silenced)
+        // A stale acknowledged BLE entry does not swallow a newer server episode of the same phone
+        val c = meLogic()
+        c.onPeerBle("P", true, 1_000, 3)
+        c.ackAll(1_100)
+        c.srv("k5", "P", 5, true, 5_000, 5_000)
+        val stale = c.audiblePeers().single()
+        assertEquals("newer server episode", "k5", stale.key)
+        assertEquals("newer server episode", 5, stale.episode)
+        assertTrue("newer server episode", c.peer("P", 3).active)
+        assertTrue("newer server episode", c.peer("P", 3).silenced)
     }
 
     @Test fun out_of_range_later_resolve_ends_ble_entry() {
@@ -399,15 +415,14 @@ class LoneWorkerPeerTest {
         assertTrue(m.peer("P", 3).active)
         m.srv("k1", "P", 3, false, 900, 40_000, resolvedAt = 0L, serverNow = 1_000_000)
         assertTrue(m.peer("P", 3).active)
-    }
 
-    @Test fun unknown_offset_uses_slack() {
-        val l = meLogic()
-        l.onPeerBle("P", true, 1_000, 3)
-        l.srv("k1", "P", 3, false, 900, 40_000, resolvedAt = 965_000, wall = 1_000_000)
-        assertTrue(l.peer("P", 3).active)
-        l.srv("k1", "P", 3, false, 900, 40_000, resolvedAt = 975_000, wall = 1_000_000)
-        assertFalse(l.peer("P", 3).active)
+        // Unknown server clock: the wall clock with slack decides (965,000 stays, 975,000 ends)
+        val u = meLogic()
+        u.onPeerBle("P", true, 1_000, 3)
+        u.srv("k1", "P", 3, false, 900, 40_000, resolvedAt = 965_000, wall = 1_000_000)
+        assertTrue("unknown offset 965,000", u.peer("P", 3).active)
+        u.srv("k1", "P", 3, false, 900, 40_000, resolvedAt = 975_000, wall = 1_000_000)
+        assertFalse("unknown offset 975,000", u.peer("P", 3).active)
     }
 
     @Test fun server_entry_first_ble_hearing_and_30s_gap_resound() {
@@ -449,6 +464,11 @@ class LoneWorkerPeerTest {
         assertEquals(2, m.peers.size)
         assertEquals("A", m.peers.single { it.key == "kA" }.name)
         assertEquals("B", m.peers.single { it.key == "kB" }.name)
+        // [OK] on one item id silences only that item, not its same-episode sibling
+        assertEquals(2, m.audiblePeers().size)
+        m.ack(1_500, "k:kA" to "Q#1")
+        assertEquals("kB", m.audiblePeers().single().key)
+        assertTrue(m.peers.single { it.key == "kA" }.silenced)
         m.srv("kA", "Q", 1, false, 1_000, 2_000)
         assertFalse(m.peers.single { it.key == "kA" }.active)
         assertTrue(m.peers.single { it.key == "kB" }.active)
@@ -460,6 +480,10 @@ class LoneWorkerPeerTest {
         l.srv("k1", "P", 3, true, 2_000, 2_000)
         assertTrue(l.peer("P").active)
         assertTrue(l.peer("P").silenced)
+        // The first BLE hearing of that phone keeps it silenced
+        l.onPeerBle("P", true, 2_500, 3)
+        assertTrue("first BLE hearing", l.peer("P").silenced)
+        assertTrue("first BLE hearing", l.audiblePeers().isEmpty())
         l.srv("k2", "Q", 1, true, 3_000, 3_000)
         assertEquals("Q", l.audiblePeers().single().bleId)
         l.onPeerBle("R", true, 4_000, 2)
@@ -476,20 +500,6 @@ class LoneWorkerPeerTest {
         m.ackAll(3_000)
         m.onPeerBle("Q", true, 4_000, 1)
         assertEquals(1, m.audiblePeers().size)
-    }
-
-    @Test fun confirm_right_after_resolve_keeps_the_guard() {
-        val l = meLogic()
-        l.srv("k1", "P", 1, true, 1_000, 1_000)
-        l.srv("k1", "P", 1, false, 1_000, 2_000)
-        l.ackAll(2_100)
-        assertEquals(1, l.peers.size)
-        assertTrue(l.peer("P").silenced)
-        l.onPeerBle("P", true, 2_500, 1)
-        assertEquals(0, l.audiblePeers().size)
-        assertEquals(1, l.peers.size)
-        l.onPeerBle("P", true, 32_100, 1)
-        assertEquals(1, l.audiblePeers().size)
     }
 
     // -- server clock --
@@ -524,86 +534,54 @@ class LoneWorkerPeerTest {
         l.tick(35_000)
         assertFalse(l.peer("P", 3).active)
         assertEquals(0, l.audiblePeers().size)
-    }
 
-    @Test fun replayed_old_resolve_is_never_retried() {
-        val l = meLogic()
-        l.onPeerBle("P", true, 1_000, 3)
-        l.onPeerBle("P", true, 20_000, 3)
-        l.srv("k1", "P", 3, false, 900, 25_000, resolvedAt = 900_000, serverNow = 1_000_000)
-        l.tick(40_000)
-        l.tick(60_000)
-        assertTrue(l.peer("P", 3).active)
-    }
+        // A replayed old resolve (resolvedAt 900,000) is never retried
+        val old = meLogic()
+        old.onPeerBle("P", true, 1_000, 3)
+        old.onPeerBle("P", true, 20_000, 3)
+        old.srv("k1", "P", 3, false, 900, 25_000, resolvedAt = 900_000, serverNow = 1_000_000)
+        old.tick(40_000)
+        old.tick(60_000)
+        assertTrue("replayed old resolve", old.peer("P", 3).active)
 
-    @Test fun pending_resolve_dropped_when_item_ends_otherwise() {
-        val l = meLogic()
-        l.onPeerBle("P", true, 1_000, 3)
-        l.onPeerBle("P", true, 20_000, 3)
+        // A pending resolve is dropped when the item ends otherwise
+        val p = meLogic()
+        p.onPeerBle("P", true, 1_000, 3)
+        p.onPeerBle("P", true, 20_000, 3)
         // resolve time lands ahead of now (clock step), refused while the ad is live
-        l.srv("k1", "P", 3, false, 900, 25_000, resolvedAt = 1_100_000, serverNow = 1_000_000)
-        assertTrue(l.peer("P", 3).active)
-        l.onPeerBle("P", false, 26_000)
-        l.onPeerBle("P", false, 36_000)
-        assertFalse(l.peer("P", 3).active)
-        l.tick(40_000)
-        l.onPeerBle("P", true, 70_000, 3)
-        assertTrue(l.peer("P", 3).active)
-        l.tick(90_000)
-        assertTrue(l.peer("P", 3).active)
+        p.srv("k1", "P", 3, false, 900, 25_000, resolvedAt = 1_100_000, serverNow = 1_000_000)
+        assertTrue("pending resolve", p.peer("P", 3).active)
+        p.onPeerBle("P", false, 26_000)
+        p.onPeerBle("P", false, 36_000)
+        assertFalse("pending resolve", p.peer("P", 3).active)
+        p.tick(40_000)
+        p.onPeerBle("P", true, 70_000, 3)
+        assertTrue("pending resolve", p.peer("P", 3).active)
+        p.tick(90_000)
+        assertTrue("pending resolve", p.peer("P", 3).active)
     }
 
     // -- confirm by item id --
 
-    @Test fun ack_silences_only_the_item_id_not_same_episode_sibling() {
-        val l = meLogic()
-        l.srv("K1", "X", 1, true, 1_000, 1_000)
-        l.srv("K2", "X", 1, true, 1_100, 1_100)
-        assertEquals(2, l.audiblePeers().size)
-        l.ack(1_200, "k:K1" to "X#1")
-        assertEquals("K2", l.audiblePeers().single().key)
-        assertTrue(l.peers.single { it.key == "K1" }.silenced)
-    }
-
+    /** An [OK] pressed before the BLE entry exists (b: key) or for server key K1 only (k: key) survives the server record that absorbs the entry. */
     @Test fun ack_before_ble_entry_exists_survives_server_absorption() {
-        val l = meLogic()
-        l.ack(1_000, "b:X#1" to "X#1")
-        l.onPeerBle("X", true, 2_000, 1)
-        assertTrue(l.peer("X").silenced)
-        l.srv("K1", "X", 1, true, 2_500, 3_000)
-        assertEquals("K1", l.peer("X").key)
-        assertTrue(l.peer("X").silenced)
-        assertEquals(0, l.audiblePeers().size)
-    }
-
-    @Test fun ack_before_server_entry_exists_survives_first_ble_hearing() {
-        val l = meLogic()
-        l.ack(1_000, "k:K1" to "X#1")
-        l.srv("K1", "X", 1, true, 2_000, 2_000)
-        assertTrue(l.peer("X").silenced)
-        l.onPeerBle("X", true, 3_000, 1)
-        assertTrue(l.peer("X").silenced)
-        assertEquals(0, l.audiblePeers().size)
-    }
-
-    @Test fun ack_before_entry_exists_for_k1_does_not_silence_absorbing_k2() {
-        val l = meLogic()
-        l.ack(1_000, "k:K1" to "X#1")
-        l.onPeerBle("X", true, 2_000, 1)
-        assertTrue(l.peer("X").silenced)
-        l.srv("K2", "X", 1, true, 2_500, 3_000)
-        assertEquals("K2", l.audiblePeers().single().key)
-    }
-
-    @Test fun gap_30s_after_ack_rings_again() {
-        val l = meLogic()
-        l.onPeerBle("X", true, 1_000, 1)
-        l.ack(1_100, "b:X#1" to "X#1")
-        l.onPeerBle("X", true, 20_000, 1)
-        assertEquals(0, l.audiblePeers().size)
-        l.onPeerBle("X", true, 50_000, 1)
-        assertEquals(1, l.audiblePeers().size)
-        assertEquals(1_000L, l.peer("X").firstSeenMs)
+        class Row(val name: String, val ackKey: String, val record: String, val stillSilenced: Boolean)
+        for (r in listOf(
+            Row("b: ack, K1 absorbs", "b:X#1", "K1", true),
+            Row("k:K1 ack, K2 absorbs", "k:K1", "K2", false))) {
+            val l = meLogic()
+            l.ack(1_000, r.ackKey to "X#1")
+            l.onPeerBle("X", true, 2_000, 1)
+            assertTrue(r.name, l.peer("X").silenced)
+            l.srv(r.record, "X", 1, true, 2_500, 3_000)
+            if (r.stillSilenced) {
+                assertEquals(r.name, r.record, l.peer("X").key)
+                assertTrue(r.name, l.peer("X").silenced)
+                assertEquals(r.name, 0, l.audiblePeers().size)
+            } else {
+                assertEquals(r.name, r.record, l.audiblePeers().single().key)
+            }
+        }
     }
 
     /** Sound priority: own SOS siren, then the check tone, then a peer siren; the check has no vibration. */
@@ -635,6 +613,16 @@ class LoneWorkerPeerTest {
         l.tick(t + LoneWorkerPeers.PEER_RING_MS)
         assertNull(Pattern.of(l.mode, l.soundingPeers().isNotEmpty()))
         assertTrue(l.alarmVibrates)
+
+        // Turning the feature off closes the own check window too, and the held-back siren starts then
+        val f = newLogic(carried = true)
+        assertEquals(Mode.CHECKING, f.seenAt(180_000))
+        f.onPeerBle("P", true, 181_000, 1)
+        assertNull("feature off", f.peer("P").ringStartMs)
+        f.setEnabled(false, 182_000)
+        assertEquals("feature off", Mode.WATCHING, f.mode)
+        assertEquals("feature off", 182_000L, f.peer("P").ringStartMs)
+        assertEquals("feature off", Pattern.SIREN, Pattern.of(f.mode, f.soundingPeers().isNotEmpty()))
     }
 
     // A server SOS outside this phone's floor/process scope stays hidden and silent until it is heard over Bluetooth; then
@@ -644,12 +632,25 @@ class LoneWorkerPeerTest {
         l.srv("K1", "P", 1, true, created = 5L, now = 1_000, inScope = false, floor = "2F", proc = "OB")
         assertTrue("범위 밖 기록은 목록에 없다", l.peers.isEmpty())
         assertTrue("범위 밖 기록은 울리지 않는다", l.audiblePeers().isEmpty())
-        l.onPeerBle("P", true, 2_000, 1)
+        // No siren, no vibration while it is not heard on air
+        for (t in listOf(1_000L, 31_000L, 100_000L - 1)) {
+            l.tick(t)
+            assertTrue(l.audiblePeers().isEmpty())
+            assertNull(Pattern.of(l.mode, l.soundingPeers().isNotEmpty()))
+            assertFalse(l.alarmVibrates)
+        }
+        l.onPeerBle("P", true, 100_000, 1)
         assertEquals(1, l.audiblePeers().size)
         val p = l.peer("P")
         assertEquals("K1", p.key)
         assertEquals("n", p.name)
-        assertTrue("행에 층·공정이 보인다", p.line(2_000).contains("2F-OB"))
+        assertTrue("행에 층·공정이 보인다", p.line(100_000).contains("2F-OB"))
+        // Its ring starts when it is heard: siren now, vibration only after the 30 s
+        assertEquals(Pattern.SIREN, Pattern.of(l.mode, l.soundingPeers().isNotEmpty()))
+        assertTrue(l.alarmVibrates)
+        l.tick(130_000)
+        assertNull(Pattern.of(l.mode, l.soundingPeers().isNotEmpty()))
+        assertTrue(l.alarmVibrates)
     }
 
     // The same merge when the advert came first: the out-of-scope record only names the entry that already rings.
@@ -678,22 +679,11 @@ class LoneWorkerPeerTest {
         assertEquals(1, l.audiblePeers().size)
     }
 
-    // A quiet entry still runs the one-hour release (also for a record replayed after its hour), without ever showing.
-    @Test fun out_of_scope_sos_runs_the_one_hour_release() {
-        val l = meLogic()
-        l.srv("K1", "P", 1, true, created = 5L, now = 1_000, serverNow = 5L, inScope = false)
-        l.tick(1_000 + SosLedger.AUTO_RELEASE_MS)
-        assertEquals(listOf("K1"), l.takeAutoReleasedPeers())
-        assertTrue(l.peers.isEmpty())
-        val now = 2 * SosLedger.AUTO_RELEASE_MS
-        l.srv("K2", "Q", 1, true, created = 5L, now = now, serverNow = 5L + SosLedger.AUTO_RELEASE_MS, inScope = false)
-        assertEquals(listOf("K2"), l.takeAutoReleasedPeers())
-        assertTrue(l.peers.isEmpty())
-    }
-
     // The same out-of-scope SOS that already ended over Bluetooth must not ring again when its (late) active server record
-    //   arrives; while its adverts are still heard it rings as before, and an in-scope record rings as before.
-    @Test fun out_of_scope_record_for_an_sos_that_ended_on_air_stays_quiet() {
+    //   arrives, nor may its leftover adverts for the guard time after the on-air end, also after the late record took over
+    //   the entry; heard again after the guard they ring. While its adverts are still heard it rings as before (see
+    //   ble_first_then_out_of_scope_record_names_the_entry), and an in-scope record rings as before.
+    @Test fun leftover_advert_of_an_out_of_scope_sos_that_ended_on_air_stays_silent_within_the_guard() {
         val l = meLogic()
         l.onPeerBle("P", true, 1_000, 1)
         l.onPeerBle("P", false, 2_000)
@@ -702,48 +692,20 @@ class LoneWorkerPeerTest {
         l.srv("K1", "P", 1, true, created = 5L, now = 13_000, inScope = false)
         assertTrue("끝난 범위 밖 SOS 는 다시 울리지 않는다", l.audiblePeers().isEmpty())
         assertTrue("목록에도 없다", l.peers.isEmpty())
-    }
-
-    @Test fun out_of_scope_record_for_an_sos_still_heard_on_air_rings() {
-        val l = meLogic()
-        l.onPeerBle("P", true, 1_000, 1)
-        l.srv("K1", "P", 1, true, created = 5L, now = 2_000, inScope = false)
-        assertEquals(1, l.audiblePeers().size)
-        assertEquals("K1", l.peer("P").key)
-    }
-
-    // Leftover adverts of an out-of-scope SOS that ended on air stay silent for the guard time after the on-air end, also
-    //   after its late active record took over the entry; heard again after the guard they ring.
-    @Test fun leftover_advert_of_an_out_of_scope_sos_that_ended_on_air_stays_silent_within_the_guard() {
-        val l = meLogic()
-        l.onPeerBle("P", true, 1_000, 1)
-        l.onPeerBle("P", false, 2_000)
-        l.tick(2_000 + LoneWorkerPeers.PEER_BLE_FALL_MS)
-        l.srv("K1", "P", 1, true, created = 5L, now = 13_000, inScope = false)
         l.onPeerBle("P", true, 14_000, 1)
         assertTrue("공중에서 끝난 범위 밖 SOS 의 남은 광고는 울리지 않는다", l.audiblePeers().isEmpty())
         assertTrue("목록에도 없다", l.peers.isEmpty())
-    }
 
-    @Test fun advert_of_an_out_of_scope_sos_that_ended_on_air_rings_after_the_guard() {
-        val l = meLogic()
-        l.onPeerBle("P", true, 1_000, 1)
-        l.onPeerBle("P", false, 2_000)
-        l.tick(2_000 + LoneWorkerPeers.PEER_BLE_FALL_MS)
-        l.srv("K1", "P", 1, true, created = 5L, now = 13_000, inScope = false)
-        l.onPeerBle("P", true, 2_000 + LoneWorkerPeers.PEER_BLE_FALL_MS + LoneWorkerPeers.PEER_RESOLVE_GUARD_MS + 1, 1)
-        assertEquals("보호 시간 뒤 다시 들리면 울린다", 1, l.audiblePeers().size)
-        assertEquals(1, l.peers.size)
-        assertEquals("K1", l.peer("P").key)
-    }
-
-    @Test fun in_scope_record_for_an_sos_that_ended_on_air_rings_again() {
-        val l = meLogic()
-        l.onPeerBle("P", true, 1_000, 1)
-        l.onPeerBle("P", false, 2_000)
-        l.tick(2_000 + LoneWorkerPeers.PEER_BLE_FALL_MS)
-        l.srv("K1", "P", 1, true, created = 5L, now = 13_000, inScope = true)
-        assertEquals(1, l.audiblePeers().size)
+        // The advert comes after the guard: it rings
+        val m = meLogic()
+        m.onPeerBle("P", true, 1_000, 1)
+        m.onPeerBle("P", false, 2_000)
+        m.tick(2_000 + LoneWorkerPeers.PEER_BLE_FALL_MS)
+        m.srv("K1", "P", 1, true, created = 5L, now = 13_000, inScope = false)
+        m.onPeerBle("P", true, 2_000 + LoneWorkerPeers.PEER_BLE_FALL_MS + LoneWorkerPeers.PEER_RESOLVE_GUARD_MS + 1, 1)
+        assertEquals("보호 시간 뒤 다시 들리면 울린다", 1, m.audiblePeers().size)
+        assertEquals(1, m.peers.size)
+        assertEquals("K1", m.peer("P").key)
     }
 
     // An acknowledged in-scope SOS that ended on air stays acknowledged while its adverts go on, inside the guard and after it.
@@ -754,6 +716,7 @@ class LoneWorkerPeerTest {
         val ended = 2_000 + LoneWorkerPeers.PEER_BLE_FALL_MS
         l.tick(ended)
         l.srv("K1", "P", 1, true, created = 5L, now = ended + 1_000, inScope = true)
+        assertEquals("in-scope record rings again", 1, l.audiblePeers().size)
         l.silencePeers(ended + 1_500, mapOf(l.peer("P").id to "P#1"))
         assertTrue(l.audiblePeers().isEmpty())
         // The first advert comes a full gap after the last one heard on air, then one a second until well past the guard
