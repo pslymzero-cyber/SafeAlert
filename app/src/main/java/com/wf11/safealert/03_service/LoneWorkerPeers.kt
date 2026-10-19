@@ -5,7 +5,8 @@ import com.wf11.safealert.utils.SiteScope
 /**
  * Peer rescue-request store (pure). No Android dependency; times are elapsed ms passed in by the caller.
  *
- * Peer rescue requests are handled as entries per episode (bleId, ep).
+ * Peer rescue requests are handled as entries per episode (bleId, ep). A rescue request made with an SOS ID (the sender's
+ * signal and its server records carry it; see the SOS ID paragraph below) is one entry per SOS ID.
  * - A server record and a BLE advertisement of the same episode form one entry; a different episode or server key is a
  *   different entry. Each entry has its own name, beacon, mute and resolution.
  * - Episode-0 records are handled by server key only (they never take over or end a BLE entry).
@@ -42,7 +43,14 @@ import com.wf11.safealert.utils.SiteScope
  *   when heard over BLE or delivered again in scope, and stays hidden after it ends. An advert of an SOS that already ended
  *   on air only refreshes when it was last heard within PEER_RESOLVE_GUARD_MS of that end: it wakes nothing and lifts
  *   no acknowledgement.
- * - A record made by another phone for a Bluetooth-only SOS (key r_..., SosRelay) never makes a second entry: if the same
+ * - SOS ID paragraph: the sender makes an SOS ID for every rescue request. Records and adverts with the same SOS ID are one
+ *   entry: a record joins the active entry of its SOS ID (a Bluetooth entry gets the key; an entry a relayed record opened is
+ *   taken over by the sender's own record, same ring time, the name alerts again; an entry that already holds a record ignores
+ *   a relayed one). A released record with that SOS ID ends the active entry of the SOS ID whatever its key is, by the same rule
+ *   as an untracked resolve (the advert must have been silent for 15 s, else it ends once it is). The SOS ID also arrives late,
+ *   from the scan response, so a record that finds no entry of its SOS ID joins the (bleId, episode) Bluetooth entry and gives it
+ *   its SOS ID. Records without an SOS ID (older app) keep the rules above and below.
+ * - A record without an SOS ID made by another phone for a Bluetooth-only SOS (key r_...) never makes a second entry: if the same
  *   episode already has a server entry it is dropped, and the sender's own record that arrives later takes the relayed entry over
  *   (same ring time, the name alerts again). Its release ends only the entry under its own key, and an entry it opened
  *   also ends when the advert has been false for 10 s, as a Bluetooth-only entry does.
@@ -121,7 +129,9 @@ class LoneWorkerPeers(private val canSound: () -> Boolean) {
         val key: String, val bleId: String, val name: String, val role: String, val trigger: String,
         val beacon: String, val createdAtMs: Long, val active: Boolean, val ep: Int, val resolvedLocalMs: Long?,
         val startLocalMs: Long? = null, val auto: Boolean = false,
-        val floor: String = "", val proc: String = "", val inScope: Boolean = true
+        val floor: String = "", val proc: String = "", val inScope: Boolean = true,
+        /** SOS ID the sender made (SosAdvert.SOS_ID_PATTERN), "" = a record without one (older app). */
+        val sosId: String = ""
     )
 
     companion object {
@@ -209,15 +219,19 @@ class LoneWorkerPeers(private val canSound: () -> Boolean) {
         }
         if (!active) {
             val cur = map[kId]
-            // A relayed record's release ends only the entry opened under its own key: the sender's own record may still be live
-            val b = if (ep != 0 && !SosRelay.isRelay(key)) map[bId] else null
+            // Same SOS ID = same rescue request: a released record ends that request's active entry whatever its key is. A record
+            // without an SOS ID keeps the old rule: it ends the Bluetooth entry of the same bleId and episode, except that a relayed
+            // record's release ends only the entry opened under its own key (the sender's own record may still be live). An entry
+            // that already has an SOS ID is not ended by a record that has none of its own.
+            val t = (if (rec.sosId.isNotEmpty()) map.values.firstOrNull { it.active && it.sosId == rec.sosId } else null)
+                ?: (if (ep != 0 && !SosRelay.isRelay(key)) map[bId]?.takeIf { rec.sosId.isEmpty() || it.sosId.isEmpty() } else null)
             val r = rec.resolvedLocalMs
             if (cur != null && cur.active) {
                 map[kId] = resolve(cur, nowMs, rec.auto)
-            } else if (b != null && b.active && r != null && r >= b.firstSeenMs) {
-                if (adGone(b, nowMs)) map[bId] = resolve(b, nowMs, rec.auto) else pendingResolve[bId] = r to rec.auto
-            } else if (b != null && !b.active && rec.auto) {
-                map[bId] = b.copy(autoEnded = true) // It already ended on air; the record says why
+            } else if (t != null && t.active && r != null && r >= t.firstSeenMs) {
+                if (adGone(t, nowMs)) map[t.id] = resolve(t, nowMs, rec.auto) else pendingResolve[t.id] = r to rec.auto
+            } else if (t != null && !t.active && rec.auto) {
+                map[t.id] = t.copy(autoEnded = true) // It already ended on air; the record says why
             }
             // An untracked resolve (old record replayed on connect) does not create an entry.
             return
@@ -230,53 +244,76 @@ class LoneWorkerPeers(private val canSound: () -> Boolean) {
                     name = name, role = role, trigger = trigger,
                     beacon = beacon.ifEmpty { cur.beacon }, createdAtMs = createdAtMs,
                     startMs = rec.startLocalMs ?: cur.startMs,
-                    floor = rec.floor, proc = rec.proc, quiet = cur.quiet && !rec.inScope
+                    floor = rec.floor, proc = rec.proc, quiet = cur.quiet && !rec.inScope,
+                    sosId = cur.sosId.ifEmpty { rec.sosId }
                 )
             }
             return
         }
-        if (ep != 0) {
+        if (rec.sosId.isNotEmpty()) {
+            // One SOS ID, one entry: the record joins the active entry of its request (see the class comment)
+            val g = map.values.firstOrNull { it.active && it.sosId == rec.sosId }
+            if (g != null) {
+                when {
+                    g.key == null -> attach(g, rec, nowMs)
+                    g.relayed && !SosRelay.isRelay(key) -> takeOver(g, rec, nowMs)
+                    // else: the entry already holds a server record of this request (the sender's own, or another phone's relayed one)
+                }
+                return
+            }
+        } else if (ep != 0) {
             val twins = map.values.filter { it.bleId == bleId && it.episode == ep && it.key != null }
             if (SosRelay.isRelay(key)) {
                 if (twins.isNotEmpty()) return   // The sender's own record (or another phone's relayed one) already holds this SOS
             } else {
-                // The sender's own record takes over the entry a relayed record opened: one SOS, one entry, the ring time goes on
-                twins.firstOrNull { it.relayed && it.active }?.let { o ->
-                    map.remove(o.id)
-                    map[kId] = o.copy(
-                        key = key, name = name, role = role, trigger = trigger, beacon = beacon.ifEmpty { o.beacon },
-                        createdAtMs = createdAtMs, startMs = rec.startLocalMs ?: o.startMs, floor = rec.floor, proc = rec.proc,
-                        quiet = o.quiet && !rec.inScope, silenced = coldServer(kId, epId, nowMs)
-                    )
-                    return
-                }
+                twins.firstOrNull { it.relayed && it.active }?.let { o -> takeOver(o, rec, nowMs); return }
             }
         }
-        val b = if (ep != 0) map[bId] else null
+        val b = if (ep != 0) map[bId]?.takeIf { rec.sosId.isEmpty() || it.sosId.isEmpty() || it.sosId == rec.sosId } else null
         if (b != null) {
-            // Same episode seen over BLE first: attach the server key and ring again with the
-            // name. Rings while the server record is active even if BLE resolved it.
-            map.remove(bId)
-            map[kId] = Peer(
-                bleId, key, name, role, trigger, beacon.ifEmpty { b.beacon }, createdAtMs,
-                // A relayed record brings no new name, so an acknowledgement already given stays
-                firstSeenMs = b.firstSeenMs, active = true,
-                silenced = coldServer(kId, epId, nowMs) || (SosRelay.isRelay(key) && b.silenced),
-                resolvedAtMs = 0L, episode = ep, lastBleMs = b.lastBleMs, startMs = rec.startLocalMs ?: b.startMs,
-                floor = rec.floor, proc = rec.proc,
-                // Already over on air: an out-of-scope record stays quiet; in or out of scope, that SOS's leftover adverts
-                // within the guard time only refresh lastBleMs (no wake, no undoing an acknowledgement). Still heard: it keeps alerting.
-                quiet = !rec.inScope && !b.active,
-                endedOnAirMs = if (!b.active) b.resolvedAtMs else null,
-                ringStartMs = b.ringStartMs, ringOver = b.ringOver
-            )
+            attach(b, rec, nowMs)
             return
         }
         map[kId] = Peer(
             bleId, key, name, role, trigger, beacon, createdAtMs,
             firstSeenMs = nowMs, active = true, silenced = coldServer(kId, epId, nowMs),
             resolvedAtMs = 0L, episode = ep, startMs = rec.startLocalMs ?: nowMs,
-            floor = rec.floor, proc = rec.proc, quiet = !rec.inScope
+            floor = rec.floor, proc = rec.proc, sosId = rec.sosId, quiet = !rec.inScope
+        )
+    }
+
+    /** The sender's own record takes over the entry a relayed record opened: one SOS, one entry, the ring time goes on. */
+    private fun takeOver(o: Peer, rec: ServerRec, nowMs: Long) {
+        val kId = "k:${rec.key}"
+        map.remove(o.id)
+        map[kId] = o.copy(
+            key = rec.key, name = rec.name, role = rec.role, trigger = rec.trigger, beacon = rec.beacon.ifEmpty { o.beacon },
+            createdAtMs = rec.createdAtMs, startMs = rec.startLocalMs ?: o.startMs, floor = rec.floor, proc = rec.proc,
+            quiet = o.quiet && !rec.inScope, silenced = coldServer(kId, "${rec.bleId}#${rec.ep}", nowMs),
+            sosId = rec.sosId.ifEmpty { o.sosId }
+        )
+    }
+
+    /**
+     * A server record joins the Bluetooth entry of its request (seen over BLE first): attach the server key and ring again with the
+     * name. Rings while the server record is active even if BLE resolved it.
+     */
+    private fun attach(b: Peer, rec: ServerRec, nowMs: Long) {
+        val kId = "k:${rec.key}"
+        val epId = "${rec.bleId}#${rec.ep}"
+        map.remove(b.id)
+        map[kId] = Peer(
+            rec.bleId, rec.key, rec.name, rec.role, rec.trigger, rec.beacon.ifEmpty { b.beacon }, rec.createdAtMs,
+            // A relayed record brings no new name, so an acknowledgement already given stays
+            firstSeenMs = b.firstSeenMs, active = true,
+            silenced = coldServer(kId, epId, nowMs) || (SosRelay.isRelay(rec.key) && b.silenced),
+            resolvedAtMs = 0L, episode = rec.ep, lastBleMs = b.lastBleMs, startMs = rec.startLocalMs ?: b.startMs,
+            floor = rec.floor, proc = rec.proc, sosId = rec.sosId.ifEmpty { b.sosId },
+            // Already over on air: an out-of-scope record stays quiet; in or out of scope, that SOS's leftover adverts
+            // within the guard time only refresh lastBleMs (no wake, no undoing an acknowledgement). Still heard: it keeps alerting.
+            quiet = !rec.inScope && !b.active,
+            endedOnAirMs = if (!b.active) b.resolvedAtMs else null,
+            ringStartMs = b.ringStartMs, ringOver = b.ringOver
         )
     }
 

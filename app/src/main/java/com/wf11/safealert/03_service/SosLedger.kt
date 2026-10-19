@@ -255,10 +255,11 @@ class SosLedger(
     }
 
     /**
-     * One create. A refusal of a record carrying floor/process (rules that predate those fields) is retried at once without
-     * them, before any read, but only while this SOS is still the active one: after the release the pending resolve's read
-     * finds the record absent and drops it, so a retry would leave a record nobody resolves. Other failures check whether
-     * the record landed late and otherwise back off.
+     * One create. A refusal of a record carrying floor/process or an SOS ID (rules that predate those fields refuse an unknown
+     * field) is retried at once without them, so my own SOS upload never stalls on a new field. It is retried before any read,
+     * but only while this SOS is still the active one: after the release the pending resolve's read finds the record absent and
+     * drops it, so a retry would leave a record nobody resolves. Other failures check whether the record landed late and
+     * otherwise back off.
      */
     private fun sendCreate(sentPath: String, sentKey: String, rec: Record, uid: String) {
         transport.create(sentPath, sentKey, rec, uid) { ok ->
@@ -266,8 +267,8 @@ class SosLedger(
                 createBusy.remove(sentKey)
                 onCreated(sentPath, sentKey)
                 onChange()
-            } else if ((rec.floor.isNotEmpty() || rec.proc.isNotEmpty()) && kv.get(K_KEY) == sentKey && hasActive()) {
-                sendCreate(sentPath, sentKey, rec.copy(floor = "", proc = ""), uid)
+            } else if ((rec.floor.isNotEmpty() || rec.proc.isNotEmpty() || rec.sosId.isNotEmpty()) && kv.get(K_KEY) == sentKey && hasActive()) {
+                sendCreate(sentPath, sentKey, rec.copy(floor = "", proc = "", sosId = ""), uid)
             } else {
                 // If my record already exists on the server (a pre-restart write landed late), don't write again; treat it as sent
                 transport.read(sentPath, sentKey) { r ->

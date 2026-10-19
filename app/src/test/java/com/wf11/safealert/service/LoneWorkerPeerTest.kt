@@ -749,7 +749,7 @@ class LoneWorkerPeerTest {
     //   entry in either order; the own record takes over (alerts again with the name, ring time goes on); the relayed release
     //   does not end it; an entry a relayed record opened ends on air or by its release like a Bluetooth-only one.
     @Test fun relayed_record_and_the_senders_own_record_are_one_sos() {
-        val rk = SosRelay.key("P", 4, 5L)
+        val rk = "r_old"   // a relayed record without an SOS ID (the old form): the old (bleId, episode) rules
         val a = meLogic()
         a.onPeerBle("P", true, 1_000, 4)
         val ring0 = a.peer("P").ringStartMs
@@ -782,6 +782,45 @@ class LoneWorkerPeerTest {
         d.srv(rk, "P", 4, true, created = 5L, now = 2_000)
         d.srv(rk, "P", 4, false, created = 5L, now = 3_000, resolvedAt = 8L, serverNow = 8L)
         assertFalse(d.peer("P").active)
+
+        // The same rescue request told by its SOS ID, whatever the order and the keys: one entry, and a released record of the
+        //   SOS ID ends it.
+        val sid = "0123456789abcdef"
+        val rs = SosRelay.PREFIX + sid
+        // e) Bluetooth entry -> relayed record joins -> the sender's own record takes over -> the relayed release is held back by
+        //    the advert that is still heard, and ends the entry once the advert has been silent for 15 s
+        val e = meLogic()
+        e.onPeerBle("P", true, 0, 4, sosId = sid)
+        e.srv(rs, "P", 4, true, created = 5L, now = 1_000, sosId = sid)
+        assertEquals(rs, e.peer("P").key)
+        e.srv("k1", "P", 4, true, created = 6L, now = 2_000, sosId = sid)
+        assertEquals("k1", e.peer("P").key)
+        assertEquals(1, e.peers.size)
+        e.onPeerBle("P", true, 7_000, 4, sosId = sid)
+        e.srv(rs, "P", 4, false, created = 5L, now = 8_000, resolvedAt = 8L, serverNow = 8L, sosId = sid)
+        assertTrue(e.peer("P").active)
+        e.tick(23_000)
+        assertFalse("a released record of the same SOS ID ends it although the key differs", e.peer("P").active)
+
+        // f) an entry only a relayed record opened ends at once on the sender's own release, which this phone never saw as active
+        val f = meLogic()
+        f.srv(rs, "P", 4, true, created = 5L, now = 1_000, sosId = sid)
+        f.srv("k1", "P", 4, false, created = 6L, now = 3_000, resolvedAt = 9L, serverNow = 9L, sosId = sid)
+        assertFalse(f.peer("P").active)
+
+        // g) the sender's own record first, the relayed one after: still one entry, under the sender's key
+        val g = meLogic()
+        g.srv("k1", "P", 4, true, created = 6L, now = 1_000, sosId = sid)
+        g.srv(rs, "P", 4, true, created = 5L, now = 2_000, sosId = sid)
+        assertEquals(1, g.peers.size)
+        assertEquals("k1", g.peer("P").key)
+
+        // h) the scan response was never heard (no SOS ID on the Bluetooth entry): the record joins by (bleId, episode) and gives it its SOS ID
+        val h = meLogic()
+        h.onPeerBle("P", true, 0, 4)
+        h.srv("k2", "P", 4, true, created = 6L, now = 1_000, sosId = sid)
+        assertEquals("k2", h.peer("P").key)
+        assertEquals(sid, h.peer("P").sosId)
 
         // The scan response can come after the first advert: it fills SOS ID, floor and process, and a later advert
         //   without it never clears them

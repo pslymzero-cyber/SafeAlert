@@ -163,7 +163,7 @@ class LoneWorkerSosSync(
         override fun create(path: String, key: String, rec: SosLedger.Record, uid: String, done: (Boolean) -> Unit) {
             val payload = SosRemote.recordPayload(
                 rec.bleId, rec.name, rec.role, rec.trigger, rec.beacon, rec.beaconRssi, uid, ServerValue.TIMESTAMP, rec.ep,
-                rec.floor, rec.proc, rec.relayBy
+                rec.floor, rec.proc, rec.relayBy, rec.sosId
             )
             SosRemote.create(path, key, payload) { ok -> handler.post { done(ok) } }
         }
@@ -302,8 +302,7 @@ class LoneWorkerSosSync(
      * (SosRelay) while the receive listener is attached and the database connection is up.
      */
     fun relay(peers: Collection<LoneWorkerPeers.Peer>, nowMs: Long, myId: String) = relayer.tick(
-        peers, nowMs, remover != null && SosRemote.connected, myId, DevSettings.floor, DevSettings.proc,
-        SosRemote.serverNowMs() ?: System.currentTimeMillis()
+        peers, nowMs, remover != null && SosRemote.connected, myId
     )
 
     private fun attachIfNeeded() {

@@ -76,7 +76,7 @@ class LoneWorkerMonitor(
                     rec.key, rec.bleId, rec.name, rec.role, rec.trigger, rec.beacon, rec.createdAt, rec.active, rec.ep,
                     LoneWorkerPeers.resolvedLocalMs(rec.resolvedAt, serverNow, wall, t),
                     LoneWorkerPeers.startLocalMs(rec.createdAt, serverNow, t), rec.auto,
-                    floor = rec.floor, proc = rec.proc, inScope = inScope
+                    floor = rec.floor, proc = rec.proc, inScope = inScope, sosId = rec.sosId
                 ), t)
                 render()
             }

@@ -10,6 +10,7 @@ import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.database.Query
 import com.google.firebase.database.ServerValue
 import com.google.firebase.database.ValueEventListener
+import com.wf11.safealert.ble.SosAdvert
 import com.wf11.safealert.utils.SiteScope
 import java.util.UUID
 
@@ -39,7 +40,8 @@ object SosRemote {
         val resolvedAt: Long = 0L, // Resolve server time (0 if none)
         val auto: Boolean = false, // Released by the one-hour limit (reason auto), not by its worker
         val floor: String = "",   // Writer's floor code ("" = none / sender that never writes it)
-        val proc: String = ""     // Writer's process code ("" = none / sender that never writes it)
+        val proc: String = "",    // Writer's process code ("" = none / sender that never writes it)
+        val sosId: String = ""    // SOS ID the sender made for this request ("" = none / sender that never writes it)
     )
 
     private const val SOS_STR_MAX = 64
@@ -95,7 +97,8 @@ object SosRemote {
             resolvedAt = (m["resolvedAt"] as? Number)?.toLong() ?: 0L,
             auto = m["reason"] == "auto",
             floor = SiteScope.code(m["floor"] as? String),
-            proc = SiteScope.code(m["proc"] as? String)
+            proc = SiteScope.code(m["proc"] as? String),
+            sosId = (m["sosId"] as? String)?.takeIf { SosAdvert.isSosId(it) }.orEmpty()
         )
     }
 
@@ -103,7 +106,7 @@ object SosRemote {
     fun recordPayload(
         bleId: String, name: String, role: String, trigger: String,
         beacon: String?, beaconRssi: Int?, uid: String, createdAt: Any, ep: Int = 0,
-        floor: String = "", proc: String = "", relayBy: String = ""
+        floor: String = "", proc: String = "", relayBy: String = "", sosId: String = ""
     ): Map<String, Any> {
         val data = HashMap<String, Any>()
         data["bleId"] = bleId.take(SOS_STR_MAX)
@@ -117,6 +120,7 @@ object SosRemote {
         if (beaconRssi != null && beaconRssi in BEACON_RSSI_MIN..BEACON_RSSI_MAX) data["beaconRssi"] = beaconRssi
         if (ep in 1..255) data["ep"] = ep
         if (relayBy.isNotEmpty()) data["relayBy"] = relayBy.take(SOS_STR_MAX)
+        if (SosAdvert.isSosId(sosId)) data["sosId"] = sosId
         data.putAll(SiteScope.fields(floor, proc))
         return data
     }

@@ -37,6 +37,13 @@ class SosRecordParseTest {
         assertEquals(1780000000000L, r.createdAt)
         assertEquals("u1", r.uid)
         assertTrue(r.active)
+        // SOS ID: kept when it is 16 lowercase hex characters, else empty
+        val id = "0123456789abcdef"
+        assertEquals(id, SosRemote.parseSosRecord("k1", valid().apply { put("sosId", id) })!!.sosId)
+        for (bad in listOf("0123456789ABCDEF", "0123456789abcde", 5L)) {
+            assertEquals("", SosRemote.parseSosRecord("k1", valid().apply { put("sosId", bad) })!!.sosId)
+        }
+        assertEquals("", r.sosId)
     }
 
     /** resolvedAt (server time of the resolve) is read as a number; absent or not a number = 0. A "resolved" status is not active. */
@@ -137,6 +144,12 @@ class SosRecordParseTest {
         // relayBy only when set
         assertEquals("ME", SosRemote.recordPayload("id", "n", "", "relay", null, null, "u1", 1L, 4, relayBy = "ME")["relayBy"])
         assertFalse(SosRemote.recordPayload("id", "n", "", "relay", null, null, "u1", 1L, 4).containsKey("relayBy"))
+
+        // sosId only when it is a valid SOS ID
+        assertEquals("0123456789abcdef", SosRemote.recordPayload("id", "n", "", "still", null, null, "u1", 1L, 4, sosId = "0123456789abcdef")["sosId"])
+        for (bad in listOf("", "0123456789ABCDEF", "short")) {
+            assertFalse(SosRemote.recordPayload("id", "n", "", "still", null, null, "u1", 1L, 4, sosId = bad).containsKey("sosId"))
+        }
     }
 
     // A worker who fell before the crew's phones started is still waiting for rescue: a phone that starts (or restarts

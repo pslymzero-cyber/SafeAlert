@@ -1,25 +1,25 @@
 package com.wf11.safealert.service
 
-import com.wf11.safealert.ble.SosAdvert
-
 /**
  * Records another phone's SOS on the server when only Bluetooth carried it (pure logic, no Android dependency, main thread).
  *
- * A peer SOS heard over Bluetooth only (episode 1..255, no server record of the same bleId and episode) for RELAY_WAIT_MS gives
- * the sender time to upload it itself. After that a phone that is connected writes one record under a deterministic key (see key);
- * a sender inside a dead zone is covered by any phone of the site that still has data. The first phone to write wins: the rules
- * refuse a second create under an existing key, and that refusal is read back and counted as "already relayed", never retried
- * and never an error. The record carries trigger relay and relayBy (this phone's device ID) so the mail and the control page can
- * say it came through a nearby device. The SOS mail is queued through onSaved like any other SOS record.
+ * A peer SOS heard over Bluetooth only (episode 1..255, an SOS ID in its signal, no server record of that request) for
+ * RELAY_WAIT_MS gives the sender time to upload it itself. After that a phone that is connected writes one record under the key
+ * PREFIX + SOS ID. Every phone builds the same key, so the first phone to write wins: the rules refuse a second create under an
+ * existing key, and that refusal is read back and counted as "already relayed", never retried and never an error. A sender inside a
+ * dead zone is covered by any phone of the site that still has data. An SOS without an SOS ID in its signal (an older app) is not
+ * relayed. The record carries trigger relay and relayBy (this phone's device ID) so the mail and the control page can say it came
+ * through a nearby device; its floor and process are the sender's, taken from the signal (empty = the whole site). The SOS mail is
+ * queued through onSaved like any other SOS record.
  *
  * This phone does not receive its own relayed record (the receive path skips records with my uid), so it judges the rest from
- * its own Bluetooth entry, which is why only the peer entries are passed in:
- * - the SOS ends on air (the entry's usual 10 s of false): the record is released and the release mail queued;
- * - the sender's own record of the same episode arrives (the entry gets a server key), or another phone's relayed record
- *   under another day's key does: this record is released without mail, so one active record remains;
+ * its own Bluetooth entry, which is why only the peer entries are passed in. A relayed record is released only when the entry has
+ * ended, never because another record joined it:
+ * - the SOS ends on air (the entry's usual 10 s of false), or a released record of the same SOS ID arrives (the sender's own, or
+ *   another phone's relayed one): this record is released and the release mail queued (the mail script sends one mail per SOS ID);
  * - the one-hour limit: released with reason auto and no release mail, as for any other record;
  * - the entry is gone from the list: nothing is written; the other phones' one-hour release closes the record.
- * A job whose write was settled stays until its entry leaves the list, so the same episode heard again is not uploaded twice.
+ * A job whose write was settled stays until its entry leaves the list, so the same SOS heard again is not uploaded twice.
  */
 class SosRelay(
     private val transport: SosTransport,
@@ -31,17 +31,6 @@ class SosRelay(
         const val RELAY_WAIT_MS = 15_000L
         const val PREFIX = "r_"
         const val TRIGGER = "relay"
-        private const val DAY_MS = 86_400_000L
-
-        /**
-         * Record key: PREFIX, the first SosAdvert.EXT_ID_MAX UTF-8 bytes of the device ID in lowercase hex, the episode, and the
-         * UTC day of the server time (episodes wrap at 255 and the rules never let a key be written twice, so without the day the
-         * same device and number could never be relayed again). At most 36 characters, valid as a Firebase key and for the mail script.
-         */
-        fun key(bleId: String, ep: Int, serverNowMs: Long): String {
-            val hex = bleId.toByteArray(Charsets.UTF_8).take(SosAdvert.EXT_ID_MAX).joinToString("") { "%02x".format(it) }
-            return "$PREFIX${hex}_${ep}_${serverNowMs / DAY_MS}"
-        }
 
         /** Push keys start with '-' and fallback UUID keys with hex, so neither can start with PREFIX. */
         fun isRelay(key: String?): Boolean = key != null && key.startsWith(PREFIX)
@@ -61,19 +50,17 @@ class SosRelay(
     private var heard: Set<String> = emptySet()
 
     /** Called every 10 s. online = signed in with the database connection up (writes made offline would upload after the SOS is over). */
-    fun tick(
-        peers: Collection<LoneWorkerPeers.Peer>, nowMs: Long, online: Boolean, myId: String,
-        floor: String, proc: String, serverNowMs: Long
-    ) {
-        val bleOnly = peers.filter { it.active && it.key == null && it.episode != 0 && it.bleId != myId }
+    fun tick(peers: Collection<LoneWorkerPeers.Peer>, nowMs: Long, online: Boolean, myId: String) {
+        val bleOnly = peers.filter { it.active && it.key == null && it.episode != 0 && it.sosId.isNotEmpty() && it.bleId != myId }
         heard = bleOnly.mapTo(HashSet()) { it.epId }
         if (myId.isNotEmpty()) {
             for (p in bleOnly) {
                 if (p.epId in jobs || nowMs - p.firstSeenMs < RELAY_WAIT_MS) continue
                 val rec = SosLedger.Record(
-                    p.bleId, p.displayName(), "", TRIGGER, p.beacon.ifEmpty { null }, null, 0, p.episode, floor, proc, relayBy = myId
+                    p.bleId, p.displayName(), "", TRIGGER, p.beacon.ifEmpty { null }, null, 0, p.episode, p.floor, p.proc,
+                    relayBy = myId, sosId = p.sosId
                 )
-                jobs[p.epId] = Job(p.epId, key(p.bleId, p.episode, serverNowMs), rec)
+                jobs[p.epId] = Job(p.epId, PREFIX + p.sosId, rec)
             }
         }
         for (job in jobs.values.toList()) {
@@ -89,11 +76,10 @@ class SosRelay(
                 if (job.epId !in heard) jobs.remove(job.epId) else if (online) create(job)
                 continue
             }
-            // Recorded: still heard with nothing attached = keep waiting; a key attached = merged into the sender's record
-            // (no mail); the entry ended = released on air (release mail) or by the one-hour limit (reason auto, no mail)
-            if (p.active && p.key == null) continue
-            if (p.active) end(job, auto = false, mail = false)
-            else end(job, auto = p.autoEnded, mail = !p.autoEnded)
+            // Recorded: the entry still going (heard, or joined by the sender's own record) = keep waiting; the entry ended =
+            // released on air or by a released record of the same SOS ID (release mail) or by the one-hour limit (reason auto, no mail)
+            if (p.active) continue
+            end(job, auto = p.autoEnded, mail = !p.autoEnded)
         }
     }
 

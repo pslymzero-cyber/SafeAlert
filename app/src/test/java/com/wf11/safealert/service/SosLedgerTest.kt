@@ -18,6 +18,8 @@ class SosLedgerTest {
         SosLedger(kv, tr, { now }, { e, _, k -> seen.add("$e:$k") })
     private fun scoped() = SosLedger.Record("BLE_ME", "n", "WALKER", "still", null, null, 0, 0, "1F", "OB")
     private fun rec(sid: Int = 0) = SosLedger.Record("BLE_ME", "n", "WALKER", "still", null, null, sid)
+    /** Every record carries an SOS ID, and a refused create goes again at once without it (rules that predate it): refuse that one too. */
+    private fun refuse(tr: FakeSosTransport) { tr.creates.last().cb(false); tr.creates.last().cb(false) }
 
     // An SOS released by the one-hour limit is recorded on the server as automatic, and no resolve mail is reported:
     //   that mail tells the site the SOS was released on the requester's phone.
@@ -151,35 +153,35 @@ class SosLedgerTest {
     @Test fun denied_create_then_read_mine_marks_sent_without_second_create() {
         val kv = Kv(); val tr = FakeSosTransport(); val l = ledger(kv, tr)
         l.begin(rec())
-        tr.creates[0].cb(false)
+        refuse(tr)
         assertEquals(1, tr.reads.size)
         tr.reads[0].cb(Remote.MINE_ACTIVE)
         assertEquals(SosLedger.STATUS_SENT, l.statusText())
         l.tick()
         now += 1_000_000L
         l.tick()
-        assertEquals(1, tr.creates.size)
+        assertEquals(2, tr.creates.size)
     }
 
     @Test fun create_retry_backs_off_exponentially() {
         val kv = Kv(); val tr = FakeSosTransport(); val l = ledger(kv, tr)
         l.begin(rec())
-        tr.creates[0].cb(false); tr.reads[0].cb(Remote.ABSENT)
+        refuse(tr); tr.reads[0].cb(Remote.ABSENT)
         assertEquals(SosLedger.STATUS_FAILED, l.statusText())
         now = 9_999L; l.tick()
-        assertEquals(1, tr.creates.size)
+        assertEquals(2, tr.creates.size)
         now = 10_000L; l.tick()
-        assertEquals(2, tr.creates.size)
-        tr.creates[1].cb(false); tr.reads[1].cb(Remote.ABSENT)
+        assertEquals(3, tr.creates.size)
+        refuse(tr); tr.reads[1].cb(Remote.ABSENT)
         now = 29_999L; l.tick()
-        assertEquals(2, tr.creates.size)
-        now = 30_000L; l.tick()
-        assertEquals(3, tr.creates.size)
-        tr.creates[2].cb(false); tr.reads[2].cb(Remote.ABSENT)
-        now = 69_999L; l.tick()
-        assertEquals(3, tr.creates.size)
-        now = 70_000L; l.tick()
         assertEquals(4, tr.creates.size)
+        now = 30_000L; l.tick()
+        assertEquals(5, tr.creates.size)
+        refuse(tr); tr.reads[2].cb(Remote.ABSENT)
+        now = 69_999L; l.tick()
+        assertEquals(6, tr.creates.size)
+        now = 70_000L; l.tick()
+        assertEquals(7, tr.creates.size)
         assertEquals(10_000L, SosLedger.backoffMs(1))
         assertEquals(20_000L, SosLedger.backoffMs(2))
         assertEquals(40_000L, SosLedger.backoffMs(3))
@@ -209,7 +211,7 @@ class SosLedgerTest {
     @Test fun resolve_of_never_created_record_is_dropped_after_read_absent() {
         val kv = Kv(); val tr = FakeSosTransport(); val l = ledger(kv, tr)
         l.begin(rec())
-        tr.creates[0].cb(false); tr.reads[0].cb(Remote.ABSENT)
+        refuse(tr); tr.reads[0].cb(Remote.ABSENT)
         l.resolve()
         tr.resolves[0].cb(false)
         assertEquals(2, tr.reads.size)
@@ -266,15 +268,15 @@ class SosLedgerTest {
             l2.tick(); tr2.resolves[0].cb(false); tr2.reads[0].cb(Remote.MINE_RESOLVED)
         })
         assertEquals("create rejected, read error, then resolve ok", both, case { _, tr, l, _ ->
-            tr.creates[0].cb(false); tr.reads[0].cb(Remote.ERROR)
+            refuse(tr); tr.reads[0].cb(Remote.ERROR)
             l.resolve(); tr.resolves[0].cb(true)
         })
         assertEquals("create rejected, resolve, create read resolved, then resolve ok", both, case { _, tr, l, _ ->
-            tr.creates[0].cb(false); l.resolve()
+            tr.creates[0].cb(false); l.resolve(); tr.creates[1].cb(false)
             tr.reads[0].cb(Remote.MINE_RESOLVED); tr.resolves[0].cb(true)
         })
         assertEquals("create rejected, resolve, resolve ok, then late create read", both, case { _, tr, l, _ ->
-            tr.creates[0].cb(false); l.resolve()
+            tr.creates[0].cb(false); l.resolve(); tr.creates[1].cb(false)
             tr.resolves[0].cb(true); tr.reads[0].cb(Remote.MINE_RESOLVED)
         })
     }
@@ -311,11 +313,14 @@ class SosLedgerTest {
         val kv = Kv(); val tr = FakeSosTransport(); val l = ledger(kv, tr)
         l.begin(scoped())
         assertEquals("1F", tr.recs[0].floor)
+        assertTrue(tr.recs[0].sosId.isNotEmpty())
         tr.creates[0].cb(false)
         assertEquals(2, tr.creates.size)
         assertTrue("읽기보다 먼저 다시 쓴다", tr.reads.isEmpty())
         assertEquals("", tr.recs[1].floor)
         assertEquals("", tr.recs[1].proc)
+        assertEquals("rules without the SOS ID field refuse it too", "", tr.recs[1].sosId)
+        assertEquals(tr.recs[0].sosId, l.sosId())
         assertEquals(tr.creates[0].key, tr.creates[1].key)
         tr.creates[1].cb(true)
         assertTrue(l.hasActive())
