@@ -1,5 +1,6 @@
 package com.wf11.safealert.service
 
+import com.wf11.safealert.ble.SosAdvert
 import com.wf11.safealert.utils.DevSettings
 import com.wf11.safealert.utils.SiteScope
 import org.junit.Assert.assertEquals
@@ -33,6 +34,8 @@ class ControlPageParityTest {
         assertTrue("auto-ended label", html.contains("s.auto ? '" + LoneWorkerNotifier.AUTO_ENDED + "' : '폰에서 해제'"))
         // A record another phone made for a Bluetooth-only SOS (SosRelay) is worded as such
         assertTrue("relay trigger", html.contains("r.trigger === '${SosRelay.TRIGGER}'"))
+        // Records of one rescue request are grouped by the app's SOS ID form
+        assertTrue("SOS ID form", html.contains("/" + SosAdvert.SOS_ID_PATTERN + "/"))
     }
 
     // The code rule (floor / process) and the one-hour release are the app's, and the rule is the mail script's too.

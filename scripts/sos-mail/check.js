@@ -390,29 +390,32 @@ for (const m of allMails) {
   }
 }
 
-// A nearby phone recorded a Bluetooth-only SOS (trigger relay): marked in the mail, cause unknown; the requester's own record of
-// the same episode (same bleId and ep) is answered dup, so one SOS is one mail, and its release mail is not blocked.
-// Records without an episode (older apps) carry no such mark and are always sent.
+// A nearby phone recorded a Bluetooth-only SOS (trigger relay): marked in the mail, cause unknown; the requester's own record with
+// the same SOS ID is answered dup, so one SOS is one mail, and its release mail is not blocked. Records without an SOS ID (older
+// apps) carry no such mark and are always sent, even with the same bleId and ep.
 const RELAY_KO = '근처 기기 경유';
-const relayRec = { name: 'P', role: '', trigger: 'relay', relayBy: 'ME', bleId: 'P', ep: 4, createdAt: NOW - 60000, status: 'active', uid: 'u2' };
-const ownRec = { name: 'P', role: 'WALKER', trigger: 'still', bleId: 'P', ep: 4, createdAt: NOW - 30000, status: 'active', uid: 'u' };
-t = make({ db: { r_50_4_20000: relayRec, k1: ownRec } });
-assert.strictEqual(t.post({ id: 'r_50_4_20000' }), 'sent');
+const SID = '0123456789abcdef';
+const RID = 'r_' + SID;
+const relayRec = { name: 'P', role: '', trigger: 'relay', relayBy: 'ME', bleId: 'P', ep: 4, sosId: SID, createdAt: NOW - 60000, status: 'active', uid: 'u2' };
+const ownRec = { name: 'P', role: 'WALKER', trigger: 'still', bleId: 'P', ep: 4, sosId: SID, createdAt: NOW - 30000, status: 'active', uid: 'u' };
+t = make({ db: { [RID]: relayRec, k1: ownRec } });
+assert.strictEqual(t.post({ id: RID }), 'sent');
 assert.ok(t.w.mails[0].subject.includes(RELAY_KO) && t.w.mails[0].body.includes('원인 모름'), 'relay subject and cause');
 assert.ok(t.w.mails[0].htmlBody.includes('전달') && t.w.mails[0].htmlBody.includes('ME'), 'relay row');
+assert.ok(!t.w.mails[0].htmlBody.includes('전달한 폰 기준'), 'floor and process are the requester\'s now');
 assert.strictEqual(t.post({}), 'dup');
 assert.strictEqual(t.w.mails.length, 1);
 Object.assign(ownRec, { status: 'resolved', resolvedAt: NOW - 1000 });
 assert.strictEqual(t.post({ event: 'resolved' }), 'sent');
 assert.ok(t.w.mails[1].body.includes(RELEASED_TEXT), 'own release mail');
 Object.assign(relayRec, { status: 'resolved', resolvedAt: NOW - 500 });
-assert.strictEqual(t.post({ id: 'r_50_4_20000', event: 'resolved' }), 'dup');
+assert.strictEqual(t.post({ id: RID, event: 'resolved' }), 'dup');
 assert.strictEqual(t.w.mails.length, 2);
-t = make({ db: { r_50_4_20000: relayRec } });
-assert.strictEqual(t.post({ id: 'r_50_4_20000' }), 'sent');
-assert.strictEqual(t.post({ id: 'r_50_4_20000', event: 'resolved' }), 'sent');
+t = make({ db: { [RID]: relayRec } });
+assert.strictEqual(t.post({ id: RID }), 'sent');
+assert.strictEqual(t.post({ id: RID, event: 'resolved' }), 'sent');
 assert.ok(t.w.mails[1].body.includes('근처 기기가 블루투스로 해제를 확인했습니다'), 'relay release wording');
-t = make({ db: { a1: Object.assign({ bleId: 'P' }, still), a2: Object.assign({ bleId: 'P' }, still) } });
+t = make({ db: { a1: Object.assign({ bleId: 'P', ep: 4 }, still), a2: Object.assign({ bleId: 'P', ep: 4 }, still) } });
 assert.strictEqual(t.post({ id: 'a1' }), 'sent');
 assert.strictEqual(t.post({ id: 'a2' }), 'sent');
 

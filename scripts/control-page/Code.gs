@@ -312,7 +312,7 @@ function sosRecs_(node) {
     if (typeof r.createdAt !== 'number') return;
     out[key] = { name: str_(r.name), role: str_(r.role), trigger: str_(r.trigger), beacon: str_(r.beacon),
                  bleId: str_(r.bleId), ep: typeof r.ep === 'number' ? r.ep : 0, relayBy: str_(r.relayBy),
-                 floor: str_(r.floor), proc: str_(r.proc), createdAt: r.createdAt, status: str_(r.status),
+                 floor: str_(r.floor), proc: str_(r.proc), sosId: str_(r.sosId), createdAt: r.createdAt, status: str_(r.status),
                  resolvedAt: typeof r.resolvedAt === 'number' ? r.resolvedAt : 0, reason: str_(r.reason) };
   });
   return out;

@@ -63,6 +63,7 @@ class SosMailTest {
         l.begin(rec())
         assertEquals(0, posts.size)
         tr.creates[0].cb(false)
+        tr.creates[1].cb(false)   // the create goes again at once without the SOS ID (rules that predate it): refused too
         assertEquals(0, posts.size)
         tr.reads[0].cb(Remote.MINE_ACTIVE)
         assertEquals(1, posts.size)
@@ -75,7 +76,7 @@ class SosMailTest {
         assertNull(kv.m[SosMail.K_LIST])
 
         l.begin(rec())
-        tr.creates[1].cb(true)
+        tr.creates[2].cb(true)
         posts[1].done(sent)
         l.resolve()
         tr.resolves[1].cb(false)

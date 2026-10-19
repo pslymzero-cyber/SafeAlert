@@ -53,6 +53,7 @@
 var SITE_RE = /^[A-Za-z0-9_-]{1,32}$/;
 var SC_RE = /^[A-Z0-9_-]{1,12}$/;
 var ID_RE = /^[A-Za-z0-9_-]{1,40}$/;
+var SOS_ID_RE = /^[0-9a-f]{16}$/;   // same text as SosAdvert.SOS_ID_PATTERN in the app
 var TO_RE = /^[A-Za-z0-9%+_-]+(\.[A-Za-z0-9%+_-]+)*@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/;
 var DB_URL_RE = /^https:\/\/[A-Za-z0-9.-]+\/?$/;
 var DAY_MS = 24 * 3600 * 1000;
@@ -156,12 +157,12 @@ function handle(p) {
     var at = event === 'sos' ? rec.createdAt : rec.resolvedAt;
     if (typeof at !== 'number' || now - at > FRESH_MS) return 'stale';
 
-    // One SOS, one mail per kind: a nearby phone may have recorded the same SOS (same bleId and episode) for a requester
-    // without data. The later record gets its own sent mark (so its release mail is not refused) and no second mail.
-    // A record without an episode (older apps) has no such mark and is always sent.
-    var epKey = (typeof rec.bleId === 'string' && typeof rec.ep === 'number' && rec.ep >= 1 && rec.ep <= 255)
-      ? SENT + ['ep', event, site, sc, encodeURIComponent(rec.bleId), rec.ep, tag].join('|') : '';
-    if (epKey && sent[epKey]) {
+    // One SOS, one mail per kind: the requester's phone makes an SOS ID for every request, and a nearby phone that recorded the
+    // same SOS for a requester without data writes the same one. The later record gets its own sent mark (so its release mail is
+    // not refused) and no second mail. A record without an SOS ID (older apps) has no such mark and is always sent.
+    var idKey = (typeof rec.sosId === 'string' && SOS_ID_RE.test(rec.sosId))
+      ? SENT + ['id', event, site, sc, rec.sosId, tag].join('|') : '';
+    if (idKey && sent[idKey]) {
       store.setProperty(key, String(now));
       return 'dup';
     }
@@ -170,11 +171,11 @@ function handle(p) {
     // Record the send first: if saving fails nothing is sent, and if sending fails the record is deleted.
     try {
       store.setProperty(key, String(now));
-      if (epKey) store.setProperty(epKey, String(now));
+      if (idKey) store.setProperty(idKey, String(now));
       MailApp.sendEmail({ to: to, subject: m.subject, body: m.body, htmlBody: m.html, name: 'SafeAlert' });
     } catch (err) {
       store.deleteProperty(key);
-      if (epKey) store.deleteProperty(epKey);
+      if (idKey) store.deleteProperty(idKey);
       throw err;
     }
     return 'sent';
@@ -265,7 +266,7 @@ function buildMail(event, sc, id, rec, stillMin) {
       ['원인', esc(cause), true],
       ['서버 기록 시각', esc(fmt(rec.createdAt, 'yyyy-MM-dd HH:mm:ss')) + ' (한국 시간)'],
       ['사업장', siteCell('#c62828', sc, rec)]
-    ].concat(relay ? [['전달', '근처 기기 경유 (' + esc(relayBy) + ') · 층·공정은 전달한 폰 기준']] : []).concat([
+    ].concat(relay ? [['전달', '근처 기기 경유 (' + esc(relayBy) + ')']] : []).concat([
       ['상태', done ? badge(auto ? '#fff3e0' : '#e8f5e9', auto ? '#e65100' : '#2e7d32',
           ended + ' (' + esc(fmt(rec.resolvedAt, 'HH:mm:ss')) + ')')
         : badge('#fdecea', '#c62828', '구조 요청 중') +

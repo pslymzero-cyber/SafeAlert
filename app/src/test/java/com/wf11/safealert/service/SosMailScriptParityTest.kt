@@ -1,5 +1,6 @@
 package com.wf11.safealert.service
 
+import com.wf11.safealert.ble.SosAdvert
 import com.wf11.safealert.model.PitType
 import com.wf11.safealert.utils.SiteScope
 import org.junit.Assert.assertEquals
@@ -44,6 +45,7 @@ class SosMailScriptParityTest {
         // Relayed records (SosRelay) have keys of up to 36 characters, which the script's ID rule must take, and a trigger it words differently
         val idRe = Regex(gs.substringAfter("var ID_RE = /").substringBefore("/;"))
         assertTrue(idRe.matches(SosRelay.PREFIX + "0123456789abcdef"))
+        assertTrue("SOS ID form", gs.contains("/" + SosAdvert.SOS_ID_PATTERN + "/"))
         assertTrue(gs.contains("rec.trigger === '${SosRelay.TRIGGER}'"))
 
         val layout = repoFile("app/src/main/res/layout/activity_dev_settings.xml")
