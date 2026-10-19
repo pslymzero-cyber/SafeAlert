@@ -12,7 +12,10 @@ object SiteScope {
     /** Trimmed, uppercased value if it is a valid floor/process code, else "". */
     fun code(raw: String?): String = raw?.trim()?.uppercase()?.takeIf { CODE.matches(it) }.orEmpty()
 
-    /** Picker choices built into the app. */
+    /**
+     * Picker choices built into the app. The order is carried in the Bluetooth SOS signal (SosAdvert.scopeByte), so
+     * never reorder or remove entries; only append at the end.
+     */
     val FLOORS: List<String> = (1..10).map { "${it}F" }
     val PROCS: List<String> = listOf("OB", "IB", "ICQA", "HUB", "EHS", "HR")
 

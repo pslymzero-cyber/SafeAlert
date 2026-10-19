@@ -1,5 +1,7 @@
 package com.wf11.safealert.service
 
+import com.wf11.safealert.ble.SosAdvert
+
 /** String key-value store. put applies all changes at once and removes null values. */
 interface SosKv {
     fun get(k: String): String?
@@ -51,7 +53,8 @@ class SosLedger(
         val bleId: String, val name: String, val role: String, val trigger: String,
         val beacon: String?, val beaconRssi: Int?, val sid: Int, val ep: Int = 0,
         val floor: String = "", val proc: String = "",   // Scope at SOS time, kept so a restored SOS uploads the same values
-        val relayBy: String = ""   // Device ID of the phone that recorded this SOS for another phone (SosRelay); empty for my own SOS
+        val relayBy: String = "",   // Device ID of the phone that recorded this SOS for another phone (SosRelay); empty for my own SOS
+        val sosId: String = ""   // SOS ID made by the sender at SOS start (SosAdvert.SOS_ID_PATTERN); empty = an SOS that began before IDs
     )
 
     enum class Remote { ABSENT, MINE_ACTIVE, MINE_RESOLVED, OTHER, ERROR }
@@ -68,6 +71,7 @@ class SosLedger(
         private const val K_EP = "a.ep"
         private const val K_FLOOR = "a.floor"
         private const val K_PROC = "a.proc"
+        private const val K_SOSID = "a.sosid"
         private const val K_KEY = "a.key"
         private const val K_PATH = "a.path"
         private const val K_SENT = "a.sent"
@@ -87,8 +91,15 @@ class SosLedger(
             return (wallNowMs - at).coerceAtLeast(0L)
         }
         private const val K_EP_LAST = "ep.last"
+
+        /** New SOS ID: SecureRandom 8 bytes as 16 lowercase hex chars. */
+        fun newSosId(): String {
+            val b = ByteArray(8)
+            java.security.SecureRandom().nextBytes(b)
+            return b.joinToString("") { "%02x".format(it.toInt() and 0xFF) }
+        }
         private val ACTIVE_KEYS = listOf(
-            K_TRIGGER, K_BLE, K_NAME, K_ROLE, K_BEACON, K_RSSI, K_SID, K_EP, K_FLOOR, K_PROC, K_KEY, K_PATH, K_SENT, K_AT, K_BEGAN
+            K_TRIGGER, K_BLE, K_NAME, K_ROLE, K_BEACON, K_RSSI, K_SID, K_EP, K_FLOOR, K_PROC, K_SOSID, K_KEY, K_PATH, K_SENT, K_AT, K_BEGAN
         )
 
         /**
@@ -136,6 +147,10 @@ class SosLedger(
     fun restoredTrigger(): String? = kv.get(K_TRIGGER)
     fun episode(): Int = kv.get(K_EP)?.toIntOrNull() ?: 0
     fun hint(): Int = kv.get(K_SID)?.toIntOrNull() ?: 0
+    /** SOS ID of the active SOS ("" without one, or for an SOS stored before IDs existed). */
+    fun sosId(): String = kv.get(K_SOSID).orEmpty()
+    /** Scope byte (SosAdvert.scopeByte) of the floor/process stored when the SOS began. */
+    fun scope(): Int = SosAdvert.scopeByte(kv.get(K_FLOOR).orEmpty(), kv.get(K_PROC).orEmpty())
 
     /**
      * How long the active SOS's server record has been up, or null without one or before the server confirmed it. Counted
@@ -172,6 +187,7 @@ class SosLedger(
         ch[K_EP] = ep.toString()
         ch[K_FLOOR] = rec.floor.ifEmpty { null }
         ch[K_PROC] = rec.proc.ifEmpty { null }
+        ch[K_SOSID] = rec.sosId.ifEmpty { newSosId() }
         ch[K_EP_LAST] = ep.toString()
         ch[K_BEGAN] = wallClock().toString()
         kv.put(ch)
@@ -295,7 +311,7 @@ class SosLedger(
         kv.get(K_BLE).orEmpty(), kv.get(K_NAME).orEmpty(), kv.get(K_ROLE).orEmpty(),
         kv.get(K_TRIGGER).orEmpty(), kv.get(K_BEACON), kv.get(K_RSSI)?.toIntOrNull(),
         kv.get(K_SID)?.toIntOrNull() ?: 0, kv.get(K_EP)?.toIntOrNull() ?: 0,
-        kv.get(K_FLOOR).orEmpty(), kv.get(K_PROC).orEmpty()
+        kv.get(K_FLOOR).orEmpty(), kv.get(K_PROC).orEmpty(), sosId = kv.get(K_SOSID).orEmpty()
     )
 
     // ── Resolve ─────────────────────────────────────────────────

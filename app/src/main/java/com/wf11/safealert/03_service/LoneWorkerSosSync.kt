@@ -281,6 +281,9 @@ class LoneWorkerSosSync(
     /** Own SOS episode number (0 if none) and beacon short ID (0 if none). Used for the BLE advertisement extension. */
     fun episode(): Int = ledger.episode()
     fun hint(): Int = ledger.hint()
+    /** Own SOS ID ("" if none) and its scope byte, for the scan response. */
+    fun sosId(): String = ledger.sosId()
+    fun scope(): Int = ledger.scope()
 
     // ── Peer reception ────────────────────────────────────────
 

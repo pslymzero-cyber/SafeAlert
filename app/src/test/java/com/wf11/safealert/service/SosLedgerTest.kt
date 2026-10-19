@@ -123,8 +123,12 @@ class SosLedgerTest {
         val kv = Kv(); val tr = FakeSosTransport()
         ledger(kv, tr).begin(rec(77))
         val first = tr.creates[0]
+        val sosId = ledger(kv, FakeSosTransport()).sosId()
+        assertTrue(com.wf11.safealert.ble.SosAdvert.isSosId(sosId))
+        assertEquals(sosId, tr.recs[0].sosId)
 
         val tr2 = FakeSosTransport(); val l2 = ledger(kv, tr2)
+        assertEquals(sosId, l2.sosId())
         assertEquals("still", l2.restoredTrigger())
         assertEquals(1, l2.episode())
         assertEquals(77, l2.hint())
@@ -134,6 +138,7 @@ class SosLedgerTest {
         assertEquals(1, tr2.creates.size)
         assertEquals(first.key, tr2.creates[0].key)
         assertEquals(first.path, tr2.creates[0].path)
+        assertEquals(sosId, tr2.recs[0].sosId)
     }
 
     @Test fun episode_after_255_wraps_to_1() {

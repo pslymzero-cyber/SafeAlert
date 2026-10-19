@@ -219,15 +219,21 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
                     else BleConstants.NO_ECHO_RSSI
 
                 BleService.safeAlertFound++
-                detectedDevices[fullId] = System.currentTimeMillis()
-                scanCallback?.onDeviceDetected(fullId, rssi, remoteState, remoteTurn, payloadPresent, peerEchoRssi, peerInZone)
-                scanCallback?.onPeerSos(fullId, BleConstants.decodeSos(extByte), SosAdvert.decodeEpisode(svcData), SosAdvert.decodeHint(svcData))   // Extension byte bit1
+                // A rescue request advert (extension byte bit1) does not go into proximity judgment, and does not refresh the
+                //   tracked time either: an approach alert already raised for that device goes down by the same timeout
+                //   loss as when it leaves range. The rescue request alert itself (onPeerSos) is unchanged.
+                val peerSos = BleConstants.decodeSos(extByte)
+                if (!peerSos) detectedDevices[fullId] = System.currentTimeMillis()
+                scanCallback?.onDeviceDetected(fullId, rssi, remoteState, remoteTurn, payloadPresent, peerEchoRssi, peerInZone, peerSos)
+                // SOS info scan response (0x5053: SOS ID + scope byte); looked up only for a rescue request advert
+                val sosInfo = if (peerSos) record.getManufacturerSpecificData(BleConstants.COMPANY_ID_SOS_INFO) else null
+                scanCallback?.onPeerSos(fullId, peerSos, SosAdvert.decodeEpisode(svcData), SosAdvert.decodeHint(svcData), SosAdvert.decodeSosId(sosInfo), SosAdvert.decodeScope(sosInfo))   // Extension byte bit1
 
                 // Parse the UWB address from the scan response (supported devices only).
                 // DEVICE (controller) = 4 bytes (address + channel + preamble), WALKER (controlee) = 2 bytes; pass on
                 //   whatever is present
                 val uwbData = record.getManufacturerSpecificData(BleConstants.COMPANY_ID_UWB_EXT)
-                if (uwbData != null && uwbData.size >= 2) {
+                if (!peerSos && uwbData != null && uwbData.size >= 2) {
                     scanCallback?.onUwbAddressReceived(fullId, uwbData.copyOf(minOf(uwbData.size, 4)))
                 }
                 return

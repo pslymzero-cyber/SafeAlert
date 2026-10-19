@@ -171,7 +171,7 @@ class RadioLifecycleTest {
     private fun startedScanner(hw: BluetoothLeScanner) = BleScanner(hw).apply {
         startScanning(object : BleScanCallback {
             override fun onDeviceDetected(deviceId: String, rssi: Int, remoteState: Int, remoteTurn: Int,
-                                          payloadPresent: Boolean, peerEchoRssi: Int, peerInZone: Boolean) = Unit
+                                          payloadPresent: Boolean, peerEchoRssi: Int, peerInZone: Boolean, peerSos: Boolean) = Unit
             override fun onDeviceLost(deviceId: String) = Unit
             override fun onScanError(errorCode: Int) = Unit
         })

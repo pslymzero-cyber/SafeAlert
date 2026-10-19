@@ -22,6 +22,15 @@ class SosAdvertTest {
         val long = "ABCDEFGHIJKLMNO"
         assertEquals(12, SosAdvert.idBytes(long, true).size)
         assertEquals(15, SosAdvert.idBytes(long, false).size)
+        // Scan response during an SOS: SOS info only = 1 length + 1 type + 2 company + 9 payload = 13 bytes
+        val sid = "0123456789abcdef"
+        val info = SosAdvert.info(sid, SosAdvert.scopeByte("10F", "HR"))!!
+        assertEquals(SosAdvert.INFO_LEN, info.size)
+        assertTrue(1 + 1 + 2 + info.size <= SosAdvert.PACKET_MAX)
+        assertEquals(13, 1 + 1 + 2 + info.size)
+        for (bad in listOf("0123456789ABCDEF", "0123456789abcde", "0123456789abcdeg", "")) {
+            assertEquals("not an SOS ID: $bad", null, SosAdvert.info(bad, 0))
+        }
     }
 
     /**
@@ -56,6 +65,20 @@ class SosAdvertTest {
             r.episode?.let { assertEquals("${r.label}: episode", it, SosAdvert.decodeEpisode(r.svc)) }
             r.hint?.let { assertEquals("${r.label}: hint", it, SosAdvert.decodeHint(r.svc)) }
         }
+        // Scan response info: scope byte round trip over every floor and process, not-in-list values read as "" and 0
+        for (f in com.wf11.safealert.utils.SiteScope.FLOORS) for (p in com.wf11.safealert.utils.SiteScope.PROCS) {
+            val sc = SosAdvert.scopeByte(f, p)
+            assertEquals(f, SosAdvert.floorOf(sc)); assertEquals(p, SosAdvert.procOf(sc))
+        }
+        assertEquals(0, SosAdvert.scopeByte("", ""))
+        assertEquals(0, SosAdvert.scopeByte("11F", "XX"))
+        assertEquals("", SosAdvert.floorOf(SosAdvert.scopeByte("11F", "OB"))); assertEquals("OB", SosAdvert.procOf(SosAdvert.scopeByte("11F", "OB")))
+        val sid = "0123456789abcdef"
+        val sc = SosAdvert.scopeByte("3F", "IB")
+        val info = SosAdvert.info(sid, sc)
+        assertEquals(sid, SosAdvert.decodeSosId(info)); assertEquals(sc, SosAdvert.decodeScope(info))
+        assertEquals("", SosAdvert.decodeSosId(null)); assertEquals(0, SosAdvert.decodeScope(null))
+        assertEquals("", SosAdvert.decodeSosId(ByteArray(8))); assertEquals(0, SosAdvert.decodeScope(ByteArray(8)))
     }
 
     @Test

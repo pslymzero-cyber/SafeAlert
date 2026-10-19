@@ -400,7 +400,7 @@ class UwbSessionGoldenTest {
         val scanner = BleScanner(hw)
         scanner.startScanning(object : BleScanCallback {
             override fun onDeviceDetected(deviceId: String, rssi: Int, remoteState: Int, remoteTurn: Int,
-                                          payloadPresent: Boolean, peerEchoRssi: Int, peerInZone: Boolean) = Unit
+                                          payloadPresent: Boolean, peerEchoRssi: Int, peerInZone: Boolean, peerSos: Boolean) = Unit
             override fun onDeviceLost(deviceId: String) = BleServiceTestHarness.deviceLost(service, deviceId)
             override fun onScanError(errorCode: Int) = Unit
         })

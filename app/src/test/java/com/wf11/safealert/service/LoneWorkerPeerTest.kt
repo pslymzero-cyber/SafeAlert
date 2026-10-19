@@ -738,6 +738,7 @@ class LoneWorkerPeerTest {
         var h = 0
         for (p in l.peers) {
             h = h * 31 + p.id.hashCode()
+            h = h * 31 + p.scopeLabel.hashCode()
             h = h * 31 + (if (p.active) 1 else 0) + (if (p.silenced) 2 else 0) + (if (p.ringOver) 4 else 0)
         }
         assertEquals(2, l.peers.size)
@@ -781,5 +782,16 @@ class LoneWorkerPeerTest {
         d.srv(rk, "P", 4, true, created = 5L, now = 2_000)
         d.srv(rk, "P", 4, false, created = 5L, now = 3_000, resolvedAt = 8L, serverNow = 8L)
         assertFalse(d.peer("P").active)
+
+        // The scan response can come after the first advert: it fills SOS ID, floor and process, and a later advert
+        //   without it never clears them
+        val q = meLogic()
+        val s2 = "0123456789abcdef"
+        q.onPeerBle("Q", true, 0, 7)
+        assertEquals("", q.peer("Q").sosId)
+        q.onPeerBle("Q", true, 500, 7, sosId = s2, floor = "3F", proc = "IB")
+        assertEquals(s2, q.peer("Q").sosId); assertEquals("3F", q.peer("Q").floor); assertEquals("IB", q.peer("Q").proc)
+        q.onPeerBle("Q", true, 1_000, 7)
+        assertEquals(s2, q.peer("Q").sosId); assertEquals("3F", q.peer("Q").floor)
     }
 }

@@ -19,6 +19,8 @@ object BleConstants {
     //   sym=(rssi_A→B + rssi_B→A)/2, removing per-phone TX/RX asymmetry (my phone silent while the peer alarms).
     //   Entry = [hash_hi][hash_lo][rssi(signed)], 3 bytes. hash = shortHash(peer fullId), 2 bytes.
     const val COMPANY_ID_RSSI_ECHO = 0xE0C0
+    // Scan response while an SOS is active (replaces UWB_EXT / RSSI_ECHO): SOS ID 8 bytes + scope byte 1
+    const val COMPANY_ID_SOS_INFO  = 0x5053
     const val ECHO_ENTRY_SIZE      = 3        // Bytes per entry (2-byte hash + 1-byte signed RSSI)
     const val NO_ECHO_RSSI         = Int.MIN_VALUE   // No-echo sentinel (RSSI is negative dBm, so MIN_VALUE is safe)
 

@@ -1,5 +1,7 @@
 package com.wf11.safealert.ble
 
+import com.wf11.safealert.utils.SiteScope
+
 /**
  * SOS advertising extension — appends 3 bytes after the service data only while an SOS is active.
  *
@@ -14,11 +16,52 @@ package com.wf11.safealert.ble
  * Packet budget: non-connectable advertising has no flags AD. UUID list 4 + service data (4+len) +
  * manufacturer (4+ID len) <= 31. With the extension the service data is 5 bytes, so the ID carries at most
  * 12 bytes (real IDs are PIT 5B, AUTO 11B, so no impact).
+ *
+ * Scan response: while an SOS is active it carries one manufacturer data (company ID 0x5053) = SOS ID 8 bytes + scope
+ * byte 1 = 9 bytes, so 1+1+2+9 = 13 <= 31 bytes. It replaces the UWB address and RSSI echo during the SOS (the SOS
+ * phone judges no proximity). The main advertising packet is not touched, so older receivers are unaffected.
  */
 object SosAdvert {
     const val ID_MAX = 15
     const val EXT_ID_MAX = 12
     const val PACKET_MAX = 31
+
+    /** SOS ID text: 16 lowercase hex chars (SecureRandom 8 bytes). Same text as the sosId rule in database.rules.json. */
+    const val SOS_ID_PATTERN = "^[0-9a-f]{16}\$"
+    private val SOS_ID = Regex(SOS_ID_PATTERN)
+
+    /** SOS info manufacturer data length: SOS ID 8 bytes + scope byte 1. */
+    const val INFO_LEN = 9
+
+    fun isSosId(s: String): Boolean = SOS_ID.matches(s)
+
+    /**
+     * Scope byte: high 4 bits = floor (SiteScope.FLOORS position + 1), low 4 bits = process (SiteScope.PROCS
+     * position + 1); 0 = none or not in the list.
+     */
+    fun scopeByte(floor: String, proc: String): Int =
+        ((SiteScope.FLOORS.indexOf(floor) + 1) shl 4) or (SiteScope.PROCS.indexOf(proc) + 1)
+
+    fun floorOf(scope: Int): String = SiteScope.FLOORS.getOrNull(((scope shr 4) and 0x0F) - 1).orEmpty()
+
+    fun procOf(scope: Int): String = SiteScope.PROCS.getOrNull((scope and 0x0F) - 1).orEmpty()
+
+    /** SOS info payload (SOS ID 8 bytes + scope byte); null if the SOS ID is not valid. */
+    fun info(sosId: String, scope: Int): ByteArray? {
+        if (!isSosId(sosId)) return null
+        val out = ByteArray(INFO_LEN)
+        for (i in 0 until 8) out[i] = sosId.substring(i * 2, i * 2 + 2).toInt(16).toByte()
+        out[8] = scope.toByte()
+        return out
+    }
+
+    /** SOS ID from the info payload as lowercase hex; "" if absent or too short. */
+    fun decodeSosId(info: ByteArray?): String =
+        if (info != null && info.size >= INFO_LEN) (0 until 8).joinToString("") { "%02x".format(info[it].toInt() and 0xFF) } else ""
+
+    /** Scope byte from the info payload, unsigned; 0 if absent. */
+    fun decodeScope(info: ByteArray?): Int =
+        if (info != null && info.size >= INFO_LEN) info[8].toInt() and 0xFF else 0
 
     /** Total advertising packet bytes: 16-bit service UUID list AD + service data AD + manufacturer data AD. */
     fun advertBytes(idLen: Int, dataLen: Int): Int = 4 + (4 + dataLen) + (4 + idLen)

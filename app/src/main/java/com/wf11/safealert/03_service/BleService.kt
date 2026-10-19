@@ -144,7 +144,7 @@ class BleService : LifecycleService() {
     private val volumeGuardHandler = android.os.Handler(android.os.Looper.getMainLooper())
     // Lone-worker no-motion/fall SOS — the constructor only stores references; every entry point is a no-op before start()
     private val loneWorker by lazy {
-        LoneWorkerMonitor(this, advertiseSos = { sos, ep, hint -> bleAdvertiser?.updateSos(sos, ep, hint) }, setAlarmVolume = { setAlarmVolumeGuarded(it) },
+        LoneWorkerMonitor(this, advertiseSos = { sos, ep, hint, id, scope -> onOwnSos(sos, ep, hint, id, scope) }, setAlarmVolume = { setAlarmVolumeGuarded(it) },
             onRescuerStop = {
                 if (requestStop()) {
                     LoneWorkerMonitor.rescuerStopped = true
@@ -566,7 +566,7 @@ class BleService : LifecycleService() {
             //   (The main send is on the onDeviceDetected scan cycle; same-level calls are no-ops, so duplicates are harmless.)
             bleAdvertiser?.updateRisk(getCurrentMaxLevel())
             reevaluateZones()       // poll zone signal-loss exits and stale-entry disposal (+IN_ZONE self-heal)
-            bleAdvertiser?.updateSos(loneWorker.sosActive, loneWorker.sosEpisode, loneWorker.sosHint)   // self-heal a recreated advertiser — no-op if the values are unchanged
+            bleAdvertiser?.updateSos(loneWorker.sosActive, loneWorker.sosEpisode, loneWorker.sosHint, loneWorker.sosId, loneWorker.sosScope)   // self-heal a recreated advertiser — no-op if the values are unchanged
             pushRssiEcho()          // reciprocal RSSI: echo my measured peer RSSI table in the scan response
             broadcastLocalState()   // periodic refresh — keeps the Local UI (state/turn) polling source current
             speedPushHandler.postDelayed(this, SPEED_PUSH_INTERVAL_MS)
@@ -893,7 +893,7 @@ class BleService : LifecycleService() {
                 bleAdvertiser = bleAdv
                 // Advertising failures go to the persistent notification, not just the log
                 bleAdv.onTxFault = { reason -> txFault = reason; refreshNotification() }
-                bleAdv.updateSos(loneWorker.sosActive, loneWorker.sosEpisode, loneWorker.sosHint, restart = false)   // load the current SOS state into the new advertiser first
+                bleAdv.updateSos(loneWorker.sosActive, loneWorker.sosEpisode, loneWorker.sosHint, loneWorker.sosId, loneWorker.sosScope, restart = false)   // load the current SOS state into the new advertiser first
                 bleAdv.startAdvertising(myId)
                 // UWB is applied separately after advertising starts — tear down the previous session first (mode switches), then recreate
                 uwbRanger?.stop(); uwbRanger = null
@@ -930,45 +930,12 @@ class BleService : LifecycleService() {
                     //   grace only postpones; the path itself is unchanged.
                     s.uwbMeasuringCheck = { id -> uwbDist.freshUwbDistM(id) != null }
                     s.startScanning(object : BleScanCallback {
-                        override fun onDeviceDetected(deviceId: String, rssi: Int, remoteState: Int, remoteTurn: Int, payloadPresent: Boolean, peerEchoRssi: Int, peerInZone: Boolean) {
-                            lastScanResultMs = System.currentTimeMillis()
-                            loneWorker.noteBeacon(deviceId, rssi)   // latest strongest beacon for the SOS — recorded before the gate
-
-                            if (myMode == "WALKER"
-                                && deviceId.startsWith(BleConstants.WALKER_PREFIX)
-                                && !(deviceId.contains("BEA_") && !BeaconRegistry.isVisitorBeacon(deviceId))   // only visitor beacons are treated as walkers; equipment/unregistered ones alert
-                                && !DevSettings.walkerDetectsWalker) return
-
-                            // Full safe-zone suppression — inside a zone only zone-beacon signals are received.
-                            //   BleScanner routes zone beacons through the dedicated onZoneBeaconSignal path, so they never reach here and this
-                            //   return doesn't block zone reception (zone entry/exit still work).
-                            //   Devices left over at entry were already cleared by refreshMyZoneInside's forceLoseAll.
-                            if (myZoneInside) return
-
-                            noteRssiForWake(deviceId, rssi)   // near signal → immediate wake decision
-                            acquireDetectionWakeLock(rssi)   // screen off + near (>=WAKE) → brief CPU hold so the chain completes
-                            // The same gate also switches scan batching to 0ms immediate delivery — even with the CPU awake on a wakelock,
-                            //   500ms batching makes the BLE chip hold results for 0.5s and halves the benefit, so drop it to 0ms too
-                            //   (going back to false is aggregated per evaluation cycle).
-                            if (rssi >= WAKE_RSSI_DBM) bleScanner?.setHazardNear(true)
-                            // Peer IN_ZONE declaration cache — must be updated before processAlert so this sample's judgment sees it
-                            peerInZoneMap[deviceId] = peerInZone
-                            try {
-                                processAlert(deviceId, rssi, remoteState, remoteTurn, payloadPresent, peerEchoRssi)
-                                // However processAlert changed alertState (add, escalate, SAFE removal, TTC early alert), send the full snapshot
-                                // right after in one go → the bottom list never disagrees with the floating overlay and alarms.
-                                broadcastDeviceList()
-                                // Re-advertise my highest detected alert level as the risk state (RISK) at once → the peer can sound first via
-                                //   cooperative escalation (compromise) before we cross. Sent from the scan path, without waiting for the TX poll (earlier onset).
-                                //   updateRisk is a no-op at the same level, immediate on a rise and throttled 0.5s on a fall, so calling it every scan is safe.
-                                bleAdvertiser?.updateRisk(getCurrentMaxLevel())
-                            } finally {
-                                releaseDetectionWakeLock()   // release as soon as the chain ends (alertWakeLock takes over on alert)
-                            }
-                        }
+                        override fun onDeviceDetected(deviceId: String, rssi: Int, remoteState: Int, remoteTurn: Int, payloadPresent: Boolean, peerEchoRssi: Int, peerInZone: Boolean, peerSos: Boolean) =
+                            handleDeviceDetected(deviceId, rssi, remoteState, remoteTurn, payloadPresent, peerEchoRssi, peerInZone, peerSos)
                         override fun onDeviceLost(deviceId: String) = handleDeviceLost(deviceId)
                         override fun onScanError(errorCode: Int) { Log.e(TAG, "스캔 오류: $errorCode") }
                         override fun onUwbAddressReceived(deviceId: String, uwbAddress: ByteArray) {
+                            if (loneWorker.sosActive) return   // my rescue request runs: no proximity judgment, so no new UWB session
                             // Walker gate mirror — if a UWB session opened between walkers that judgment (onDeviceDetected) filtered out,
                             //   judgeUwbOnly would revive the filtered device. Block session setup itself.
                             if (myMode == "WALKER" && deviceId.startsWith(BleConstants.WALKER_PREFIX)
@@ -978,8 +945,8 @@ class BleService : LifecycleService() {
                             uwbRanger?.onPeerUwbAddressReceived(deviceId, uwbAddress)
                         }
                         // Peer SOS bit — a path separate from the judgment gate so phones inside a zone and walker phones get it too
-                        override fun onPeerSos(deviceId: String, sos: Boolean, episode: Int, hint: Int) {
-                            loneWorker.onPeerBle(deviceId, sos, episode, hint)
+                        override fun onPeerSos(deviceId: String, sos: Boolean, episode: Int, hint: Int, sosId: String, scope: Int) {
+                            loneWorker.onPeerBle(deviceId, sos, episode, hint, sosId, scope)
                         }
                         override fun onZoneBeaconSignal(beaconKey: String, rssi: Int, enterRssi: Int) {
                             // A zone beacon is a genuine scan result too. Without updating here, on a site with only a zone beacon and no
@@ -1011,6 +978,58 @@ class BleService : LifecycleService() {
 
     private fun processAlert(deviceId: String, rssi: Int, remoteState: Int = 0x00, remoteTurn: Int = BleConstants.TURN_STRAIGHT, payloadPresent: Boolean = false, peerEchoRssi: Int = BleConstants.NO_ECHO_RSSI, nowMs: () -> Long = { System.currentTimeMillis() }) =
         asm.processAlert(deviceId, rssi, remoteState, remoteTurn, payloadPresent, peerEchoRssi, nowMs)
+
+    /** The scan callback's detection handler (applyMode); a named method so tests can drive the real path, like handleDeviceLost. */
+    private fun handleDeviceDetected(deviceId: String, rssi: Int, remoteState: Int, remoteTurn: Int, payloadPresent: Boolean, peerEchoRssi: Int, peerInZone: Boolean, peerSos: Boolean) {
+        lastScanResultMs = System.currentTimeMillis()
+        loneWorker.noteBeacon(deviceId, rssi)   // latest strongest beacon for the SOS — recorded before the gate
+
+        // No proximity judgment for a device that is requesting rescue, nor while my own rescue request runs. The rescue
+        //   request alert is raised separately (onPeerSos); an approach alert already up goes down through the loss path.
+        if (peerSos || loneWorker.sosActive) return
+
+        if (myMode == "WALKER"
+            && deviceId.startsWith(BleConstants.WALKER_PREFIX)
+            && !(deviceId.contains("BEA_") && !BeaconRegistry.isVisitorBeacon(deviceId))   // only visitor beacons are treated as walkers; equipment/unregistered ones alert
+            && !DevSettings.walkerDetectsWalker) return
+
+        // Full safe-zone suppression — inside a zone only zone-beacon signals are received.
+        //   BleScanner routes zone beacons through the dedicated onZoneBeaconSignal path, so they never reach here and this
+        //   return doesn't block zone reception (zone entry/exit still work).
+        //   Devices left over at entry were already cleared by refreshMyZoneInside's forceLoseAll.
+        if (myZoneInside) return
+
+        noteRssiForWake(deviceId, rssi)   // near signal → immediate wake decision
+        acquireDetectionWakeLock(rssi)   // screen off + near (>=WAKE) → brief CPU hold so the chain completes
+        // The same gate also switches scan batching to 0ms immediate delivery — even with the CPU awake on a wakelock,
+        //   500ms batching makes the BLE chip hold results for 0.5s and halves the benefit, so drop it to 0ms too
+        //   (going back to false is aggregated per evaluation cycle).
+        if (rssi >= WAKE_RSSI_DBM) bleScanner?.setHazardNear(true)
+        // Peer IN_ZONE declaration cache — must be updated before processAlert so this sample's judgment sees it
+        peerInZoneMap[deviceId] = peerInZone
+        try {
+            processAlert(deviceId, rssi, remoteState, remoteTurn, payloadPresent, peerEchoRssi)
+            // However processAlert changed alertState (add, escalate, SAFE removal, TTC early alert), send the full snapshot
+            // right after in one go → the bottom list never disagrees with the floating overlay and alarms.
+            broadcastDeviceList()
+            // Re-advertise my highest detected alert level as the risk state (RISK) at once → the peer can sound first via
+            //   cooperative escalation (compromise) before we cross. Sent from the scan path, without waiting for the TX poll (earlier onset).
+            //   updateRisk is a no-op at the same level, immediate on a rise and throttled 0.5s on a fall, so calling it every scan is safe.
+            bleAdvertiser?.updateRisk(getCurrentMaxLevel())
+        } finally {
+            releaseDetectionWakeLock()   // release as soon as the chain ends (alertWakeLock takes over on alert)
+        }
+    }
+
+    /**
+     * My rescue request starts or ends (LoneWorkerMonitor). Starting also drops every approach alert already up, by the same
+     * loss path as entering a safe zone (forceLoseAll -> onDeviceLost -> handleDeviceLost): the nearby adverts keep arriving,
+     * so no timeout loss would come by itself. My own siren (LoneWorkerAlarm's own AudioTrack) is not touched by that path.
+     */
+    private fun onOwnSos(sos: Boolean, ep: Int, hint: Int, sosId: String, scope: Int) {
+        bleAdvertiser?.updateSos(sos, ep, hint, sosId, scope)
+        if (sos) bleScanner?.forceLoseAll()
+    }
 
     /** The scan callback's signal-lost handler (applyMode); a named method so tests can drive the real path. */
     private fun handleDeviceLost(deviceId: String) {
@@ -1067,7 +1086,7 @@ class BleService : LifecycleService() {
         //   run to completion inside a zone and devices would stay in the list/overlay (only audio was suppressed).
         //   The sample time was already recorded above, so after leaving the zone Case A freshness recovers on the next sample.
         //   Devices left over at entry are cleared by refreshMyZoneInside's forceLoseAll → onDeviceLost.
-        if (myZoneInside) return
+        if (myZoneInside || loneWorker.sosActive) return
         if (!uwbJudgeModeExclusive(deviceId, now)) return
         acquireDetectionWakeLock(0)   // 0 (strong) — always acquire with screen off: a UWB measurement proves proximity
         try {

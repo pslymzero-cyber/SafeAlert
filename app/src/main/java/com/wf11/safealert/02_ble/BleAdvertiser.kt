@@ -175,6 +175,7 @@ class BleAdvertiser(
     @Volatile private var currentSos = false          // Lone-worker rescue request (extension byte bit1)
     @Volatile private var sosEpisode = 0              // Rescue request episode (service data byte2, 0 = none)
     @Volatile private var sosHint = 0                 // Short ID of the latest beacon (byte3-4, 0 = none)
+    @Volatile private var sosInfo: ByteArray? = null  // Scan response payload during an SOS: SOS ID 8B + scope byte (null = none)
     // Throttle timestamp shared by STATE and Turn re-advertising
     private var lastPayloadUpdateMs = 0L
     // Throttle timestamp for RISK only, independent of the STATE/TURN throttle.
@@ -329,7 +330,13 @@ class BleAdvertiser(
         val echoToSend = if (desiredEcho.size <= echoBudget) desiredEcho
                          else desiredEcho.copyOf(echoBudget)   // 15 and 24 are multiples of 3, so entry boundaries are kept
         lastAdvertisedEcho = desiredEcho                       // Record the echo this (re)advertisement carries
-        val scanResponse = if (hasUwb || echoToSend.isNotEmpty()) {
+        // During an SOS the scan response carries only the SOS info (SOS ID + floor/process); the SOS phone judges no
+        //   proximity, so it sends neither the UWB address nor the RSSI echo. No valid SOS ID (an SOS that began before
+        //   IDs existed) = no scan response.
+        val info = sosInfo
+        val scanResponse = if (sosExt) {
+            info?.let { AdvertiseData.Builder().setIncludeDeviceName(false).addManufacturerData(BleConstants.COMPANY_ID_SOS_INFO, it).build() }
+        } else if (hasUwb || echoToSend.isNotEmpty()) {
             val b = AdvertiseData.Builder().setIncludeDeviceName(false)
             if (hasUwb) b.addManufacturerData(BleConstants.COMPANY_ID_UWB_EXT, uwbLocalAddress!!.take(4).toByteArray())
             if (echoToSend.isNotEmpty()) b.addManufacturerData(BleConstants.COMPANY_ID_RSSI_ECHO, echoToSend)
@@ -342,7 +349,7 @@ class BleAdvertiser(
         try {
             if (scanResponse != null) {
                 advertiser.startAdvertising(settings, advertiseData, scanResponse, callback)
-                Log.d(TAG, "광고+SR 시작: id=$deviceId uwb=${if (hasUwb) uwbLocalAddress!!.take(4).joinToString("") { "%02X".format(it) } else "-"} echo=${echoToSend.size / BleConstants.ECHO_ENTRY_SIZE}엔트리")
+                Log.d(TAG, "광고+SR 시작: id=$deviceId ${if (sosExt) "sos=${SosAdvert.decodeSosId(info)}" else "uwb=${if (hasUwb) uwbLocalAddress!!.take(4).joinToString("") { "%02X".format(it) } else "-"} echo=${echoToSend.size / BleConstants.ECHO_ENTRY_SIZE}엔트리"}")
             } else {
                 advertiser.startAdvertising(settings, advertiseData, callback)
                 Log.d(TAG, "광고 시작: companyId=0x${companyId.toString(16).uppercase()} id=$deviceId")
@@ -460,14 +467,16 @@ class BleAdvertiser(
      *  If restart is false, only the values are set without re-advertising (to preload the state into a freshly
      *  created advertiser right before startAdvertising).
      */
-    fun updateSos(sos: Boolean, episode: Int = 0, hint: Int = 0, restart: Boolean = true) {
+    fun updateSos(sos: Boolean, episode: Int = 0, hint: Int = 0, sosId: String = "", scope: Int = 0, restart: Boolean = true) {
         if (stopped) return
         val ep = if (sos) episode else 0
         val h = if (sos) hint else 0
-        if (sos == currentSos && ep == sosEpisode && h == sosHint) return
+        val info = if (sos) SosAdvert.info(sosId, scope) else null
+        if (sos == currentSos && ep == sosEpisode && h == sosHint && info.contentEquals(sosInfo)) return
         currentSos = sos
         sosEpisode = ep
         sosHint = h
+        sosInfo = info
         if (!restart) return
         Log.d(TAG, "SOS 갱신 → $sos 재광고")
         try { advertiser.stopAdvertising(callback) } catch (_: Exception) {}

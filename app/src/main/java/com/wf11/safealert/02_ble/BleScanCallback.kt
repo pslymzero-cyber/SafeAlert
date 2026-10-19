@@ -11,14 +11,16 @@ interface BleScanCallback {
     //   NO_ECHO_RSSI.
     // peerInZone: whether the peer declares zone beacon contact (IN_ZONE) (ServiceData extension byte bit0).
     //   Old version or beacon = false.
-    fun onDeviceDetected(deviceId: String, rssi: Int, remoteState: Int, remoteTurn: Int = BleConstants.TURN_STRAIGHT, payloadPresent: Boolean = false, peerEchoRssi: Int = BleConstants.NO_ECHO_RSSI, peerInZone: Boolean = false)
+    // peerSos: the advertisement has the rescue request bit (extension byte bit1) on - the receiver does not put it
+    //   into proximity judgment.
+    fun onDeviceDetected(deviceId: String, rssi: Int, remoteState: Int, remoteTurn: Int = BleConstants.TURN_STRAIGHT, payloadPresent: Boolean = false, peerEchoRssi: Int = BleConstants.NO_ECHO_RSSI, peerInZone: Boolean = false, peerSos: Boolean = false)
     fun onDeviceLost(deviceId: String)
     fun onScanError(errorCode: Int)
     // A peer's rescue request (extension byte bit1) is delivered separately from onDeviceDetected, which passes
     //   through the zone and walker gates (default: ignored).
     //   episode = advertised rescue request episode (byte2, 0 if none), hint = short ID of the latest beacon
-    //   (byte3-4, 0 if none)
-    fun onPeerSos(deviceId: String, sos: Boolean, episode: Int = 0, hint: Int = 0) {}
+    //   (byte3-4, 0 if none), sosId / scope = scan response 0x5053 (SOS ID text, scope byte), "" / 0 if absent
+    fun onPeerSos(deviceId: String, sos: Boolean, episode: Int = 0, hint: Int = 0, sosId: String = "", scope: Int = 0) {}
     // When a UWB address is parsed from the scan response (default: ignored)
     fun onUwbAddressReceived(deviceId: String, uwbAddress: ByteArray) {}
     // Zone beacon (zoneMute profile) signal: not added to the device list or judgment, only passed to the zone

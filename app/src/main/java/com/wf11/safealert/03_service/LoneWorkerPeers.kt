@@ -80,6 +80,8 @@ class LoneWorkerPeers(private val canSound: () -> Boolean) {
         /** Floor and process the sender gave ("" = none), shown on the row. */
         val floor: String = "",
         val proc: String = "",
+        /** SOS ID the sending phone made for this SOS, from its signal or its server record ("" = unknown). */
+        val sosId: String = "",
         /**
          * Out-of-scope server entry not heard over Bluetooth: kept only to merge with its adverts and to run the one-hour
          * release; not listed, not audible, no notification; stays hidden after it ends.
@@ -183,6 +185,7 @@ class LoneWorkerPeers(private val canSound: () -> Boolean) {
         for (p in map.values) {
             if (p.quiet) continue
             h = h * 31 + p.id.hashCode()
+            h = h * 31 + p.scopeLabel.hashCode()   // a scope filled in later by a scan response redraws the row
             h = h * 31 + (if (p.active) 1 else 0) + (if (p.silenced) 2 else 0) + (if (p.ringOver) 4 else 0)
         }
         return h
@@ -277,12 +280,12 @@ class LoneWorkerPeers(private val canSound: () -> Boolean) {
         )
     }
 
-    fun onBle(bleId: String, sos: Boolean, nowMs: Long, ep: Int, beacon: String) {
-        ble(bleId, sos, nowMs, ep, beacon)
+    fun onBle(bleId: String, sos: Boolean, nowMs: Long, ep: Int, beacon: String, sosId: String = "", floor: String = "", proc: String = "") {
+        ble(bleId, sos, nowMs, ep, beacon, sosId, floor, proc)
         ring(nowMs)
     }
 
-    private fun ble(bleId: String, sos: Boolean, nowMs: Long, ep: Int, beacon: String) {
+    private fun ble(bleId: String, sos: Boolean, nowMs: Long, ep: Int, beacon: String, sosId: String, floor: String, proc: String) {
         if (!sos) {
             expiredEps.removeAll { it.startsWith("$bleId#") }   // its SOS ended on air: a later one is new
             if (map.values.none { it.bleId == bleId && (it.key == null || it.relayed) && it.active }) return
@@ -310,7 +313,9 @@ class LoneWorkerPeers(private val canSound: () -> Boolean) {
                     lastBleMs = nowMs,
                     quiet = false,
                     silenced = p.silenced && keep,
-                    beacon = if (p.key == null) p.beacon.ifEmpty { beacon } else p.beacon
+                    beacon = if (p.key == null) p.beacon.ifEmpty { beacon } else p.beacon,
+                    // A scan response can arrive after the first advert: fill what is still empty, never overwrite
+                    sosId = p.sosId.ifEmpty { sosId }, floor = p.floor.ifEmpty { floor }, proc = p.proc.ifEmpty { proc }
                 )
             }
             return
@@ -322,7 +327,7 @@ class LoneWorkerPeers(private val canSound: () -> Boolean) {
         map[bId] = Peer(
             bleId, null, "", "", "", beacon, nowMs,
             firstSeenMs = nowMs, active = true, silenced = live(pendingEps["$bleId#$ep"], nowMs),
-            resolvedAtMs = 0L, episode = ep, lastBleMs = nowMs
+            resolvedAtMs = 0L, episode = ep, lastBleMs = nowMs, floor = floor, proc = proc, sosId = sosId
         )
     }
 
@@ -437,8 +442,10 @@ class LoneWorkerPeers(private val canSound: () -> Boolean) {
 /** Server record received — delegated from LoneWorkerLogic, kept here due to the 500-line limit. */
 fun LoneWorkerLogic.onPeerServer(rec: LoneWorkerPeers.ServerRec, nowMs: Long) = peerStore.onServer(rec, nowMs)
 /** BLE bit received — delegated from LoneWorkerLogic, kept here due to the 500-line limit. */
-fun LoneWorkerLogic.onPeerBle(bleId: String, sos: Boolean, nowMs: Long, episode: Int = 0, beacon: String = "") =
-    peerStore.onBle(bleId, sos, nowMs, episode, beacon)
+fun LoneWorkerLogic.onPeerBle(
+    bleId: String, sos: Boolean, nowMs: Long, episode: Int = 0, beacon: String = "",
+    sosId: String = "", floor: String = "", proc: String = ""
+) = peerStore.onBle(bleId, sos, nowMs, episode, beacon, sosId, floor, proc)
 /**
  * The "확인" button. targets = entry id -> episode ID. Mutes only those entries —
  * delegated from LoneWorkerLogic, kept here due to the 500-line limit.
