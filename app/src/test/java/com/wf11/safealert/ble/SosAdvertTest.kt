@@ -31,6 +31,16 @@ class SosAdvertTest {
         for (bad in listOf("0123456789ABCDEF", "0123456789abcde", "0123456789abcdeg", "")) {
             assertEquals("not an SOS ID: $bad", null, SosAdvert.info(bad, 0))
         }
+        // While my rescue request runs the advert never drops below BALANCED (the 0.2 s setting), even asleep; a faster
+        //   setting or a burst stays faster, and without it sleep is LOW_POWER again
+        val lowPower = android.bluetooth.le.AdvertiseSettings.ADVERTISE_MODE_LOW_POWER
+        val balanced = android.bluetooth.le.AdvertiseSettings.ADVERTISE_MODE_BALANCED
+        val lowLatency = android.bluetooth.le.AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY
+        assertEquals(balanced, BleAdvertiser.modeFor(burst = false, floorBalanced = true, paused = true, intervalMs = 200))
+        assertEquals(balanced, BleAdvertiser.modeFor(burst = false, floorBalanced = true, paused = false, intervalMs = 1000))
+        assertEquals(lowLatency, BleAdvertiser.modeFor(burst = false, floorBalanced = true, paused = false, intervalMs = 100))
+        assertEquals(lowLatency, BleAdvertiser.modeFor(burst = true, floorBalanced = true, paused = true, intervalMs = 200))
+        assertEquals(lowPower, BleAdvertiser.modeFor(burst = false, floorBalanced = false, paused = true, intervalMs = 200))
     }
 
     /**

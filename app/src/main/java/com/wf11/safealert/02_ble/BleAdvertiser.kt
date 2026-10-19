@@ -62,6 +62,21 @@ class BleAdvertiser(
             intervalMs <= 250 -> AdvertiseSettings.ADVERTISE_MODE_BALANCED
             else              -> AdvertiseSettings.ADVERTISE_MODE_LOW_POWER
         }
+
+        /**
+         * Advertising mode: a burst sends LOW_LATENCY (~100ms) regardless of sleep or settings; a hazard hold or my own
+         * rescue request floors the mode at BALANCED (~250ms, the 0.2 s setting) whether or not asleep, keeping a faster
+         * setting; otherwise asleep (paused) = LOW_POWER (~1s) and awake = the advertiseInterval mapping.
+         */
+        internal fun modeFor(burst: Boolean, floorBalanced: Boolean, paused: Boolean, intervalMs: Int): Int = when {
+            burst -> AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY
+            floorBalanced -> {
+                val base = if (paused) AdvertiseSettings.ADVERTISE_MODE_LOW_POWER else mapAdvertiseMode(intervalMs)
+                if (base == AdvertiseSettings.ADVERTISE_MODE_LOW_POWER) AdvertiseSettings.ADVERTISE_MODE_BALANCED else base
+            }
+            paused -> AdvertiseSettings.ADVERTISE_MODE_LOW_POWER
+            else -> mapAdvertiseMode(intervalMs)
+        }
     }
 
     // Consecutive advertising start failures; reset to 0 on success (or ALREADY_STARTED).
@@ -265,21 +280,12 @@ class BleAdvertiser(
         // Active mode = mapping of the advertiseInterval setting, re-read at every (re)advertise, so sleep/wake and
         //   STATE/Turn re-advertising always apply the latest value. Sleep ignores the setting (LOW_POWER, the lowest
         //   public-API rate).
-        // Priority: a burst (burstUntilMs in the future) sends LOW_LATENCY (~100ms) regardless of paused or settings,
-        //   so peers find me immediately; then a hazard hold floors the mode at BALANCED; otherwise sleep = LOW_POWER
-        //   and active = advertiseInterval mapping.
-        val advertiseMode = when {
-            SystemClock.elapsedRealtime() < burstUntilMs -> AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY
-            // During a hazard hold, floor at BALANCED (~250ms) whether or not paused, so peers still discover me in time
-            //   even if the burst failed or under doze. If base is faster (BALANCED or above), keep base.
-            SystemClock.elapsedRealtime() < hazardUntilMs -> {
-                val base = if (paused) AdvertiseSettings.ADVERTISE_MODE_LOW_POWER
-                           else mapAdvertiseMode(BleConstants.advertiseInterval)
-                if (base == AdvertiseSettings.ADVERTISE_MODE_LOW_POWER) AdvertiseSettings.ADVERTISE_MODE_BALANCED else base
-            }
-            paused -> AdvertiseSettings.ADVERTISE_MODE_LOW_POWER
-            else -> mapAdvertiseMode(BleConstants.advertiseInterval)
-        }
+        // Priority (modeFor): a burst (burstUntilMs in the future) sends LOW_LATENCY (~100ms) regardless of paused or
+        //   settings, so peers find me immediately; then a hazard hold floors the mode at BALANCED, so peers still
+        //   discover me in time even if the burst failed or under doze; my own rescue request floors it at BALANCED too
+        //   (0.2 s setting) for as long as it runs, asleep or not, so rescuers' phones and relaying phones at the edge of
+        //   range catch it sooner; otherwise sleep = LOW_POWER and active = advertiseInterval mapping.
+        val advertiseMode = currentMode()
         lastAppliedAdvertiseMode = advertiseMode   // For the refreshAdvertiseMode no-op check
 
         val settings = AdvertiseSettings.Builder()
@@ -554,13 +560,14 @@ class BleAdvertiser(
     private val hazardExpiryRunnable = Runnable {
         if (stopped) return@Runnable
         if (SystemClock.elapsedRealtime() < hazardUntilMs) return@Runnable   // Extended; the new timer handles it
-        // Expired: recompute the normal mode due now; re-advertise only if it differs from the applied mode
-        val target = when {
-            SystemClock.elapsedRealtime() < burstUntilMs -> AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY
-            paused -> AdvertiseSettings.ADVERTISE_MODE_LOW_POWER
-            else -> mapAdvertiseMode(BleConstants.advertiseInterval)
-        }
-        if (target != lastAppliedAdvertiseMode) hazardRestart()
+        // Expired: recompute the mode due now (an SOS still floors it); re-advertise only if it differs from the applied mode
+        if (currentMode() != lastAppliedAdvertiseMode) hazardRestart()
+    }
+
+    /** Advertising mode due now (modeFor). */
+    private fun currentMode(): Int {
+        val now = SystemClock.elapsedRealtime()
+        return modeFor(now < burstUntilMs, now < hazardUntilMs || currentSos, paused, BleConstants.advertiseInterval)
     }
 
     /**
@@ -597,7 +604,7 @@ class BleAdvertiser(
      */
     fun refreshAdvertiseMode() {
         if (stopped || paused) return
-        val target = mapAdvertiseMode(BleConstants.advertiseInterval)
+        val target = currentMode()
         if (target == lastAppliedAdvertiseMode) return
         Log.d(TAG, "광고 모드 라이브 갱신 → 간격설정 ${BleConstants.advertiseInterval}ms")
         restartAdvertise()
