@@ -42,6 +42,10 @@ import com.wf11.safealert.utils.SiteScope
  *   when heard over BLE or delivered again in scope, and stays hidden after it ends. An advert of an SOS that already ended
  *   on air only refreshes when it was last heard within PEER_RESOLVE_GUARD_MS of that end: it wakes nothing and lifts
  *   no acknowledgement.
+ * - A record made by another phone for a Bluetooth-only SOS (key r_..., SosRelay) never makes a second entry: if the same
+ *   episode already has a server entry it is dropped, and the sender's own record that arrives later takes the relayed entry over
+ *   (same ring time, the name alerts again). Its release ends only the entry under its own key, and an entry it opened
+ *   also ends when the advert has been false for 10 s, as a Bluetooth-only entry does.
  */
 
 /** One peer row used by the screen and the acknowledge gate. id = entry id, epId = episode ID. */
@@ -202,7 +206,8 @@ class LoneWorkerPeers(private val canSound: () -> Boolean) {
         }
         if (!active) {
             val cur = map[kId]
-            val b = if (ep != 0) map[bId] else null
+            // A relayed record's release ends only the entry opened under its own key: the sender's own record may still be live
+            val b = if (ep != 0 && !SosRelay.isRelay(key)) map[bId] else null
             val r = rec.resolvedLocalMs
             if (cur != null && cur.active) {
                 map[kId] = resolve(cur, nowMs, rec.auto)
@@ -227,6 +232,23 @@ class LoneWorkerPeers(private val canSound: () -> Boolean) {
             }
             return
         }
+        if (ep != 0) {
+            val twins = map.values.filter { it.bleId == bleId && it.episode == ep && it.key != null }
+            if (SosRelay.isRelay(key)) {
+                if (twins.isNotEmpty()) return   // The sender's own record (or another phone's relayed one) already holds this SOS
+            } else {
+                // The sender's own record takes over the entry a relayed record opened: one SOS, one entry, the ring time goes on
+                twins.firstOrNull { it.relayed && it.active }?.let { o ->
+                    map.remove(o.id)
+                    map[kId] = o.copy(
+                        key = key, name = name, role = role, trigger = trigger, beacon = beacon.ifEmpty { o.beacon },
+                        createdAtMs = createdAtMs, startMs = rec.startLocalMs ?: o.startMs, floor = rec.floor, proc = rec.proc,
+                        quiet = o.quiet && !rec.inScope, silenced = coldServer(kId, epId, nowMs)
+                    )
+                    return
+                }
+            }
+        }
         val b = if (ep != 0) map[bId] else null
         if (b != null) {
             // Same episode seen over BLE first: attach the server key and ring again with the
@@ -234,7 +256,9 @@ class LoneWorkerPeers(private val canSound: () -> Boolean) {
             map.remove(bId)
             map[kId] = Peer(
                 bleId, key, name, role, trigger, beacon.ifEmpty { b.beacon }, createdAtMs,
-                firstSeenMs = b.firstSeenMs, active = true, silenced = coldServer(kId, epId, nowMs),
+                // A relayed record brings no new name, so an acknowledgement already given stays
+                firstSeenMs = b.firstSeenMs, active = true,
+                silenced = coldServer(kId, epId, nowMs) || (SosRelay.isRelay(key) && b.silenced),
                 resolvedAtMs = 0L, episode = ep, lastBleMs = b.lastBleMs, startMs = rec.startLocalMs ?: b.startMs,
                 floor = rec.floor, proc = rec.proc,
                 // Already over on air: an out-of-scope record stays quiet; in or out of scope, that SOS's leftover adverts
@@ -261,7 +285,7 @@ class LoneWorkerPeers(private val canSound: () -> Boolean) {
     private fun ble(bleId: String, sos: Boolean, nowMs: Long, ep: Int, beacon: String) {
         if (!sos) {
             expiredEps.removeAll { it.startsWith("$bleId#") }   // its SOS ended on air: a later one is new
-            if (map.values.none { it.bleId == bleId && it.key == null && it.active }) return
+            if (map.values.none { it.bleId == bleId && (it.key == null || it.relayed) && it.active }) return
             falseSince.putIfAbsent(bleId, nowMs)
             settle(bleId, nowMs)
             return
@@ -376,7 +400,7 @@ class LoneWorkerPeers(private val canSound: () -> Boolean) {
         val since = falseSince[bleId] ?: return
         if (nowMs - since < PEER_BLE_FALL_MS) return
         for (p in map.values.toList()) {
-            if (p.bleId == bleId && p.key == null && p.active) map[p.id] = resolve(p, nowMs)
+            if (p.bleId == bleId && (p.key == null || p.relayed) && p.active) map[p.id] = resolve(p, nowMs)
         }
         falseSince.remove(bleId)
     }

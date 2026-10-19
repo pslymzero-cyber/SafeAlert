@@ -89,7 +89,38 @@ class SosRelay(
                 if (job.epId !in heard) jobs.remove(job.epId) else if (online) create(job)
                 continue
             }
+            // Recorded: still heard with nothing attached = keep waiting; a key attached = merged into the sender's record
+            // (no mail); the entry ended = released on air (release mail) or by the one-hour limit (reason auto, no mail)
+            if (p.active && p.key == null) continue
+            if (p.active) end(job, auto = false, mail = false)
+            else end(job, auto = p.autoEnded, mail = !p.autoEnded)
         }
+    }
+
+    private fun end(job: Job, auto: Boolean, mail: Boolean) {
+        val path = job.path ?: return
+        job.busy = true
+        transport.resolve(path, job.key, auto) { ok ->
+            if (ok) {
+                job.busy = false
+                finish(job, path, mail)
+            } else {
+                transport.read(path, job.key) { r ->
+                    job.busy = false
+                    when (r) {
+                        // Closed meanwhile (the other phones' one-hour release may come first)
+                        SosLedger.Remote.MINE_RESOLVED -> finish(job, path, mail)
+                        SosLedger.Remote.ABSENT, SosLedger.Remote.OTHER -> job.done = true
+                        else -> retryLater(job)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun finish(job: Job, path: String, mail: Boolean) {
+        job.done = true
+        if (mail) onSaved(SosMail.EVENT_RESOLVED, path, job.key)
     }
 
     private fun create(job: Job) {

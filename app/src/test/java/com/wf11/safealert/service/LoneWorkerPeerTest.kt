@@ -743,4 +743,43 @@ class LoneWorkerPeerTest {
         assertEquals(2, l.peers.size)
         assertEquals(h, l.peerSig())
     }
+
+    // A record another phone made for a Bluetooth-only SOS (key r_...) and the sender's own record of the same episode are one
+    //   entry in either order; the own record takes over (alerts again with the name, ring time goes on); the relayed release
+    //   does not end it; an entry a relayed record opened ends on air or by its release like a Bluetooth-only one.
+    @Test fun relayed_record_and_the_senders_own_record_are_one_sos() {
+        val rk = SosRelay.key("P", 4, 5L)
+        val a = meLogic()
+        a.onPeerBle("P", true, 1_000, 4)
+        val ring0 = a.peer("P").ringStartMs
+        assertTrue(ring0 != null)
+        a.ackAll(1_500)
+        a.srv(rk, "P", 4, true, created = 5L, now = 2_000)
+        assertEquals(rk, a.peer("P").key)
+        assertTrue("the acknowledgement stays", a.peer("P").silenced)
+        a.srv("k1", "P", 4, true, created = 6L, now = 3_000)
+        assertEquals("k1", a.peer("P").key)
+        assertFalse("the sender's record alerts again with the name", a.peer("P").silenced)
+        assertEquals(ring0, a.peer("P").ringStartMs)
+        a.srv(rk, "P", 4, false, created = 5L, now = 4_000, resolvedAt = 8L, serverNow = 8L)
+        assertTrue(a.peer("P").active)
+
+        val b = meLogic()
+        b.srv("k1", "P", 4, true, created = 6L, now = 1_000)
+        b.srv(rk, "P", 4, true, created = 5L, now = 2_000)
+        assertEquals("k1", b.peer("P").key)
+
+        val c = meLogic()
+        c.onPeerBle("P", true, 1_000, 4)
+        c.srv(rk, "P", 4, true, created = 5L, now = 2_000)
+        c.onPeerBle("P", false, 3_000)
+        assertTrue(c.peer("P").active)
+        c.onPeerBle("P", false, 14_000)
+        assertFalse("ends on air like a Bluetooth-only entry", c.peer("P").active)
+
+        val d = meLogic()
+        d.srv(rk, "P", 4, true, created = 5L, now = 2_000)
+        d.srv(rk, "P", 4, false, created = 5L, now = 3_000, resolvedAt = 8L, serverNow = 8L)
+        assertFalse(d.peer("P").active)
+    }
 }
