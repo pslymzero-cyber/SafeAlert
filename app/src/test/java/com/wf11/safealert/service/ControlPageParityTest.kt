@@ -31,6 +31,8 @@ class ControlPageParityTest {
         assertEquals(SiteScope.PROCS, quoted(procs))
         // The auto-ended label on the page is the app's own wording (LoneWorkerNotifier.AUTO_ENDED).
         assertTrue("auto-ended label", html.contains("s.auto ? '" + LoneWorkerNotifier.AUTO_ENDED + "' : '폰에서 해제'"))
+        // A record another phone made for a Bluetooth-only SOS (SosRelay) is worded as such
+        assertTrue("relay trigger", html.contains("r.trigger === '${SosRelay.TRIGGER}'"))
     }
 
     // The code rule (floor / process) and the one-hour release are the app's, and the rule is the mail script's too.

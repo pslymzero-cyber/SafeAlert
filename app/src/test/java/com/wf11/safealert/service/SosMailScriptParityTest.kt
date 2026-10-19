@@ -41,6 +41,12 @@ class SosMailScriptParityTest {
         val max = scriptMaxTo(gs)
         assertEquals(254, max)
 
+        // Relayed records (SosRelay) have keys of up to 36 characters, which the script's ID rule must take, and a trigger it words differently
+        val idRe = Regex(gs.substringAfter("var ID_RE = /").substringBefore("/;"))
+        assertTrue(idRe.matches(SosRelay.key("ABCDEFGHIJKL", 255, 99_999L * 86_400_000L)))
+        assertTrue(idRe.matches(SosRelay.key("가나다라", 1, 0L)))
+        assertTrue(gs.contains("rec.trigger === '${SosRelay.TRIGGER}'"))
+
         val layout = repoFile("app/src/main/res/layout/activity_dev_settings.xml")
         val id = "android:id=\"@+id/et_sos_mail_to\""
         assertTrue(layout.contains(id))

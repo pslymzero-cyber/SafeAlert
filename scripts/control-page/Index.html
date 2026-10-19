@@ -427,7 +427,7 @@
   function scopeOf(r) { return [r.floor, r.proc].filter(Boolean).join('-'); }
   function placeOf(r) { var s = scopeOf(r); return s ? r.sc + '-' + s : r.sc + ' (층·공정 미지정)'; }
   function nameOf(s) { return s.name || '이름 없음'; }
-  function endedHow(s) { return s.auto ? '응답 없이 자동 종료' : '폰에서 해제'; }
+  function endedHow(s) { return (s.relay && !s.auto) ? '근처 기기에서 해제 확인' : s.auto ? '응답 없이 자동 종료' : '폰에서 해제'; }
   function isStale(s) { return nowMs() > s.createdAt + STALE_AFTER_MS; }
   function match(sel, v) { return !sel || (sel === '-' ? !v : v === sel); }
   function inScope(r) { return match(st.floor, r.floor) && match(st.proc, r.proc); }
@@ -461,7 +461,9 @@
   function toSos(sc, key, r) {
     if (!r || typeof r !== 'object' || typeof r.createdAt !== 'number') return null;
     return { key: key, sc: sc, name: str(r.name), who: roleName(str(r.role), str(r.name)),
-             trigger: r.trigger === 'fall' ? '넘어짐' : r.trigger === 'still' ? '움직임 없음' : '알 수 없음',
+             trigger: r.trigger === 'fall' ? '넘어짐' : r.trigger === 'still' ? '움직임 없음'
+               : r.trigger === 'relay' ? '알 수 없음 (근처 기기 경유)' : '알 수 없음',
+             bleId: str(r.bleId), ep: typeof r.ep === 'number' ? r.ep : 0, relay: str(r.relayBy) !== '',
              beacon: str(r.beacon), floor: code(r.floor), proc: code(r.proc), createdAt: r.createdAt,
              active: r.status === 'active', resolvedAt: typeof r.resolvedAt === 'number' ? r.resolvedAt : 0,
              auto: r.reason === 'auto' };
@@ -472,19 +474,33 @@
   function inWindow(s) { return s.createdAt >= nowMs() - DAY_MS; }
   function sosLabel(s) { return (st.view.length > 1 ? s.sc + ' ' : '') + nameOf(s); }
 
+  // One SOS, one line: a nearby phone may record a Bluetooth-only SOS for a requester without data (relay), and the requester's
+  // own record of the same episode (same bleId and ep) can follow. A relayed record gives way to the other one.
+  function twins(recs, s) {
+    if (!s.ep) return [];
+    return Object.keys(recs).map(function (k) { return recs[k]; }).filter(function (t) {
+      return t !== s && t.bleId === s.bleId && t.ep === s.ep;
+    });
+  }
+  function covered(recs, s) {
+    return s.relay && twins(recs, s).some(function (t) { return !t.relay || t.createdAt < s.createdAt; });
+  }
+
   // A site's records from either path, merged record by record. The database only adds records and ends active ones
   // (its rules allow no delete and nothing after 'resolved'), so a record is never taken back here and an ended one never
   // turns active again. Records leave by age (dropOld) and, while live carries the SOS, when the database no longer has
   // them (liveSite; server answers are not merged then). `at` serves the '기준' line only.
   function setSite(sc, node, at) {
-    var cur = st.sites[sc] || { recs: {}, at: 0 }, recs = {}, notes = [];
+    var cur = st.sites[sc] || { recs: {}, at: 0 }, recs = {}, notes = [], ended = [];
     Object.keys(cur.recs).forEach(function (k) { recs[k] = cur.recs[k]; });
     if (node && typeof node === 'object') Object.keys(node).forEach(function (k) {
       var s = toSos(sc, k, node[k]), old = recs[k];
       if (!s || !inWindow(s) || (old && !old.active)) return;
-      if (old && !s.active && inView(s)) notes.push(sosLabel(s) + ' 구조 요청이 끝났습니다 (' + endedHow(s) + ')');
+      if (old && !s.active && inView(s)) ended.push(s);
       recs[k] = s;
     });
+    // Told once all records are merged: a relayed record that ended because the requester's own record took over is no news
+    ended.forEach(function (s) { if (!covered(recs, s)) notes.push(sosLabel(s) + ' 구조 요청이 끝났습니다 (' + endedHow(s) + ')'); });
     st.sites[sc] = { recs: recs, at: Math.max(cur.at, at) };
     delete st.fail[sc];
     return notes;
@@ -497,7 +513,7 @@
       var r = st.sites[sc].recs;
       Object.keys(r).forEach(function (k) {
         if (inWindow(r[k])) return;
-        if (r[k].active && inView(r[k])) notes.push(sosLabel(r[k]) + ' 구조 요청이 24시간이 지나 목록에서 빠졌습니다 (해제 기록 없음)');
+        if (r[k].active && inView(r[k]) && !covered(r, r[k])) notes.push(sosLabel(r[k]) + ' 구조 요청이 24시간이 지나 목록에서 빠졌습니다 (해제 기록 없음)');
         delete r[k];
         gone++;
       });
@@ -508,7 +524,17 @@
 
   function allSos() {
     var out = [];
-    Object.keys(st.sites).forEach(function (sc) { var r = st.sites[sc].recs; Object.keys(r).forEach(function (k) { out.push(r[k]); }); });
+    Object.keys(st.sites).forEach(function (sc) {
+      var r = st.sites[sc].recs;
+      Object.keys(r).forEach(function (k) {
+        var s = r[k];
+        if (covered(r, s)) return;
+        // The requester's own record continues the card the relayed one opened: same key, same start (no new alarm, no new answer)
+        var first = s.relay ? null : twins(r, s).filter(function (t) { return t.relay && t.createdAt < s.createdAt; })
+          .sort(function (a, b) { return a.createdAt - b.createdAt; })[0];
+        out.push(first ? Object.assign({}, s, { key: first.key, createdAt: first.createdAt }) : s);
+      });
+    });
     return out;
   }
   // Active SOS of the chosen site (or every site), oldest first (the alarm keeps its own order: a card never moves while it

@@ -390,6 +390,32 @@ for (const m of allMails) {
   }
 }
 
+// A nearby phone recorded a Bluetooth-only SOS (trigger relay): marked in the mail, cause unknown; the requester's own record of
+// the same episode (same bleId and ep) is answered dup, so one SOS is one mail, and its release mail is not blocked.
+// Records without an episode (older apps) carry no such mark and are always sent.
+const RELAY_KO = '근처 기기 경유';
+const relayRec = { name: 'P', role: '', trigger: 'relay', relayBy: 'ME', bleId: 'P', ep: 4, createdAt: NOW - 60000, status: 'active', uid: 'u2' };
+const ownRec = { name: 'P', role: 'WALKER', trigger: 'still', bleId: 'P', ep: 4, createdAt: NOW - 30000, status: 'active', uid: 'u' };
+t = make({ db: { r_50_4_20000: relayRec, k1: ownRec } });
+assert.strictEqual(t.post({ id: 'r_50_4_20000' }), 'sent');
+assert.ok(t.w.mails[0].subject.includes(RELAY_KO) && t.w.mails[0].body.includes('원인 모름'), 'relay subject and cause');
+assert.ok(t.w.mails[0].htmlBody.includes('전달') && t.w.mails[0].htmlBody.includes('ME'), 'relay row');
+assert.strictEqual(t.post({}), 'dup');
+assert.strictEqual(t.w.mails.length, 1);
+Object.assign(ownRec, { status: 'resolved', resolvedAt: NOW - 1000 });
+assert.strictEqual(t.post({ event: 'resolved' }), 'sent');
+assert.ok(t.w.mails[1].body.includes(RELEASED_TEXT), 'own release mail');
+Object.assign(relayRec, { status: 'resolved', resolvedAt: NOW - 500 });
+assert.strictEqual(t.post({ id: 'r_50_4_20000', event: 'resolved' }), 'dup');
+assert.strictEqual(t.w.mails.length, 2);
+t = make({ db: { r_50_4_20000: relayRec } });
+assert.strictEqual(t.post({ id: 'r_50_4_20000' }), 'sent');
+assert.strictEqual(t.post({ id: 'r_50_4_20000', event: 'resolved' }), 'sent');
+assert.ok(t.w.mails[1].body.includes('근처 기기가 블루투스로 해제를 확인했습니다'), 'relay release wording');
+t = make({ db: { a1: Object.assign({ bleId: 'P' }, still), a2: Object.assign({ bleId: 'P' }, still) } });
+assert.strictEqual(t.post({ id: 'a1' }), 'sent');
+assert.strictEqual(t.post({ id: 'a2' }), 'sent');
+
 console.log('sos-mail check OK (' + scenes + ' scenes)');
 
 // With a folder argument: write the sos and resolved html bodies there for a visual check.

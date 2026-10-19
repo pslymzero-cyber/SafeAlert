@@ -156,13 +156,25 @@ function handle(p) {
     var at = event === 'sos' ? rec.createdAt : rec.resolvedAt;
     if (typeof at !== 'number' || now - at > FRESH_MS) return 'stale';
 
+    // One SOS, one mail per kind: a nearby phone may have recorded the same SOS (same bleId and episode) for a requester
+    // without data. The later record gets its own sent mark (so its release mail is not refused) and no second mail.
+    // A record without an episode (older apps) has no such mark and is always sent.
+    var epKey = (typeof rec.bleId === 'string' && typeof rec.ep === 'number' && rec.ep >= 1 && rec.ep <= 255)
+      ? SENT + ['ep', event, site, sc, encodeURIComponent(rec.bleId), rec.ep, tag].join('|') : '';
+    if (epKey && sent[epKey]) {
+      store.setProperty(key, String(now));
+      return 'dup';
+    }
+
     var m = buildMail(event, sc, id, rec, p.stillMin);
     // Record the send first: if saving fails nothing is sent, and if sending fails the record is deleted.
-    store.setProperty(key, String(now));
     try {
+      store.setProperty(key, String(now));
+      if (epKey) store.setProperty(epKey, String(now));
       MailApp.sendEmail({ to: to, subject: m.subject, body: m.body, htmlBody: m.html, name: 'SafeAlert' });
     } catch (err) {
       store.deleteProperty(key);
+      if (epKey) store.deleteProperty(epKey);
       throw err;
     }
     return 'sent';
@@ -213,12 +225,14 @@ function buildMail(event, sc, id, rec, stillMin) {
   var role = roleName(rec.role, name);
   var no = id.slice(-6);
   var who = esc(sc) + ' · ' + esc(name) + ' (' + esc(role) + ')';
+  var relayBy = oneLine(rec.relayBy);   // a nearby phone recorded this SOS for a requester without data (empty = the requester's own)
+  var relay = typeof rec.relayBy === 'string' && relayBy !== '';
   if (event === 'resolved') {
     var sec = Math.floor((rec.resolvedAt - rec.createdAt) / 1000);
     if (!(sec > 0)) sec = 0;
     return {
       subject: '[SafeAlert 해제] ' + sc + ' ' + name + ' - 구조 요청 해제 (기록 ' + no + ')',
-      html: mailHtml('#2e7d32', '구조 요청 해제', who, '구조 요청을 낸 폰에서 해제했습니다.', [
+      html: mailHtml('#2e7d32', '구조 요청 해제', who, relay ? '근처 기기가 블루투스로 해제를 확인했습니다.' : '구조 요청을 낸 폰에서 해제했습니다.', [
         ['해제 시각', esc(fmt(rec.resolvedAt, 'HH:mm:ss')) + ' (서버 기록)', true],
         ['걸린 시간', '구조 요청 기록 후 ' + Math.floor(sec / 60) + '분 ' + (sec % 60) + '초'],
         ['사업장', siteCell('#2e7d32', sc, rec)],
@@ -226,34 +240,38 @@ function buildMail(event, sc, id, rec, stillMin) {
         ['기록 번호', esc(no)]
       ]),
       body: name + '(' + role + ') 작업자의 구조 요청이 서버 기록 ' + fmt(rec.resolvedAt, 'HH:mm:ss') +
-        '에 구조 요청을 낸 폰에서 해제됐습니다. (구조 요청 기록 후 ' + Math.floor(sec / 60) + '분 ' + (sec % 60) + '초)' +
+        '에 ' + (relay ? '근처 기기가 블루투스로 해제를 확인했습니다.' : '구조 요청을 낸 폰에서 해제됐습니다.') + ' (구조 요청 기록 후 ' + Math.floor(sec / 60) + '분 ' + (sec % 60) + '초)' +
         '\n기록 번호: ' + no + '\n\n' + TAIL
     };
   }
   var fall = rec.trigger === 'fall';
   var n = stillMinutes(stillMin);
-  var cause = fall ? '넘어짐 감지 후 응답 없음'
+  var relayed = rec.trigger === 'relay';   // heard over Bluetooth by a nearby phone: the cause is not known
+  var cause = relayed ? '근처 기기가 블루투스로 받은 구조 요청 (원인 모름)'
+    : fall ? '넘어짐 감지 후 응답 없음'
     : (n ? n + '분 동안 움직임 없음 후 응답 없음' : '움직임 없음 후 응답 없음');
+  var hint = relay ? '해제되면 해제 메일이 갑니다.' : '구조 요청을 낸 폰에서 해제하면 해제 메일이 갑니다.';
   var beacon = oneLine(rec.beacon) || '알 수 없음';
   var done = rec.status === 'resolved' && typeof rec.resolvedAt === 'number';
   var auto = rec.reason === 'auto';   // ended by the app's one-hour limit, not by the worker (no resolve mail follows)
   var ended = auto ? '응답 없이 자동 종료' : '해제됨';
   var state = done
     ? '상태: ' + ended + ' (' + fmt(rec.resolvedAt, 'HH:mm:ss') + ')'
-    : '상태: 구조 요청 중 (구조 요청을 낸 폰에서 해제하면 해제 메일이 갑니다)';
+    : '상태: 구조 요청 중 (' + (relay ? '해제되면 해제 메일이 갑니다' : '구조 요청을 낸 폰에서 해제하면 해제 메일이 갑니다') + ')';
   return {
-    subject: '[SafeAlert 구조 요청] ' + sc + ' ' + name + (fall ? ' - 넘어짐 감지' : ' - 움직임 없음') +
+    subject: '[SafeAlert 구조 요청] ' + sc + ' ' + name + (relayed ? ' - 근처 기기 경유' : fall ? ' - 넘어짐 감지' : ' - 움직임 없음') +
       ' (기록 ' + no + ')',
     html: mailHtml('#c62828', '구조 요청', who, '즉시 작업자 상태를 확인해 주십시오.', [
       ['원인', esc(cause), true],
       ['서버 기록 시각', esc(fmt(rec.createdAt, 'yyyy-MM-dd HH:mm:ss')) + ' (한국 시간)'],
-      ['사업장', siteCell('#c62828', sc, rec)],
+      ['사업장', siteCell('#c62828', sc, rec)]
+    ].concat(relay ? [['전달', '근처 기기 경유 (' + esc(relayBy) + ') · 층·공정은 전달한 폰 기준']] : []).concat([
       ['상태', done ? badge(auto ? '#fff3e0' : '#e8f5e9', auto ? '#e65100' : '#2e7d32',
           ended + ' (' + esc(fmt(rec.resolvedAt, 'HH:mm:ss')) + ')')
         : badge('#fdecea', '#c62828', '구조 요청 중') +
-          '<br><span style="font-size:12px;color:#666666;">구조 요청을 낸 폰에서 해제하면 해제 메일이 갑니다.</span>'],
+          '<br><span style="font-size:12px;color:#666666;">' + hint + '</span>'],
       ['기록 번호', esc(no)]
-    ]),
+    ])),
     body: [
       'SafeAlert 단독 작업자 구조 요청이 발생했습니다. 즉시 작업자 상태를 확인해 주십시오.',
       '',
@@ -261,12 +279,13 @@ function buildMail(event, sc, id, rec, stillMin) {
       '센터: ' + sc,
       '작업자: ' + name + ' (' + role + ')',
       '원인: ' + cause,
+      relay ? '전달: 근처 기기 경유 (' + relayBy + ')' : null,
       '서버 기록 시각: ' + fmt(rec.createdAt, 'yyyy-MM-dd HH:mm:ss') + '(한국 시간)',
       '마지막 위치: ' + beacon,
       state,
       '',
       TAIL
-    ].join('\n')
+    ].filter(function (l) { return l !== null; }).join('\n')
   };
 }
 
