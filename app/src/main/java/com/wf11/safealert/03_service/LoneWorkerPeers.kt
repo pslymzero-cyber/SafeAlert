@@ -94,6 +94,8 @@ class LoneWorkerPeers(private val canSound: () -> Boolean) {
         val ringOver: Boolean = false
     ) {
         val fromServer: Boolean get() = key != null
+        /** The server record under this key was made by another phone for a Bluetooth-only SOS (SosRelay). */
+        val relayed: Boolean get() = SosRelay.isRelay(key)
         /** Store key. */
         val id: String get() = if (key != null) "k:$key" else "b:$bleId#$episode"
         /** Acknowledge target ID. Unchanged when a server key is obtained. */
@@ -166,6 +168,9 @@ class LoneWorkerPeers(private val canSound: () -> Boolean) {
 
     /** Entries the screen and notifications see (quiet ones are left out). */
     val all: Collection<Peer> get() = map.values.filter { !it.quiet }
+
+    /** Every entry including the quiet ones, for SosRelay to judge which Bluetooth-only SOS still has no server record. */
+    val entries: Collection<Peer> get() = map.values
 
     /** Change signature of the visible entries (id, active, silenced, ring over), without building a list. */
     fun sig(): Int {
@@ -426,3 +431,5 @@ fun LoneWorkerLogic.soundingPeers(): List<LoneWorkerPeers.Peer> = audiblePeers()
 fun LoneWorkerLogic.peerRingEndAt(): Long? = peerStore.ringEndAt()
 /** Server keys of peer SOS released by the one-hour limit — delegated from LoneWorkerLogic. */
 fun LoneWorkerLogic.takeAutoReleasedPeers(): List<String> = peerStore.takeAutoReleased()
+/** Every peer entry including the quiet ones, for SosRelay — delegated from LoneWorkerLogic. */
+fun LoneWorkerLogic.peerEntries(): Collection<LoneWorkerPeers.Peer> = peerStore.entries

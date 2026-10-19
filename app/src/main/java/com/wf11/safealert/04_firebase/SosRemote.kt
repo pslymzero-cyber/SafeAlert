@@ -63,6 +63,11 @@ object SosRemote {
      */
     fun serverNowMs(): Long? = serverAnchor?.let { (s, e) -> s + (SystemClock.elapsedRealtime() - e) }
 
+    /** True while the Realtime Database connection is up (.info/connected, kept by listen). SosRelay writes only while connected,
+     *  because a write queued offline would upload after the SOS it was recorded for is over. */
+    @Volatile var connected = false
+        private set
+
     /** Receive replay window: records created up to one shift (12 h) before start are received, so a phone that
      *  starts or restarts later in the shift still gets a request nobody has resolved. */
     const val REPLAY_WINDOW_MS = 12 * 60 * 60_000L
@@ -98,7 +103,7 @@ object SosRemote {
     fun recordPayload(
         bleId: String, name: String, role: String, trigger: String,
         beacon: String?, beaconRssi: Int?, uid: String, createdAt: Any, ep: Int = 0,
-        floor: String = "", proc: String = ""
+        floor: String = "", proc: String = "", relayBy: String = ""
     ): Map<String, Any> {
         val data = HashMap<String, Any>()
         data["bleId"] = bleId.take(SOS_STR_MAX)
@@ -111,6 +116,7 @@ object SosRemote {
         if (!beacon.isNullOrEmpty()) data["beacon"] = beacon.take(SOS_STR_MAX)
         if (beaconRssi != null && beaconRssi in BEACON_RSSI_MIN..BEACON_RSSI_MAX) data["beaconRssi"] = beaconRssi
         if (ep in 1..255) data["ep"] = ep
+        if (relayBy.isNotEmpty()) data["relayBy"] = relayBy.take(SOS_STR_MAX)
         data.putAll(SiteScope.fields(floor, proc))
         return data
     }
@@ -239,9 +245,17 @@ object SosRemote {
             }
         }
         offsetRef.addValueEventListener(offsetListener)
+        val connRef = FirebaseDatabase.getInstance().getReference(".info/connected")
+        val connListener = object : ValueEventListener {
+            override fun onDataChange(s: DataSnapshot) { connected = s.getValue(Boolean::class.java) == true }
+            override fun onCancelled(e: DatabaseError) { connected = false }
+        }
+        connRef.addValueEventListener(connListener)
         return {
             stopped = true
             offsetRef.removeEventListener(offsetListener)
+            connRef.removeEventListener(connListener)
+            connected = false
             attached?.let { (q, l) -> q.removeEventListener(l) }
             attached = null
         }

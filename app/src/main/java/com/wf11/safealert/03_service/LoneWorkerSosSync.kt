@@ -163,7 +163,7 @@ class LoneWorkerSosSync(
         override fun create(path: String, key: String, rec: SosLedger.Record, uid: String, done: (Boolean) -> Unit) {
             val payload = SosRemote.recordPayload(
                 rec.bleId, rec.name, rec.role, rec.trigger, rec.beacon, rec.beaconRssi, uid, ServerValue.TIMESTAMP, rec.ep,
-                rec.floor, rec.proc
+                rec.floor, rec.proc, rec.relayBy
             )
             SosRemote.create(path, key, payload) { ok -> handler.post { done(ok) } }
         }
@@ -191,6 +191,12 @@ class LoneWorkerSosSync(
         SosLedger(kv, transport, SystemClock::elapsedRealtime, { event, path, key ->
             if (mailEnabled) mail(ctx).enqueue(event, path, key, DevSettings.lwStillMin)
         }, onChange = { onChange() })
+    }
+
+    private val relayer by lazy {
+        SosRelay(transport, SystemClock::elapsedRealtime) { event, path, key ->
+            if (mailEnabled) mail(ctx).enqueue(event, path, key, DevSettings.lwStillMin)
+        }
     }
 
     // Liveness record while monitoring — record only; failures are ignored, unrelated to alerts and judgment
@@ -287,6 +293,15 @@ class LoneWorkerSosSync(
         ledger.tick()
         if (mailEnabled) mail(ctx).tick()
     }
+
+    /**
+     * Called every 10 s after tick(), so my own SOS upload goes first. Records a peer SOS that only Bluetooth carried
+     * (SosRelay) while the receive listener is attached and the database connection is up.
+     */
+    fun relay(peers: Collection<LoneWorkerPeers.Peer>, nowMs: Long, myId: String) = relayer.tick(
+        peers, nowMs, remover != null && SosRemote.connected, myId, DevSettings.floor, DevSettings.proc,
+        SosRemote.serverNowMs() ?: System.currentTimeMillis()
+    )
 
     private fun attachIfNeeded() {
         val site = DevSettings.siteCode

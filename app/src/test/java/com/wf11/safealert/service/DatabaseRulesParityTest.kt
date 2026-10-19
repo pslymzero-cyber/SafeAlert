@@ -31,9 +31,14 @@ class DatabaseRulesParityTest {
         assertTrue(w, Regex(Regex.escape(auto) + "(?!\\d)").containsMatchIn(w))
         assertTrue(w.contains("data.child('uid').val() === auth.uid ||"))
         // floor / process are unchanged on resolve as well (listed with the other fixed fields)
-        for (f in listOf("uid", "name", "role", "trigger", "beacon", "beaconRssi", "ep", "floor", "proc")) {
+        for (f in listOf("uid", "name", "role", "trigger", "beacon", "beaconRssi", "ep", "floor", "proc", "relayBy")) {
             assertTrue(f, w.contains("newData.child('$f').val() === data.child('$f').val()"))
         }
+        // A phone may record another phone's SOS (SosRelay): trigger relay is allowed, and relayBy is a short string that never changes
+        val rules = repoFile("database.rules.json")
+        assertTrue(rules.contains("newData.val() === '${SosRelay.TRIGGER}'"))
+        val relayBy = rules.substringAfter("\"relayBy\": {").substringBefore("}")
+        assertTrue(relayBy, relayBy.contains("length <= 64") && relayBy.contains("!data.exists() || newData.val() === data.val()"))
         // Floor / process: the same pattern as the app's SiteScope in sos, hb and alerts (two fields each); there is no
         //   site list node (the lists are built into the app).
         val s = repoFile("database.rules.json")

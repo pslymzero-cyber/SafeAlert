@@ -50,7 +50,8 @@ class SosLedger(
     data class Record(
         val bleId: String, val name: String, val role: String, val trigger: String,
         val beacon: String?, val beaconRssi: Int?, val sid: Int, val ep: Int = 0,
-        val floor: String = "", val proc: String = ""   // Scope at SOS time, kept so a restored SOS uploads the same values
+        val floor: String = "", val proc: String = "",   // Scope at SOS time, kept so a restored SOS uploads the same values
+        val relayBy: String = ""   // Device ID of the phone that recorded this SOS for another phone (SosRelay); empty for my own SOS
     )
 
     enum class Remote { ABSENT, MINE_ACTIVE, MINE_RESOLVED, OTHER, ERROR }

@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.util.Log
 import com.wf11.safealert.firebase.SosRemote
 import com.wf11.safealert.utils.BeaconRegistry
 import com.wf11.safealert.utils.DevSettings
@@ -175,6 +176,8 @@ class LoneWorkerMonitor(
         override fun run() {
             if (!started) return
             sync.tick()
+            // Guarded so a relay failure can never stop the loop that retries my own upload and keeps the liveness record
+            runCatching { sync.relay(logic.peerEntries(), now(), logic.myBleId) }.onFailure { Log.w("SosRelay", "대신 올리기 실패", it) }
             releaseOldSos()
             sync.heartbeat(DevSettings.lwEnabled, roleName) // Liveness record only; unrelated to judgment
             onPowerRaw(power.plugged(), true) // Sticky battery fixes missed broadcasts (dropped if pending, same 2 s debounce)

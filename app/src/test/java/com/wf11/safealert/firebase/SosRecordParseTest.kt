@@ -133,6 +133,10 @@ class SosRecordParseTest {
         assertFalse(SosRemote.recordPayload("id", "n", "WALKER", "still", null, null, "u1", 1L, 0).containsKey("ep"))
         assertFalse(SosRemote.recordPayload("id", "n", "WALKER", "still", null, null, "u1", 1L, 256).containsKey("ep"))
         assertFalse(SosRemote.recordPayload("id", "n", "WALKER", "still", null, null, "u1", 1L).containsKey("ep"))
+
+        // relayBy only when set
+        assertEquals("ME", SosRemote.recordPayload("id", "n", "", "relay", null, null, "u1", 1L, 4, relayBy = "ME")["relayBy"])
+        assertFalse(SosRemote.recordPayload("id", "n", "", "relay", null, null, "u1", 1L, 4).containsKey("relayBy"))
     }
 
     // A worker who fell before the crew's phones started is still waiting for rescue: a phone that starts (or restarts
