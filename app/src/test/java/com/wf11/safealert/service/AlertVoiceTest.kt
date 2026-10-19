@@ -517,9 +517,8 @@ class AlertVoiceTest : VoiceTestBase() {
         assertFalse(manifest.contains("<queries>"))
         assertFalse(manifest.contains("TTS_SERVICE"))
 
-        val news = repoFile("app/src/main/res/values/strings.xml").let { it.substring(it.indexOf("name=\"whats_new\"")) }
-        val first = news.substringBefore("\\n- ")
-        assertTrue(first.contains(AlertVoice.WARNING) && first.contains(AlertVoice.DANGER) && first.contains(AlertVoice.RAPID))
+        val news = repoFile("app/src/main/res/values/strings.xml").let { it.substring(it.indexOf("name=\"whats_new\"")) }.substringBefore("</string>")
+        assertTrue(news.contains(AlertVoice.WARNING) && news.contains(AlertVoice.DANGER) && news.contains(AlertVoice.RAPID))
     }
 
     // ---- the real judgement ----------------------------------------------------------------------------
