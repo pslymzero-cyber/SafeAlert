@@ -216,7 +216,7 @@ class LoneWorkerLogicTest {
         assertNull(l.nextCueAt(t + 60_000))
         assertTrue(l.cancelSos(t + 61_000))
         assertFalse(l.rescuerButton(t + 62_000))
-        assertNull(l.nextCueAt(t + 62_000))
+        assertEquals(l.stillCueAt(), l.nextCueAt(t + 62_000)) // no rescuer cue left; only the restarted no-motion count's cue
 
         // A restored SOS keeps its age: the stored start decides, not the restart.
         val a = newLogic(carried = true)

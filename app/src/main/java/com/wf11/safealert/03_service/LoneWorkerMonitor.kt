@@ -124,15 +124,17 @@ class LoneWorkerMonitor(
     private val resume = LoneWorkerResume(ctx)
     private var lastRest = LoneWorkerLogic.Rest.NONE
     /**
-     * Main screen notice line: monitoring unavailable without a sensor, otherwise why
-     * no-motion checking is paused (docked / waiting for movement).
+     * Main screen notice line, one of: monitoring stop pending, monitoring unavailable without a sensor, my own count toward
+     * an SOS (countdownBanner), otherwise why no-motion checking is paused (docked / waiting for movement).
      */
     val banner: String? get() = when {
         !started -> null
         logic.stopAt != null -> "${LoneWorkerNotifier.RESCUER_OK} — ${LoneWorkerNotifier.RESCUER_STOP_SOON}"
         sensors.noSensor -> "사고·무동작 감시 불가 — 가속도 센서 없음 (동료 구조 요청 수신은 계속)"
-        else -> logic.rest.banner
+        else -> logic.countdown(now())?.let { countdownBanner(it) } ?: logic.rest.banner
     }
+    private var buzzedFall = Long.MIN_VALUE   // buzzKey of the last fall / no-motion count that already buzzed
+    private var buzzedStill = Long.MIN_VALUE
     private var rendering = false
     private var renderAgain = false
 
@@ -531,6 +533,19 @@ class LoneWorkerMonitor(
         val p = LoneWorkerAlarm.Pattern.of(mode, logic.soundingPeers().isNotEmpty())
         if (p != null) alarm.play(p, vibrates) else alarm.stop(vibrate = vibrates)
         sensors.gyroLog(audible.isNotEmpty(), vibrates)
+        // Weak double buzz once per count: a fall count (per accepted impact) or the last minute of a no-motion count.
+        // The key is kept even with the vibration switch off, so switching it on later does not buzz for an old count.
+        if (logic.stopAt == null && !sensors.noSensor) {
+            logic.countdown(t)?.let { c ->
+                val key = c.buzzKey ?: return@let
+                val fresh = when (c.kind) {
+                    LoneWorkerLogic.CountdownKind.FALL -> (key != buzzedFall).also { buzzedFall = key }
+                    LoneWorkerLogic.CountdownKind.STILL -> (key != buzzedStill).also { buzzedStill = key }
+                    else -> false
+                }
+                if (fresh && DevSettings.vibrationEnabled) VibrationHelper.vibrateCountdown(ctx)
+            }
+        }
 
         // A phone with a monitoring stop pending shows no ended rows either: LoneWorkerNotifier.update drops the quiet notice when ended rows exist, which would hide the stop notice
         val resolved = if (logic.stopAt != null) emptyList() else logic.peers.filter { !it.active && !it.silenced }
@@ -571,5 +586,16 @@ class LoneWorkerMonitor(
         // battery cost) so turn polling and ImuFusion run with the screen off
         val need = logic.wakeNeeded(sensors.needsWake, now())
         wake.hold(need, renew)
+    }
+}
+
+/** Status line text for my own count toward an SOS (seconds rounded up, never negative). */
+internal fun countdownBanner(c: LoneWorkerLogic.Countdown): String {
+    val s = (c.leftMs.coerceAtLeast(0L) + 999L) / 1000L
+    return when (c.kind) {
+        LoneWorkerLogic.CountdownKind.SOS -> "구조 요청 중 — 해제는 구조 요청 화면에서"
+        LoneWorkerLogic.CountdownKind.RESPONSE -> "'괜찮으세요?' 응답 대기 — ${s}초 뒤 구조 요청"
+        LoneWorkerLogic.CountdownKind.FALL -> "넘어짐 감지 — ${s}초 뒤 '괜찮으세요?' 창 (움직이면 취소)"
+        LoneWorkerLogic.CountdownKind.STILL -> "움직임 없음 — ${s}초 뒤 '괜찮으세요?' 창 (움직이면 취소)"
     }
 }

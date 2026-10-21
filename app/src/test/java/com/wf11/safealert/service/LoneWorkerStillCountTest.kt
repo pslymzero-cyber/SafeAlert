@@ -153,9 +153,12 @@ class LoneWorkerStillCountTest {
         val l = newLogic(carried = true)
         l.sensed(178_000)
         assertEquals(Mode.WATCHING, l.modeAt(180_000))
+        assertEquals(0L, l.countdown(150_000)!!.buzzKey)
         l.onMoved(179_500)
         l.sensed(181_000)
         assertEquals(Mode.WATCHING, l.modeAt(181_000))
+        // the movement reset the count: the last minute starts over with a new buzz key
+        assertEquals(179_500L, l.countdown(300_000)!!.buzzKey)
         assertEquals(Mode.WATCHING, l.seenAt(359_499))
         assertEquals(Mode.CHECKING, l.seenAt(359_500))
     }
@@ -163,16 +166,54 @@ class LoneWorkerStillCountTest {
     @Test fun still_deadline_is_scheduled() {
         assertEquals(180_000L, newLogic(carried = true).nextCheckAt(0))
 
+        // the last minute: shown from 120 s, one buzz key, a wake-up cue that is not a judgment deadline
+        val c = newLogic(carried = true)
+        assertNull(c.countdown(0))
+        assertEquals(120_000L, c.stillCueAt())
+        assertEquals(120_000L, c.nextCueAt(0))
+        assertEquals(LoneWorkerLogic.Countdown(LoneWorkerLogic.CountdownKind.STILL, 60_000L, 0L), c.countdown(120_000))
+        assertEquals(LoneWorkerLogic.Countdown(LoneWorkerLogic.CountdownKind.STILL, 30_000L, 0L), c.countdown(150_000))
+        assertFalse(c.dueNow(120_000))
+        // a setting of 1 min or less shows the text from the start but never buzzes
+        val one = newLogic(carried = true).apply { stillMs = 60_000L }
+        assertEquals(LoneWorkerLogic.Countdown(LoneWorkerLogic.CountdownKind.STILL, 60_000L, null), one.countdown(0))
+        assertNull(one.stillCueAt())
+
         val settled = newLogic(zoneInside = true, carried = true)
         settled.tick(60_000)
         assertNull(settled.nextCheckAt(60_000))
+        assertNull(settled.countdown(150_000))
+        assertNull(settled.stillCueAt())
 
         val siren = newLogic(carried = true)
         siren.onPeerBle("P", true, 1_000)
         siren.tick(1_000)
         assertNull(siren.nextCheckAt(1_000))
+        assertNull(siren.countdown(150_000))
+        assertNull(siren.stillCueAt())
 
         assertNull(newLogic().nextCheckAt(0))
+        assertNull(newLogic().countdown(150_000))
+        assertNull(newLogic().stillCueAt())
+    }
+
+    /** Status line texts (seconds rounded up) and the monitor wiring: banner order, buzz gated by the vibration switch. */
+    @Test fun countdown_banner_text_and_wiring() {
+        fun text(kind: LoneWorkerLogic.CountdownKind, left: Long) = countdownBanner(LoneWorkerLogic.Countdown(kind, left, null))
+        val k = LoneWorkerLogic.CountdownKind.values()
+        assertEquals("구조 요청 중 — 해제는 구조 요청 화면에서", text(k[0], 0))
+        assertEquals("'괜찮으세요?' 응답 대기 — 60초 뒤 구조 요청", text(k[1], 59_001))
+        assertEquals("넘어짐 감지 — 1초 뒤 '괜찮으세요?' 창 (움직이면 취소)", text(k[2], 1))
+        assertEquals("움직임 없음 — 0초 뒤 '괜찮으세요?' 창 (움직이면 취소)", text(k[3], 0))
+        assertEquals("움직임 없음 — 30초 뒤 '괜찮으세요?' 창 (움직이면 취소)", text(k[3], 30_000))
+
+        val monitor = noComments(serviceSource("LoneWorkerMonitor.kt"))
+        val banner = monitor.substring(monitor.indexOf("val banner"), monitor.indexOf("private var buzzedFall"))
+        assertTrue(banner.indexOf("sensors.noSensor") < banner.indexOf("countdownBanner(it)"))
+        assertTrue(banner.indexOf("countdownBanner(it)") < banner.indexOf("logic.rest.banner"))
+        val render = sourceBlock(monitor, "private fun renderOnce()")
+        assertTrue(render.indexOf("DevSettings.vibrationEnabled") in 0 until render.indexOf("VibrationHelper.vibrateCountdown"))
+        assertTrue(noComments(serviceSource("LoneWorkerWakeLock.kt")).contains("stillCueAt()"))
     }
 
     /**

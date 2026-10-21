@@ -1,5 +1,6 @@
 package com.wf11.safealert.service
 
+import android.os.SystemClock
 import android.os.Vibrator
 import com.wf11.safealert.utils.DevSettings
 import org.junit.After
@@ -56,5 +57,11 @@ class LoneWorkerAlarmVibrationTest {
         assertTrue("the siren time ends, the vibration stays", vibrating())
         alarm.stop()
         assertFalse(vibrating())
+
+        // the weak buzz at the start of my own count: vibrates, and its window keeps the sensors from counting it as movement
+        VibrationHelper.vibrateCountdown(app)
+        assertTrue("weak buzz", vibrating())
+        assertTrue("sensors mask the buzz", VibrationHelper.window.covers(SystemClock.elapsedRealtime()))
+        VibrationHelper.stopVibration(app)
     }
 }

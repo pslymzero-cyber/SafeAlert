@@ -55,8 +55,9 @@ internal fun LoneWorkerLogic.rescuerButton(nowMs: Long): Boolean =
 
 /**
  * Next time a sound or a label changes by time alone (no judgment and no sensor data involved), for the monitor to wake at:
- * a peer siren running out of ring time, or my SOS button turning to the rescuer's; null when nothing is due after nowMs.
+ * a peer siren running out of ring time, my SOS button turning to the rescuer's, or the no-motion count reaching its last
+ * minute (weak vibration; not a judgment deadline); null when nothing is due after nowMs.
  */
 internal fun LoneWorkerLogic.nextCueAt(nowMs: Long): Long? =
-    listOfNotNull(peerRingEndAt(), if (sosActive) modeSinceMs + LoneWorkerLogic.RESCUER_BUTTON_MS else null)
+    listOfNotNull(peerRingEndAt(), if (sosActive) modeSinceMs + LoneWorkerLogic.RESCUER_BUTTON_MS else null, stillCueAt())
         .filter { it > nowMs }.minOrNull()

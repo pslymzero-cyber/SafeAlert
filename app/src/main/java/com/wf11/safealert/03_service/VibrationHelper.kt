@@ -63,6 +63,17 @@ object VibrationHelper {
         Log.d(TAG, "급접근 진동")
     }
 
+    /**
+     * Lone-worker count start (fall 30 s / last minute of no-motion): two short weak buzzes. Not an alarm vibration —
+     * the caller checks the vibration switch. Alarm usage so it also sounds in silent mode; the vibration window it records
+     * keeps the sensors from counting the buzz as movement.
+     */
+    fun vibrateCountdown(context: Context) {
+        val on = if (vibrator(context)?.hasAmplitudeControl() == true) 70 else VibrationEffect.DEFAULT_AMPLITUDE
+        vibe(context, longArrayOf(0, 120, 150, 120), intArrayOf(0, on, 0, on), alarm = true)
+        Log.d(TAG, "구조 요청 카운트 시작 진동")
+    }
+
     // Pauses the alarm loop vibration during a collision vibration. All calls on the main thread.
     // AOSP ignores a lower-importance one-shot vibration while a repeating alarm vibration runs, so a collision vibration pauses the loop,
     // plays, and restarts the loop when it ends.
@@ -129,7 +140,7 @@ object VibrationHelper {
     }
 
     @Suppress("DEPRECATION")
-    private fun vibe(context: Context, pattern: LongArray, amplitudes: IntArray) {
+    private fun vibe(context: Context, pattern: LongArray, amplitudes: IntArray, alarm: Boolean = false) {
         val vib = vibrator(context) ?: return
         if (!vib.hasVibrator()) return
         val now = SystemClock.elapsedRealtime()
@@ -146,7 +157,7 @@ object VibrationHelper {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 val fx = VibrationEffect.createWaveform(pattern, amplitudes, -1)
                 // While the alarm loop is requested, vibrate with the same importance (ALARM) so it is not displaced in a restart race.
-                if (loop) vib.vibrate(fx, alarmAttrs()) else vib.vibrate(fx)
+                if (loop || alarm) vib.vibrate(fx, alarmAttrs()) else vib.vibrate(fx)
             } else vib.vibrate(pattern, -1)
         }.onFailure { Log.e(TAG, "진동 실패: ${it.message}") }
         if (loop) handler.postDelayed(resume, dur + RESUME_PAD_MS)

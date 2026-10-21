@@ -76,6 +76,8 @@ class LoneWorkerLogic(var myBleId: String) {
         const val ACCIDENT_WATCH_MS = 300_000L
         const val ACCIDENT_STILL_MS = 30_000L
         const val ACCIDENT_RESPONSE_MS = 60_000L
+        /** Last minute of the no-motion count: screen text and weak vibration start here. Not used by judgment. */
+        const val COUNTDOWN_STILL_MS = 60_000L
         /** An actual power connection within this time before a trigger is the act of placing the phone in the cradle. */
         const val PLUG_EXCEPT_MS = 10_000L
         /**
@@ -187,6 +189,8 @@ class LoneWorkerLogic(var myBleId: String) {
     // Accident suspicion
     private var accidentFrom = Long.MIN_VALUE
     private var accidentUntil = Long.MIN_VALUE
+    /** Time of the last accepted impact — read only by countdown (screen / weak vibration), never by judgment. Not saved. */
+    private var impactAt = Long.MIN_VALUE
     private var lastPlugAt = Long.MIN_VALUE
     private var lastUnplugAt = Long.MIN_VALUE
     /**
@@ -376,6 +380,7 @@ class LoneWorkerLogic(var myBleId: String) {
                 (lastUnplugAt != Long.MIN_VALUE && trigMs - lastUnplugAt <= UNPLUG_FALL_MS))) return
         if (lastPlugAt != Long.MIN_VALUE && trigMs - lastPlugAt <= PLUG_EXCEPT_MS) return
         if (accidentUntil == Long.MIN_VALUE) accidentFrom = trigMs
+        impactAt = trigMs
         accidentUntil = maxOf(accidentUntil, trigMs + ACCIDENT_WATCH_MS)
         // Recount clear movement from post-impact records only — movement that relied on pre-impact
         // steps is excluded from the accident baseline; closed windows stay closed
@@ -557,6 +562,30 @@ class LoneWorkerLogic(var myBleId: String) {
 
     fun responseLeftMs(nowMs: Long): Long = sosAt()?.let { (it - nowMs).coerceAtLeast(0L) } ?: 0L
     fun responseTotalMs(): Long = respFor(trigger)  // Full response time of current window (ring basis, same rule as deadline)
+
+    enum class CountdownKind { SOS, RESPONSE, FALL, STILL }
+
+    /**
+     * My own phone's count toward an SOS, for the status text and the weak vibration only (judgment never reads it).
+     * buzzKey identifies one weak-vibration event (FALL / STILL only, otherwise null).
+     */
+    data class Countdown(val kind: CountdownKind, val leftMs: Long, val buzzKey: Long?)
+
+    /** Read-only: one count in priority order SOS > response > fall > last minute of no-motion, or null. */
+    fun countdown(nowMs: Long): Countdown? {
+        if (mode == Mode.SOS) return Countdown(CountdownKind.SOS, 0L, null)
+        if (sosAt() != null) return Countdown(CountdownKind.RESPONSE, responseLeftMs(nowMs), null)
+        fallOpenAt(nowMs)?.let {
+            return Countdown(CountdownKind.FALL, (it - nowMs).coerceAtLeast(0L), maxOf(accidentFrom, impactAt))
+        }
+        val still = stillOpenAt() ?: return null
+        val left = (still - nowMs).coerceAtLeast(0L)
+        // ponytail: setting at or under 1 min shows the text only — every step would restart the count and buzz
+        return if (left <= COUNTDOWN_STILL_MS) Countdown(CountdownKind.STILL, left, if (stillCueAt() != null) stillBase else null) else null
+    }
+
+    /** Moment the no-motion count has 60 s left (weak vibration); the monitor wakes then. Not a judgment deadline. */
+    fun stillCueAt(): Long? = stillOpenAt()?.takeIf { stillMs > COUNTDOWN_STILL_MS }?.minus(COUNTDOWN_STILL_MS)
 
     /**
      * Monitor scheduling (nextCheckAt), wake lock (waitingToJudge), flush (waitingOnSensors), immediate judgment (dueNow) — JudgeOrder.

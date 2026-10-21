@@ -27,14 +27,26 @@ class LoneWorkerAccidentTest {
         val l = fallRuleOnly()
         l.responseMs = 600_000L
         l.onAccident(6_000)
+        // the screen count (read only): 30 s from the impact, one buzz key per accepted impact
+        assertEquals(LoneWorkerLogic.Countdown(LoneWorkerLogic.CountdownKind.FALL, 30_000L, 6_000L), l.countdown(6_000))
         assertEquals(Mode.WATCHING, l.modeAt(18_000))
+        assertEquals(18_000L, l.countdown(18_000)!!.leftMs)
         assertEquals(Mode.WATCHING, l.seenAt(35_999))
         assertEquals(Mode.CHECKING, l.seenAt(36_000))
         assertEquals("fall", l.trigger)
         assertEquals(60_000L, l.responseLeftMs(36_000))
+        assertEquals(LoneWorkerLogic.Countdown(LoneWorkerLogic.CountdownKind.RESPONSE, 60_000L, null), l.countdown(36_000))
         assertEquals(Mode.CHECKING, l.seenAt(95_999))
+        assertEquals(1L, l.countdown(95_999)!!.leftMs)
         assertEquals(Mode.SOS, l.seenAt(96_000))
         assertEquals("fall", l.trigger)
+        assertEquals(LoneWorkerLogic.Countdown(LoneWorkerLogic.CountdownKind.SOS, 0L, null), l.countdown(96_000))
+
+        // a second impact inside the same suspicion is a new count: a new buzz key
+        val twice = fallRuleOnly()
+        twice.onAccident(6_000)
+        twice.onAccident(10_000)
+        assertEquals(10_000L, twice.countdown(10_000)!!.buzzKey)
     }
 
     /**
@@ -150,8 +162,13 @@ class LoneWorkerAccidentTest {
             val l = fallRuleOnly()
             if (!r.stepSensor) l.stepsAvailable = false
             l.onAccident(r.fallAt)
+            val key = l.countdown(r.fallAt)!!.buzzKey
             r.motion(l)
-            for ((t, want) in r.seen) assertEquals("${r.name}: seen at $t", want, l.seenAt(t))
+            for ((t, want) in r.seen) {
+                assertEquals("${r.name}: seen at $t", want, l.seenAt(t))
+                // a count restarted by motion is still the same impact: no second buzz
+                if (want == Mode.WATCHING) assertEquals("${r.name}: count at $t", key, l.countdown(t)?.buzzKey)
+            }
         }
     }
 
