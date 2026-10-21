@@ -595,7 +595,8 @@ internal fun countdownBanner(c: LoneWorkerLogic.Countdown): String {
     return when (c.kind) {
         LoneWorkerLogic.CountdownKind.SOS -> "구조 요청 중 — 해제는 구조 요청 화면에서"
         LoneWorkerLogic.CountdownKind.RESPONSE -> "'괜찮으세요?' 응답 대기 — ${s}초 뒤 구조 요청"
-        LoneWorkerLogic.CountdownKind.FALL -> "넘어짐 감지 — ${s}초 뒤 '괜찮으세요?' 창 (움직이면 취소)"
+        // Moving does not cancel a fall watch (it lasts 5 min); it only restarts the 30 s, so say what opens the window
+        LoneWorkerLogic.CountdownKind.FALL -> "넘어짐 감지 — ${s}초 동안 움직임이 없으면 '괜찮으세요?' 창"
         LoneWorkerLogic.CountdownKind.STILL -> "움직임 없음 — ${s}초 뒤 '괜찮으세요?' 창 (움직이면 취소)"
     }
 }

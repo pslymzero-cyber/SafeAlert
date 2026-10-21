@@ -203,7 +203,7 @@ class LoneWorkerStillCountTest {
         val k = LoneWorkerLogic.CountdownKind.values()
         assertEquals("구조 요청 중 — 해제는 구조 요청 화면에서", text(k[0], 0))
         assertEquals("'괜찮으세요?' 응답 대기 — 60초 뒤 구조 요청", text(k[1], 59_001))
-        assertEquals("넘어짐 감지 — 1초 뒤 '괜찮으세요?' 창 (움직이면 취소)", text(k[2], 1))
+        assertEquals("넘어짐 감지 — 1초 동안 움직임이 없으면 '괜찮으세요?' 창", text(k[2], 1))
         assertEquals("움직임 없음 — 0초 뒤 '괜찮으세요?' 창 (움직이면 취소)", text(k[3], 0))
         assertEquals("움직임 없음 — 30초 뒤 '괜찮으세요?' 창 (움직이면 취소)", text(k[3], 30_000))
 
