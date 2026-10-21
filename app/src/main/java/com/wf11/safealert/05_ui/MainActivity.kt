@@ -63,6 +63,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private val prefs by lazy { getSharedPreferences("safealert_prefs", MODE_PRIVATE) }
     private var currentMode: String? = null
+    private var pitAskOpen = false   // the equipment question for a restarted equipment session is on screen (askPitIfRestored)
     // Selected role (Category) — passed BleService → BleAdvertiser as bits[1:0] of the 1-byte payload
     private var currentCategory: Int = BleConstants.CAT_WALKER
     private var testAlertRunning = false
@@ -109,6 +110,7 @@ class MainActivity : AppCompatActivity() {
         private var lastMuted = false
         override fun run() {
             LoneWorkerUi.onPoll(this@MainActivity, binding.tvLwStatus, binding.layoutPermissionWarning, binding.tvPermissionMsg, currentMode == null, this@MainActivity::showPermissionWarning) { restoreRunningState() }   // Check/SOS screen entry, stop-race recovery, charging hint, reachability recheck
+            askPitIfRestored()
             if (LoneWorkerUi.takeRescuerStop(this@MainActivity) && currentMode != null) stopServiceImmediately(tellService = false)
             if (binding.cardRunning.visibility == View.VISIBLE) {
                 // Fallback for missed broadcasts — reads the service snapshot (BleService.detectedSnapshot)
@@ -856,7 +858,7 @@ class MainActivity : AppCompatActivity() {
      *
      * [onPicked] is called only after a selection is confirmed; never on cancel.
      */
-    private fun showPitSelectDialog(onPicked: (PitType) -> Unit) {
+    private fun showPitSelectDialog(onClosed: () -> Unit = {}, onPicked: (PitType) -> Unit) {
         val types = PitType.values().toList()
         val nos   = (PitType.NO_MIN..PitType.NO_MAX).toList()
         val dlg   = DialogPitSelectBinding.inflate(layoutInflater)
@@ -902,6 +904,7 @@ class MainActivity : AppCompatActivity() {
                 onPicked(type)
             }
             .setNegativeButton("취소", null)
+            .setOnDismissListener { onClosed() }
             .show()
     }
 
@@ -912,6 +915,34 @@ class MainActivity : AppCompatActivity() {
      */
     private fun startAsPitOperator() {
         showPitSelectDialog { type -> onRoleSelected("DEVICE", type.category) }
+    }
+
+    /**
+     * An equipment session that restarted without the picker (STICKY, boot, update, a revive on returning here, a
+     * notification button; BleService.K_PIT_ASK) asks for the equipment once, with the running one selected. The same
+     * equipment keeps running; another one restarts monitoring with it (the role-switch path); cancel keeps running, so
+     * the question never leaves monitoring off. Not over my own SOS - it asks once that is over.
+     */
+    private fun askPitIfRestored() {
+        if (currentMode != "DEVICE" || pitAskOpen || !prefs.getBoolean(BleService.K_PIT_ASK, false)) return
+        if (LoneWorkerMonitor.current?.sosActive == true) return
+        prefs.edit().putBoolean(BleService.K_PIT_ASK, false).apply()   // asked once; cancel keeps the running equipment
+        pitAskOpen = true
+        val running = prefs.getString("device_id", "") ?: ""
+        showPitSelectDialog(onClosed = { pitAskOpen = false }) { type ->
+            if ((prefs.getString("display_name", "") ?: "") != running) requireWorkerCode { restartAsDevice(type.category) }
+        }
+    }
+
+    /** Stop → 800 ms → start with the equipment just picked: the same path as a role switch (performSwitchRole). */
+    private fun restartAsDevice(category: Int) {
+        if (LoneWorkerUi.blockIfOwnSos(this)) return
+        stopServiceImmediately()
+        statusHandler.postDelayed({
+            if (isFinishing || isDestroyed) return@postDelayed
+            if (LoneWorkerUi.blockIfOwnSos(this)) return@postDelayed
+            onRoleSelected("DEVICE", category)
+        }, 800L)
     }
 
     /**

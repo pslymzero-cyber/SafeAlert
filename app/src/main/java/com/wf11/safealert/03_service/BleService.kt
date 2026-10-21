@@ -60,6 +60,9 @@ class BleService : LifecycleService() {
         //   prefs and UI state. Reusing the existing confirmSwitchRole() is the only safe path.
         const val ACTION_OPEN_SWITCH_ROLE = "ACTION_OPEN_SWITCH_ROLE"
         const val EXTRA_ID             = "extra_id"
+        // safealert_prefs flag: an equipment session restarted without the equipment picker (STICKY, boot, update, a revive
+        //   on returning to the screen, a notification button) — the main screen asks for the equipment once (MainActivity)
+        const val K_PIT_ASK            = "pit_ask"
         const val EXTRA_CATEGORY       = "extra_category"       // sender role Category (CAT_*)
         const val EXTRA_PSTATE         = "extra_pstate"         // STATE value for ACTION_TEST_STATE (PSTATE_*)
         const val EXTRA_ALERT_LEVEL    = "extra_alert_level"
@@ -712,7 +715,10 @@ class BleService : LifecycleService() {
                 // An instance started from a notification button is exempt from the while-in-use
                 // permission restriction, so it doesn't count as a background start
                 bgStarted = intent == null || intent.getBooleanExtra(BootRestoreReceiver.EXTRA_BOOT_RESTORE, false)
-                prefs.edit().putLong(BootRestoreReceiver.K_STARTED_AT, System.currentTimeMillis()).apply()
+                // Equipment restarted with the saved equipment, without the picker: the screen asks once (monitoring keeps running)
+                val ed = prefs.edit().putLong(BootRestoreReceiver.K_STARTED_AT, System.currentTimeMillis())
+                if (savedMode == "DEVICE") ed.putBoolean(K_PIT_ASK, true)
+                ed.apply()
                 applyMode()
                 if (intent?.action == null) return START_STICKY   // notification action: continue into the when below
             } else {
@@ -738,6 +744,7 @@ class BleService : LifecycleService() {
                 myCategory = intent.getIntExtra(EXTRA_CATEGORY, BleConstants.CAT_FORKLIFT)
                 // Save the mode: used by onStartCommand to restore after a START_STICKY restart
                 saveRunningMode(myMode, myId, myCategory)
+                clearPitAsk()   // started from the screen, right after the equipment picker
                 loneWorker.keepRunning() // Drops a pending stop after a rescuer's release
                 LoneWorkerMonitor.rescuerStopped = false // A start command handled after the stop must not leave the new monitoring stopped
                 bgStarted = false
@@ -750,6 +757,7 @@ class BleService : LifecycleService() {
                 myMode = "WALKER"
                 myCategory = BleConstants.CAT_WALKER   // always walker
                 saveRunningMode(myMode, myId, myCategory)
+                clearPitAsk()
                 loneWorker.keepRunning() // Drops a pending stop after a rescuer's release
                 LoneWorkerMonitor.rescuerStopped = false // A start command handled after the stop must not leave the new monitoring stopped
                 bgStarted = false
@@ -808,6 +816,10 @@ class BleService : LifecycleService() {
         stopAll()
         return true
     }
+
+    /** A start from the screen: no equipment question is pending (K_PIT_ASK). */
+    private fun clearPitAsk() =
+        getSharedPreferences("safealert_prefs", MODE_PRIVATE).edit().putBoolean(K_PIT_ASK, false).apply()
 
     /** Save mode and ID to SharedPrefs (for restore after a START_STICKY restart) */
     private fun saveRunningMode(mode: String, id: String, category: Int) {
