@@ -930,7 +930,9 @@ class MainActivity : AppCompatActivity() {
         pitAskOpen = true
         val running = prefs.getString("device_id", "") ?: ""
         showPitSelectDialog(onClosed = { pitAskOpen = false }) { type ->
-            if ((prefs.getString("display_name", "") ?: "") != running) requireWorkerCode { restartAsDevice(type.category) }
+            // No worker-code gate here: a cancelled code popup would leave display_name on the new equipment while the old one
+            //   keeps advertising. A session that ran without a code (started on an older version) restarts without one.
+            if ((prefs.getString("display_name", "") ?: "") != running) restartAsDevice(type.category)
         }
     }
 
