@@ -739,6 +739,7 @@ class LoneWorkerPeerTest {
         for (p in l.peers) {
             h = h * 31 + p.id.hashCode()
             h = h * 31 + p.scopeLabel.hashCode()
+            h = h * 31 + p.worker.hashCode()
             h = h * 31 + (if (p.active) 1 else 0) + (if (p.silenced) 2 else 0) + (if (p.ringOver) 4 else 0)
         }
         assertEquals(2, l.peers.size)
@@ -828,9 +829,14 @@ class LoneWorkerPeerTest {
         val s2 = "0123456789abcdef"
         q.onPeerBle("Q", true, 0, 7)
         assertEquals("", q.peer("Q").sosId)
-        q.onPeerBle("Q", true, 500, 7, sosId = s2, floor = "3F", proc = "IB")
+        q.onPeerBle("Q", true, 500, 7, sosId = s2, floor = "3F", proc = "IB", zone = "Z1", worker = "G6628767")
         assertEquals(s2, q.peer("Q").sosId); assertEquals("3F", q.peer("Q").floor); assertEquals("IB", q.peer("Q").proc)
+        assertEquals("Z1", q.peer("Q").zone); assertEquals("G6628767", q.peer("Q").worker); assertEquals("3F-IB-Z1", q.peer("Q").scopeLabel)
         q.onPeerBle("Q", true, 1_000, 7)
         assertEquals(s2, q.peer("Q").sosId); assertEquals("3F", q.peer("Q").floor)
+        assertEquals("Z1", q.peer("Q").zone); assertEquals("G6628767", q.peer("Q").worker)
+        // The driver shows on the row only when the worker code differs from the name
+        assertTrue(q.peer("Q").line(1_000).contains("운전자 G6628767"))
+        assertFalse(q.peer("Q").copy(bleId = "G6628767").line(1_000).contains("운전자"))
     }
 }

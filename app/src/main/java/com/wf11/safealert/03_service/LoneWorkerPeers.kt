@@ -38,7 +38,7 @@ import com.wf11.safealert.utils.SiteScope
  *   an old sender's next SOS cannot be told apart), and its record is queued (takeAutoReleased) to be marked released on
  *   the server, where its writer may be gone. A BLE-only entry may never have reached the server (nobody was told), so it
  *   ends that way only once its adverts have stopped as well.
- * - A server record outside this phone's floor/process scope is a quiet entry: hidden and silent, but it merges either way
+ * - A server record outside this phone's floor/process/zone scope is a quiet entry: hidden and silent, but it merges either way
  *   with its episode's BLE entry (which then alerts with the name) and runs the one-hour release. It becomes a normal entry
  *   when heard over BLE or delivered again in scope, and stays hidden after it ends. An advert of an SOS that already ended
  *   on air only refreshes when it was last heard within PEER_RESOLVE_GUARD_MS of that end: it wakes nothing and lifts
@@ -85,9 +85,12 @@ class LoneWorkerPeers(private val canSound: () -> Boolean) {
         val startMs: Long = firstSeenMs,
         /** Ended by the one-hour limit, not by its worker. */
         val autoEnded: Boolean = false,
-        /** Floor and process the sender gave ("" = none), shown on the row. */
+        /** Floor, process and zone the sender gave ("" = none), shown on the row. */
         val floor: String = "",
         val proc: String = "",
+        val zone: String = "",
+        /** The sender's worker code ("" = unknown); for equipment it is the driver. Not used to judge quiet or ringing. */
+        val worker: String = "",
         /** SOS ID the sending phone made for this SOS, from its signal or its server record ("" = unknown). */
         val sosId: String = "",
         /**
@@ -114,8 +117,8 @@ class LoneWorkerPeers(private val canSound: () -> Boolean) {
         val id: String get() = if (key != null) "k:$key" else "b:$bleId#$episode"
         /** Acknowledge target ID. Unchanged when a server key is obtained. */
         val epId: String get() = "$bleId#$episode"
-        /** "1F-OB", "" without floor/process. */
-        val scopeLabel: String get() = SiteScope.label("", floor, proc)
+        /** "1F-OB-Z1", "" without floor/process/zone. */
+        val scopeLabel: String get() = SiteScope.label("", floor, proc, zone)
         /** Name plus " · 1F-OB" for a notification. */
         fun nameWithScope(): String = displayName().let { n -> scopeLabel.let { if (it.isEmpty()) n else "$n · $it" } }
     }
@@ -131,7 +134,8 @@ class LoneWorkerPeers(private val canSound: () -> Boolean) {
         val startLocalMs: Long? = null, val auto: Boolean = false,
         val floor: String = "", val proc: String = "", val inScope: Boolean = true,
         /** SOS ID the sender made (SosAdvert.SOS_ID_PATTERN), "" = a record without one (older app). */
-        val sosId: String = ""
+        val sosId: String = "",
+        val zone: String = "", val worker: String = ""
     )
 
     companion object {
@@ -196,6 +200,7 @@ class LoneWorkerPeers(private val canSound: () -> Boolean) {
             if (p.quiet) continue
             h = h * 31 + p.id.hashCode()
             h = h * 31 + p.scopeLabel.hashCode()   // a scope filled in later by a scan response redraws the row
+            h = h * 31 + p.worker.hashCode()   // so does a driver filled in later
             h = h * 31 + (if (p.active) 1 else 0) + (if (p.silenced) 2 else 0) + (if (p.ringOver) 4 else 0)
         }
         return h
@@ -244,8 +249,8 @@ class LoneWorkerPeers(private val canSound: () -> Boolean) {
                     name = name, role = role, trigger = trigger,
                     beacon = beacon.ifEmpty { cur.beacon }, createdAtMs = createdAtMs,
                     startMs = rec.startLocalMs ?: cur.startMs,
-                    floor = rec.floor, proc = rec.proc, quiet = cur.quiet && !rec.inScope,
-                    sosId = cur.sosId.ifEmpty { rec.sosId }
+                    floor = rec.floor, proc = rec.proc, zone = rec.zone, quiet = cur.quiet && !rec.inScope,
+                    sosId = cur.sosId.ifEmpty { rec.sosId }, worker = rec.worker.ifEmpty { cur.worker }
                 )
             }
             return
@@ -278,7 +283,7 @@ class LoneWorkerPeers(private val canSound: () -> Boolean) {
             bleId, key, name, role, trigger, beacon, createdAtMs,
             firstSeenMs = nowMs, active = true, silenced = coldServer(kId, epId, nowMs),
             resolvedAtMs = 0L, episode = ep, startMs = rec.startLocalMs ?: nowMs,
-            floor = rec.floor, proc = rec.proc, sosId = rec.sosId, quiet = !rec.inScope
+            floor = rec.floor, proc = rec.proc, sosId = rec.sosId, quiet = !rec.inScope, zone = rec.zone, worker = rec.worker
         )
     }
 
@@ -289,6 +294,7 @@ class LoneWorkerPeers(private val canSound: () -> Boolean) {
         map[kId] = o.copy(
             key = rec.key, name = rec.name, role = rec.role, trigger = rec.trigger, beacon = rec.beacon.ifEmpty { o.beacon },
             createdAtMs = rec.createdAtMs, startMs = rec.startLocalMs ?: o.startMs, floor = rec.floor, proc = rec.proc,
+            zone = rec.zone, worker = rec.worker.ifEmpty { o.worker },
             quiet = o.quiet && !rec.inScope, silenced = coldServer(kId, "${rec.bleId}#${rec.ep}", nowMs),
             sosId = rec.sosId.ifEmpty { o.sosId }
         )
@@ -309,6 +315,7 @@ class LoneWorkerPeers(private val canSound: () -> Boolean) {
             silenced = coldServer(kId, epId, nowMs) || (SosRelay.isRelay(rec.key) && b.silenced),
             resolvedAtMs = 0L, episode = rec.ep, lastBleMs = b.lastBleMs, startMs = rec.startLocalMs ?: b.startMs,
             floor = rec.floor, proc = rec.proc, sosId = rec.sosId.ifEmpty { b.sosId },
+            zone = rec.zone, worker = rec.worker.ifEmpty { b.worker },
             // Already over on air: an out-of-scope record stays quiet; in or out of scope, that SOS's leftover adverts
             // within the guard time only refresh lastBleMs (no wake, no undoing an acknowledgement). Still heard: it keeps alerting.
             quiet = !rec.inScope && !b.active,
@@ -317,12 +324,12 @@ class LoneWorkerPeers(private val canSound: () -> Boolean) {
         )
     }
 
-    fun onBle(bleId: String, sos: Boolean, nowMs: Long, ep: Int, beacon: String, sosId: String = "", floor: String = "", proc: String = "") {
-        ble(bleId, sos, nowMs, ep, beacon, sosId, floor, proc)
+    fun onBle(bleId: String, sos: Boolean, nowMs: Long, ep: Int, beacon: String, sosId: String = "", floor: String = "", proc: String = "", zone: String = "", worker: String = "") {
+        ble(bleId, sos, nowMs, ep, beacon, sosId, floor, proc, zone, worker)
         ring(nowMs)
     }
 
-    private fun ble(bleId: String, sos: Boolean, nowMs: Long, ep: Int, beacon: String, sosId: String, floor: String, proc: String) {
+    private fun ble(bleId: String, sos: Boolean, nowMs: Long, ep: Int, beacon: String, sosId: String, floor: String, proc: String, zone: String, worker: String) {
         if (!sos) {
             expiredEps.removeAll { it.startsWith("$bleId#") }   // its SOS ended on air: a later one is new
             if (map.values.none { it.bleId == bleId && (it.key == null || it.relayed) && it.active }) return
@@ -352,7 +359,8 @@ class LoneWorkerPeers(private val canSound: () -> Boolean) {
                     silenced = p.silenced && keep,
                     beacon = if (p.key == null) p.beacon.ifEmpty { beacon } else p.beacon,
                     // A scan response can arrive after the first advert: fill what is still empty, never overwrite
-                    sosId = p.sosId.ifEmpty { sosId }, floor = p.floor.ifEmpty { floor }, proc = p.proc.ifEmpty { proc }
+                    sosId = p.sosId.ifEmpty { sosId }, floor = p.floor.ifEmpty { floor }, proc = p.proc.ifEmpty { proc },
+                    zone = p.zone.ifEmpty { zone }, worker = p.worker.ifEmpty { worker }
                 )
             }
             return
@@ -364,7 +372,8 @@ class LoneWorkerPeers(private val canSound: () -> Boolean) {
         map[bId] = Peer(
             bleId, null, "", "", "", beacon, nowMs,
             firstSeenMs = nowMs, active = true, silenced = live(pendingEps["$bleId#$ep"], nowMs),
-            resolvedAtMs = 0L, episode = ep, lastBleMs = nowMs, floor = floor, proc = proc, sosId = sosId
+            resolvedAtMs = 0L, episode = ep, lastBleMs = nowMs, floor = floor, proc = proc, sosId = sosId,
+            zone = zone, worker = worker
         )
     }
 
@@ -481,8 +490,8 @@ fun LoneWorkerLogic.onPeerServer(rec: LoneWorkerPeers.ServerRec, nowMs: Long) = 
 /** BLE bit received — delegated from LoneWorkerLogic, kept here due to the 500-line limit. */
 fun LoneWorkerLogic.onPeerBle(
     bleId: String, sos: Boolean, nowMs: Long, episode: Int = 0, beacon: String = "",
-    sosId: String = "", floor: String = "", proc: String = ""
-) = peerStore.onBle(bleId, sos, nowMs, episode, beacon, sosId, floor, proc)
+    sosId: String = "", floor: String = "", proc: String = "", zone: String = "", worker: String = ""
+) = peerStore.onBle(bleId, sos, nowMs, episode, beacon, sosId, floor, proc, zone, worker)
 /**
  * The "확인" button. targets = entry id -> episode ID. Mutes only those entries —
  * delegated from LoneWorkerLogic, kept here due to the 500-line limit.

@@ -16,7 +16,7 @@ class SosLedgerTest {
     /** Ledger whose mail-queue hook appends "event:key" to [seen]. */
     private fun recording(kv: Kv, tr: FakeSosTransport, seen: MutableList<String>) =
         SosLedger(kv, tr, { now }, { e, _, k -> seen.add("$e:$k") })
-    private fun scoped() = SosLedger.Record("BLE_ME", "n", "WALKER", "still", null, null, 0, 0, "1F", "OB")
+    private fun scoped() = SosLedger.Record("BLE_ME", "n", "WALKER", "still", null, null, 0, 0, "1F", "OB", zone = "Z1", worker = "G6628767")
     private fun rec(sid: Int = 0) = SosLedger.Record("BLE_ME", "n", "WALKER", "still", null, null, sid)
     /** Every record carries an SOS ID, and a refused create goes again at once without it (rules that predate it): refuse that one too. */
     private fun refuse(tr: FakeSosTransport) { tr.creates.last().cb(false); tr.creates.last().cb(false) }
@@ -123,7 +123,7 @@ class SosLedgerTest {
 
     @Test fun restored_sos_keeps_trigger_episode_hint_and_is_resent_with_same_key_and_begin_is_noop() {
         val kv = Kv(); val tr = FakeSosTransport()
-        ledger(kv, tr).begin(rec(77))
+        ledger(kv, tr).begin(rec(77).copy(zone = "Z1", worker = "G6628767"))
         val first = tr.creates[0]
         val sosId = ledger(kv, FakeSosTransport()).sosId()
         assertTrue(com.wf11.safealert.ble.SosAdvert.isSosId(sosId))
@@ -141,6 +141,8 @@ class SosLedgerTest {
         assertEquals(first.key, tr2.creates[0].key)
         assertEquals(first.path, tr2.creates[0].path)
         assertEquals(sosId, tr2.recs[0].sosId)
+        assertEquals("Z1", l2.zone()); assertEquals("G6628767", l2.worker())
+        assertEquals("Z1", tr2.recs[0].zone); assertEquals("G6628767", tr2.recs[0].worker)
     }
 
     @Test fun episode_after_255_wraps_to_1() {
@@ -319,6 +321,8 @@ class SosLedgerTest {
         assertTrue("읽기보다 먼저 다시 쓴다", tr.reads.isEmpty())
         assertEquals("", tr.recs[1].floor)
         assertEquals("", tr.recs[1].proc)
+        assertEquals("", tr.recs[1].zone)
+        assertEquals("", tr.recs[1].worker)
         assertEquals("rules without the SOS ID field refuse it too", "", tr.recs[1].sosId)
         assertEquals(tr.recs[0].sosId, l.sosId())
         assertEquals(tr.creates[0].key, tr.creates[1].key)

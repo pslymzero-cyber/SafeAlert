@@ -144,7 +144,7 @@ class BleService : LifecycleService() {
     private val volumeGuardHandler = android.os.Handler(android.os.Looper.getMainLooper())
     // Lone-worker no-motion/fall SOS — the constructor only stores references; every entry point is a no-op before start()
     private val loneWorker by lazy {
-        LoneWorkerMonitor(this, advertiseSos = { sos, ep, hint, id, scope -> onOwnSos(sos, ep, hint, id, scope) }, setAlarmVolume = { setAlarmVolumeGuarded(it) },
+        LoneWorkerMonitor(this, advertiseSos = { sos, ep, hint, id, scope, zone, worker -> onOwnSos(sos, ep, hint, id, scope, zone, worker) }, setAlarmVolume = { setAlarmVolumeGuarded(it) },
             onRescuerStop = {
                 if (requestStop()) {
                     LoneWorkerMonitor.rescuerStopped = true
@@ -566,7 +566,7 @@ class BleService : LifecycleService() {
             //   (The main send is on the onDeviceDetected scan cycle; same-level calls are no-ops, so duplicates are harmless.)
             bleAdvertiser?.updateRisk(getCurrentMaxLevel())
             reevaluateZones()       // poll zone signal-loss exits and stale-entry disposal (+IN_ZONE self-heal)
-            bleAdvertiser?.updateSos(loneWorker.sosActive, loneWorker.sosEpisode, loneWorker.sosHint, loneWorker.sosId, loneWorker.sosScope)   // self-heal a recreated advertiser — no-op if the values are unchanged
+            bleAdvertiser?.updateSos(loneWorker.sosActive, loneWorker.sosEpisode, loneWorker.sosHint, loneWorker.sosId, loneWorker.sosScope, loneWorker.sosZone, loneWorker.sosWorker)   // self-heal a recreated advertiser — no-op if the values are unchanged
             pushRssiEcho()          // reciprocal RSSI: echo my measured peer RSSI table in the scan response
             broadcastLocalState()   // periodic refresh — keeps the Local UI (state/turn) polling source current
             speedPushHandler.postDelayed(this, SPEED_PUSH_INTERVAL_MS)
@@ -893,7 +893,7 @@ class BleService : LifecycleService() {
                 bleAdvertiser = bleAdv
                 // Advertising failures go to the persistent notification, not just the log
                 bleAdv.onTxFault = { reason -> txFault = reason; refreshNotification() }
-                bleAdv.updateSos(loneWorker.sosActive, loneWorker.sosEpisode, loneWorker.sosHint, loneWorker.sosId, loneWorker.sosScope, restart = false)   // load the current SOS state into the new advertiser first
+                bleAdv.updateSos(loneWorker.sosActive, loneWorker.sosEpisode, loneWorker.sosHint, loneWorker.sosId, loneWorker.sosScope, loneWorker.sosZone, loneWorker.sosWorker, restart = false)   // load the current SOS state into the new advertiser first
                 bleAdv.startAdvertising(myId)
                 // UWB is applied separately after advertising starts — tear down the previous session first (mode switches), then recreate
                 uwbRanger?.stop(); uwbRanger = null
@@ -945,8 +945,8 @@ class BleService : LifecycleService() {
                             uwbRanger?.onPeerUwbAddressReceived(deviceId, uwbAddress)
                         }
                         // Peer SOS bit — a path separate from the judgment gate so phones inside a zone and walker phones get it too
-                        override fun onPeerSos(deviceId: String, sos: Boolean, episode: Int, hint: Int, sosId: String, scope: Int) {
-                            loneWorker.onPeerBle(deviceId, sos, episode, hint, sosId, scope)
+                        override fun onPeerSos(deviceId: String, sos: Boolean, episode: Int, hint: Int, sosId: String, scope: Int, zone: String, worker: String) {
+                            loneWorker.onPeerBle(deviceId, sos, episode, hint, sosId, scope, zone, worker)
                         }
                         override fun onZoneBeaconSignal(beaconKey: String, rssi: Int, enterRssi: Int) {
                             // A zone beacon is a genuine scan result too. Without updating here, on a site with only a zone beacon and no
@@ -1026,8 +1026,8 @@ class BleService : LifecycleService() {
      * loss path as entering a safe zone (forceLoseAll -> onDeviceLost -> handleDeviceLost): the nearby adverts keep arriving,
      * so no timeout loss would come by itself. My own siren (LoneWorkerAlarm's own AudioTrack) is not touched by that path.
      */
-    private fun onOwnSos(sos: Boolean, ep: Int, hint: Int, sosId: String, scope: Int) {
-        bleAdvertiser?.updateSos(sos, ep, hint, sosId, scope)
+    private fun onOwnSos(sos: Boolean, ep: Int, hint: Int, sosId: String, scope: Int, zone: String, worker: String) {
+        bleAdvertiser?.updateSos(sos, ep, hint, sosId, scope, zone, worker)
         if (sos) bleScanner?.forceLoseAll()
     }
 

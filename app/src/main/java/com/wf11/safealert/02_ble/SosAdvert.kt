@@ -1,6 +1,7 @@
 package com.wf11.safealert.ble
 
 import com.wf11.safealert.utils.SiteScope
+import com.wf11.safealert.utils.WorkerCode
 
 /**
  * SOS advertising extension — appends 3 bytes after the service data only while an SOS is active.
@@ -18,8 +19,9 @@ import com.wf11.safealert.utils.SiteScope
  * 12 bytes (real IDs are PIT 5B, AUTO 11B, so no impact).
  *
  * Scan response: while an SOS is active it carries one manufacturer data (company ID 0x5053) = SOS ID 8 bytes + scope
- * byte 1 = 9 bytes, so 1+1+2+9 = 13 <= 31 bytes. It replaces the UWB address and RSSI echo during the SOS (the SOS
- * phone judges no proximity). The main advertising packet is not touched, so older receivers are unaffected.
+ * byte 1 + zone 4 + worker code 10 = 23 bytes, so 1+1+2+23 = 27 <= 31 bytes. 1.2.13 receivers read only the first
+ * 9 bytes (INFO_LEN). It replaces the UWB address and RSSI echo during the SOS (the SOS phone judges no proximity).
+ * The main advertising packet is not touched, so older receivers are unaffected.
  */
 object SosAdvert {
     const val ID_MAX = 15
@@ -30,8 +32,15 @@ object SosAdvert {
     const val SOS_ID_PATTERN = "^[0-9a-f]{16}\$"
     private val SOS_ID = Regex(SOS_ID_PATTERN)
 
-    /** SOS info manufacturer data length: SOS ID 8 bytes + scope byte 1. */
+    /** The part of the SOS info that 1.2.13 also reads: SOS ID 8 bytes + scope byte 1. */
     const val INFO_LEN = 9
+
+    /** Zone ASCII at 9..12 (0-padded), worker code ASCII at 13..22 (0-padded); the full info is 23 bytes. */
+    const val ZONE_AT = 9
+    const val ZONE_MAX = 4
+    const val WORKER_AT = 13
+    const val WORKER_MAX = WorkerCode.MAX_LEN
+    const val INFO_FULL_LEN = 23
 
     fun isSosId(s: String): Boolean = SOS_ID.matches(s)
 
@@ -46,12 +55,17 @@ object SosAdvert {
 
     fun procOf(scope: Int): String = SiteScope.PROCS.getOrNull((scope and 0x0F) - 1).orEmpty()
 
-    /** SOS info payload (SOS ID 8 bytes + scope byte); null if the SOS ID is not valid. */
-    fun info(sosId: String, scope: Int): ByteArray? {
+    /**
+     * SOS info payload (SOS ID 8 bytes + scope byte + zone 4 + worker code 10, 23 bytes); null if the SOS ID is not
+     * valid. A zone or worker code that does not match its format is left as zeros.
+     */
+    fun info(sosId: String, scope: Int, zone: String = "", worker: String = ""): ByteArray? {
         if (!isSosId(sosId)) return null
-        val out = ByteArray(INFO_LEN)
+        val out = ByteArray(INFO_FULL_LEN)
         for (i in 0 until 8) out[i] = sosId.substring(i * 2, i * 2 + 2).toInt(16).toByte()
         out[8] = scope.toByte()
+        SiteScope.code(zone).toByteArray(Charsets.US_ASCII).copyInto(out, ZONE_AT)
+        WorkerCode.code(worker).toByteArray(Charsets.US_ASCII).copyInto(out, WORKER_AT)
         return out
     }
 
@@ -62,6 +76,20 @@ object SosAdvert {
     /** Scope byte from the info payload, unsigned; 0 if absent. */
     fun decodeScope(info: ByteArray?): Int =
         if (info != null && info.size >= INFO_LEN) info[8].toInt() and 0xFF else 0
+
+    private fun asciiAt(info: ByteArray, at: Int, max: Int): String {
+        var n = 0
+        while (n < max && info[at + n].toInt() != 0) n++
+        return String(info, at, n, Charsets.US_ASCII)
+    }
+
+    /** Zone from the info payload; "" if absent (older sender), too short or not in the zone format. */
+    fun decodeZone(info: ByteArray?): String =
+        if (info != null && info.size >= ZONE_AT + ZONE_MAX) SiteScope.code(asciiAt(info, ZONE_AT, ZONE_MAX)) else ""
+
+    /** Worker code from the info payload; "" if absent (older sender), too short or not in the worker code format. */
+    fun decodeWorker(info: ByteArray?): String =
+        if (info != null && info.size >= INFO_FULL_LEN) WorkerCode.code(asciiAt(info, WORKER_AT, WORKER_MAX)) else ""
 
     /** Total advertising packet bytes: 16-bit service UUID list AD + service data AD + manufacturer data AD. */
     fun advertBytes(idLen: Int, dataLen: Int): Int = 4 + (4 + dataLen) + (4 + idLen)

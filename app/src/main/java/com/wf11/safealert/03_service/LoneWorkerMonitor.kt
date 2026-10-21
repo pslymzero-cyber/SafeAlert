@@ -24,7 +24,7 @@ import com.wf11.safealert.utils.DevSettings
  */
 class LoneWorkerMonitor(
     private val ctx: Context,
-    private val advertiseSos: (Boolean, Int, Int, String, Int) -> Unit,
+    private val advertiseSos: (Boolean, Int, Int, String, Int, String, String) -> Unit,
     setAlarmVolume: (Int) -> Unit,
     /** Stops this phone's monitoring when the delay after the rescuer's release is over. */
     private val onRescuerStop: () -> Unit
@@ -76,7 +76,8 @@ class LoneWorkerMonitor(
                     rec.key, rec.bleId, rec.name, rec.role, rec.trigger, rec.beacon, rec.createdAt, rec.active, rec.ep,
                     LoneWorkerPeers.resolvedLocalMs(rec.resolvedAt, serverNow, wall, t),
                     LoneWorkerPeers.startLocalMs(rec.createdAt, serverNow, t), rec.auto,
-                    floor = rec.floor, proc = rec.proc, inScope = inScope, sosId = rec.sosId
+                    floor = rec.floor, proc = rec.proc, inScope = inScope, sosId = rec.sosId,
+                    zone = rec.zone, worker = rec.worker
                 ), t)
                 render()
             }
@@ -113,6 +114,9 @@ class LoneWorkerMonitor(
     // SOS ID and scope byte carried in the scan response — "" / 0 when not requesting rescue
     val sosId: String get() = if (sosActive) sync.sosId() else ""
     val sosScope: Int get() = if (sosActive) sync.scope() else 0
+    // Zone and worker code carried in the scan response — "" when not requesting rescue
+    val sosZone: String get() = if (sosActive) sync.zone() else ""
+    val sosWorker: String get() = if (sosActive) sync.worker() else ""
     private val sidLabels = HashMap<Int, String>()   // Short ID → beacon label cache (found labels only), cleared in stop
     private val sidMissUntil = HashMap<Int, Long>()  // Unlabeled short ID → time it may be looked up again
     private val power = LoneWorkerPower(ctx) { onPowerRaw(it, false) }
@@ -347,12 +351,12 @@ class LoneWorkerMonitor(
     }
 
     /** Called on every scan, so kept light: redraws only when peer entries change. */
-    fun onPeerBle(bleId: String, sos: Boolean, episode: Int = 0, hint: Int = 0, sosId: String = "", scope: Int = 0) {
+    fun onPeerBle(bleId: String, sos: Boolean, episode: Int = 0, hint: Int = 0, sosId: String = "", scope: Int = 0, zone: String = "", worker: String = "") {
         if (!started) return
         val before = peerSig()
         val t = now()
         val label = if (sos && hint != 0) sidLabel(hint, t) else ""
-        logic.onPeerBle(bleId, sos, t, episode, label, sosId, SosAdvert.floorOf(scope), SosAdvert.procOf(scope))
+        logic.onPeerBle(bleId, sos, t, episode, label, sosId, SosAdvert.floorOf(scope), SosAdvert.procOf(scope), zone, worker)
         if (peerSig() != before) render()
     }
 
@@ -504,12 +508,12 @@ class LoneWorkerMonitor(
         if (mode == LoneWorkerLogic.Mode.SOS && lastMode != LoneWorkerLogic.Mode.SOS) {
             val hint = logic.beaconHint(t)
             sync.begin(logic.myBleId, name, roleName, logic.trigger, hint?.first, hint?.second, logic.beaconSid(t))
-            advertiseSos(true, sync.episode(), sync.hint(), sync.sosId(), sync.scope())
+            advertiseSos(true, sync.episode(), sync.hint(), sync.sosId(), sync.scope(), sync.zone(), sync.worker())
             showScreen = true
         }
         if (mode != LoneWorkerLogic.Mode.SOS && lastMode == LoneWorkerLogic.Mode.SOS) {
             sync.resolve()
-            advertiseSos(false, 0, 0, "", 0)
+            advertiseSos(false, 0, 0, "", 0, "", "")
         }
         logic.takeAutoReleasedPeers().forEach { sync.autoResolvePeer(it) }
         lastMode = mode

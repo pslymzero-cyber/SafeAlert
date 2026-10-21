@@ -11,7 +11,7 @@ interface HbRemote {
      * Estimated server time (wall clock if unknown). Stamped when the event happens, so a late delivery does not change the time.
      */
     fun serverNow(): Long
-    /** floor / proc fields written once at session start (empty = none). */
+    /** floor / proc / zone fields written once at session start (empty = none). */
     fun scope(): Map<String, Any> = emptyMap()
     /** Partially updates the session node. done is called on the main thread with the server's confirmation result. */
     fun update(path: String, key: String, fields: Map<String, Any>, done: (Boolean) -> Unit)
@@ -109,7 +109,7 @@ class LoneWorkerHeartbeat(private val remote: HbRemote, private val kv: SosKv, p
         val scope = remote.scope()
         val g = ++gen
         remote.update(p, k, base + scope) { sent ->
-            // Rules that predate floor/proc refuse the scoped start: go again without them, but only while this session is
+            // Rules that predate floor/proc/zone refuse the scoped start: go again without them, but only while this session is
             // still the current one (after end() a late retry would create a session nobody ends).
             if (!sent && scope.isNotEmpty() && g == gen) remote.update(p, k, base, answer(g, k)) else answer(g, k)(sent)
         }

@@ -61,7 +61,7 @@ object FirebaseManager {
         Log.d(TAG, "보류 경보 ${items.size}건 저장")
     }
 
-    /** Writes data plus uid; a refused write that carried floor/proc goes once more without them (older rules). */
+    /** Writes data plus uid; a refused write that carried floor/proc/zone goes once more without them (older rules). */
     private fun writeWithUid(ref: DatabaseReference, data: Map<String, Any>, uid: String, failLog: String) {
         ref.setValue(data + ("uid" to uid)).addOnFailureListener {
             Log.e(TAG, "$failLog: ${it.message}")
@@ -86,7 +86,7 @@ object FirebaseManager {
             "myRole" to myRole,
             "peerRole" to peerRole,
             "site" to DevSettings.siteCode
-        ) + SiteScope.fields(DevSettings.floor, DevSettings.proc)
+        ) + SiteScope.fields(DevSettings.floor, DevSettings.proc, DevSettings.zone)
         val ref = siteNode("alerts").child(today).child(alertId)
         val uid = currentUid()
         if (uid == null) {

@@ -54,7 +54,9 @@ class SosLedger(
         val beacon: String?, val beaconRssi: Int?, val sid: Int, val ep: Int = 0,
         val floor: String = "", val proc: String = "",   // Scope at SOS time, kept so a restored SOS uploads the same values
         val relayBy: String = "",   // Device ID of the phone that recorded this SOS for another phone (SosRelay); empty for my own SOS
-        val sosId: String = ""   // SOS ID made by the sender at SOS start (SosAdvert.SOS_ID_PATTERN); empty = an SOS that began before IDs
+        val sosId: String = "",   // SOS ID made by the sender at SOS start (SosAdvert.SOS_ID_PATTERN); empty = an SOS that began before IDs
+        val zone: String = "",   // Zone at SOS time like floor/proc
+        val worker: String = ""   // Worker code of the person (walker or equipment driver); empty = unknown
     )
 
     enum class Remote { ABSENT, MINE_ACTIVE, MINE_RESOLVED, OTHER, ERROR }
@@ -72,6 +74,8 @@ class SosLedger(
         private const val K_FLOOR = "a.floor"
         private const val K_PROC = "a.proc"
         private const val K_SOSID = "a.sosid"
+        private const val K_ZONE = "a.zone"
+        private const val K_WORKER = "a.worker"
         private const val K_KEY = "a.key"
         private const val K_PATH = "a.path"
         private const val K_SENT = "a.sent"
@@ -99,7 +103,7 @@ class SosLedger(
             return b.joinToString("") { "%02x".format(it.toInt() and 0xFF) }
         }
         private val ACTIVE_KEYS = listOf(
-            K_TRIGGER, K_BLE, K_NAME, K_ROLE, K_BEACON, K_RSSI, K_SID, K_EP, K_FLOOR, K_PROC, K_SOSID, K_KEY, K_PATH, K_SENT, K_AT, K_BEGAN
+            K_TRIGGER, K_BLE, K_NAME, K_ROLE, K_BEACON, K_RSSI, K_SID, K_EP, K_FLOOR, K_PROC, K_SOSID, K_ZONE, K_WORKER, K_KEY, K_PATH, K_SENT, K_AT, K_BEGAN
         )
 
         /**
@@ -149,6 +153,9 @@ class SosLedger(
     fun hint(): Int = kv.get(K_SID)?.toIntOrNull() ?: 0
     /** SOS ID of the active SOS ("" without one, or for an SOS stored before IDs existed). */
     fun sosId(): String = kv.get(K_SOSID).orEmpty()
+    /** Zone and worker code stored when the SOS began ("" = none). */
+    fun zone(): String = kv.get(K_ZONE).orEmpty()
+    fun worker(): String = kv.get(K_WORKER).orEmpty()
     /** Scope byte (SosAdvert.scopeByte) of the floor/process stored when the SOS began. */
     fun scope(): Int = SosAdvert.scopeByte(kv.get(K_FLOOR).orEmpty(), kv.get(K_PROC).orEmpty())
 
@@ -187,6 +194,8 @@ class SosLedger(
         ch[K_EP] = ep.toString()
         ch[K_FLOOR] = rec.floor.ifEmpty { null }
         ch[K_PROC] = rec.proc.ifEmpty { null }
+        ch[K_ZONE] = rec.zone.ifEmpty { null }
+        ch[K_WORKER] = rec.worker.ifEmpty { null }
         ch[K_SOSID] = rec.sosId.ifEmpty { newSosId() }
         ch[K_EP_LAST] = ep.toString()
         ch[K_BEGAN] = wallClock().toString()
@@ -255,7 +264,7 @@ class SosLedger(
     }
 
     /**
-     * One create. A refusal of a record carrying floor/process or an SOS ID (rules that predate those fields refuse an unknown
+     * One create. A refusal of a record carrying floor/process/zone, a worker code or an SOS ID (rules that predate those fields refuse an unknown
      * field) is retried at once without them, so my own SOS upload never stalls on a new field. It is retried before any read,
      * but only while this SOS is still the active one: after the release the pending resolve's read finds the record absent and
      * drops it, so a retry would leave a record nobody resolves. Other failures check whether the record landed late and
@@ -267,8 +276,8 @@ class SosLedger(
                 createBusy.remove(sentKey)
                 onCreated(sentPath, sentKey)
                 onChange()
-            } else if ((rec.floor.isNotEmpty() || rec.proc.isNotEmpty() || rec.sosId.isNotEmpty()) && kv.get(K_KEY) == sentKey && hasActive()) {
-                sendCreate(sentPath, sentKey, rec.copy(floor = "", proc = "", sosId = ""), uid)
+            } else if ((rec.floor.isNotEmpty() || rec.proc.isNotEmpty() || rec.zone.isNotEmpty() || rec.worker.isNotEmpty() || rec.sosId.isNotEmpty()) && kv.get(K_KEY) == sentKey && hasActive()) {
+                sendCreate(sentPath, sentKey, rec.copy(floor = "", proc = "", zone = "", worker = "", sosId = ""), uid)
             } else {
                 // If my record already exists on the server (a pre-restart write landed late), don't write again; treat it as sent
                 transport.read(sentPath, sentKey) { r ->
@@ -312,7 +321,8 @@ class SosLedger(
         kv.get(K_BLE).orEmpty(), kv.get(K_NAME).orEmpty(), kv.get(K_ROLE).orEmpty(),
         kv.get(K_TRIGGER).orEmpty(), kv.get(K_BEACON), kv.get(K_RSSI)?.toIntOrNull(),
         kv.get(K_SID)?.toIntOrNull() ?: 0, kv.get(K_EP)?.toIntOrNull() ?: 0,
-        kv.get(K_FLOOR).orEmpty(), kv.get(K_PROC).orEmpty(), sosId = kv.get(K_SOSID).orEmpty()
+        kv.get(K_FLOOR).orEmpty(), kv.get(K_PROC).orEmpty(), sosId = kv.get(K_SOSID).orEmpty(),
+        zone = kv.get(K_ZONE).orEmpty(), worker = kv.get(K_WORKER).orEmpty()
     )
 
     // ── Resolve ─────────────────────────────────────────────────

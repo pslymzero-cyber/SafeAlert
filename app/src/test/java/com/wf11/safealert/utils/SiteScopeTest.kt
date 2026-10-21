@@ -8,9 +8,10 @@ import org.junit.Test
 /** Floor/process scope helpers (pure, no Android). */
 class SiteScopeTest {
 
-    // active, recFloor, recProc, myFloor, myProc, all -> expected
+    // active, recFloor, recProc, myFloor, myProc, all, recZone, myZone -> expected
     private class Row(
-        val active: Boolean, val rf: String, val rp: String, val mf: String, val mp: String, val all: Boolean, val want: Boolean
+        val active: Boolean, val rf: String, val rp: String, val mf: String, val mp: String, val all: Boolean, val want: Boolean,
+        val rz: String = "", val mz: String = ""
     )
 
     @Test
@@ -26,10 +27,17 @@ class SiteScopeTest {
             Row(true, "2F", "IB", "1F", "", false, false),
             Row(true, "1F", "", "1F", "OB", false, true),   // record without process
             Row(true, "2F", "IB", "1F", "OB", true, true),  // checkbox: whole site
-            Row(false, "2F", "IB", "1F", "OB", false, true) // resolved always passes
+            Row(false, "2F", "IB", "1F", "OB", false, true), // resolved always passes
+            Row(true, "", "", "", "", false, false, rz = "Z1", mz = "Z2"),   // zone differs
+            Row(true, "", "", "", "", false, true, rz = "Z1", mz = "Z1"),
+            Row(true, "", "", "", "", false, true, rz = "", mz = "Z1"),   // record without zone
+            Row(true, "", "", "", "", false, true, rz = "Z1", mz = ""),   // I have no zone
+            Row(true, "", "", "", "", true, true, rz = "Z1", mz = "Z2"),   // whole-site switch
+            Row(false, "", "", "", "", false, true, rz = "Z1", mz = "Z2"), // resolved always passes
+            Row(true, "2F", "", "1F", "", false, false, rz = "Z1", mz = "Z1")   // floor differs, zone equal
         )
         rows.forEachIndexed { i, r ->
-            assertEquals("row $i", r.want, SiteScope.receives(r.active, r.rf, r.rp, r.mf, r.mp, r.all))
+            assertEquals("row $i", r.want, SiteScope.receives(r.active, r.rf, r.rp, r.mf, r.mp, r.all, r.rz, r.mz))
         }
     }
 
@@ -62,12 +70,15 @@ class SiteScopeTest {
         assertEquals(mapOf("floor" to "1F", "proc" to "OB"), SiteScope.fields("1F", "OB"))
         assertTrue(SiteScope.fields("", "").isEmpty())
         assertEquals(mapOf("proc" to "OB"), SiteScope.fields("toolong", "OB"))
+        assertEquals(mapOf("floor" to "1F", "proc" to "OB", "zone" to "Z1"), SiteScope.fields("1F", "OB", "Z1"))
+        assertTrue(SiteScope.fields("", "", "TOOLONG").isEmpty())
     }
 
     @Test
     fun withoutScope_dropsFloorAndProcOrReturnsNull() {
         assertEquals(mapOf("a" to 1), SiteScope.withoutScope(mapOf("a" to 1, "floor" to "1F", "proc" to "OB")))
         assertEquals(mapOf("a" to 1), SiteScope.withoutScope(mapOf("a" to 1, "proc" to "OB")))
+        assertEquals(mapOf("a" to 1), SiteScope.withoutScope(mapOf("a" to 1, "zone" to "Z1")))
         assertNull(SiteScope.withoutScope(mapOf("a" to 1)))
     }
 }

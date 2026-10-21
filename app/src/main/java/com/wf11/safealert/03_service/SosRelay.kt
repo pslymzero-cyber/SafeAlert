@@ -9,7 +9,7 @@ package com.wf11.safealert.service
  * existing key, and that refusal is read back and counted as "already relayed", never retried and never an error. A sender inside a
  * dead zone is covered by any phone of the site that still has data. An SOS without an SOS ID in its signal (an older app) is not
  * relayed. The record carries trigger relay and relayBy (this phone's device ID) so the mail and the control page can say it came
- * through a nearby device; its floor and process are the sender's, taken from the signal (empty = the whole site). The SOS mail is
+ * through a nearby device; its floor, process, zone and worker code are the sender's, taken from the signal (empty = the whole site). The SOS mail is
  * queued through onSaved like any other SOS record.
  *
  * This phone does not receive its own relayed record (the receive path skips records with my uid), so it judges the rest from
@@ -58,7 +58,7 @@ class SosRelay(
                 if (p.epId in jobs || nowMs - p.firstSeenMs < RELAY_WAIT_MS) continue
                 val rec = SosLedger.Record(
                     p.bleId, p.displayName(), "", TRIGGER, p.beacon.ifEmpty { null }, null, 0, p.episode, p.floor, p.proc,
-                    relayBy = myId, sosId = p.sosId
+                    relayBy = myId, sosId = p.sosId, zone = p.zone, worker = p.worker
                 )
                 jobs[p.epId] = Job(p.epId, PREFIX + p.sosId, rec)
             }

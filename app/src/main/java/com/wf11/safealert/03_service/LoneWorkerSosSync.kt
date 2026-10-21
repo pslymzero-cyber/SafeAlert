@@ -163,7 +163,7 @@ class LoneWorkerSosSync(
         override fun create(path: String, key: String, rec: SosLedger.Record, uid: String, done: (Boolean) -> Unit) {
             val payload = SosRemote.recordPayload(
                 rec.bleId, rec.name, rec.role, rec.trigger, rec.beacon, rec.beaconRssi, uid, ServerValue.TIMESTAMP, rec.ep,
-                rec.floor, rec.proc, rec.relayBy, rec.sosId
+                rec.floor, rec.proc, rec.relayBy, rec.sosId, rec.zone, rec.worker
             )
             SosRemote.create(path, key, payload) { ok -> handler.post { done(ok) } }
         }
@@ -209,7 +209,7 @@ class LoneWorkerSosSync(
             }
             override fun newKey(path: String): String = SosRemote.newKey(path)
             override fun serverNow(): Long = SosRemote.serverNowMs() ?: System.currentTimeMillis()
-            override fun scope(): Map<String, Any> = SiteScope.fields(DevSettings.floor, DevSettings.proc)
+            override fun scope(): Map<String, Any> = SiteScope.fields(DevSettings.floor, DevSettings.proc, DevSettings.zone)
             override fun update(path: String, key: String, fields: Map<String, Any>, done: (Boolean) -> Unit) {
                 runCatching { SosRemote.update(path, key, fields) { ok -> handler.post { done(ok) } } }
                     .onFailure { done(false) }
@@ -246,7 +246,8 @@ class LoneWorkerSosSync(
     ) = ledger.begin(
         SosLedger.Record(
             bleId, name, role, trigger, beacon, beaconRssi, beaconSid,
-            floor = DevSettings.floor, proc = DevSettings.proc
+            floor = DevSettings.floor, proc = DevSettings.proc,
+            zone = DevSettings.zone, worker = DevSettings.workerCode
         )
     )
 
@@ -284,6 +285,9 @@ class LoneWorkerSosSync(
     /** Own SOS ID ("" if none) and its scope byte, for the scan response. */
     fun sosId(): String = ledger.sosId()
     fun scope(): Int = ledger.scope()
+    /** Own SOS zone and worker code ("" if none), for the scan response. */
+    fun zone(): String = ledger.zone()
+    fun worker(): String = ledger.worker()
 
     // ── Peer reception ────────────────────────────────────────
 
@@ -311,7 +315,8 @@ class LoneWorkerSosSync(
         val all = DevSettings.sosAllSite
         val f = DevSettings.floor
         val p = DevSettings.proc
-        val key = if (path.isEmpty()) "" else "$path|$all|$f|$p"
+        val z = DevSettings.zone
+        val key = if (path.isEmpty()) "" else "$path|$all|$f|$p|$z"
         if (remover != null && key != listenKey) detach()
         if (remover != null || key.isEmpty()) return
         if (SosRemote.currentUid() == null) {
@@ -330,7 +335,7 @@ class LoneWorkerSosSync(
                     // active ones arrive with inScope false and stay quiet in LoneWorkerPeers until heard over Bluetooth.
                     if (gen == generation && !(rec.uid.isNotEmpty() && rec.uid == mine)) {
                         peerPaths[rec.key] = path
-                        onPeer(rec, SiteScope.receives(rec.active, rec.floor, rec.proc, f, p, all))
+                        onPeer(rec, SiteScope.receives(rec.active, rec.floor, rec.proc, f, p, all, rec.zone, z))
                     }
                 }
             },

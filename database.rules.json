@@ -85,6 +85,9 @@
               "proc": {
                 ".validate": "newData.isString() && newData.val().matches(/^[A-Z0-9]{1,4}$/)"
               },
+              "zone": {
+                ".validate": "newData.isString() && newData.val().matches(/^[A-Z0-9]{1,4}$/)"
+              },
               "$other": {
                 ".validate": false
               }
@@ -127,7 +130,7 @@
           ".read": "auth != null",
           ".indexOn": ["createdAt"],
           "$id": {
-            ".write": "auth != null && $site.matches(/^[A-Za-z0-9_-]{1,32}$/) && $sc.matches(/^[A-Z0-9_-]{1,12}$/) && newData.exists() && (!data.exists() ? (newData.child('uid').val() === auth.uid && newData.child('status').val() === 'active') : (data.child('status').val() === 'active' && newData.child('status').val() === 'resolved' && newData.child('uid').val() === data.child('uid').val() && newData.child('name').val() === data.child('name').val() && newData.child('role').val() === data.child('role').val() && newData.child('trigger').val() === data.child('trigger').val() && newData.child('beacon').val() === data.child('beacon').val() && newData.child('beaconRssi').val() === data.child('beaconRssi').val() && newData.child('ep').val() === data.child('ep').val() && newData.child('floor').val() === data.child('floor').val() && newData.child('proc').val() === data.child('proc').val() && newData.child('relayBy').val() === data.child('relayBy').val() && newData.child('sosId').val() === data.child('sosId').val() && (data.child('uid').val() === auth.uid || (newData.child('reason').val() === 'auto' && now >= data.child('createdAt').val() + 3600000))))",
+            ".write": "auth != null && $site.matches(/^[A-Za-z0-9_-]{1,32}$/) && $sc.matches(/^[A-Z0-9_-]{1,12}$/) && newData.exists() && (!data.exists() ? (newData.child('uid').val() === auth.uid && newData.child('status').val() === 'active') : (data.child('status').val() === 'active' && newData.child('status').val() === 'resolved' && newData.child('uid').val() === data.child('uid').val() && newData.child('name').val() === data.child('name').val() && newData.child('role').val() === data.child('role').val() && newData.child('trigger').val() === data.child('trigger').val() && newData.child('beacon').val() === data.child('beacon').val() && newData.child('beaconRssi').val() === data.child('beaconRssi').val() && newData.child('ep').val() === data.child('ep').val() && newData.child('floor').val() === data.child('floor').val() && newData.child('proc').val() === data.child('proc').val() && newData.child('relayBy').val() === data.child('relayBy').val() && newData.child('sosId').val() === data.child('sosId').val() && newData.child('zone').val() === data.child('zone').val() && newData.child('worker').val() === data.child('worker').val() && (data.child('uid').val() === auth.uid || (newData.child('reason').val() === 'auto' && now >= data.child('createdAt').val() + 3600000))))",
             ".validate": "newData.hasChildren(['bleId','name','role','trigger','createdAt','status','uid'])",
             "bleId": {
               ".validate": "newData.isString() && newData.val().length <= 64 && (!data.exists() || newData.val() === data.val())"
@@ -171,11 +174,17 @@
             "proc": {
               ".validate": "newData.isString() && newData.val().matches(/^[A-Z0-9]{1,4}$/) && (!data.exists() || newData.val() === data.val())"
             },
+            "zone": {
+              ".validate": "newData.isString() && newData.val().matches(/^[A-Z0-9]{1,4}$/) && (!data.exists() || newData.val() === data.val())"
+            },
             "relayBy": {
               ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 64 && (!data.exists() || newData.val() === data.val())"
             },
             "sosId": {
               ".validate": "newData.isString() && newData.val().matches(/^[0-9a-f]{16}$/) && (!data.exists() || newData.val() === data.val())"
+            },
+            "worker": {
+              ".validate": "newData.isString() && newData.val().matches(/^[A-Z][0-9]{1,9}$/) && (!data.exists() || newData.val() === data.val())"
             },
             "$other": {
               ".validate": false
@@ -209,6 +218,9 @@
               ".validate": "newData.isString() && newData.val().matches(/^[A-Z0-9]{1,4}$/) && (!data.exists() || newData.val() === data.val())"
             },
             "proc": {
+              ".validate": "newData.isString() && newData.val().matches(/^[A-Z0-9]{1,4}$/) && (!data.exists() || newData.val() === data.val())"
+            },
+            "zone": {
               ".validate": "newData.isString() && newData.val().matches(/^[A-Z0-9]{1,4}$/) && (!data.exists() || newData.val() === data.val())"
             },
             "g": {

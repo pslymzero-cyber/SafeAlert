@@ -19,8 +19,9 @@ interface BleScanCallback {
     // A peer's rescue request (extension byte bit1) is delivered separately from onDeviceDetected, which passes
     //   through the zone and walker gates (default: ignored).
     //   episode = advertised rescue request episode (byte2, 0 if none), hint = short ID of the latest beacon
-    //   (byte3-4, 0 if none), sosId / scope = scan response 0x5053 (SOS ID text, scope byte), "" / 0 if absent
-    fun onPeerSos(deviceId: String, sos: Boolean, episode: Int = 0, hint: Int = 0, sosId: String = "", scope: Int = 0) {}
+    //   (byte3-4, 0 if none), sosId / scope / zone / worker = scan response 0x5053 (SOS ID text, scope byte, zone,
+    //   worker code), "" / 0 if absent or from an older sender
+    fun onPeerSos(deviceId: String, sos: Boolean, episode: Int = 0, hint: Int = 0, sosId: String = "", scope: Int = 0, zone: String = "", worker: String = "") {}
     // When a UWB address is parsed from the scan response (default: ignored)
     fun onUwbAddressReceived(deviceId: String, uwbAddress: ByteArray) {}
     // Zone beacon (zoneMute profile) signal: not added to the device list or judgment, only passed to the zone

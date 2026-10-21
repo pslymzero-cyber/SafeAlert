@@ -92,7 +92,8 @@ class SosProximityGateTest {
             service, "onOwnSos",
             ClassParameter.from(Boolean::class.javaPrimitiveType, true), ClassParameter.from(Int::class.javaPrimitiveType, 1),
             ClassParameter.from(Int::class.javaPrimitiveType, 0), ClassParameter.from(String::class.java, sosId),
-            ClassParameter.from(Int::class.javaPrimitiveType, 0)
+            ClassParameter.from(Int::class.javaPrimitiveType, 0), ClassParameter.from(String::class.java, "Z1"),
+            ClassParameter.from(String::class.java, "G6628767")
         )
         assertTrue(BleServiceTestHarness.alertStateOf(service).isEmpty())
         assertEquals(BleConstants.LEVEL_SAFE, lastLevelSent(a))
@@ -138,7 +139,7 @@ class SosProximityGateTest {
                                           payloadPresent: Boolean, peerEchoRssi: Int, peerInZone: Boolean, peerSos: Boolean) { detections += deviceId to peerSos }
             override fun onDeviceLost(deviceId: String) { lost += deviceId }
             override fun onScanError(errorCode: Int) = Unit
-            override fun onPeerSos(deviceId: String, sos: Boolean, episode: Int, hint: Int, sosId: String, scope: Int) { peerSos += Triple(sos, sosId, scope) }
+            override fun onPeerSos(deviceId: String, sos: Boolean, episode: Int, hint: Int, sosId: String, scope: Int, zone: String, worker: String) { peerSos += Triple(sos, sosId, scope) }
             override fun onUwbAddressReceived(deviceId: String, uwbAddress: ByteArray) { uwb += deviceId }
         })
         val detected = ReflectionHelpers.getField<MutableMap<String, Long>>(sc, "detectedDevices")

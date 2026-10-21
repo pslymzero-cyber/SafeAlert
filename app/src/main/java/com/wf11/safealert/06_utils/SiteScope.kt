@@ -30,28 +30,32 @@ object SiteScope {
         return "같은 ${names.joinToString("·")}(${label("", floor, proc, zone)})"
     }
 
-    /** Record fields for floor/proc; empty or invalid values are omitted. */
-    fun fields(floor: String, proc: String): Map<String, String> {
+    /** Record fields for floor/proc/zone; empty or invalid values are omitted. */
+    fun fields(floor: String, proc: String, zone: String = ""): Map<String, String> {
         val m = LinkedHashMap<String, String>()
         code(floor).takeIf { it.isNotEmpty() }?.let { m["floor"] = it }
         code(proc).takeIf { it.isNotEmpty() }?.let { m["proc"] = it }
+        code(zone).takeIf { it.isNotEmpty() }?.let { m["zone"] = it }
         return m
     }
 
     /**
-     * The map without floor/proc, or null when it carries neither. Rules that predate those fields refuse a record
+     * The map without floor/proc/zone, or null when it carries none. Rules that predate those fields refuse a record
      * carrying them, so a refused write goes again with this.
      */
     fun <V> withoutScope(m: Map<String, V>): Map<String, V>? =
-        if ("floor" in m || "proc" in m) m - "floor" - "proc" else null
+        if ("floor" in m || "proc" in m || "zone" in m) m - "floor" - "proc" - "zone" else null
 
     /**
      * Whether a server SOS record should ring here. Resolved records and the whole-site switch always pass; otherwise
-     * floor and process each match when either side is empty or both are equal.
+     * floor, process and zone each match when either side is empty or both are equal.
      */
-    fun receives(active: Boolean, recFloor: String, recProc: String, myFloor: String, myProc: String, all: Boolean): Boolean {
+    fun receives(
+        active: Boolean, recFloor: String, recProc: String, myFloor: String, myProc: String, all: Boolean,
+        recZone: String, myZone: String,
+    ): Boolean {
         if (!active || all) return true
         fun match(a: String, b: String) = a.isEmpty() || b.isEmpty() || a == b
-        return match(recFloor, myFloor) && match(recProc, myProc)
+        return match(recFloor, myFloor) && match(recProc, myProc) && match(recZone, myZone)
     }
 }

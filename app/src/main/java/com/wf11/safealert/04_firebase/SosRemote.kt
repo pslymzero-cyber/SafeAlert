@@ -12,6 +12,7 @@ import com.google.firebase.database.ServerValue
 import com.google.firebase.database.ValueEventListener
 import com.wf11.safealert.ble.SosAdvert
 import com.wf11.safealert.utils.SiteScope
+import com.wf11.safealert.utils.WorkerCode
 import java.util.UUID
 
 /**
@@ -41,7 +42,9 @@ object SosRemote {
         val auto: Boolean = false, // Released by the one-hour limit (reason auto), not by its worker
         val floor: String = "",   // Writer's floor code ("" = none / sender that never writes it)
         val proc: String = "",    // Writer's process code ("" = none / sender that never writes it)
-        val sosId: String = ""    // SOS ID the sender made for this request ("" = none / sender that never writes it)
+        val sosId: String = "",   // SOS ID the sender made for this request ("" = none / sender that never writes it)
+        val zone: String = "",    // Writer's zone code ("" = none / sender that never writes it)
+        val worker: String = ""   // Writer's worker code ("" = none / sender that never writes it); the driver for equipment
     )
 
     private const val SOS_STR_MAX = 64
@@ -98,7 +101,9 @@ object SosRemote {
             auto = m["reason"] == "auto",
             floor = SiteScope.code(m["floor"] as? String),
             proc = SiteScope.code(m["proc"] as? String),
-            sosId = (m["sosId"] as? String)?.takeIf { SosAdvert.isSosId(it) }.orEmpty()
+            sosId = (m["sosId"] as? String)?.takeIf { SosAdvert.isSosId(it) }.orEmpty(),
+            zone = SiteScope.code(m["zone"] as? String),
+            worker = WorkerCode.code(m["worker"] as? String)
         )
     }
 
@@ -106,7 +111,8 @@ object SosRemote {
     fun recordPayload(
         bleId: String, name: String, role: String, trigger: String,
         beacon: String?, beaconRssi: Int?, uid: String, createdAt: Any, ep: Int = 0,
-        floor: String = "", proc: String = "", relayBy: String = "", sosId: String = ""
+        floor: String = "", proc: String = "", relayBy: String = "", sosId: String = "",
+        zone: String = "", worker: String = ""
     ): Map<String, Any> {
         val data = HashMap<String, Any>()
         data["bleId"] = bleId.take(SOS_STR_MAX)
@@ -121,7 +127,8 @@ object SosRemote {
         if (ep in 1..255) data["ep"] = ep
         if (relayBy.isNotEmpty()) data["relayBy"] = relayBy.take(SOS_STR_MAX)
         if (SosAdvert.isSosId(sosId)) data["sosId"] = sosId
-        data.putAll(SiteScope.fields(floor, proc))
+        data.putAll(SiteScope.fields(floor, proc, zone))
+        WorkerCode.code(worker).takeIf { it.isNotEmpty() }?.let { data["worker"] = it }
         return data
     }
 
@@ -135,7 +142,7 @@ object SosRemote {
 
     /**
      * Partial update of the session node (updateChildren). Failure logs never include the path, key or uid. A refusal is
-     * reported as is: the caller (LoneWorkerHeartbeat) owns the retry without floor/proc, because only it knows whether
+     * reported as is: the caller (LoneWorkerHeartbeat) owns the retry without floor/proc/zone, because only it knows whether
      * the session it belongs to is still current.
      */
     fun update(path: String, key: String, fields: Map<String, Any>, onDone: (Boolean) -> Unit) {
@@ -156,7 +163,7 @@ object SosRemote {
     /**
      * Creates the record. createdAt is server time. The result (success or not) goes to
      * onResult. While offline it stays pending until a response arrives. A refusal is reported as is: SosLedger owns the
-     * retry without floor/proc (it then reaches every phone of the site), because only it knows whether the SOS is still
+     * retry without floor/proc/zone (it then reaches every phone of the site), because only it knows whether the SOS is still
      * the active one.
      */
     fun create(path: String, key: String, payload: Map<String, Any>, onResult: (Boolean) -> Unit) {

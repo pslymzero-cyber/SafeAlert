@@ -95,6 +95,13 @@ class SosRecordParseTest {
         assertEquals("", none.floor)
         assertEquals("", none.proc)
         assertEquals("", SosRemote.parseSosRecord("k", valid().apply { put("floor", "toolong") })!!.floor)
+        // zone / worker code: valid values kept, absent or out of format = ""
+        val zw = SosRemote.parseSosRecord("k", valid().apply { put("zone", "Z1"); put("worker", "G6628767") })!!
+        assertEquals("Z1", zw.zone)
+        assertEquals("G6628767", zw.worker)
+        assertEquals("", none.zone); assertEquals("", none.worker)
+        val badZw = SosRemote.parseSosRecord("k", valid().apply { put("zone", "TOOLONG"); put("worker", "GG1") })!!
+        assertEquals("", badZw.zone); assertEquals("", badZw.worker)
 
         // ep: in-range read, absent / out-of-range / non-number = 0
         assertEquals(7, SosRemote.parseSosRecord("k", valid().apply { put("ep", 7L) })!!.ep)
@@ -133,6 +140,14 @@ class SosRecordParseTest {
         for (e in listOf(pf("", ""), pf("bad!", "toolong"))) {
             assertFalse(e.containsKey("floor"))
             assertFalse(e.containsKey("proc"))
+        }
+        // zone / worker code the same way
+        fun pz(z: String, w: String) = SosRemote.recordPayload("id", "n", "WALKER", "still", null, null, "u1", 1L, zone = z, worker = w)
+        assertEquals("Z1", pz("Z1", "G6628767")["zone"])
+        assertEquals("G6628767", pz("Z1", "G6628767")["worker"])
+        for (e in listOf(pz("", ""), pz("TOOLONG", "GG1"))) {
+            assertFalse(e.containsKey("zone"))
+            assertFalse(e.containsKey("worker"))
         }
 
         // ep: in-range written, 0 / 256 / default dropped

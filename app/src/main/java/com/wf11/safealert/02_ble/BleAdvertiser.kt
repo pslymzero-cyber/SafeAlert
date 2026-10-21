@@ -190,7 +190,7 @@ class BleAdvertiser(
     @Volatile private var currentSos = false          // Lone-worker rescue request (extension byte bit1)
     @Volatile private var sosEpisode = 0              // Rescue request episode (service data byte2, 0 = none)
     @Volatile private var sosHint = 0                 // Short ID of the latest beacon (byte3-4, 0 = none)
-    @Volatile private var sosInfo: ByteArray? = null  // Scan response payload during an SOS: SOS ID 8B + scope byte (null = none)
+    @Volatile private var sosInfo: ByteArray? = null  // Scan response payload during an SOS: SOS ID 8B + scope byte + zone 4B + worker code 10B (null = none)
     // Throttle timestamp shared by STATE and Turn re-advertising
     private var lastPayloadUpdateMs = 0L
     // Throttle timestamp for RISK only, independent of the STATE/TURN throttle.
@@ -473,11 +473,11 @@ class BleAdvertiser(
      *  If restart is false, only the values are set without re-advertising (to preload the state into a freshly
      *  created advertiser right before startAdvertising).
      */
-    fun updateSos(sos: Boolean, episode: Int = 0, hint: Int = 0, sosId: String = "", scope: Int = 0, restart: Boolean = true) {
+    fun updateSos(sos: Boolean, episode: Int = 0, hint: Int = 0, sosId: String = "", scope: Int = 0, zone: String = "", worker: String = "", restart: Boolean = true) {
         if (stopped) return
         val ep = if (sos) episode else 0
         val h = if (sos) hint else 0
-        val info = if (sos) SosAdvert.info(sosId, scope) else null
+        val info = if (sos) SosAdvert.info(sosId, scope, zone, worker) else null
         if (sos == currentSos && ep == sosEpisode && h == sosHint && info.contentEquals(sosInfo)) return
         currentSos = sos
         sosEpisode = ep

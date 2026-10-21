@@ -28,7 +28,7 @@ class SosRelayTest {
     //   relay nothing. The key is PREFIX + SOS ID, so every phone writes the same key; floor and process are the sender's.
     @Test fun relays_a_bluetooth_only_sos_once_after_the_wait_and_queues_its_mail() {
         val r = Rig()
-        r.store.onBle("P", true, 0, 4, "GATE-A", S, "1F", "OB")
+        r.store.onBle("P", true, 0, 4, "GATE-A", S, "1F", "OB", "Z1", "G6628767")
         r.tick(SosRelay.RELAY_WAIT_MS - 1)
         assertEquals(0, r.t.creates.size)
         r.tick(SosRelay.RELAY_WAIT_MS, online = false)
@@ -37,7 +37,7 @@ class SosRelayTest {
         assertEquals(1, r.t.creates.size)
         val key = SosRelay.PREFIX + S
         assertEquals(key, r.t.creates[0].key)
-        assertEquals(SosLedger.Record("P", "P", "", "relay", "GATE-A", null, 0, 4, "1F", "OB", relayBy = "ME", sosId = S), r.t.recs[0])
+        assertEquals(SosLedger.Record("P", "P", "", "relay", "GATE-A", null, 0, 4, "1F", "OB", relayBy = "ME", sosId = S, zone = "Z1", worker = "G6628767"), r.t.recs[0])
         r.tick(17_000)
         assertEquals("no second write while the first is in flight", 1, r.t.creates.size)
         r.t.creates[0].cb(true)

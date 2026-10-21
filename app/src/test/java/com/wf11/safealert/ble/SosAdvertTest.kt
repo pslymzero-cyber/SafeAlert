@@ -22,12 +22,13 @@ class SosAdvertTest {
         val long = "ABCDEFGHIJKLMNO"
         assertEquals(12, SosAdvert.idBytes(long, true).size)
         assertEquals(15, SosAdvert.idBytes(long, false).size)
-        // Scan response during an SOS: SOS info only = 1 length + 1 type + 2 company + 9 payload = 13 bytes
+        // Scan response during an SOS: SOS info only = 1 length + 1 type + 2 company + 23 payload = 27 bytes
         val sid = "0123456789abcdef"
-        val info = SosAdvert.info(sid, SosAdvert.scopeByte("10F", "HR"))!!
-        assertEquals(SosAdvert.INFO_LEN, info.size)
+        val info = SosAdvert.info(sid, SosAdvert.scopeByte("10F", "HR"), "ZONE", "G123456789")!!
+        assertEquals(SosAdvert.INFO_FULL_LEN, info.size)
+        assertEquals(23, info.size)
         assertTrue(1 + 1 + 2 + info.size <= SosAdvert.PACKET_MAX)
-        assertEquals(13, 1 + 1 + 2 + info.size)
+        assertEquals(27, 1 + 1 + 2 + info.size)
         for (bad in listOf("0123456789ABCDEF", "0123456789abcde", "0123456789abcdeg", "")) {
             assertEquals("not an SOS ID: $bad", null, SosAdvert.info(bad, 0))
         }
@@ -89,6 +90,21 @@ class SosAdvertTest {
         assertEquals(sid, SosAdvert.decodeSosId(info)); assertEquals(sc, SosAdvert.decodeScope(info))
         assertEquals("", SosAdvert.decodeSosId(null)); assertEquals(0, SosAdvert.decodeScope(null))
         assertEquals("", SosAdvert.decodeSosId(ByteArray(8))); assertEquals(0, SosAdvert.decodeScope(ByteArray(8)))
+        // Zone and worker code round trip; values outside their format come back "" and leave the SOS ID and scope alone
+        val full = SosAdvert.info(sid, sc, "Z1", "G6628767")
+        assertEquals("Z1", SosAdvert.decodeZone(full)); assertEquals("G6628767", SosAdvert.decodeWorker(full))
+        val max = SosAdvert.info(sid, sc, "ZONE", "G123456789")
+        assertEquals("ZONE", SosAdvert.decodeZone(max)); assertEquals("G123456789", SosAdvert.decodeWorker(max))
+        val none = SosAdvert.info(sid, sc)
+        assertEquals("", SosAdvert.decodeZone(none)); assertEquals("", SosAdvert.decodeWorker(none))
+        val bad = SosAdvert.info(sid, sc, "TOOLONG", "GG1")
+        assertEquals("", SosAdvert.decodeZone(bad)); assertEquals("", SosAdvert.decodeWorker(bad))
+        assertEquals(sid, SosAdvert.decodeSosId(bad)); assertEquals(sc, SosAdvert.decodeScope(bad))
+        // A 1.2.13 sender sends only the first 9 bytes: SOS ID and scope still read, zone and worker code are ""
+        val old = full!!.copyOf(SosAdvert.INFO_LEN)
+        assertEquals(sid, SosAdvert.decodeSosId(old)); assertEquals(sc, SosAdvert.decodeScope(old))
+        assertEquals("", SosAdvert.decodeZone(old)); assertEquals("", SosAdvert.decodeWorker(old))
+        assertEquals("", SosAdvert.decodeZone(null)); assertEquals("", SosAdvert.decodeWorker(null))
     }
 
     @Test

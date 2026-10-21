@@ -225,9 +225,9 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
                 val peerSos = BleConstants.decodeSos(extByte)
                 if (!peerSos) detectedDevices[fullId] = System.currentTimeMillis()
                 scanCallback?.onDeviceDetected(fullId, rssi, remoteState, remoteTurn, payloadPresent, peerEchoRssi, peerInZone, peerSos)
-                // SOS info scan response (0x5053: SOS ID + scope byte); looked up only for a rescue request advert
+                // SOS info scan response (0x5053: SOS ID + scope byte + zone + worker code); looked up only for a rescue request advert
                 val sosInfo = if (peerSos) record.getManufacturerSpecificData(BleConstants.COMPANY_ID_SOS_INFO) else null
-                scanCallback?.onPeerSos(fullId, peerSos, SosAdvert.decodeEpisode(svcData), SosAdvert.decodeHint(svcData), SosAdvert.decodeSosId(sosInfo), SosAdvert.decodeScope(sosInfo))   // Extension byte bit1
+                scanCallback?.onPeerSos(fullId, peerSos, SosAdvert.decodeEpisode(svcData), SosAdvert.decodeHint(svcData), SosAdvert.decodeSosId(sosInfo), SosAdvert.decodeScope(sosInfo), SosAdvert.decodeZone(sosInfo), SosAdvert.decodeWorker(sosInfo))   // Extension byte bit1
 
                 // Parse the UWB address from the scan response (supported devices only).
                 // DEVICE (controller) = 4 bytes (address + channel + preamble), WALKER (controlee) = 2 bytes; pass on
