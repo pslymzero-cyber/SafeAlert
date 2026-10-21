@@ -312,7 +312,8 @@ function sosRecs_(node) {
     if (typeof r.createdAt !== 'number') return;
     out[key] = { name: str_(r.name), role: str_(r.role), trigger: str_(r.trigger), beacon: str_(r.beacon),
                  bleId: str_(r.bleId), ep: typeof r.ep === 'number' ? r.ep : 0, relayBy: str_(r.relayBy),
-                 floor: str_(r.floor), proc: str_(r.proc), sosId: str_(r.sosId), createdAt: r.createdAt, status: str_(r.status),
+                 floor: str_(r.floor), proc: str_(r.proc), zone: str_(r.zone), worker: str_(r.worker),
+                 sosId: str_(r.sosId), createdAt: r.createdAt, status: str_(r.status),
                  resolvedAt: typeof r.resolvedAt === 'number' ? r.resolvedAt : 0, reason: str_(r.reason) };
   });
   return out;
@@ -334,7 +335,7 @@ function sessions_(node) {
     if (typeof s.last !== 'number' || typeof s.start !== 'number') return;
     if (typeof s.end === 'number') return;   // stopped normally
     if (typeof s.uid === 'string' && s.last < latest[s.uid]) return;   // a leftover: the same phone wrote later
-    out.push({ role: roleName_(str_(s.role), ''), floor: code_(s.floor), proc: code_(s.proc), start: s.start, last: s.last });
+    out.push({ role: roleName_(str_(s.role), ''), floor: code_(s.floor), proc: code_(s.proc), zone: code_(s.zone), start: s.start, last: s.last });
   });
   out.sort(function (a, b) { return b.last - a.last; });
   return out;
@@ -355,7 +356,8 @@ function alerts_(node, sc) {
       myRole: roleName_(str_(a.myRole), me),
       peerRole: roleName_(str_(a.peerRole), peer),
       floor: code_(a.floor),
-      proc: code_(a.proc)
+      proc: code_(a.proc),
+      zone: code_(a.zone)
     });
   });
   return out;

@@ -54,6 +54,7 @@ var SITE_RE = /^[A-Za-z0-9_-]{1,32}$/;
 var SC_RE = /^[A-Z0-9_-]{1,12}$/;
 var ID_RE = /^[A-Za-z0-9_-]{1,40}$/;
 var SOS_ID_RE = /^[0-9a-f]{16}$/;   // same text as SosAdvert.SOS_ID_PATTERN in the app
+var WORKER_RE = /^[A-Z][0-9]{1,9}$/;   // same text as WorkerCode.PATTERN in the app
 var TO_RE = /^[A-Za-z0-9%+_-]+(\.[A-Za-z0-9%+_-]+)*@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/;
 var DB_URL_RE = /^https:\/\/[A-Za-z0-9.-]+\/?$/;
 var DAY_MS = 24 * 3600 * 1000;
@@ -212,20 +213,22 @@ function allowed(to, list) {
   });
 }
 
-/** Site code plus floor / process when the record has them (WF11-1F-OB). Only [A-Z0-9]{1,4} values are appended. */
+/** Site code plus floor / process / zone when the record has them (WF11-1F-OB-Z1). Only [A-Z0-9]{1,4} values are appended. */
 function siteLabel(sc, rec) {
-  ['floor', 'proc'].forEach(function (k) {
+  ['floor', 'proc', 'zone'].forEach(function (k) {
     if (typeof rec[k] === 'string' && /^[A-Z0-9]{1,4}$/.test(rec[k])) sc += '-' + rec[k];
   });
   return sc;
 }
 
 function buildMail(event, sc, id, rec, stillMin) {
-  sc = siteLabel(sc, rec);   // Subject, header and site cell all show WF11-1F-OB
+  sc = siteLabel(sc, rec);   // Subject, header and site cell all show WF11-1F-OB-Z1
   var name = oneLine(rec.name);
   var role = roleName(rec.role, name);
   var no = id.slice(-6);
-  var who = esc(sc) + ' · ' + esc(name) + ' (' + esc(role) + ')';
+  // Driver: the worker code of whoever is on the equipment; shown only when it differs from the name (a walker's name is the code)
+  var driver = typeof rec.worker === 'string' && WORKER_RE.test(rec.worker) && rec.worker !== name ? rec.worker : '';
+  var who = esc(sc) + ' · ' + esc(name) + ' (' + esc(role) + ')' + (driver ? ' · 운전자 ' + esc(driver) : '');
   var relayBy = oneLine(rec.relayBy);   // a nearby phone recorded this SOS for a requester without data (empty = the requester's own)
   var relay = typeof rec.relayBy === 'string' && relayBy !== '';
   if (event === 'resolved') {
@@ -278,7 +281,7 @@ function buildMail(event, sc, id, rec, stillMin) {
       '',
       '기록 번호: ' + no,
       '센터: ' + sc,
-      '작업자: ' + name + ' (' + role + ')',
+      '작업자: ' + name + ' (' + role + ')' + (driver ? ' · 운전자 ' + driver : ''),
       '원인: ' + cause,
       relay ? '전달: 근처 기기 경유 (' + relayBy + ')' : null,
       '서버 기록 시각: ' + fmt(rec.createdAt, 'yyyy-MM-dd HH:mm:ss') + '(한국 시간)',

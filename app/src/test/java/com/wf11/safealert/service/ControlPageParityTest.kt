@@ -36,6 +36,9 @@ class ControlPageParityTest {
         assertTrue("relay trigger", html.contains("r.trigger === '${SosRelay.TRIGGER}'"))
         // Records of one rescue request are grouped by the app's SOS ID form
         assertTrue("SOS ID form", html.contains("/" + SosAdvert.SOS_ID_PATTERN + "/"))
+        // The worker code (the driver of equipment) is read by the app's own form; the page has a zone picker
+        assertTrue("worker code form", html.contains("/" + com.wf11.safealert.utils.WorkerCode.PATTERN + "/"))
+        assertTrue("zone picker", html.contains("<select id=\"zone\">"))
     }
 
     // The code rule (floor / process) and the one-hour release are the app's, and the rule is the mail script's too.

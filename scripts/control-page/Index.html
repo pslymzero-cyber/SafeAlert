@@ -261,6 +261,7 @@
       <div id="sitePanel" class="site-panel" role="group" aria-label="관제할 사업장" hidden></div></div>
     <label class="pick">층 <select id="floor"></select></label>
     <label class="pick">공정 <select id="proc"></select></label>
+    <label class="pick">존 <select id="zone"></select></label>
   </div>
   <button id="sosPill" class="sos-pill" type="button" data-act="jump" hidden></button>
   <div class="bar-end">
@@ -366,10 +367,11 @@
   var PIT_NAMES = FB.pit || {};         // equipment code -> English name, from Code.gs (one table)
   var CODE_RE = new RegExp(FB.code || '^$');
   var SOS_ID_RE = /^[0-9a-f]{16}$/;   // same text as SosAdvert.SOS_ID_PATTERN in the app
+  var WORKER_RE = /^[A-Z][0-9]{1,9}$/;   // same text as WorkerCode.PATTERN in the app (the worker code of whoever is on the equipment)
   var SC_RE = new RegExp(FB.sc);        // the site-code form (Code.gs SC_RE), for the codes read from the address
   var ALIVE_MS = FB.aliveMs;            // a session silent this long has lost contact (Code.gs ALIVE_MS)
   var MAX_ALERTS = FB.maxAlerts || 400; // newest alerts of a day's node read (Code.gs MAX_ALERTS; the same 400 if it sends none)
-  var st = { pick: ['*'], floor: '', proc: '', tab: 'id',   // pick: the centers checked under '사업장' ('*': every center, new ones too)
+  var st = { pick: ['*'], floor: '', proc: '', zone: '', zoneSig: null, tab: 'id',   // pick: the centers checked under '사업장' ('*': every center, new ones too)
              sites: {},                 // site -> { recs: { key: SOS }, at: server time up to which the list is known }
              fail: {},                  // site -> { why, code } while the server path cannot read it
              f: null,                   // what the field panel shows (mergeField): { now, at, sessions, alerts, cut, n, total, live }
@@ -425,17 +427,18 @@
   // computer's clock never moves it. Before the first measurement: the computer's clock.
   function nowMs() { return st.srv ? st.srv.at + (mono() - st.srv.m) : Date.now(); }
   function setServerTime(at) { if (typeof at === 'number' && isFinite(at)) st.srv = { at: at, m: mono() }; }
-  function scopeOf(r) { return [r.floor, r.proc].filter(Boolean).join('-'); }
-  function placeOf(r) { var s = scopeOf(r); return s ? r.sc + '-' + s : r.sc + ' (층·공정 미지정)'; }
-  function nameOf(s) { return s.name || '이름 없음'; }
+  function scopeOf(r) { return [r.floor, r.proc, r.zone].filter(Boolean).join('-'); }
+  function placeOf(r) { var s = scopeOf(r); return s ? r.sc + '-' + s : r.sc + ' (층·공정·존 미지정)'; }
+  // The driver shows only next to equipment: a walker's name is the worker code itself
+  function nameOf(s) { var n = s.name || '이름 없음'; return s.worker && s.worker !== s.name ? n + ' · 운전자 ' + s.worker : n; }
   function endedHow(s) { return (s.relay && !s.auto) ? '근처 기기에서 해제 확인' : s.auto ? '응답 없이 자동 종료' : '폰에서 해제'; }
   function isStale(s) { return nowMs() > s.createdAt + STALE_AFTER_MS; }
   function match(sel, v) { return !sel || (sel === '-' ? !v : v === sel); }
-  function inScope(r) { return match(st.floor, r.floor) && match(st.proc, r.proc); }
+  function inScope(r) { return match(st.floor, r.floor) && match(st.proc, r.proc) && match(st.zone, r.zone); }
   // Ended SOS follow the app's own rule (SiteScope.receives): a record without floor or process reaches every phone, so
-  // it shows under any filter; '미지정' shows only those. Active SOS are never filtered.
+  // it shows under any filter (zone included); '미지정' shows only those. Active SOS are never filtered.
   function sosMatch(sel, v) { return sel === '-' ? !v : (!v || match(sel, v)); }
-  function sosInScope(s) { return sosMatch(st.floor, s.floor) && sosMatch(st.proc, s.proc); }
+  function sosInScope(s) { return sosMatch(st.floor, s.floor) && sosMatch(st.proc, s.proc) && sosMatch(st.zone, s.zone); }
   // Only the centers checked under '사업장' count, for every alert shown, the SOS alarm included
   function inView(s) { return st.viewSet[s.sc] === true; }
   function allPicked() { return st.pick.indexOf('*') >= 0; }
@@ -465,7 +468,8 @@
              trigger: r.trigger === 'fall' ? '넘어짐' : r.trigger === 'still' ? '움직임 없음'
                : r.trigger === 'relay' ? '알 수 없음 (근처 기기 경유)' : '알 수 없음',
              bleId: str(r.bleId), ep: typeof r.ep === 'number' ? r.ep : 0, relay: str(r.relayBy) !== '',
-             beacon: str(r.beacon), floor: code(r.floor), proc: code(r.proc), sosId: SOS_ID_RE.test(str(r.sosId)) ? str(r.sosId) : '', createdAt: r.createdAt,
+             beacon: str(r.beacon), floor: code(r.floor), proc: code(r.proc), zone: code(r.zone),
+             worker: WORKER_RE.test(str(r.worker)) ? str(r.worker) : '', sosId: SOS_ID_RE.test(str(r.sosId)) ? str(r.sosId) : '', createdAt: r.createdAt,
              active: r.status === 'active', resolvedAt: typeof r.resolvedAt === 'number' ? r.resolvedAt : 0,
              auto: r.reason === 'auto' };
   }
@@ -663,7 +667,7 @@
       if (typeof s.last !== 'number' || typeof s.start !== 'number') return;
       if (typeof s.end === 'number') return;   // stopped normally
       if (typeof s.uid === 'string' && s.last < latest[s.uid]) return;   // a leftover: the same phone wrote later
-      out.push({ role: roleName(str(s.role), ''), floor: code(s.floor), proc: code(s.proc), start: s.start, last: s.last });
+      out.push({ role: roleName(str(s.role), ''), floor: code(s.floor), proc: code(s.proc), zone: code(s.zone), start: s.start, last: s.last });
     });
     out.sort(function (a, b) { return b.last - a.last; });
     return out;
@@ -683,7 +687,8 @@
         myRole: roleName(str(a.myRole), me),
         peerRole: roleName(str(a.peerRole), peer),
         floor: code(a.floor),
-        proc: code(a.proc)
+        proc: code(a.proc),
+        zone: code(a.zone)
       });
     });
     return out;
@@ -1148,7 +1153,17 @@
   }
 
   // ── rendering ──
-  function renderAll() { renderStatus(); renderAlarm(); renderSos(); renderSide(); renderAlerts(); renderEnded(); }
+  // The zones on the screen: every zone of the lists drawn now (SOS, devices, alerts) plus the chosen one, so a choice never vanishes
+  function fillZones() {
+    var set = {}, add = function (z) { if (z) set[z] = true; };
+    st.view.forEach(function (sc) { var cur = st.sites[sc]; if (cur) Object.keys(cur.recs).forEach(function (k) { add(cur.recs[k].zone); }); });
+    if (st.f) { st.f.sessions.forEach(function (s) { add(s.zone); }); st.f.alerts.forEach(function (a) { add(a.zone); }); }
+    if (st.zone && st.zone !== '-') add(st.zone);
+    var zones = Object.keys(set).sort(), sig = zones.join(',');
+    if (sig !== st.zoneSig) { st.zoneSig = sig; fill($('zone'), zones, '전체'); }
+    $('zone').value = st.zone;
+  }
+  function renderAll() { fillZones(); renderStatus(); renderAlarm(); renderSos(); renderSide(); renderAlerts(); renderEnded(); }
 
   // Not current: neither path has delivered for STALE_MS (the live one counts as delivering while it is connected)
   function lostConn() { return !st.denied && !noneChecked() && !liveOk() && (sosCall.fails >= 3 || age(st.current) > STALE_MS); }
@@ -1365,16 +1380,16 @@
     $('fieldAt').textContent = ready ? '기기·경보 ' + (f.total > 1 ? f.n + '/' + f.total + '곳 · ' : '') + (f.live ? '실시간' : hms(f.at) + ' 기준') : '';
 
     var cnt = {};
-    alive.forEach(function (s) { var k = (all ? s.sc : '') + '|' + s.role + '|' + s.floor + '|' + s.proc; cnt[k] = (cnt[k] || 0) + 1; });
+    alive.forEach(function (s) { var k = (all ? s.sc : '') + '|' + s.role + '|' + s.floor + '|' + s.proc + '|' + s.zone; cnt[k] = (cnt[k] || 0) + 1; });
     var keys = Object.keys(cnt).sort();
     setHtml($('aliveTable'), !ready ? skeleton() : !keys.length ? blank('감시 중인 기기가 없습니다') :
-      '<thead><tr>' + (all ? '<th>사업장</th>' : '') + '<th>역할</th><th>층</th><th>공정</th><th class="num">대수</th></tr></thead><tbody>' + keys.map(function (k) {
+      '<thead><tr>' + (all ? '<th>사업장</th>' : '') + '<th>역할</th><th>층</th><th>공정</th><th>존</th><th class="num">대수</th></tr></thead><tbody>' + keys.map(function (k) {
         var p = k.split('|');
-        return '<tr>' + (all ? '<td>' + esc(p[0]) + '</td>' : '') + '<td>' + esc(p[1]) + '</td><td>' + esc(p[2] || '-') + '</td><td>' + esc(p[3] || '-') + '</td><td class="num">' + cnt[k] + '</td></tr>';
+        return '<tr>' + (all ? '<td>' + esc(p[0]) + '</td>' : '') + '<td>' + esc(p[1]) + '</td><td>' + esc(p[2] || '-') + '</td><td>' + esc(p[3] || '-') + '</td><td>' + esc(p[4] || '-') + '</td><td class="num">' + cnt[k] + '</td></tr>';
       }).join('') + '</tbody>');
 
     setHtml($('lostTable'), !ready ? skeleton() : !lost.length ? blank('연락이 끊긴 기기가 없습니다') :
-      '<thead><tr>' + (all ? '<th>사업장</th>' : '') + '<th>역할</th><th>층·공정</th><th>마지막 응답</th><th>감시 시작</th></tr></thead><tbody>' + lost.slice(0, 30).map(function (s) {
+      '<thead><tr>' + (all ? '<th>사업장</th>' : '') + '<th>역할</th><th>층·공정·존</th><th>마지막 응답</th><th>감시 시작</th></tr></thead><tbody>' + lost.slice(0, 30).map(function (s) {
         return '<tr>' + (all ? '<td>' + esc(s.sc) + '</td>' : '') + '<td>' + esc(s.role) + '</td><td>' + esc(scopeOf(s) || '-') + '</td><td>' + hm(s.last) +
           '<span class="sub">' + mins(f.now - s.last) + ' 전</span></td><td>' + hm(s.start) + '</td></tr>';
       }).join('') + '</tbody>');
@@ -1388,7 +1403,7 @@
     if (!f) { setHtml(tbl, skeleton()); meta.textContent = ''; return; }
     meta.textContent = f.cut ? '경보가 많아 최근 ' + f.alerts.length + '건만 불러왔습니다' : '';
     meta.className = f.cut ? 'ph-meta warn' : 'ph-meta';
-    var filtered = !!(st.floor || st.proc), all = st.view.length > 1;
+    var filtered = !!(st.floor || st.proc || st.zone), all = st.view.length > 1;
     var siteTh = all ? '<th>사업장</th>' : '', siteTd = function (x) { return all ? '<td>' + esc(x.sc) + '</td>' : ''; };
     if (st.tab === 'id') {
       var by = {};
@@ -1400,8 +1415,8 @@
       });
       var rows = Object.keys(by).map(function (k) { return by[k]; })
         .sort(function (x, y) { return (y.d - x.d) || (y.w - x.w) || (y.last.t - x.last.t); });
-      setHtml(tbl, !rows.length ? blank(filtered ? '선택한 층·공정에 최근 1시간 접근 경보가 없습니다' : '최근 1시간 접근 경보가 없습니다') :
-        '<thead><tr>' + siteTh + '<th>기기 ID</th><th>역할</th><th>층·공정</th><th class="num">위험</th><th class="num">경고</th><th>마지막</th><th>마지막 상대</th></tr></thead><tbody>' +
+      setHtml(tbl, !rows.length ? blank(filtered ? '선택한 층·공정·존에 최근 1시간 접근 경보가 없습니다' : '최근 1시간 접근 경보가 없습니다') :
+        '<thead><tr>' + siteTh + '<th>기기 ID</th><th>역할</th><th>층·공정·존</th><th class="num">위험</th><th class="num">경고</th><th>마지막</th><th>마지막 상대</th></tr></thead><tbody>' +
         rows.map(function (g) {
           return '<tr>' + siteTd(g) + '<td class="mono">' + esc(g.id) + '</td><td>' + esc(g.role) + '</td><td>' + esc(scopeOf(g.last) || '-') + '</td>' +
             '<td class="num' + (g.d ? ' crit' : '') + '">' + g.d + '</td><td class="num">' + g.w + '</td>' +
@@ -1409,8 +1424,8 @@
         }).join('') + '</tbody>');
     } else {
       var recent = f.alerts.filter(inScope).slice(0, 50);
-      setHtml(tbl, !recent.length ? blank(filtered ? '선택한 층·공정에 최근 24시간 접근 경보가 없습니다' : '최근 24시간 접근 경보가 없습니다') :
-        '<thead><tr>' + siteTh + '<th>시각</th><th>등급</th><th>기록한 기기</th><th>상대</th><th>층·공정</th></tr></thead><tbody>' +
+      setHtml(tbl, !recent.length ? blank(filtered ? '선택한 층·공정·존에 최근 24시간 접근 경보가 없습니다' : '최근 24시간 접근 경보가 없습니다') :
+        '<thead><tr>' + siteTh + '<th>시각</th><th>등급</th><th>기록한 기기</th><th>상대</th><th>층·공정·존</th></tr></thead><tbody>' +
         recent.map(function (a) {
           return '<tr>' + siteTd(a) + '<td>' + hm(a.t) + '</td><td' + (a.level === 'DANGER' ? ' class="crit">위험' : '>경고') + '</td>' +
             '<td><span class="mono">' + esc(a.me) + '</span><span class="sub">' + esc(a.myRole) + '</span></td>' +
@@ -1560,6 +1575,7 @@
   fillSites();
   $('floor').onchange = function () { st.floor = this.value; renderAll(); };
   $('proc').onchange = function () { st.proc = this.value; renderAll(); };
+  $('zone').onchange = function () { st.zone = this.value; renderAll(); };
   $('siteBtn').onclick = function () { sitesOpen($('sitePanel').hidden); };
   $('sitePanel').onchange = function (ev) { var v = ev.target.getAttribute('data-pick'); if (v) pickSite(v, ev.target.checked); };
   document.addEventListener('keydown', function (ev) { if (ev.key === 'Escape' && !$('sitePanel').hidden) { sitesOpen(false); $('siteBtn').focus(); } });

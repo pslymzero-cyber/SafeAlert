@@ -419,6 +419,21 @@ t = make({ db: { a1: Object.assign({ bleId: 'P', ep: 4 }, still), a2: Object.ass
 assert.strictEqual(t.post({ id: 'a1' }), 'sent');
 assert.strictEqual(t.post({ id: 'a2' }), 'sent');
 
+// Zone joins the site label; the worker code shows as the driver of equipment, never next to a walker's own name (name = code),
+// and a value outside its format is left out.
+const DRV = '운전자 G6628767';
+const equip = { name: 'RT-07', role: 'FORKLIFT', trigger: 'still', createdAt: NOW - 30000, status: 'active', uid: 'u', floor: '1F', proc: 'OB', zone: 'Z1', worker: 'G6628767' };
+t = make({ db: { k1: equip } });
+assert.strictEqual(t.post({}), 'sent');
+assert.ok(t.w.mails[0].subject.includes('WF11-1F-OB-Z1'), 'zone in the subject');
+assert.ok(t.w.mails[0].body.includes(DRV) && t.w.mails[0].htmlBody.includes(DRV), 'driver of equipment');
+t = make({ db: { k1: Object.assign({}, equip, { name: 'G6628767', role: 'WALKER' }) } });
+assert.strictEqual(t.post({}), 'sent');
+assert.ok(!t.w.mails[0].body.includes('운전자') && !t.w.mails[0].htmlBody.includes('운전자'), 'walker: name is the code');
+t = make({ db: { k1: Object.assign({}, equip, { worker: 'GG1', zone: 'TOOLONG' }) } });
+assert.strictEqual(t.post({}), 'sent');
+assert.ok(!t.w.mails[0].body.includes('운전자') && !t.w.mails[0].subject.includes('-TOOLONG'), 'bad worker and zone are left out');
+
 console.log('sos-mail check OK (' + scenes + ' scenes)');
 
 // With a folder argument: write the sos and resolved html bodies there for a visual check.

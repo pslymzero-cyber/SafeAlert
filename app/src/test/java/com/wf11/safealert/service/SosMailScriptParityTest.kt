@@ -47,6 +47,7 @@ class SosMailScriptParityTest {
         assertTrue(idRe.matches(SosRelay.PREFIX + "0123456789abcdef"))
         assertTrue("SOS ID form", gs.contains("/" + SosAdvert.SOS_ID_PATTERN + "/"))
         assertTrue(gs.contains("rec.trigger === '${SosRelay.TRIGGER}'"))
+        assertTrue("worker code form", gs.contains("/" + com.wf11.safealert.utils.WorkerCode.PATTERN + "/"))
 
         val layout = repoFile("app/src/main/res/layout/activity_dev_settings.xml")
         val id = "android:id=\"@+id/et_sos_mail_to\""
@@ -103,6 +104,7 @@ class SosMailScriptParityTest {
         val body = script().substringAfter("function siteLabel(sc, rec) {").substringBefore("\n}")
         assertTrue(body, body.contains("/" + SiteScope.CODE_PATTERN + "/.test("))
         assertTrue(body, body.contains("sc += '-' + rec[k]"))
-        assertEquals("WF11-1F-OB", SiteScope.label("WF11", "1F", "OB"))
+        assertTrue(body, body.contains("'zone'"))
+        assertEquals("WF11-1F-OB-Z1", SiteScope.label("WF11", "1F", "OB", "Z1"))
     }
 }
