@@ -179,26 +179,40 @@ class DevSettingsSiteSetupTest {
     fun `사업장을 바꾸면 층·공정이 비워진다`() {
         DevSettings.floor = "1F"
         DevSettings.proc = "OB"
+        DevSettings.zone = "z1"
+        assertEquals("Z1", DevSettings.zone)
+        DevSettings.workerCode = "g6628767"
+        assertEquals("G6628767", DevSettings.workerCode)
         DevSettings.siteCode = "HOME1"
         assertEquals("같은 사업장이면 남는다", "1F" to "OB", DevSettings.floor to DevSettings.proc)
+        assertEquals("Z1", DevSettings.zone)
         DevSettings.siteCode = "OTHER"
         assertEquals("", DevSettings.floor)
         assertEquals("", DevSettings.proc)
+        assertEquals("", DevSettings.zone)
+        assertEquals("쿠코드는 사업장이 바뀌어도 남는다", "G6628767", DevSettings.workerCode)
 
         // 기본값 초기화는 감시 시작 사업장이면 층·공정을 남기고 아니면 비운다
         DevSettings.siteCode = "HOME1"
         DevSettings.floor = "1F"
         DevSettings.proc = "OB"
+        DevSettings.zone = "Z1"
         DevSettings.sosAllSite = true
         DevSettings.resetToDefault()
         assertEquals("1F" to "OB", DevSettings.floor to DevSettings.proc)
+        assertEquals("Z1", DevSettings.zone)
         assertFalse(DevSettings.sosAllSite)
         DevSettings.siteCode = "OTHER"
         DevSettings.floor = "2F"
         DevSettings.proc = "IB"
+        DevSettings.zone = "Z2"
         DevSettings.resetToDefault()
         assertEquals("HOME1", DevSettings.siteCode)
         assertEquals("", DevSettings.floor)
         assertEquals("", DevSettings.proc)
+        assertEquals("", DevSettings.zone)
+        assertEquals("초기화 뒤에도 쿠코드는 남는다", "G6628767", DevSettings.workerCode)
+        DevSettings.workerCode = "GG1"
+        assertEquals("", DevSettings.workerCode)
     }
 }

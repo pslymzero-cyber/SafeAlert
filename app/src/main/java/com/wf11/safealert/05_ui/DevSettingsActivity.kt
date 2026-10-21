@@ -577,7 +577,7 @@ class DevSettingsActivity : AppCompatActivity() {
         // A safety switch turned off in another section still shows here, where the site settings are
         binding.secSiteSummary.text = listOfNotNull(
             if (DevSettings.siteCode.isEmpty()) "사업장 없음"
-            else SiteScope.label(DevSettings.siteCode, DevSettings.floor, DevSettings.proc),
+            else SiteScope.label(DevSettings.siteCode, DevSettings.floor, DevSettings.proc, DevSettings.zone),
             "모든 구조 요청".takeIf { DevSettings.sosAllSite },
             "볼륨 ${DevSettings.alarmVolume}%",
             DevSettings.safetyOff().takeIf { it.isNotEmpty() }?.joinToString(" · ", prefix = "꺼짐: ")

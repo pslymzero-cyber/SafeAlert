@@ -121,6 +121,7 @@ class SosMailTest {
         val kv = Kv(); val m = mail(kv)
         to = "x@a.com, not an address, " + (1..6).joinToString(", ") { "u$it@a.com" }
         m.enqueue(SosMail.EVENT_SOS, "root/sos/WF11", "k1", 3)
+        assertEquals(5, SosMail.MAX_TO)
         assertEquals(SosMail.MAX_TO, posts.size)
         assertTrue(posts.none { it.form.contains("not+an") })
     }

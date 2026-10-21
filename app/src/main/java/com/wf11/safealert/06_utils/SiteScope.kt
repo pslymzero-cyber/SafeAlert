@@ -1,7 +1,7 @@
 package com.wf11.safealert.utils
 
 /**
- * Floor / process scope inside a site (e.g. WF11-1F-OB). Pure helpers, no Android imports.
+ * Floor / process / zone scope inside a site (e.g. WF11-1F-OB-Z1). Pure helpers, no Android imports.
  * Applies to server SOS reception only: an SOS heard over Bluetooth never goes through [receives].
  */
 object SiteScope {
@@ -19,16 +19,15 @@ object SiteScope {
     val FLOORS: List<String> = (1..10).map { "${it}F" }
     val PROCS: List<String> = listOf("OB", "IB", "ICQA", "HUB", "EHS", "HR")
 
-    /** "WF11-1F-OB"; empty floor/proc parts are left out. */
-    fun label(site: String, floor: String, proc: String): String =
-        listOf(site, floor, proc).filter { it.isNotEmpty() }.joinToString("-")
+    /** "WF11-1F-OB-Z1"; empty floor/proc/zone parts are left out. */
+    fun label(site: String, floor: String, proc: String, zone: String = ""): String =
+        listOf(site, floor, proc, zone).filter { it.isNotEmpty() }.joinToString("-")
 
     /** Who my own SOS reaches, for the wording on screen and in notifications. */
-    fun audience(floor: String, proc: String): String = when {
-        floor.isNotEmpty() && proc.isNotEmpty() -> "같은 층·공정(${label("", floor, proc)})"
-        floor.isNotEmpty() -> "같은 층(${floor})"
-        proc.isNotEmpty() -> "같은 공정(${proc})"
-        else -> "같은 사업장"
+    fun audience(floor: String, proc: String, zone: String = ""): String {
+        val names = listOf(floor to "층", proc to "공정", zone to "존").filter { it.first.isNotEmpty() }.map { it.second }
+        if (names.isEmpty()) return "같은 사업장"
+        return "같은 ${names.joinToString("·")}(${label("", floor, proc, zone)})"
     }
 
     /** Record fields for floor/proc; empty or invalid values are omitted. */

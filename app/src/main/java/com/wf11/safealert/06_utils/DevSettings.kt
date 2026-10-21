@@ -177,13 +177,16 @@ object DevSettings {
     /** Back to every default, except that the site returns to the one entered when monitoring started (homeSiteCode). */
     fun resetToDefault() {
         val home = homeSiteCode
-        val keepScope = siteCode == home   // Floor/process are main-screen values like the site
+        val keepScope = siteCode == home   // Floor/process/zone are main-screen values like the site
         val f = floor
         val p = proc
+        val z = zone
+        val w = workerCode   // A person's code, not a developer setting: a reset must not block the next start
         prefs.edit().clear().apply()
         homeSiteCode = home
         siteCode = home   // Through the setter, so a site without its own beacon file still gets the common one
-        if (keepScope) { floor = f; proc = p }
+        if (keepScope) { floor = f; proc = p; zone = z }
+        workerCode = w
     }
 
     /** Safety switches turned off (lone-worker checks, alarm sound, vibration), named for the screens that warn about them. */
@@ -771,13 +774,15 @@ object DevSettings {
             val next = normalizeSite(v)
             if (next == siteCode) return
             // A different site has its own floors/processes; a stale filter would silently drop SOS
-            prefs.edit().putString(KEY_UWB_SITE_CODE, next).remove(KEY_SITE_FLOOR).remove(KEY_SITE_PROC).apply()
+            prefs.edit().putString(KEY_UWB_SITE_CODE, next).remove(KEY_SITE_FLOOR).remove(KEY_SITE_PROC).remove(KEY_SITE_ZONE).apply()
             adoptCommonPrefs(next)
         }
 
-    // Floor / process inside the site (main-screen pickers) and the whole-site SOS reception switch.
+    // Floor / process / zone inside the site (main-screen pickers) and the whole-site SOS reception switch.
     private const val KEY_SITE_FLOOR = "site_floor"
     private const val KEY_SITE_PROC = "site_proc"
+    private const val KEY_SITE_ZONE = "site_zone"
+    private const val KEY_WORKER_CODE = "worker_code"
     private const val KEY_SOS_ALL_SITE = "sos_all_site"
     var floor: String
         get() = SiteScope.code(prefs.getString(KEY_SITE_FLOOR, ""))
@@ -785,6 +790,13 @@ object DevSettings {
     var proc: String
         get() = SiteScope.code(prefs.getString(KEY_SITE_PROC, ""))
         set(v) = prefs.edit().putString(KEY_SITE_PROC, SiteScope.code(v)).apply()
+    var zone: String
+        get() = SiteScope.code(prefs.getString(KEY_SITE_ZONE, ""))
+        set(v) = prefs.edit().putString(KEY_SITE_ZONE, SiteScope.code(v)).apply()
+    /** The worker code typed on the main screen (the last one is kept); survives a site change and a reset. */
+    var workerCode: String
+        get() = WorkerCode.code(prefs.getString(KEY_WORKER_CODE, ""))
+        set(v) = prefs.edit().putString(KEY_WORKER_CODE, WorkerCode.code(v)).apply()
     /** On = receive every server SOS of the site regardless of floor/process. */
     var sosAllSite: Boolean
         get() = prefs.getBoolean(KEY_SOS_ALL_SITE, false)

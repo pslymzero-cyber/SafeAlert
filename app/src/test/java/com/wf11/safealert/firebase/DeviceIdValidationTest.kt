@@ -17,7 +17,7 @@ class DeviceIdValidationTest {
     /** The auto id needs its own pattern - it is not a PIT id and never will be. */
     @Test
     fun usableAdvertisedId() {
-        listOf("SA-1A2B3C4D", "SA-ABCDEFAB", "SA-00000000", "CB-01", "rt-07", " rt-07 ", " SA-1A2B3C4D ")
+        listOf("SA-1A2B3C4D", "SA-ABCDEFAB", "SA-00000000", "CB-01", "rt-07", " rt-07 ", " SA-1A2B3C4D ", "G6628767", " g6628767 ")
             .forEach { assertTrue(it, FirebaseManager.isUsableAdvertisedId(it)) }
         listOf("", "   ", "SA-DEFAULT", "SA-1A2B3C4", "SA-1A2B3C4DE", "SA-GGGGGGGG",
                KIM, "KIM", "8FB25-40604")

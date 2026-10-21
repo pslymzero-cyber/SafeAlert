@@ -10,6 +10,7 @@ import com.wf11.safealert.BuildConfig
 import com.wf11.safealert.utils.BeaconRegistry
 import com.wf11.safealert.utils.DevSettings
 import com.wf11.safealert.utils.SiteScope
+import com.wf11.safealert.utils.WorkerCode
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -168,13 +169,14 @@ object FirebaseManager {
     val AUTO_ID_REGEX = Regex("^SA-[0-9A-F]{8}$")
 
     /**
-     * Whether the value may be used as the broadcast ID as is — an equipment ID or an auto-issued ID (empty is not allowed).
+     * Whether the value may be used as the broadcast ID as is — an equipment ID, an auto-issued ID or a worker code
+     * (WorkerCode; empty is not allowed).
      * Used to filter out personal names that older versions wrote into device_id.
      */
     fun isUsableAdvertisedId(s: String): Boolean {
         val t = normalizeDeviceId(s)
         if (t.isEmpty()) return false
-        return AUTO_ID_REGEX.matches(t) || PIT_ID_REGEX.matches(t)
+        return AUTO_ID_REGEX.matches(t) || PIT_ID_REGEX.matches(t) || WorkerCode.code(t).isNotEmpty()
     }
 
     /**

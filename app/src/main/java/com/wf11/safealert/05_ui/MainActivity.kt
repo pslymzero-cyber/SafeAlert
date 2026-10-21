@@ -44,6 +44,7 @@ import com.wf11.safealert.utils.BeaconRegistry
 import com.wf11.safealert.utils.DevSettings
 import com.wf11.safealert.utils.OverlayManager
 import com.wf11.safealert.utils.SiteScope
+import com.wf11.safealert.utils.WorkerCode
 import com.wf11.safealert.databinding.ActivityMainBinding
 import com.wf11.safealert.databinding.DialogPitSelectBinding
 import com.wf11.safealert.firebase.FirebaseManager
@@ -261,7 +262,7 @@ class MainActivity : AppCompatActivity() {
         binding.viewBgScrim.visibility      = View.VISIBLE
 
         // Version shown at the bottom — read from BuildConfig so it is always current
-        binding.tvVersionFooter.text = "v${BuildConfig.VERSION_NAME}  ·  Created by Ian"
+        binding.tvVersionFooter.text = "v${BuildConfig.VERSION_NAME}  ·  Created by Flex Fulfillment"
         // Once on the first launch after an update (fresh installs included) — show what's new. Text = strings.xml whats_new
         if (prefs.getInt("last_seen_version_code", 0) < BuildConfig.VERSION_CODE) {
             prefs.edit().putInt("last_seen_version_code", BuildConfig.VERSION_CODE).apply()
@@ -280,17 +281,21 @@ class MainActivity : AppCompatActivity() {
         // Floor / process pickers — same no-typing pattern as the display name
         binding.etFloor.asPicker { pickScope(true) }
         binding.etProc.asPicker { pickScope(false) }
+        binding.etZone.asPicker { pickZone() }
+        binding.etWorkerCode.asPicker { editWorkerCodeIfIdle() }
+        renderWorkerCode()
         // Restore the saved site code — same value as the BLE settings UWB section (dev_settings.uwb_site_code).
         // Editable only while empty; once set it is locked and can be changed only in developer settings.
         refreshSiteCodeField()
 
         // Role selection — walker (WALKER) / EPJ·forklift (DEVICE), setting Category at the same time.
-        //   Without a site code, requireSiteCode shows the input popup and blocks start.
+        //   Without a site code, requireSiteCode shows the input popup and blocks start; then the worker code
+        //   (requireWorkerCode - both roles need it).
         // There is a single equipment card. The chosen equipment sets the role (Category) —
         //   picking a role first and then equipment could make the two disagree.
         //   EPJ and walkie stacker are picked from the equipment list.
-        binding.cardRoleWalker.setOnClickListener   { requireSiteCode { onRoleSelected("WALKER", BleConstants.CAT_WALKER) } }
-        binding.cardRoleForklift.setOnClickListener { requireSiteCode { startAsPitOperator() } }
+        binding.cardRoleWalker.setOnClickListener   { requireSiteCode { requireWorkerCode { onRoleSelected("WALKER", BleConstants.CAT_WALKER) } } }
+        binding.cardRoleForklift.setOnClickListener { requireSiteCode { requireWorkerCode { startAsPitOperator() } } }
         binding.btnStop.setOnClickListener       { if (!LoneWorkerUi.blockIfOwnSos(this)) stopServiceImmediately() }
         binding.btnSwitchRole.setOnClickListener { confirmSwitchRole() }   // Role switch
         binding.cardSettings.setOnClickListener  { showDevPinDialog { startActivity(Intent(this, DevSettingsActivity::class.java)) } }
@@ -647,9 +652,8 @@ class MainActivity : AppCompatActivity() {
         val mode  = currentMode ?: return
         // A rescuer-stop flag left by the previous monitoring would make the 800 ms poll stop the monitoring started now
         LoneWorkerMonitor.rescuerStopped = false
-        // If a name was entered, use it as the BLE advertising ID (shown on the peer's screen)
-        val displayName = prefs.getString("display_name", "")?.trim()
-        val id = if (!displayName.isNullOrEmpty()) displayName else myId()
+        // Walker = worker code, device = equipment ID (shown on the peer's screen); the auto ID only when that is empty
+        val id = WorkerCode.startId(mode == "WALKER", DevSettings.workerCode, prefs.getString("display_name", "") ?: "") { myId() }
         val since = System.currentTimeMillis()
         val action = if (mode == "DEVICE") BleService.ACTION_START_DEVICE else BleService.ACTION_START_WALKER
 
@@ -779,9 +783,8 @@ class MainActivity : AppCompatActivity() {
         binding.tvRunningMode.text  = roleDisplayName(currentCategory)   // 3-role label
         binding.btnSwitchRole.text  = "${switchTargetLabel()}로 전환"    // Dynamic label for the switch target
         binding.tvRunningSince.text = SimpleDateFormat("HH:mm 시작", Locale.KOREA).format(Date(since))
-        // Show the entered name, otherwise the auto ID
-        val displayName = prefs.getString("display_name", "")?.trim()
-        binding.tvRunningId.text = if (!displayName.isNullOrEmpty()) displayName else myId()
+        // Show the ID the session advertises (same rule as startServiceWithCurrentMode)
+        binding.tvRunningId.text = WorkerCode.startId(mode == "WALKER", DevSettings.workerCode, prefs.getString("display_name", "") ?: "") { myId() }
         // Dark UI — apply the role background photo/icon/TEST accent (visuals only, no functional change)
         applyRoleVisuals(currentCategory)
         // Show Bluetooth state immediately
@@ -837,7 +840,7 @@ class MainActivity : AppCompatActivity() {
         val id = prefs.getString("display_name", "") ?: ""
         binding.etDisplayName.setText(id)
         binding.tilDisplayName.helperText =
-            if (id.isEmpty()) "미선택 — 자동 ID 로 송출됩니다 (보행자)"
+            if (id.isEmpty()) "보행자는 쿠코드로 송출됩니다"
             else "경보 로그: ${FirebaseManager.withSite(id)}"
     }
 
@@ -977,18 +980,26 @@ class MainActivity : AppCompatActivity() {
         renderSiteScope()
     }
 
-    /** Floor / process pickers (built-in lists) and the "who receives my site's SOS" line; shown whenever a site is set. */
+    /**
+     * Floor / process / zone pickers (built-in lists for floor and process) and the "who receives my site's SOS" line;
+     * always shown, dimmed until a site is set.
+     */
     private fun renderSiteScope() {
         val site = DevSettings.siteCode
         val floor = DevSettings.floor
         val proc = DevSettings.proc
-        binding.rowSiteScope.visibility = if (site.isNotEmpty()) View.VISIBLE else View.GONE
+        val zone = DevSettings.zone
+        val alpha = if (site.isNotEmpty()) 1f else 0.5f   // Not isEnabled=false: a disabled field gets no tap, so no hint toast
+        binding.tilFloor.alpha = alpha
+        binding.tilProc.alpha = alpha
+        binding.tilZone.alpha = alpha
         binding.etFloor.setText(floor.ifEmpty { "전체" })
         binding.etProc.setText(proc.ifEmpty { "전체" })
+        binding.etZone.setText(zone.ifEmpty { "전체" })
         binding.tvSiteScope.text = when {
             DevSettings.sosAllSite -> "사업장 전체 구조 요청 받음 (개발자 설정)"
-            floor.isEmpty() && proc.isEmpty() -> "층·공정 미지정 — 사업장 전체 구조 요청을 받습니다"
-            else -> "내 층·공정: " + SiteScope.label(site, floor, proc)
+            floor.isEmpty() && proc.isEmpty() && zone.isEmpty() -> "층·공정·존 미지정 — 사업장 전체 구조 요청을 받습니다"
+            else -> "내 층·공정·존: " + SiteScope.label(site, floor, proc, zone)
         }
     }
 
@@ -1001,11 +1012,21 @@ class MainActivity : AppCompatActivity() {
         setOnClickListener { onTap() }
     }
 
-    private fun pickScope(isFloor: Boolean) {
+    /** Gates for the scope pickers: blocked while monitoring, and until a site is set. True = may open the picker. */
+    private fun scopeEditable(): Boolean {
         if (BleService.isRunning) {
             Toast.makeText(this, "감시 중에는 바꿀 수 없습니다. 중지한 뒤 바꾸세요", Toast.LENGTH_SHORT).show()
-            return
+            return false
         }
+        if (DevSettings.siteCode.isEmpty()) {
+            Toast.makeText(this, "센터를 먼저 입력하세요", Toast.LENGTH_SHORT).show()
+            return false
+        }
+        return true
+    }
+
+    private fun pickScope(isFloor: Boolean) {
+        if (!scopeEditable()) return
         val list = if (isFloor) SiteScope.FLOORS else SiteScope.PROCS
         AlertDialog.Builder(this)
             .setTitle(if (isFloor) "층 선택" else "공정 선택")
@@ -1015,6 +1036,89 @@ class MainActivity : AppCompatActivity() {
                 renderSiteScope()
             }
             .show()
+    }
+
+    /** Zone is typed (up to 4 letters/digits, same rule as floor and process codes); empty = the whole floor/process. */
+    private fun pickZone() {
+        if (!scopeEditable()) return
+        val input = EditText(this).apply {
+            hint = "예: Z1 (비우면 전체)"
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS
+            filters = arrayOf(InputFilter.LengthFilter(4))
+            setText(DevSettings.zone)
+            setPadding(56, 32, 56, 32)
+        }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("존 입력")
+            .setView(input)
+            .setPositiveButton("확인", null)   // Handled below so a bad value does not close the dialog
+            .setNegativeButton("취소", null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val raw = input.text?.toString()?.trim() ?: ""
+                val zone = SiteScope.code(raw)
+                if (raw.isNotEmpty() && zone.isEmpty()) {
+                    input.error = "영문·숫자 4자까지"
+                } else {
+                    DevSettings.zone = zone
+                    renderSiteScope()
+                    dialog.dismiss()
+                }
+            }
+        }
+        dialog.show()
+    }
+
+    /** Draw the worker-code field with the last value (kept across starts). */
+    private fun renderWorkerCode() {
+        binding.etWorkerCode.setText(DevSettings.workerCode)
+    }
+
+    private fun editWorkerCodeIfIdle() {
+        if (BleService.isRunning) {
+            Toast.makeText(this, "감시 중에는 바꿀 수 없습니다. 중지한 뒤 바꾸세요", Toast.LENGTH_SHORT).show()
+            return
+        }
+        editWorkerCode { }
+    }
+
+    /** Worker-code input popup: stays open on an empty or malformed value; onDone runs after a valid code is saved. */
+    private fun editWorkerCode(onDone: () -> Unit) {
+        val input = EditText(this).apply {
+            hint = "예: G6628767"
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS
+            filters = arrayOf(InputFilter.LengthFilter(WorkerCode.MAX_LEN))
+            setText(DevSettings.workerCode)
+            setPadding(56, 32, 56, 32)
+        }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("쿠코드 입력")
+            .setMessage("보행자는 쿠코드가 블루투스 ID가 되고, 장비는 구조 요청에 운전자로 함께 표시됩니다.")
+            .setView(input)
+            .setPositiveButton("확인", null)   // Handled below so a bad value does not close the dialog
+            .setNegativeButton("취소", null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val code = WorkerCode.code(input.text?.toString())
+                if (code.isEmpty()) {
+                    input.error = "영문 1자 + 숫자 9자리까지"
+                } else {
+                    DevSettings.workerCode = code
+                    renderWorkerCode()
+                    dialog.dismiss()
+                    onDone()
+                }
+            }
+        }
+        dialog.show()
+    }
+
+    /** Mode start gate, after the site code: a worker code is required; without one show the popup and wait. */
+    private fun requireWorkerCode(onReady: () -> Unit) {
+        if (DevSettings.workerCode.isNotEmpty()) { onReady(); return }
+        editWorkerCode(onReady)
     }
 
     /**
@@ -1058,9 +1162,13 @@ class MainActivity : AppCompatActivity() {
     /** Generate an auto-issued ID — same format as FirebaseManager.AUTO_ID_REGEX ("SA-" + 8 uppercase UUID chars) */
     private fun newAutoId(): String = "SA-" + UUID.randomUUID().toString().take(8).uppercase()
 
+    /**
+     * device_id is overwritten with the start ID by saveRunningMode, so it can hold an equipment ID or a worker code;
+     * the fallback must never advertise those - only a real auto ID is kept.
+     */
     private fun myId(): String {
         val saved = prefs.getString("device_id", null)
-        if (saved != null) return saved
+        if (saved != null && FirebaseManager.AUTO_ID_REGEX.matches(saved)) return saved
         val newId = newAutoId()
         prefs.edit().putString("device_id", newId).apply()
         return newId

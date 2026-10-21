@@ -50,6 +50,11 @@ class SiteScopeTest {
         assertEquals("같은 층·공정(1F-OB)", SiteScope.audience("1F", "OB"))
         assertEquals("같은 층(1F)", SiteScope.audience("1F", ""))
         assertEquals("같은 공정(OB)", SiteScope.audience("", "OB"))
+        // zone joins the label and the audience like floor and process
+        assertEquals("WF11-1F-OB-Z1", SiteScope.label("WF11", "1F", "OB", "Z1"))
+        assertEquals("WF11-Z1", SiteScope.label("WF11", "", "", "Z1"))
+        assertEquals("같은 존(Z1)", SiteScope.audience("", "", "Z1"))
+        assertEquals("같은 층·존(1F-Z1)", SiteScope.audience("1F", "", "Z1"))
     }
 
     @Test

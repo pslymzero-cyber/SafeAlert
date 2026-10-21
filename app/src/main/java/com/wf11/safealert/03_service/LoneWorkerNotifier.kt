@@ -195,7 +195,7 @@ class LoneWorkerNotifier(
             mode == LoneWorkerLogic.Mode.SOS ->
                 Triple("구조 요청 중", sosExitHint(rescuer), sosExitLabel(rescuer) to activityPi(REQ_CONFIRM, true))
             mode == LoneWorkerLogic.Mode.CHECKING ->
-                Triple("괜찮으세요?", "응답이 없으면 ${SiteScope.audience(DevSettings.floor, DevSettings.proc)}에 구조 요청이 나가요. " + (if (closesByTurn) TURN_CLOSE_HINT else "걸으면 자동으로 닫혀요"), "괜찮아요" to servicePi(REQ_ACK, BleService.ACTION_LW_ACK))
+                Triple("괜찮으세요?", "응답이 없으면 ${SiteScope.audience(DevSettings.floor, DevSettings.proc, DevSettings.zone)}에 구조 요청이 나가요. " + (if (closesByTurn) TURN_CLOSE_HINT else "걸으면 자동으로 닫혀요"), "괜찮아요" to servicePi(REQ_ACK, BleService.ACTION_LW_ACK))
             audible.isNotEmpty() ->
                 Triple(if (audible.all { it.ringOver }) "구조 요청 · ${RING_OVER}" else "구조 요청", audible.joinToString(", ") { it.nameWithScope() }, "확인" to servicePi(REQ_SILENCE, BleService.ACTION_LW_SILENCE, audible))
             quiet != null -> Triple(quiet.first, quiet.second, null)

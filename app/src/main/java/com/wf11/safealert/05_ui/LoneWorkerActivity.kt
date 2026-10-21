@@ -120,7 +120,7 @@ class LoneWorkerActivity : AppCompatActivity() {
     }
 
     /** Who my own SOS reaches (this phone's floor/process scope). */
-    private fun audience() = SiteScope.audience(DevSettings.floor, DevSettings.proc)
+    private fun audience() = SiteScope.audience(DevSettings.floor, DevSettings.proc, DevSettings.zone)
 
     private fun showConfirm() {
         if (confirmDialog?.isShowing == true) return

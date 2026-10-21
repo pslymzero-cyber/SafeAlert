@@ -323,20 +323,75 @@
 
                 </LinearLayout>
 
-                <!-- Name (optional) + site code (required), side by side -->
+                <!-- Row 1: site code (required, case-insensitive, normalized to uppercase; the key that keeps alert and calibration data separate) + worker code (picker dialog) -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="10dp"
+                    android:baselineAligned="false"
                     android:orientation="horizontal">
 
-                    <!-- Equipment selection only — no typing. Tapping opens the type/number picker popup -->
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/til_site_code"
+                        android:layout_width="0dp"
+                        android:layout_weight="1"
+                        android:layout_height="wrap_content"
+                        android:hint="센터"
+                        android:textColorHint="@color/sa_text_tertiary"
+                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                        app:boxCornerRadiusTopStart="@dimen/sa_radius_sm" app:boxCornerRadiusTopEnd="@dimen/sa_radius_sm"
+                        app:boxCornerRadiusBottomStart="@dimen/sa_radius_sm" app:boxCornerRadiusBottomEnd="@dimen/sa_radius_sm"
+                        app:boxStrokeColor="@color/box_stroke_dark" app:hintTextColor="@color/sa_accent_soft">
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/et_site_code"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:inputType="textCapCharacters"
+                            android:maxLength="12"
+                            android:textSize="@dimen/sa_type_section"
+                            android:textColor="@color/sa_text_primary"
+                            android:imeOptions="actionDone"/>
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/til_worker_code"
+                        android:layout_width="0dp"
+                        android:layout_weight="1"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="@dimen/sa_space_sm"
+                        android:hint="쿠코드"
+                        android:textColorHint="@color/sa_text_tertiary"
+                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                        app:boxCornerRadiusTopStart="@dimen/sa_radius_sm" app:boxCornerRadiusTopEnd="@dimen/sa_radius_sm"
+                        app:boxCornerRadiusBottomStart="@dimen/sa_radius_sm" app:boxCornerRadiusBottomEnd="@dimen/sa_radius_sm"
+                        app:boxStrokeColor="@color/box_stroke_dark" app:hintTextColor="@color/sa_accent_soft">
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/et_worker_code"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:inputType="none"
+                            android:focusable="false"
+                            android:cursorVisible="false"
+                            android:textSize="@dimen/sa_type_section"
+                            android:textColor="@color/sa_text_primary"/>
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                </LinearLayout>
+
+                <!-- Row 2: equipment selection only (no typing, the type/number picker popup) + floor -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:baselineAligned="false"
+                    android:orientation="horizontal">
+
                     <com.google.android.material.textfield.TextInputLayout
                         android:id="@+id/til_display_name"
                         android:layout_width="0dp"
-                        android:layout_weight="1.7"
+                        android:layout_weight="1"
                         android:layout_height="wrap_content"
-                        android:hint="내 장비 (탭하여 선택)"
+                        android:hint="장비 (탭하여 선택)"
                         android:textColorHint="@color/sa_text_tertiary"
                         style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
                         app:helperTextEnabled="true"
@@ -354,102 +409,93 @@
                             android:textColor="@color/sa_text_primary"/>
                     </com.google.android.material.textfield.TextInputLayout>
 
-                    <!-- Site code — case-insensitive (normalized to uppercase). The key that keeps alert and calibration data separate -->
                     <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/til_floor"
                         android:layout_width="0dp"
                         android:layout_weight="1"
                         android:layout_height="wrap_content"
                         android:layout_marginStart="@dimen/sa_space_sm"
-                        android:id="@+id/til_site_code"
-                        android:hint="센터명"
+                        android:hint="층"
                         android:textColorHint="@color/sa_text_tertiary"
                         style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
                         app:boxCornerRadiusTopStart="@dimen/sa_radius_sm" app:boxCornerRadiusTopEnd="@dimen/sa_radius_sm"
                         app:boxCornerRadiusBottomStart="@dimen/sa_radius_sm" app:boxCornerRadiusBottomEnd="@dimen/sa_radius_sm"
                         app:boxStrokeColor="@color/box_stroke_dark" app:hintTextColor="@color/sa_accent_soft">
                         <com.google.android.material.textfield.TextInputEditText
-                            android:id="@+id/et_site_code"
+                            android:id="@+id/et_floor"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:inputType="textCapCharacters"
-                            android:maxLength="12"
+                            android:inputType="none"
+                            android:focusable="false"
+                            android:cursorVisible="false"
                             android:textSize="@dimen/sa_type_section"
-                            android:textColor="@color/sa_text_primary"
-                            android:imeOptions="actionDone"/>
+                            android:textColor="@color/sa_text_primary"/>
                     </com.google.android.material.textfield.TextInputLayout>
 
                 </LinearLayout>
 
-                <!-- Floor + process pickers (lists are built into the app: SiteScope.FLOORS / PROCS; the row is shown whenever a site code is set, MainActivity.renderSiteScope) -->
+                <!-- Row 3: process + zone (floor/process lists are built into the app: SiteScope.FLOORS / PROCS; dimmed until a site is set, MainActivity.renderSiteScope) -->
                 <LinearLayout
-                    android:id="@+id/row_site_scope"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="10dp"
-                    android:orientation="vertical"
-                    android:visibility="gone">
+                    android:baselineAligned="false"
+                    android:orientation="horizontal">
 
-                    <LinearLayout
-                        android:layout_width="match_parent"
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/til_proc"
+                        android:layout_width="0dp"
+                        android:layout_weight="1"
                         android:layout_height="wrap_content"
-                        android:orientation="horizontal">
-
-                        <com.google.android.material.textfield.TextInputLayout
-                            android:id="@+id/til_floor"
-                            android:layout_width="0dp"
-                            android:layout_weight="1"
+                        android:hint="공정"
+                        android:textColorHint="@color/sa_text_tertiary"
+                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                        app:boxCornerRadiusTopStart="@dimen/sa_radius_sm" app:boxCornerRadiusTopEnd="@dimen/sa_radius_sm"
+                        app:boxCornerRadiusBottomStart="@dimen/sa_radius_sm" app:boxCornerRadiusBottomEnd="@dimen/sa_radius_sm"
+                        app:boxStrokeColor="@color/box_stroke_dark" app:hintTextColor="@color/sa_accent_soft">
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/et_proc"
+                            android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:hint="층"
-                            android:textColorHint="@color/sa_text_tertiary"
-                            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
-                            app:boxCornerRadiusTopStart="@dimen/sa_radius_sm" app:boxCornerRadiusTopEnd="@dimen/sa_radius_sm"
-                            app:boxCornerRadiusBottomStart="@dimen/sa_radius_sm" app:boxCornerRadiusBottomEnd="@dimen/sa_radius_sm"
-                            app:boxStrokeColor="@color/box_stroke_dark" app:hintTextColor="@color/sa_accent_soft">
-                            <com.google.android.material.textfield.TextInputEditText
-                                android:id="@+id/et_floor"
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:inputType="none"
-                                android:focusable="false"
-                                android:cursorVisible="false"
-                                android:textSize="@dimen/sa_type_section"
-                                android:textColor="@color/sa_text_primary"/>
-                        </com.google.android.material.textfield.TextInputLayout>
+                            android:inputType="none"
+                            android:focusable="false"
+                            android:cursorVisible="false"
+                            android:textSize="@dimen/sa_type_section"
+                            android:textColor="@color/sa_text_primary"/>
+                    </com.google.android.material.textfield.TextInputLayout>
 
-                        <com.google.android.material.textfield.TextInputLayout
-                            android:id="@+id/til_proc"
-                            android:layout_width="0dp"
-                            android:layout_weight="1"
-                            android:layout_height="wrap_content"
-                            android:layout_marginStart="@dimen/sa_space_sm"
-                            android:hint="공정"
-                            android:textColorHint="@color/sa_text_tertiary"
-                            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
-                            app:boxCornerRadiusTopStart="@dimen/sa_radius_sm" app:boxCornerRadiusTopEnd="@dimen/sa_radius_sm"
-                            app:boxCornerRadiusBottomStart="@dimen/sa_radius_sm" app:boxCornerRadiusBottomEnd="@dimen/sa_radius_sm"
-                            app:boxStrokeColor="@color/box_stroke_dark" app:hintTextColor="@color/sa_accent_soft">
-                            <com.google.android.material.textfield.TextInputEditText
-                                android:id="@+id/et_proc"
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:inputType="none"
-                                android:focusable="false"
-                                android:cursorVisible="false"
-                                android:textSize="@dimen/sa_type_section"
-                                android:textColor="@color/sa_text_primary"/>
-                        </com.google.android.material.textfield.TextInputLayout>
-
-                    </LinearLayout>
-
-                    <TextView
-                        android:id="@+id/tv_site_scope"
-                        android:layout_width="match_parent"
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/til_zone"
+                        android:layout_width="0dp"
+                        android:layout_weight="1"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
-                        android:textSize="@dimen/sa_type_caption"
-                        android:textColor="@color/sa_text_tertiary" />
+                        android:layout_marginStart="@dimen/sa_space_sm"
+                        android:hint="존"
+                        android:textColorHint="@color/sa_text_tertiary"
+                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                        app:boxCornerRadiusTopStart="@dimen/sa_radius_sm" app:boxCornerRadiusTopEnd="@dimen/sa_radius_sm"
+                        app:boxCornerRadiusBottomStart="@dimen/sa_radius_sm" app:boxCornerRadiusBottomEnd="@dimen/sa_radius_sm"
+                        app:boxStrokeColor="@color/box_stroke_dark" app:hintTextColor="@color/sa_accent_soft">
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/et_zone"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:inputType="none"
+                            android:focusable="false"
+                            android:cursorVisible="false"
+                            android:textSize="@dimen/sa_type_section"
+                            android:textColor="@color/sa_text_primary"/>
+                    </com.google.android.material.textfield.TextInputLayout>
 
                 </LinearLayout>
+
+                <TextView
+                    android:id="@+id/tv_site_scope"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:textSize="@dimen/sa_type_caption"
+                    android:textColor="@color/sa_text_tertiary" />
 
                 <!-- Walker role card -->
                 <androidx.cardview.widget.CardView
@@ -782,7 +828,7 @@
         android:paddingTop="10dp"
         android:paddingBottom="14dp"
         android:gravity="center"
-        android:text="v1.0.0  ·  Created by Ian"
+        android:text="v1.0.0  ·  Created by Flex Fulfillment"
         android:textSize="@dimen/sa_type_hint"
         android:textColor="@color/sa_text_tertiary"
         android:letterSpacing="0.05"
