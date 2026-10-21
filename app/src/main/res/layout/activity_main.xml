@@ -378,7 +378,7 @@
 
                 </LinearLayout>
 
-                <!-- Row 2: equipment selection only (no typing, the type/number picker popup) + floor -->
+                <!-- Row 2: floor + zone (the floor list is built into the app: SiteScope.FLOORS; the zone is typed; dimmed until a site is set, MainActivity.renderSiteScope) -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
@@ -387,34 +387,10 @@
                     android:orientation="horizontal">
 
                     <com.google.android.material.textfield.TextInputLayout
-                        android:id="@+id/til_display_name"
-                        android:layout_width="0dp"
-                        android:layout_weight="1"
-                        android:layout_height="wrap_content"
-                        android:hint="장비 (탭하여 선택)"
-                        android:textColorHint="@color/sa_text_tertiary"
-                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
-                        app:helperTextEnabled="true"
-                        app:boxCornerRadiusTopStart="@dimen/sa_radius_sm" app:boxCornerRadiusTopEnd="@dimen/sa_radius_sm"
-                        app:boxCornerRadiusBottomStart="@dimen/sa_radius_sm" app:boxCornerRadiusBottomEnd="@dimen/sa_radius_sm"
-                        app:boxStrokeColor="@color/box_stroke_dark" app:hintTextColor="@color/sa_accent_soft">
-                        <com.google.android.material.textfield.TextInputEditText
-                            android:id="@+id/et_display_name"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:inputType="none"
-                            android:focusable="false"
-                            android:cursorVisible="false"
-                            android:textSize="@dimen/sa_type_section"
-                            android:textColor="@color/sa_text_primary"/>
-                    </com.google.android.material.textfield.TextInputLayout>
-
-                    <com.google.android.material.textfield.TextInputLayout
                         android:id="@+id/til_floor"
                         android:layout_width="0dp"
                         android:layout_weight="1"
                         android:layout_height="wrap_content"
-                        android:layout_marginStart="@dimen/sa_space_sm"
                         android:hint="층"
                         android:textColorHint="@color/sa_text_tertiary"
                         style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
@@ -432,9 +408,33 @@
                             android:textColor="@color/sa_text_primary"/>
                     </com.google.android.material.textfield.TextInputLayout>
 
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/til_zone"
+                        android:layout_width="0dp"
+                        android:layout_weight="1"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="@dimen/sa_space_sm"
+                        android:hint="존"
+                        android:textColorHint="@color/sa_text_tertiary"
+                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                        app:boxCornerRadiusTopStart="@dimen/sa_radius_sm" app:boxCornerRadiusTopEnd="@dimen/sa_radius_sm"
+                        app:boxCornerRadiusBottomStart="@dimen/sa_radius_sm" app:boxCornerRadiusBottomEnd="@dimen/sa_radius_sm"
+                        app:boxStrokeColor="@color/box_stroke_dark" app:hintTextColor="@color/sa_accent_soft">
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/et_zone"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:inputType="none"
+                            android:focusable="false"
+                            android:cursorVisible="false"
+                            android:textSize="@dimen/sa_type_section"
+                            android:textColor="@color/sa_text_primary"/>
+                    </com.google.android.material.textfield.TextInputLayout>
+
                 </LinearLayout>
 
-                <!-- Row 3: process + zone (floor/process lists are built into the app: SiteScope.FLOORS / PROCS; dimmed until a site is set, MainActivity.renderSiteScope) -->
+                <!-- Row 3: process (built-in list SiteScope.PROCS; dimmed until a site is set, MainActivity.renderSiteScope) + equipment
+                     selection only (no typing, the type/number picker popup) -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
@@ -465,19 +465,20 @@
                     </com.google.android.material.textfield.TextInputLayout>
 
                     <com.google.android.material.textfield.TextInputLayout
-                        android:id="@+id/til_zone"
+                        android:id="@+id/til_display_name"
                         android:layout_width="0dp"
                         android:layout_weight="1"
                         android:layout_height="wrap_content"
                         android:layout_marginStart="@dimen/sa_space_sm"
-                        android:hint="존"
+                        android:hint="장비 (탭하여 선택)"
                         android:textColorHint="@color/sa_text_tertiary"
                         style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                        app:helperTextEnabled="true"
                         app:boxCornerRadiusTopStart="@dimen/sa_radius_sm" app:boxCornerRadiusTopEnd="@dimen/sa_radius_sm"
                         app:boxCornerRadiusBottomStart="@dimen/sa_radius_sm" app:boxCornerRadiusBottomEnd="@dimen/sa_radius_sm"
                         app:boxStrokeColor="@color/box_stroke_dark" app:hintTextColor="@color/sa_accent_soft">
                         <com.google.android.material.textfield.TextInputEditText
-                            android:id="@+id/et_zone"
+                            android:id="@+id/et_display_name"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:inputType="none"
