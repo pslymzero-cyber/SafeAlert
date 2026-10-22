@@ -300,7 +300,7 @@ class MainActivity : AppCompatActivity() {
         // There is a single equipment card. The chosen equipment sets the role (Category) —
         //   picking a role first and then equipment could make the two disagree.
         //   EPJ and walkie stacker are picked from the equipment list.
-        binding.cardRoleWalker.setOnClickListener   { requireSiteCode { requireWorkerCode { pickWorkerKind { cart -> onRoleSelected("WALKER", BleConstants.CAT_WALKER, cart) } } } }
+        binding.cardRoleWalker.setOnClickListener   { requireSiteCode { requireWorkerCode { pickWorkerKind { cart -> onWorkerPicked(cart) } } } }
         binding.cardRoleForklift.setOnClickListener { requireSiteCode { requireWorkerCode { startAsPitOperator() } } }
         binding.btnStop.setOnClickListener       { if (!LoneWorkerUi.blockIfOwnSos(this)) stopServiceImmediately() }
         binding.btnSwitchRole.setOnClickListener { confirmSwitchRole() }   // Role switch
@@ -539,6 +539,12 @@ class MainActivity : AppCompatActivity() {
         binding.tvBleStatus.text = sb
     }
 
+    /** A kind picked on the worker card: a cart worker starts exactly like an EPJ (DEVICE, CAT_EPJ), only flagged as a cart. */
+    private fun onWorkerPicked(cart: Boolean) {
+        if (cart) onRoleSelected("DEVICE", BleConstants.CAT_EPJ, true)
+        else onRoleSelected("WALKER", BleConstants.CAT_WALKER, false)
+    }
+
     private fun onRoleSelected(mode: String, category: Int, cart: Boolean = false) {
         currentMode = mode
         currentCategory = category
@@ -659,8 +665,8 @@ class MainActivity : AppCompatActivity() {
         val mode  = currentMode ?: return
         // A rescuer-stop flag left by the previous monitoring would make the 800 ms poll stop the monitoring started now
         LoneWorkerMonitor.rescuerStopped = false
-        // Walker = worker code, device = equipment ID (shown on the peer's screen); the auto ID only when that is empty
-        val id = WorkerCode.startId(mode == "WALKER", DevSettings.workerCode, prefs.getString("display_name", "") ?: "") { myId() }
+        // Walker and cart worker = worker code, device = equipment ID (shown on the peer's screen); the auto ID only when that is empty
+        val id = WorkerCode.startId(mode == "WALKER" || currentCart, DevSettings.workerCode, prefs.getString("display_name", "") ?: "") { myId() }
         val since = System.currentTimeMillis()
         val action = if (mode == "DEVICE") BleService.ACTION_START_DEVICE else BleService.ACTION_START_WALKER
 
@@ -668,7 +674,7 @@ class MainActivity : AppCompatActivity() {
             this.action = action
             putExtra(BleService.EXTRA_ID, id)
             putExtra(BleService.EXTRA_CATEGORY, currentCategory)   // Pass the role Category
-            putExtra(BleService.EXTRA_CART, mode == "WALKER" && currentCart)
+            putExtra(BleService.EXTRA_CART, mode == "DEVICE" && currentCart)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent)
         else startService(intent)
@@ -677,7 +683,7 @@ class MainActivity : AppCompatActivity() {
             .putString("running_mode", mode)
             .putLong("running_since", since)
             .putInt("running_category", currentCategory)
-            .putBoolean("running_cart", mode == "WALKER" && currentCart)
+            .putBoolean("running_cart", mode == "DEVICE" && currentCart)
             .apply()
         showRunningUi(mode, since)
     }
@@ -768,7 +774,7 @@ class MainActivity : AppCompatActivity() {
             if (LoneWorkerUi.blockIfOwnSos(this)) return@postDelayed   // An SOS started while waiting to switch
             // Switching to equipment also asks to pick the equipment — the chosen equipment sets the role
             if (fromMode == "WALKER") startAsPitOperator()
-            else onRoleSelected("WALKER", BleConstants.CAT_WALKER, cart)
+            else onWorkerPicked(cart)
         }, 800L)
     }
 
@@ -797,7 +803,7 @@ class MainActivity : AppCompatActivity() {
         binding.btnSwitchRole.text  = "${switchTargetLabel()}로 전환"    // Dynamic label for the switch target
         binding.tvRunningSince.text = SimpleDateFormat("HH:mm 시작", Locale.KOREA).format(Date(since))
         // Show the ID the session advertises (same rule as startServiceWithCurrentMode)
-        binding.tvRunningId.text = WorkerCode.startId(mode == "WALKER", DevSettings.workerCode, prefs.getString("display_name", "") ?: "") { myId() }
+        binding.tvRunningId.text = WorkerCode.startId(mode == "WALKER" || currentCart, DevSettings.workerCode, prefs.getString("display_name", "") ?: "") { myId() }
         // Dark UI — apply the role background photo/icon/TEST accent (visuals only, no functional change)
         applyRoleVisuals(currentCategory)
         // Show Bluetooth state immediately

@@ -64,7 +64,7 @@ class BleService : LifecycleService() {
         //   on returning to the screen, a notification button) — the main screen asks for the equipment once (MainActivity)
         const val K_PIT_ASK            = "pit_ask"
         const val EXTRA_CATEGORY       = "extra_category"       // sender role Category (CAT_*)
-        const val EXTRA_CART           = "extra_cart"           // ACTION_START_WALKER only: boolean, started as a cart worker (absent = false)
+        const val EXTRA_CART           = "extra_cart"           // ACTION_START_DEVICE only: started as a cart worker (EPJ signal + ext bit2 label; absent = false)
         const val EXTRA_PSTATE         = "extra_pstate"         // STATE value for ACTION_TEST_STATE (PSTATE_*)
         const val EXTRA_ALERT_LEVEL    = "extra_alert_level"
         const val EXTRA_DISPLAY_NAME   = "extra_display_name"
@@ -105,7 +105,7 @@ class BleService : LifecycleService() {
     private var myMode = ""
     // My role (Category) — packed into advertising payload bits[1:0]. Defaults to walker.
     private var myCategory = BleConstants.CAT_WALKER
-    // Started as a cart worker (walker category + ext bit2). Rewritten at every start; restored from running_cart.
+    // Cart worker = EPJ (DEVICE, CAT_EPJ) + ext bit2 label; display / advert / save only, never judgment. Rewritten at every start; restored from running_cart.
     private var myCart = false
     private var testRunnable: Runnable? = null
     private val testHandler = android.os.Handler(android.os.Looper.getMainLooper())
@@ -478,7 +478,6 @@ class BleService : LifecycleService() {
         override val myId get() = this@BleService.myId
         override val myMode get() = this@BleService.myMode
         override val myCategory get() = this@BleService.myCategory
-        override val myCart get() = this@BleService.myCart
         override val myZoneInside get() = this@BleService.myZoneInside
         override var activeSoundLevel: Int
             get() = this@BleService.activeSoundLevel
@@ -747,7 +746,7 @@ class BleService : LifecycleService() {
                 myMode = "DEVICE"
                 // DEVICE mode is EPJ (01) or forklift (10) — told apart by the Category extra (default forklift)
                 myCategory = intent.getIntExtra(EXTRA_CATEGORY, BleConstants.CAT_FORKLIFT)
-                myCart = false
+                myCart = intent.getBooleanExtra(EXTRA_CART, false)   // cart worker = EPJ signal + ext bit2 label
                 // Save the mode: used by onStartCommand to restore after a START_STICKY restart
                 saveRunningMode(myMode, myId, myCategory)
                 clearPitAsk()   // started from the screen, right after the equipment picker
@@ -762,7 +761,7 @@ class BleService : LifecycleService() {
                 myId   = intent.getStringExtra(EXTRA_ID) ?: "WALKER_001"
                 myMode = "WALKER"
                 myCategory = BleConstants.CAT_WALKER   // always walker
-                myCart = intent.getBooleanExtra(EXTRA_CART, false)
+                myCart = false   // only a walking worker starts here; a cart worker starts as DEVICE / CAT_EPJ
                 saveRunningMode(myMode, myId, myCategory)
                 clearPitAsk()
                 loneWorker.keepRunning() // Drops a pending stop after a rescuer's release
@@ -960,10 +959,8 @@ class BleService : LifecycleService() {
                             if (loneWorker.sosActive) return   // my rescue request runs: no proximity judgment, so no new UWB session
                             // Walker gate mirror — if a UWB session opened between walkers that judgment (onDeviceDetected) filtered out,
                             //   judgeUwbOnly would revive the filtered device. Block session setup itself.
-                            //   Cart pairs are let through like the RSSI gate (peerCartMap is filled by onPeerCart earlier in this scan result).
                             if (myMode == "WALKER" && deviceId.startsWith(BleConstants.WALKER_PREFIX)
-                                && !(deviceId.contains("BEA_") && !BeaconRegistry.isVisitorBeacon(deviceId)) && !DevSettings.walkerDetectsWalker
-                                && !(myCart && asm.peerCartMap[deviceId] == true)) return
+                                && !(deviceId.contains("BEA_") && !BeaconRegistry.isVisitorBeacon(deviceId)) && !DevSettings.walkerDetectsWalker) return
                             // Record the 0x9ABC sighting (diagnostics only — not used for judgment) + pass the address = session (re)open path
                             peerUwbSeenMap[deviceId] = System.currentTimeMillis()
                             uwbRanger?.onPeerUwbAddressReceived(deviceId, uwbAddress)
@@ -1015,8 +1012,7 @@ class BleService : LifecycleService() {
         if (myMode == "WALKER"
             && deviceId.startsWith(BleConstants.WALKER_PREFIX)
             && !(deviceId.contains("BEA_") && !BeaconRegistry.isVisitorBeacon(deviceId))   // only visitor beacons are treated as walkers; equipment/unregistered ones alert
-            && !DevSettings.walkerDetectsWalker
-            && !(myCart && asm.peerCartMap[deviceId] == true)) return   // cart workers detect each other
+            && !DevSettings.walkerDetectsWalker) return
 
         // Full safe-zone suppression — inside a zone only zone-beacon signals are received.
         //   BleScanner routes zone beacons through the dedicated onZoneBeaconSignal path, so they never reach here and this
@@ -1624,9 +1620,9 @@ class BleService : LifecycleService() {
         else -> if (myCart) "카트 작업자" else "보행 작업자"
     }
 
-    /** Another device's role name: "카트 작업자" only when both phones are cart workers, otherwise the plain category name. */
+    /** Another device's role name: any device that declares the cart marker (ext bit2) is shown as a cart worker (display only). */
     private fun peerRoleName(deviceId: String, category: Int): String =
-        if (asm.isCartPair(deviceId, category)) "카트 작업자" else categoryRoleName(category)
+        if (asm.peerCartMap[deviceId] == true) "카트 작업자" else categoryRoleName(category)
 
     /**
      * Role label for device display.

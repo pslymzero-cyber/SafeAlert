@@ -8,7 +8,6 @@ import com.wf11.safealert.ble.RssiPreFilter
 import com.wf11.safealert.utils.DevSettings
 import com.wf11.safealert.utils.UwbRanger
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -48,7 +47,6 @@ class AlertStateMachineJvmTest {
     private class FakeEffects(
         override val myCategory: Int,
         override val myMode: String,
-        override val myCart: Boolean = false,
     ) : AlertStateMachine.Effects {
         override val myId: String = "SAFEALERT_DEVICE_ME"
         override val myZoneInside: Boolean = false
@@ -163,53 +161,42 @@ class AlertStateMachineJvmTest {
     }
 
     /**
-     * Cart workers: only when this phone is a cart worker, the peer is a walker-category device AND the peer's
-     * ext bit2 (peerCartMap) is on, the pair is judged like EPJ-EPJ (offset epjVsEpjBiasDb); every other pair keeps
-     * today's offset (walker-walker 0, walker-forklift/EPJ bias). The UWB walker gate and the stationary-pair quiet
-     * follow the same cart rule.
+     * Cart workers are EPJ in every judgment: a cart phone is DEVICE / CAT_EPJ, so it gets the EPJ offsets against
+     * walker, forklift and EPJ peers. The ext bit2 cart marker (peerCartMap) is a display label only and never
+     * changes an offset, the stationary-pair quiet scope or the UWB walker gate.
      */
     @Test
-    fun cartPair_judgedAsEpjPair_onlyWhenBothPhonesAreCarts() {
+    fun cartMarker_neverChangesJudgment_cartJudgedAsEpj() {
         val id = "SAFEALERT_WALKER_PEER01"
-        fun asm(myCart: Boolean, peerCart: Boolean): AlertStateMachine =
-            AlertStateMachine(FakeEffects(BleConstants.CAT_WALKER, "WALKER", myCart), UwbDistanceManager { null })
+        fun asm(myCategory: Int, myMode: String, peerCart: Boolean): AlertStateMachine =
+            AlertStateMachine(FakeEffects(myCategory, myMode), UwbDistanceManager { null })
                 .also { if (peerCart) it.peerCartMap[id] = true }
         fun offset(a: AlertStateMachine, rCategory: Int) =
             a.computePayloadRiskOffset(id, rCategory, BleConstants.PSTATE_IDLE, 0.0)
 
-        val both = asm(myCart = true, peerCart = true)
-        assertEquals(DevSettings.epjVsEpjBiasDb, offset(both, BleConstants.CAT_WALKER))
-        assertTrue(both.isCartPair(id, BleConstants.CAT_WALKER))
+        // A cart phone (EPJ) gets the EPJ offsets, with or without the peer's marker.
+        for (peerCart in listOf(false, true)) {
+            val cart = asm(BleConstants.CAT_EPJ, "DEVICE", peerCart)
+            assertEquals(DevSettings.walkerVsEpjBiasDb, offset(cart, BleConstants.CAT_WALKER))
+            assertEquals(DevSettings.equipVsEquipBiasDb, offset(cart, BleConstants.CAT_FORKLIFT))
+            assertEquals(DevSettings.epjVsEpjBiasDb, offset(cart, BleConstants.CAT_EPJ))
+        }
 
-        val peerNotCart = asm(myCart = true, peerCart = false)
-        assertEquals(0, offset(peerNotCart, BleConstants.CAT_WALKER))
-        assertTrue(!peerNotCart.isCartPair(id, BleConstants.CAT_WALKER))
+        // A walking worker sees a marked cart as a plain EPJ; a marked walker-category peer stays walker-walker.
+        val walker = asm(BleConstants.CAT_WALKER, "WALKER", peerCart = true)
+        assertEquals(0, offset(walker, BleConstants.CAT_WALKER))
+        assertEquals(DevSettings.walkerVsEpjBiasDb, offset(walker, BleConstants.CAT_EPJ))
 
-        val meNotCart = asm(myCart = false, peerCart = true)
-        assertEquals(0, offset(meNotCart, BleConstants.CAT_WALKER))
-        assertTrue(!meNotCart.isCartPair(id, BleConstants.CAT_WALKER))
+        // Stationary-pair quiet scope (shared by the RSSI and UWB paths) looks at categories only.
+        val cart = asm(BleConstants.CAT_EPJ, "DEVICE", peerCart = true)
+        assertTrue(cart.isEpjQuietPair(BleConstants.CAT_WALKER))
+        assertTrue(cart.isEpjQuietPair(BleConstants.CAT_EPJ))
+        assertTrue(!cart.isEpjQuietPair(BleConstants.CAT_FORKLIFT))
+        assertTrue(!walker.isEpjQuietPair(BleConstants.CAT_WALKER))
+        assertTrue(walker.isEpjQuietPair(BleConstants.CAT_EPJ))
 
-        val vsForklift = asm(myCart = true, peerCart = true)
-        assertEquals(DevSettings.walkerVsEquipBiasDb, offset(vsForklift, BleConstants.CAT_FORKLIFT))
-        assertTrue(!vsForklift.isCartPair(id, BleConstants.CAT_FORKLIFT))
-
-        val vsEpj = asm(myCart = true, peerCart = true)
-        assertEquals(DevSettings.walkerVsEpjBiasDb, offset(vsEpj, BleConstants.CAT_EPJ))
-        assertTrue(!vsEpj.isCartPair(id, BleConstants.CAT_EPJ))
-
-        // Stationary-pair quiet scope (shared by the RSSI and UWB paths): cart pairs count as EPJ pairs.
-        assertTrue("카트끼리는 EPJ쌍 억제 범위", both.isEpjQuietPair(id, BleConstants.CAT_WALKER))
-        assertTrue(!peerNotCart.isEpjQuietPair(id, BleConstants.CAT_WALKER))
-        assertTrue(!meNotCart.isEpjQuietPair(id, BleConstants.CAT_WALKER))
-        assertTrue(vsEpj.isEpjQuietPair(id, BleConstants.CAT_EPJ))
-        assertTrue(!vsForklift.isEpjQuietPair(id, BleConstants.CAT_FORKLIFT))
-
-        // UWB walker gate (writes state, so last): cart pair is judged, walker pairs stay blocked.
-        both.judgeUwbOnly(id, 1f, 1_000L)
-        assertNotNull("카트끼리는 UWB 도 판정", both.alertState[id])
-        peerNotCart.judgeUwbOnly(id, 1f, 1_000L)
-        assertNull("보행 작업자 쌍 UWB 는 계속 막힘", peerNotCart.alertState[id])
-        meNotCart.judgeUwbOnly(id, 1f, 1_000L)
-        assertNull("보행 작업자 쌍 UWB 는 계속 막힘", meNotCart.alertState[id])
+        // UWB walker gate ignores the marker (writes state, so last): walking worker vs a marked walker-prefixed peer stays blocked.
+        walker.judgeUwbOnly(id, 1f, 1_000L)
+        assertNull("마커가 있어도 보행 작업자 쌍 UWB 는 막힘", walker.alertState[id])
     }
 }
