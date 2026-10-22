@@ -4,7 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 /**
- * ext byte (ServiceData byte[1]) bit0 = IN_ZONE, bit1 = SOS, and the frozen 1-byte payload layout (byte[0]).
+ * ext byte (ServiceData byte[1]) bit0 = IN_ZONE, bit1 = SOS, bit2 = CART (older versions mask only bit0/bit1), and the frozen 1-byte payload layout (byte[0]).
  * That the SOS advert keeps byte[0] untouched is SosAdvertTest's job (it builds the real service data).
  */
 class ExtFlagCodecTest {
@@ -15,16 +15,20 @@ class ExtFlagCodecTest {
      */
     @Test
     fun extByte_inZoneInBit0_sosInBit1() {
-        class Row(val label: String, val inZone: Boolean, val sos: Boolean, val byte: Int)
+        class Row(val label: String, val inZone: Boolean, val sos: Boolean, val byte: Int, val cart: Boolean = false)
         val rows = listOf(
             Row("row 1 neither (a missing byte is parsed as 0)", inZone = false, sos = false, byte = 0x00),
             Row("row 2 inZone", inZone = true, sos = false, byte = 0x01),
             Row("row 3 sos", inZone = false, sos = true, byte = 0x02),
             Row("row 4 inZone+sos", inZone = true, sos = true, byte = 0x03),
+            Row("row 5 cart", inZone = false, sos = false, byte = 0x04, cart = true),
+            Row("row 6 inZone+sos+cart", inZone = true, sos = true, byte = 0x07, cart = true),
         )
         for (r in rows) {
-            assertEquals("${r.label}: encodeExt", r.byte, BleConstants.encodeExt(inZone = r.inZone, sos = r.sos))
+            assertEquals("${r.label}: encodeExt", r.byte, BleConstants.encodeExt(inZone = r.inZone, sos = r.sos, cart = r.cart))
             assertEquals("${r.label}: decodeSos", r.sos, BleConstants.decodeSos(r.byte))
+            assertEquals("${r.label}: decodeCart", r.cart, BleConstants.decodeCart(r.byte))
+            assertEquals("${r.label}: older versions see bit0/bit1 only", BleConstants.encodeExt(inZone = r.inZone, sos = r.sos), r.byte and 0x03)
         }
     }
 

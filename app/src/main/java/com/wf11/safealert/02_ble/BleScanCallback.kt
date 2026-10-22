@@ -22,6 +22,9 @@ interface BleScanCallback {
     //   (byte3-4, 0 if none), sosId / scope / zone / worker = scan response 0x5053 (SOS ID text, scope byte, zone,
     //   worker code), "" / 0 if absent or from an older sender
     fun onPeerSos(deviceId: String, sos: Boolean, episode: Int = 0, hint: Int = 0, sosId: String = "", scope: Int = 0, zone: String = "", worker: String = "") {}
+    // The peer's cart worker marker (extension byte bit2), delivered just before the same scan result's
+    //   onDeviceDetected (default: ignored). Old version or beacon = never called or false.
+    fun onPeerCart(deviceId: String, cart: Boolean) {}
     // When a UWB address is parsed from the scan response (default: ignored)
     fun onUwbAddressReceived(deviceId: String, uwbAddress: ByteArray) {}
     // Zone beacon (zoneMute profile) signal: not added to the device list or judgment, only passed to the zone

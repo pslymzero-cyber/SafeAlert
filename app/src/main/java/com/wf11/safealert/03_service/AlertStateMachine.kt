@@ -28,6 +28,8 @@ class AlertStateMachine(
         val myId: String
         val myMode: String
         val myCategory: Int
+        // This phone was started as a cart worker (walker category, cart marker on). Default false.
+        val myCart: Boolean get() = false
         val myZoneInside: Boolean
         var activeSoundLevel: Int
         var lastApproachAtMs: Long
@@ -48,7 +50,7 @@ class AlertStateMachine(
         fun collapseOverlay()
         fun sendStatusBroadcast(status: String)
         fun extractDisplayName(deviceId: String): String
-        fun makeStateLabel(name: String, category: Int, state: Int): String
+        fun makeStateLabel(name: String, category: Int, state: Int, deviceId: String): String
         fun sendAlertBroadcast(deviceId: String, level: Int)
         fun broadcastDeviceList()
         fun oneSecAvgRssi(deviceId: String, rssi: Int): Int
@@ -261,6 +263,16 @@ class AlertStateMachine(
     internal val mutedDevices      = mutableMapOf<String, Long>()
 
     internal val peerInZoneMap    = mutableMapOf<String, Boolean>() // deviceId → IN_ZONE declared by the other device
+    internal val peerCartMap      = mutableMapOf<String, Boolean>() // deviceId → cart worker marker (ext bit2) declared by the other device
+
+    /**
+     * Cart workers (walker category) are judged like EPJ-EPJ only against each other: this phone is a cart worker,
+     * the peer is walker category and declares the cart marker. Used for the payload offset and the RSSI-path
+     * stationary-pair beep suppression only; deviceCategoryMap, logs and Firebase keep WALKER.
+     */
+    internal fun isCartPair(deviceId: String, rCategory: Int): Boolean =
+        fx.myCart && fx.myCategory == BleConstants.CAT_WALKER &&
+            rCategory == BleConstants.CAT_WALKER && peerCartMap[deviceId] == true
 
     // Display-string override map for devices in the reverse/loading special alert.
     //   Value = fx.makeStateLabel text (e.g. "{name} 지게차 후진 중! 주의!") → shown instead of the plain name in the overlay/list.
@@ -427,15 +439,19 @@ class AlertStateMachine(
      *   Engages at the threshold immediately (fail-safe), releases only after crossing the dead band — asymmetric.
      *   0 when the toggles (categoryBiasEnabled/stateModulationEnabled) are off or the pair/state does not apply.
      */
-    private fun computePayloadRiskOffset(deviceId: String, rCategory: Int, rState: Int, kfVel: Double): Int {
+    internal fun computePayloadRiskOffset(deviceId: String, rCategory: Int, rState: Int, kfVel: Double): Int {
         var offset = 0
         if (DevSettings.categoryBiasEnabled) {
-            val iAmWalker   = fx.myCategory == BleConstants.CAT_WALKER
-            val iAmForklift = fx.myCategory == BleConstants.CAT_FORKLIFT
-            val iAmEpj      = fx.myCategory == BleConstants.CAT_EPJ
-            val rIsWalker   = rCategory == BleConstants.CAT_WALKER
-            val rIsForklift = rCategory == BleConstants.CAT_FORKLIFT
-            val rIsEpj      = rCategory == BleConstants.CAT_EPJ
+            // Cart worker pair → both sides count as EPJ (effective categories, only for this calculation).
+            val cartPair = isCartPair(deviceId, rCategory)
+            val myCat = if (cartPair) BleConstants.CAT_EPJ else fx.myCategory
+            val rCat  = if (cartPair) BleConstants.CAT_EPJ else rCategory
+            val iAmWalker   = myCat == BleConstants.CAT_WALKER
+            val iAmForklift = myCat == BleConstants.CAT_FORKLIFT
+            val iAmEpj      = myCat == BleConstants.CAT_EPJ
+            val rIsWalker   = rCat == BleConstants.CAT_WALKER
+            val rIsForklift = rCat == BleConstants.CAT_FORKLIFT
+            val rIsEpj      = rCat == BleConstants.CAT_EPJ
             // Per role pair: pedestrian↔forklift gets a strong early warning (+6), pedestrian↔EPJ a milder one (+2).
             //   EPJs work slowly in the same space, so the forklift threshold would over-alert → a separate offset.
             //   Equipment↔equipment gets equipVsEquipBiasDb below; only pedestrian↔pedestrian is 0.
@@ -512,6 +528,7 @@ class AlertStateMachine(
         registry.addImmediate("approachLastSeenMap", approachLastSeenMap)
         registry.addImmediate("forwardBiasLatchMap", forwardBiasLatchMap)
         registry.addImmediate("peerInZoneMap", peerInZoneMap)
+        registry.addImmediate("peerCartMap", peerCartMap)
         registry.addImmediate("suddenLabelMap", suddenLabelMap)
         registry.addImmediate("deviceCategoryMap", deviceCategoryMap)
         registry.addImmediate("deviceStateMap", deviceStateMap)
@@ -1008,8 +1025,9 @@ class AlertStateMachine(
         //   approach while moving cannot be suppressed by the gate's structure.
         //   Global flag ON = suppress all pairs (superset); EPJ-pair flag OFF = only the global flag applies
         //   (kill switch).
-        val epjQuietPair = (fx.myCategory == BleConstants.CAT_EPJ || rCategory == BleConstants.CAT_EPJ) &&
-            fx.myCategory != BleConstants.CAT_FORKLIFT && rCategory != BleConstants.CAT_FORKLIFT
+        val epjQuietPair = isCartPair(deviceId, rCategory) ||
+            ((fx.myCategory == BleConstants.CAT_EPJ || rCategory == BleConstants.CAT_EPJ) &&
+            fx.myCategory != BleConstants.CAT_FORKLIFT && rCategory != BleConstants.CAT_FORKLIFT)
         val quietArmed = DevSettings.idleIdleSuppressEnabled ||
             (DevSettings.idleIdleSuppressEpjPairsEnabled && epjQuietPair)
         val idleIdleQuiet = quietArmed && payloadPresent &&
@@ -1117,7 +1135,7 @@ class AlertStateMachine(
         }
         if (specialConfirmed) {
             deviceRssiMap[deviceId]  = kalmanRssi
-            suddenLabelMap[deviceId] = fx.makeStateLabel(fx.extractDisplayName(deviceId), rCategory, rState)
+            suddenLabelMap[deviceId] = fx.makeStateLabel(fx.extractDisplayName(deviceId), rCategory, rState, deviceId)
             alertState[deviceId]     = Pair(BleConstants.LEVEL_DANGER, now)
             pendingDisplayMap.remove(deviceId)   // alert registered: clear pending display
             fx.bleScanner?.setEcoMode(false)   // switch to combat mode (ACTIVE) immediately
@@ -2072,7 +2090,7 @@ class AlertStateMachine(
             (rState == BleConstants.PSTATE_REVERSE || rState == BleConstants.PSTATE_LOADING) &&
             uwbD <= warnM &&
             peerInZoneMap[deviceId] != true) {   // peer declared IN_ZONE = harmless — blocks the special alert entirely
-            suddenLabelMap[deviceId] = fx.makeStateLabel(fx.extractDisplayName(deviceId), rCategory, rState)
+            suddenLabelMap[deviceId] = fx.makeStateLabel(fx.extractDisplayName(deviceId), rCategory, rState, deviceId)
             alertState[deviceId] = Pair(BleConstants.LEVEL_DANGER, now)
             pendingDisplayMap.remove(deviceId)
             fx.bleScanner?.setEcoMode(false)

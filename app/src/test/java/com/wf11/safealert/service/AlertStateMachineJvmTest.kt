@@ -47,6 +47,7 @@ class AlertStateMachineJvmTest {
     private class FakeEffects(
         override val myCategory: Int,
         override val myMode: String,
+        override val myCart: Boolean = false,
     ) : AlertStateMachine.Effects {
         override val myId: String = "SAFEALERT_DEVICE_ME"
         override val myZoneInside: Boolean = false
@@ -69,7 +70,7 @@ class AlertStateMachineJvmTest {
         override fun collapseOverlay() {}
         override fun sendStatusBroadcast(status: String) {}
         override fun extractDisplayName(deviceId: String): String = deviceId
-        override fun makeStateLabel(name: String, category: Int, state: Int): String = name
+        override fun makeStateLabel(name: String, category: Int, state: Int, deviceId: String): String = name
         override fun sendAlertBroadcast(deviceId: String, level: Int) {}
         override fun broadcastDeviceList() {}
         override fun oneSecAvgRssi(deviceId: String, rssi: Int): Int = rssi
@@ -158,5 +159,40 @@ class AlertStateMachineJvmTest {
             .map { it.name }
             .filter { it !in notPerDevice && asm.registry.sizeOf(it) == null }
         assertTrue("레지스트리에 등록되지 않은 기기별 맵: $unregistered", unregistered.isEmpty())
+    }
+
+    /**
+     * Cart workers: only when this phone is a cart worker, the peer is a walker-category device AND the peer's
+     * ext bit2 (peerCartMap) is on, the pair is judged like EPJ-EPJ (offset epjVsEpjBiasDb); every other pair keeps
+     * today's offset (walker-walker 0, walker-forklift/EPJ bias).
+     */
+    @Test
+    fun cartPair_judgedAsEpjPair_onlyWhenBothPhonesAreCarts() {
+        val id = "SAFEALERT_WALKER_PEER01"
+        fun asm(myCart: Boolean, peerCart: Boolean): AlertStateMachine =
+            AlertStateMachine(FakeEffects(BleConstants.CAT_WALKER, "WALKER", myCart), UwbDistanceManager { null })
+                .also { if (peerCart) it.peerCartMap[id] = true }
+        fun offset(a: AlertStateMachine, rCategory: Int) =
+            a.computePayloadRiskOffset(id, rCategory, BleConstants.PSTATE_IDLE, 0.0)
+
+        val both = asm(myCart = true, peerCart = true)
+        assertEquals(DevSettings.epjVsEpjBiasDb, offset(both, BleConstants.CAT_WALKER))
+        assertTrue(both.isCartPair(id, BleConstants.CAT_WALKER))
+
+        val peerNotCart = asm(myCart = true, peerCart = false)
+        assertEquals(0, offset(peerNotCart, BleConstants.CAT_WALKER))
+        assertTrue(!peerNotCart.isCartPair(id, BleConstants.CAT_WALKER))
+
+        val meNotCart = asm(myCart = false, peerCart = true)
+        assertEquals(0, offset(meNotCart, BleConstants.CAT_WALKER))
+        assertTrue(!meNotCart.isCartPair(id, BleConstants.CAT_WALKER))
+
+        val vsForklift = asm(myCart = true, peerCart = true)
+        assertEquals(DevSettings.walkerVsEquipBiasDb, offset(vsForklift, BleConstants.CAT_FORKLIFT))
+        assertTrue(!vsForklift.isCartPair(id, BleConstants.CAT_FORKLIFT))
+
+        val vsEpj = asm(myCart = true, peerCart = true)
+        assertEquals(DevSettings.walkerVsEpjBiasDb, offset(vsEpj, BleConstants.CAT_EPJ))
+        assertTrue(!vsEpj.isCartPair(id, BleConstants.CAT_EPJ))
     }
 }

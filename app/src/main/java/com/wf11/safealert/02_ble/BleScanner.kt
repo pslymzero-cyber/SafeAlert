@@ -224,6 +224,7 @@ class BleScanner(private val scanner: BluetoothLeScanner) {
                 //   loss as when it leaves range. The rescue request alert itself (onPeerSos) is unchanged.
                 val peerSos = BleConstants.decodeSos(extByte)
                 if (!peerSos) detectedDevices[fullId] = System.currentTimeMillis()
+                scanCallback?.onPeerCart(fullId, BleConstants.decodeCart(extByte))   // Extension byte bit2 (cart worker); must precede onDeviceDetected
                 scanCallback?.onDeviceDetected(fullId, rssi, remoteState, remoteTurn, payloadPresent, peerEchoRssi, peerInZone, peerSos)
                 // SOS info scan response (0x5053: SOS ID + scope byte + zone + worker code); looked up only for a rescue request advert
                 val sosInfo = if (peerSos) record.getManufacturerSpecificData(BleConstants.COMPANY_ID_SOS_INFO) else null

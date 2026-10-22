@@ -15,7 +15,10 @@ class BleAdvertiser(
     // Sender role (Category), packed into the 1-byte payload at bits 7:6.
     //   Walker=CAT_WALKER / EPJ=CAT_EPJ / Forklift=CAT_FORKLIFT
     private val category: Int = BleConstants.CAT_WALKER,
-    private val onStatusUpdate: ((String) -> Unit)? = null
+    private val onStatusUpdate: ((String) -> Unit)? = null,
+    // Cart worker marker (ext byte bit2). The advertiser is rebuilt on every start and a running phone never
+    //   switches walker <-> cart, so a fixed constructor value is enough.
+    private val cart: Boolean = false
 ) {
     companion object {
         private const val TAG = "BleAdvertiser"
@@ -318,7 +321,7 @@ class BleAdvertiser(
                 //   (ID limited to 12B → max 31B).
                 SosAdvert.serviceData(
                     BleConstants.encodePayload(category, currentState, currentTurnDir, currentRisk),
-                    BleConstants.encodeExt(currentInZone, currentSos),
+                    BleConstants.encodeExt(currentInZone, currentSos, cart),
                     if (sosExt) sosEpisode else 0,
                     sosHint
                 )

@@ -64,6 +64,7 @@ class BleService : LifecycleService() {
         //   on returning to the screen, a notification button) — the main screen asks for the equipment once (MainActivity)
         const val K_PIT_ASK            = "pit_ask"
         const val EXTRA_CATEGORY       = "extra_category"       // sender role Category (CAT_*)
+        const val EXTRA_CART           = "extra_cart"           // ACTION_START_WALKER only: boolean, started as a cart worker (absent = false)
         const val EXTRA_PSTATE         = "extra_pstate"         // STATE value for ACTION_TEST_STATE (PSTATE_*)
         const val EXTRA_ALERT_LEVEL    = "extra_alert_level"
         const val EXTRA_DISPLAY_NAME   = "extra_display_name"
@@ -104,6 +105,8 @@ class BleService : LifecycleService() {
     private var myMode = ""
     // My role (Category) — packed into advertising payload bits[1:0]. Defaults to walker.
     private var myCategory = BleConstants.CAT_WALKER
+    // Started as a cart worker (walker category + ext bit2). Rewritten at every start; restored from running_cart.
+    private var myCart = false
     private var testRunnable: Runnable? = null
     private val testHandler = android.os.Handler(android.os.Looper.getMainLooper())
 
@@ -475,6 +478,7 @@ class BleService : LifecycleService() {
         override val myId get() = this@BleService.myId
         override val myMode get() = this@BleService.myMode
         override val myCategory get() = this@BleService.myCategory
+        override val myCart get() = this@BleService.myCart
         override val myZoneInside get() = this@BleService.myZoneInside
         override var activeSoundLevel: Int
             get() = this@BleService.activeSoundLevel
@@ -500,7 +504,7 @@ class BleService : LifecycleService() {
         override fun collapseOverlay() = this@BleService.collapseOverlay()
         override fun sendStatusBroadcast(status: String) = this@BleService.sendStatusBroadcast(status)
         override fun extractDisplayName(deviceId: String) = this@BleService.extractDisplayName(deviceId)
-        override fun makeStateLabel(name: String, category: Int, state: Int) = this@BleService.makeStateLabel(name, category, state)
+        override fun makeStateLabel(name: String, category: Int, state: Int, deviceId: String) = this@BleService.makeStateLabel(name, category, state, deviceId)
         override fun sendAlertBroadcast(deviceId: String, level: Int) = this@BleService.sendAlertBroadcast(deviceId, level)
         override fun broadcastDeviceList() = this@BleService.broadcastDeviceList()
         override fun oneSecAvgRssi(deviceId: String, rssi: Int) = this@BleService.oneSecAvgRssi(deviceId, rssi)
@@ -710,7 +714,8 @@ class BleService : LifecycleService() {
                 myId   = prefs.getString("device_id", "SA-DEFAULT") ?: "SA-DEFAULT"
                 myCategory = prefs.getInt("running_category",
                     if (savedMode == "DEVICE") BleConstants.CAT_FORKLIFT else BleConstants.CAT_WALKER)
-                if (!startForegroundTyped("${categoryRoleName(myCategory)} 실행 중", "재시작됨")) return failStart(startId)
+                myCart = savedMode == "WALKER" && prefs.getBoolean("running_cart", false)
+                if (!startForegroundTyped("${myRoleName()} 실행 중", "재시작됨")) return failStart(startId)
                 myMode = savedMode
                 // An instance started from a notification button is exempt from the while-in-use
                 // permission restriction, so it doesn't count as a background start
@@ -742,13 +747,14 @@ class BleService : LifecycleService() {
                 myMode = "DEVICE"
                 // DEVICE mode is EPJ (01) or forklift (10) — told apart by the Category extra (default forklift)
                 myCategory = intent.getIntExtra(EXTRA_CATEGORY, BleConstants.CAT_FORKLIFT)
+                myCart = false
                 // Save the mode: used by onStartCommand to restore after a START_STICKY restart
                 saveRunningMode(myMode, myId, myCategory)
                 clearPitAsk()   // started from the screen, right after the equipment picker
                 loneWorker.keepRunning() // Drops a pending stop after a rescuer's release
                 LoneWorkerMonitor.rescuerStopped = false // A start command handled after the stop must not leave the new monitoring stopped
                 bgStarted = false
-                if (!startForegroundTyped("${categoryRoleName(myCategory)} 실행 중",
+                if (!startForegroundTyped("${myRoleName()} 실행 중",
                         buildSubText(DevSettings.deviceTx, DevSettings.deviceRx))) return failStart(startId)
                 applyMode()
             }
@@ -756,12 +762,13 @@ class BleService : LifecycleService() {
                 myId   = intent.getStringExtra(EXTRA_ID) ?: "WALKER_001"
                 myMode = "WALKER"
                 myCategory = BleConstants.CAT_WALKER   // always walker
+                myCart = intent.getBooleanExtra(EXTRA_CART, false)
                 saveRunningMode(myMode, myId, myCategory)
                 clearPitAsk()
                 loneWorker.keepRunning() // Drops a pending stop after a rescuer's release
                 LoneWorkerMonitor.rescuerStopped = false // A start command handled after the stop must not leave the new monitoring stopped
                 bgStarted = false
-                if (!startForegroundTyped("보행자 실행 중", buildSubText(DevSettings.walkerTx, DevSettings.walkerRx))) return failStart(startId)
+                if (!startForegroundTyped("${myRoleName()} 실행 중", buildSubText(DevSettings.walkerTx, DevSettings.walkerRx))) return failStart(startId)
                 applyMode()
             }
             ACTION_STOP       -> requestStop()
@@ -827,6 +834,7 @@ class BleService : LifecycleService() {
             .putString("running_mode", mode)
             .putString("device_id", id)
             .putInt("running_category", category)   // for restoring the role
+            .putBoolean("running_cart", myCart)     // cart worker flag (rewritten at every start)
             .putLong(BootRestoreReceiver.K_STARTED_AT, System.currentTimeMillis())   // stop records older than this are ignored
             .commit()   // synchronous save — async .apply() loss would desync restore and stop
     }
@@ -900,7 +908,8 @@ class BleService : LifecycleService() {
                 val prefix = if (myMode == "DEVICE") BleConstants.DEVICE_PREFIX else BleConstants.WALKER_PREFIX
                 // Pass the role (Category) to the advertiser → packed into 1-byte payload bits[1:0]
                 val bleAdv = BleAdvertiser(advertiser, prefix, myCategory,
-                    onStatusUpdate = { msg -> sendStatusBroadcast(msg) }
+                    onStatusUpdate = { msg -> sendStatusBroadcast(msg) },
+                    cart = myCart
                 )
                 bleAdvertiser = bleAdv
                 // Advertising failures go to the persistent notification, not just the log
@@ -944,6 +953,7 @@ class BleService : LifecycleService() {
                     s.startScanning(object : BleScanCallback {
                         override fun onDeviceDetected(deviceId: String, rssi: Int, remoteState: Int, remoteTurn: Int, payloadPresent: Boolean, peerEchoRssi: Int, peerInZone: Boolean, peerSos: Boolean) =
                             handleDeviceDetected(deviceId, rssi, remoteState, remoteTurn, payloadPresent, peerEchoRssi, peerInZone, peerSos)
+                        override fun onPeerCart(deviceId: String, cart: Boolean) { asm.peerCartMap[deviceId] = cart }
                         override fun onDeviceLost(deviceId: String) = handleDeviceLost(deviceId)
                         override fun onScanError(errorCode: Int) { Log.e(TAG, "스캔 오류: $errorCode") }
                         override fun onUwbAddressReceived(deviceId: String, uwbAddress: ByteArray) {
@@ -1003,7 +1013,8 @@ class BleService : LifecycleService() {
         if (myMode == "WALKER"
             && deviceId.startsWith(BleConstants.WALKER_PREFIX)
             && !(deviceId.contains("BEA_") && !BeaconRegistry.isVisitorBeacon(deviceId))   // only visitor beacons are treated as walkers; equipment/unregistered ones alert
-            && !DevSettings.walkerDetectsWalker) return
+            && !DevSettings.walkerDetectsWalker
+            && !(myCart && asm.peerCartMap[deviceId] == true)) return   // cart workers detect each other
 
         // Full safe-zone suppression — inside a zone only zone-beacon signals are received.
         //   BleScanner routes zone beacons through the dedicated onZoneBeaconSignal path, so they never reach here and this
@@ -1498,7 +1509,7 @@ class BleService : LifecycleService() {
      *   itself is always shown while monitoring.
      */
     private fun updateFloatingOverlay() {
-        OverlayManager.showSidebar(this, hazardListForOverlay(), categoryRoleName(myCategory))
+        OverlayManager.showSidebar(this, hazardListForOverlay(), myRoleName())
     }
 
     /**
@@ -1507,7 +1518,7 @@ class BleService : LifecycleService() {
      *   updateFloatingOverlay() on that path would leave the list showing, so pass an empty list explicitly.
      */
     private fun collapseOverlay() {
-        OverlayManager.showSidebar(this, emptyList(), categoryRoleName(myCategory))
+        OverlayManager.showSidebar(this, emptyList(), myRoleName())
     }
 
     private fun startScanHealthCheck() {
@@ -1605,6 +1616,16 @@ class BleService : LifecycleService() {
         else                      -> "보행자"
     }
 
+    /** My own role name for display (mine only): equipment keeps its name, walkers are split into walking/cart workers. */
+    private fun myRoleName(): String = when (myCategory) {
+        BleConstants.CAT_EPJ, BleConstants.CAT_FORKLIFT -> categoryRoleName(myCategory)
+        else -> if (myCart) "카트 작업자" else "보행 작업자"
+    }
+
+    /** Another device's role name: "카트 작업자" only when both phones are cart workers, otherwise the plain category name. */
+    private fun peerRoleName(deviceId: String, category: Int): String =
+        if (asm.isCartPair(deviceId, category)) "카트 작업자" else categoryRoleName(category)
+
     /**
      * Role label for device display.
      * With a decoded Category cache it distinguishes walker/EPJ/forklift;
@@ -1612,7 +1633,7 @@ class BleService : LifecycleService() {
      */
     private fun typeLabelOf(deviceId: String): String {
         val cat = deviceCategoryMap[deviceId]
-        return if (cat != null) categoryRoleName(cat)
+        return if (cat != null) peerRoleName(deviceId, cat)
                else if (deviceId.startsWith(BleConstants.DEVICE_PREFIX)) "장비" else "보행자"
     }
 
@@ -1629,7 +1650,7 @@ class BleService : LifecycleService() {
         val moving = (deviceStateMap[deviceId] ?: BleConstants.PSTATE_IDLE) != BleConstants.PSTATE_IDLE
         // Shows the decoded hex (role and turn bits) in readable form — the receiver's popup/overlay/list shows
         //   the sender's role (forklift/EPJ/walker) and turn direction. Role prefix only with a payload cache (no beacon fallback).
-        val rolePrefix = deviceCategoryMap[deviceId]?.let { "[${categoryRoleName(it)}] " } ?: ""
+        val rolePrefix = deviceCategoryMap[deviceId]?.let { "[${peerRoleName(deviceId, it)}] " } ?: ""
         val turnWord = if (moving) when (deviceTurnMap[deviceId] ?: BleConstants.TURN_STRAIGHT) {
             BleConstants.TURN_LEFT  -> "좌회전하며 "
             BleConstants.TURN_RIGHT -> "우회전하며 "
@@ -1651,8 +1672,8 @@ class BleService : LifecycleService() {
      *   Loading/work (LOADING): forklift "{name} 상부 고소 작업 중! 낙하물 주의!", others "{name} {role} 하역·작업 중! 주의!"
      *   ※ Stopped/normal (IDLE) and forward/driving (FORWARD) are not special alerts, so this is not called for them (fallback only).
      */
-    private fun makeStateLabel(name: String, category: Int, state: Int): String {
-        val role = categoryRoleName(category)
+    private fun makeStateLabel(name: String, category: Int, state: Int, deviceId: String): String {
+        val role = peerRoleName(deviceId, category)
         return when (state) {
             BleConstants.PSTATE_REVERSE ->
                 if (category == BleConstants.CAT_FORKLIFT) "$name 지게차 후진 중! 주의!"
@@ -2081,7 +2102,7 @@ class BleService : LifecycleService() {
 
     // Switch target for the notification action label — same mapping as MainActivity.switchTargetLabel().
     //   WALKER→"지게차" / DEVICE (incl. legacy EPJ)→"보행자".
-    private fun switchTargetName(): String = if (myMode == "WALKER") "지게차" else "보행자"
+    private fun switchTargetName(): String = if (myMode == "WALKER") "지게차" else "작업자"
 
     private fun buildNotification(title: String, subText: String): android.app.Notification {
         // Tapping the body = mute. The target is the whole notification body (title and text), not an action button.
@@ -2163,12 +2184,12 @@ class BleService : LifecycleService() {
         } else if (myZoneInside) {
             // Show the safe zone explicitly — priority right after a fault.
             //   A loss of protection must not be hidden behind the "안전구역" label, so the fault comes first.
-            title = "세이프존 — ${categoryRoleName(myCategory)}"
+            title = "세이프존 — ${myRoleName()}"
             body  = "안전구역 안입니다 · 경보 송수신 중지" + fallbackNote
         } else {
             val doTx = if (myMode == "DEVICE") DevSettings.deviceTx else DevSettings.walkerTx
             val doRx = if (myMode == "DEVICE") DevSettings.deviceRx else DevSettings.walkerRx
-            title = "${categoryRoleName(myCategory)} 실행 중"
+            title = "${myRoleName()} 실행 중"
             body  = buildSubText(doTx, doRx) + fallbackNote
         }
 
