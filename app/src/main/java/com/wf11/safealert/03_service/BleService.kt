@@ -711,17 +711,26 @@ class BleService : LifecycleService() {
             val canStart  = ServiceStartGate.canStart(this)
             if (savedMode != null && canStart) {
                 myId   = prefs.getString("device_id", "SA-DEFAULT") ?: "SA-DEFAULT"
-                myCategory = prefs.getInt("running_category",
+                // A 1.2.16 cart worker was saved as WALKER + running_cart; move it once to the EPJ signal (DEVICE / CAT_EPJ / cart).
+                //   Deferred while my own SOS is stored: the SOS keeps the identity it began with and moves on a later restore or start.
+                val savedCart = prefs.getBoolean("running_cart", false)
+                val migrate = savedMode == "WALKER" && savedCart && !LoneWorkerSosSync.hasStoredSos(this)
+                val restoreMode = if (migrate) "DEVICE" else savedMode
+                myCategory = if (migrate) BleConstants.CAT_EPJ else prefs.getInt("running_category",
                     if (savedMode == "DEVICE") BleConstants.CAT_FORKLIFT else BleConstants.CAT_WALKER)
-                myCart = savedMode == "WALKER" && prefs.getBoolean("running_cart", false)
+                myCart = savedCart
                 if (!startForegroundTyped("${myRoleName()} 실행 중", "재시작됨")) return failStart(startId)
-                myMode = savedMode
+                myMode = restoreMode
+                if (migrate) {
+                    saveRunningMode(myMode, myId, myCategory)   // same ID (worker code), now the EPJ signal
+                    Log.i(TAG, "1.2.16 카트 감시를 EPJ 로 옮김")
+                }
                 // An instance started from a notification button is exempt from the while-in-use
                 // permission restriction, so it doesn't count as a background start
                 bgStarted = intent == null || intent.getBooleanExtra(BootRestoreReceiver.EXTRA_BOOT_RESTORE, false)
                 // Equipment restarted with the saved equipment, without the picker: the screen asks once (monitoring keeps running)
                 val ed = prefs.edit().putLong(BootRestoreReceiver.K_STARTED_AT, System.currentTimeMillis())
-                if (savedMode == "DEVICE") ed.putBoolean(K_PIT_ASK, true)
+                if (restoreMode == "DEVICE" && !myCart) ed.putBoolean(K_PIT_ASK, true)   // a cart never gets the equipment question
                 ed.apply()
                 applyMode()
                 if (intent?.action == null) return START_STICKY   // notification action: continue into the when below
@@ -1614,10 +1623,11 @@ class BleService : LifecycleService() {
         else                      -> "보행자"
     }
 
-    /** My own role name for display (mine only): equipment keeps its name, walkers are split into walking/cart workers. */
-    private fun myRoleName(): String = when (myCategory) {
-        BleConstants.CAT_EPJ, BleConstants.CAT_FORKLIFT -> categoryRoleName(myCategory)
-        else -> if (myCart) "카트 작업자" else "보행 작업자"
+    /** My own role name for display (mine only): a cart worker (EPJ signal) is named as such, otherwise equipment keeps its name. */
+    private fun myRoleName(): String = when {
+        myCart -> "카트 작업자"
+        myCategory == BleConstants.CAT_EPJ || myCategory == BleConstants.CAT_FORKLIFT -> categoryRoleName(myCategory)
+        else -> "보행 작업자"
     }
 
     /** Another device's role name: any device that declares the cart marker (ext bit2) is shown as a cart worker (display only). */
@@ -2099,8 +2109,8 @@ class BleService : LifecycleService() {
     }
 
     // Switch target for the notification action label — same mapping as MainActivity.switchTargetLabel().
-    //   WALKER→"지게차" / DEVICE (incl. legacy EPJ)→"보행자".
-    private fun switchTargetName(): String = if (myMode == "WALKER") "지게차" else "작업자"
+    //   worker side (walking worker or cart) → "지게차" (equipment picker) / equipment → "작업자".
+    private fun switchTargetName(): String = if (myMode == "WALKER" || myCart) "지게차" else "작업자"
 
     private fun buildNotification(title: String, subText: String): android.app.Notification {
         // Tapping the body = mute. The target is the whole notification body (title and text), not an action button.

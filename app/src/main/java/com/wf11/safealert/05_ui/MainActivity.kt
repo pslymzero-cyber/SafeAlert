@@ -735,10 +735,10 @@ class MainActivity : AppCompatActivity() {
     // Role switch while running (stop → restart) — the role prefix (DEVICE_/WALKER_) is baked into the advertised fullId,
     //   and there is no API to change the category while running, so stopServiceImmediately() and then a fresh start
     //   is the only safe path. EMA warm-up softens the cold start in the switch gap.
-    //   Mapping: WALKER → equipment picker (startAsPitOperator; the chosen equipment sets the category) /
-    //   DEVICE (incl. legacy EPJ) → walker (WALKER, CAT_WALKER).
+    //   Mapping: worker side (walking worker or cart) → equipment picker (startAsPitOperator; the chosen equipment sets
+    //   the category) / equipment → worker card (walking worker, or cart = DEVICE / CAT_EPJ / cart).
     private fun switchTargetLabel(): String =
-        if (currentMode == "WALKER") "장비 작업자" else "작업자"
+        if (currentMode == "WALKER" || currentCart) "장비 작업자" else "작업자"
 
     // Handle the persistent notification's switch action. Consume the action (action=null) so the same intent
     //   doesn't revive the dialog on rotation/resume. Ignored when not monitoring.
@@ -751,20 +751,21 @@ class MainActivity : AppCompatActivity() {
 
     private fun confirmSwitchRole() {
         if (LoneWorkerUi.blockIfOwnSos(this)) return   // Block switching during an SOS
-        val mode = currentMode ?: return
+        if (currentMode == null) return
+        val workerSide = currentMode == "WALKER" || currentCart
         val target = switchTargetLabel()
         AlertDialog.Builder(this)
             .setTitle("작업 전환")
             .setMessage("현재 감시를 중지하고 '${target}' 역할로 다시 시작합니다.\n전환 중 1~2초간 감시가 중단됩니다.")
             .setPositiveButton("전환") { _, _ ->
                 // To a worker: pick walking/cart worker first; cancelling the list leaves the equipment monitoring running
-                if (mode == "WALKER") performSwitchRole(mode) else pickWorkerKind { cart -> performSwitchRole(mode, cart) }
+                if (workerSide) performSwitchRole(true) else pickWorkerKind { cart -> performSwitchRole(false, cart) }
             }
             .setNegativeButton("취소", null)
             .show()
     }
 
-    private fun performSwitchRole(fromMode: String, cart: Boolean = false) {
+    private fun performSwitchRole(toEquipment: Boolean, cart: Boolean = false) {
         if (LoneWorkerUi.blockIfOwnSos(this)) return   // An SOS started while the confirm dialog was open
         stopServiceImmediately()
         // 800ms delay between stop and restart — if ACTION_STOP handling (BLE teardown) overlaps the new start,
@@ -773,7 +774,7 @@ class MainActivity : AppCompatActivity() {
             if (isFinishing || isDestroyed) return@postDelayed
             if (LoneWorkerUi.blockIfOwnSos(this)) return@postDelayed   // An SOS started while waiting to switch
             // Switching to equipment also asks to pick the equipment — the chosen equipment sets the role
-            if (fromMode == "WALKER") startAsPitOperator()
+            if (toEquipment) startAsPitOperator()
             else onWorkerPicked(cart)
         }, 800L)
     }
@@ -815,11 +816,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     /** Category (CAT_*) -> role name on the running card (walkers: walking or cart worker). No emoji — iv_role_icon (vector) shows the icon. */
-    private fun roleDisplayName(category: Int): String = when (category) {
-        BleConstants.CAT_EPJ      -> "EPJ 작업자"
-        BleConstants.CAT_FORKLIFT -> "지게차"
-        BleConstants.CAT_WALKER   -> if (currentCart) "카트 작업자" else "보행 작업자"
-        else                      -> if (currentCart) "카트 작업자" else "보행 작업자"
+    private fun roleDisplayName(category: Int): String = when {
+        currentCart                          -> "카트 작업자"
+        category == BleConstants.CAT_EPJ      -> "EPJ 작업자"
+        category == BleConstants.CAT_FORKLIFT -> "지게차"
+        else                                  -> "보행 작업자"
     }
 
     // TEST button's normal accent (per role) — used by toggleTestAlert/stopServiceImmediately to restore it
@@ -831,7 +832,9 @@ class MainActivity : AppCompatActivity() {
      *   stopServiceImmediately hides them when returning to the selection screen.
      */
     private fun applyRoleVisuals(category: Int) {
-        val (bgRes, iconRes, accent) = when (category) {
+        val (bgRes, iconRes, accent) = if (currentCart) {
+            Triple(R.drawable.bg_walker, R.drawable.ic_cart, 0xFF4ADE80.toInt())   // cart worker: worker-side green, cart icon
+        } else when (category) {
             BleConstants.CAT_FORKLIFT -> Triple(R.drawable.bg_forklift, R.drawable.ic_forklift, 0xFFF97316.toInt())
             BleConstants.CAT_EPJ      -> Triple(R.drawable.bg_epj,      R.drawable.ic_epj,      0xFFD7DEE8.toInt())
             else                      -> Triple(R.drawable.bg_walker,   R.drawable.ic_walker,   0xFF4ADE80.toInt())
@@ -941,7 +944,7 @@ class MainActivity : AppCompatActivity() {
      * the question never leaves monitoring off. Not over my own SOS - it asks once that is over.
      */
     private fun askPitIfRestored() {
-        if (currentMode != "DEVICE" || pitAskOpen || !prefs.getBoolean(BleService.K_PIT_ASK, false)) return
+        if (currentMode != "DEVICE" || currentCart || pitAskOpen || !prefs.getBoolean(BleService.K_PIT_ASK, false)) return
         if (LoneWorkerMonitor.current?.sosActive == true) return
         prefs.edit().putBoolean(BleService.K_PIT_ASK, false).apply()   // asked once; cancel keeps the running equipment
         pitAskOpen = true

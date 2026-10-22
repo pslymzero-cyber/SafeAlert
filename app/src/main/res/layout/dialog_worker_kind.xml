@@ -139,7 +139,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="@dimen/sa_space_hairline"
-                    android:text="카트를 밀며 일함 · 카트끼리 서로 경보"
+                    android:text="카트를 밀며 일함 · EPJ와 같은 경보"
                     android:textSize="@dimen/sa_type_caption"
                     android:textColor="@color/sa_text_tertiary" />
             </LinearLayout>
