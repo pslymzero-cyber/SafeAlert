@@ -66,6 +66,8 @@ class MainActivity : AppCompatActivity() {
     private var pitAskOpen = false   // the equipment question for a restarted equipment session is on screen (askPitIfRestored)
     // Selected role (Category) — passed BleService → BleAdvertiser as bits[1:0] of the 1-byte payload
     private var currentCategory: Int = BleConstants.CAT_WALKER
+    // Worker kind: a cart worker sends BleService.EXTRA_CART true (walker category, only the ext bit2 differs)
+    private var currentCart: Boolean = false
     private var testAlertRunning = false
 
     // Detected-device list — replaced wholesale with each BleService.alertState snapshot.
@@ -296,7 +298,7 @@ class MainActivity : AppCompatActivity() {
         // There is a single equipment card. The chosen equipment sets the role (Category) —
         //   picking a role first and then equipment could make the two disagree.
         //   EPJ and walkie stacker are picked from the equipment list.
-        binding.cardRoleWalker.setOnClickListener   { requireSiteCode { requireWorkerCode { onRoleSelected("WALKER", BleConstants.CAT_WALKER) } } }
+        binding.cardRoleWalker.setOnClickListener   { requireSiteCode { requireWorkerCode { pickWorkerKind { cart -> onRoleSelected("WALKER", BleConstants.CAT_WALKER, cart) } } } }
         binding.cardRoleForklift.setOnClickListener { requireSiteCode { requireWorkerCode { startAsPitOperator() } } }
         binding.btnStop.setOnClickListener       { if (!LoneWorkerUi.blockIfOwnSos(this)) stopServiceImmediately() }
         binding.btnSwitchRole.setOnClickListener { confirmSwitchRole() }   // Role switch
@@ -535,9 +537,10 @@ class MainActivity : AppCompatActivity() {
         binding.tvBleStatus.text = sb
     }
 
-    private fun onRoleSelected(mode: String, category: Int) {
+    private fun onRoleSelected(mode: String, category: Int, cart: Boolean = false) {
         currentMode = mode
         currentCategory = category
+        currentCart = cart
         // Save the role (Category) for restore — keeps labels consistent after a START_STICKY service restart or app relaunch
         prefs.edit().putInt("running_category", category).apply()
         binding.layoutPermissionWarning.visibility = View.GONE
@@ -663,6 +666,7 @@ class MainActivity : AppCompatActivity() {
             this.action = action
             putExtra(BleService.EXTRA_ID, id)
             putExtra(BleService.EXTRA_CATEGORY, currentCategory)   // Pass the role Category
+            putExtra(BleService.EXTRA_CART, mode == "WALKER" && currentCart)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent)
         else startService(intent)
@@ -671,6 +675,7 @@ class MainActivity : AppCompatActivity() {
             .putString("running_mode", mode)
             .putLong("running_since", since)
             .putInt("running_category", currentCategory)
+            .putBoolean("running_cart", mode == "WALKER" && currentCart)
             .apply()
         showRunningUi(mode, since)
     }
@@ -725,7 +730,7 @@ class MainActivity : AppCompatActivity() {
     //   Mapping: WALKER → equipment picker (startAsPitOperator; the chosen equipment sets the category) /
     //   DEVICE (incl. legacy EPJ) → walker (WALKER, CAT_WALKER).
     private fun switchTargetLabel(): String =
-        if (currentMode == "WALKER") "장비 작업자" else "보행자"
+        if (currentMode == "WALKER") "장비 작업자" else "작업자"
 
     // Handle the persistent notification's switch action. Consume the action (action=null) so the same intent
     //   doesn't revive the dialog on rotation/resume. Ignored when not monitoring.
@@ -743,12 +748,15 @@ class MainActivity : AppCompatActivity() {
         AlertDialog.Builder(this)
             .setTitle("작업 전환")
             .setMessage("현재 감시를 중지하고 '${target}' 역할로 다시 시작합니다.\n전환 중 1~2초간 감시가 중단됩니다.")
-            .setPositiveButton("전환") { _, _ -> performSwitchRole(mode) }
+            .setPositiveButton("전환") { _, _ ->
+                // To a worker: pick walking/cart worker first; cancelling the list leaves the equipment monitoring running
+                if (mode == "WALKER") performSwitchRole(mode) else pickWorkerKind { cart -> performSwitchRole(mode, cart) }
+            }
             .setNegativeButton("취소", null)
             .show()
     }
 
-    private fun performSwitchRole(fromMode: String) {
+    private fun performSwitchRole(fromMode: String, cart: Boolean = false) {
         if (LoneWorkerUi.blockIfOwnSos(this)) return   // An SOS started while the confirm dialog was open
         stopServiceImmediately()
         // 800ms delay between stop and restart — if ACTION_STOP handling (BLE teardown) overlaps the new start,
@@ -758,7 +766,7 @@ class MainActivity : AppCompatActivity() {
             if (LoneWorkerUi.blockIfOwnSos(this)) return@postDelayed   // An SOS started while waiting to switch
             // Switching to equipment also asks to pick the equipment — the chosen equipment sets the role
             if (fromMode == "WALKER") startAsPitOperator()
-            else onRoleSelected("WALKER", BleConstants.CAT_WALKER)
+            else onRoleSelected("WALKER", BleConstants.CAT_WALKER, cart)
         }, 800L)
     }
 
@@ -767,6 +775,7 @@ class MainActivity : AppCompatActivity() {
         val since = prefs.getLong("running_since", 0L)
         currentMode = mode
         currentCategory = prefs.getInt("running_category", BleConstants.CAT_WALKER)  // Restore role
+        currentCart = prefs.getBoolean("running_cart", false)
         showRunningUi(mode, since)
     }
 
@@ -797,12 +806,12 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** Category (CAT_*) -> role name on the running card. No emoji — iv_role_icon (vector) shows the icon. */
+    /** Category (CAT_*) -> role name on the running card (walkers: walking or cart worker). No emoji — iv_role_icon (vector) shows the icon. */
     private fun roleDisplayName(category: Int): String = when (category) {
         BleConstants.CAT_EPJ      -> "EPJ 작업자"
         BleConstants.CAT_FORKLIFT -> "지게차"
-        BleConstants.CAT_WALKER   -> "보행자"
-        else                      -> "보행자"
+        BleConstants.CAT_WALKER   -> if (currentCart) "카트 작업자" else "보행 작업자"
+        else                      -> if (currentCart) "카트 작업자" else "보행 작업자"
     }
 
     // TEST button's normal accent (per role) — used by toggleTestAlert/stopServiceImmediately to restore it
@@ -1056,6 +1065,14 @@ class MainActivity : AppCompatActivity() {
             return false
         }
         return true
+    }
+
+    /** Worker kind list: tapping an item starts that kind at once; tapping outside or back starts nothing. */
+    private fun pickWorkerKind(onPicked: (cart: Boolean) -> Unit) {
+        AlertDialog.Builder(this)
+            .setTitle("작업자 선택")
+            .setItems(arrayOf("보행 작업자", "카트 작업자")) { _, i -> onPicked(i == 1) }
+            .show()
     }
 
     private fun pickScope(isFloor: Boolean) {

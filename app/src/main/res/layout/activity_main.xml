@@ -540,7 +540,7 @@
                             <TextView
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                android:text="보행자"
+                                android:text="작업자"
                                 android:textSize="@dimen/sa_type_section"
                                 android:textStyle="bold"
                                 android:textColor="@color/sa_text_primary" />
@@ -548,7 +548,7 @@
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:layout_marginTop="@dimen/sa_space_hairline"
-                                android:text="도보 이동 작업자"
+                                android:text="보행 · 카트 작업자"
                                 android:textSize="@dimen/sa_type_caption"
                                 android:textColor="@color/sa_text_tertiary" />
                         </LinearLayout>
