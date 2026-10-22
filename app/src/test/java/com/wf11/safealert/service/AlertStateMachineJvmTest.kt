@@ -8,6 +8,7 @@ import com.wf11.safealert.ble.RssiPreFilter
 import com.wf11.safealert.utils.DevSettings
 import com.wf11.safealert.utils.UwbRanger
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -164,7 +165,8 @@ class AlertStateMachineJvmTest {
     /**
      * Cart workers: only when this phone is a cart worker, the peer is a walker-category device AND the peer's
      * ext bit2 (peerCartMap) is on, the pair is judged like EPJ-EPJ (offset epjVsEpjBiasDb); every other pair keeps
-     * today's offset (walker-walker 0, walker-forklift/EPJ bias).
+     * today's offset (walker-walker 0, walker-forklift/EPJ bias). The UWB walker gate and the stationary-pair quiet
+     * follow the same cart rule.
      */
     @Test
     fun cartPair_judgedAsEpjPair_onlyWhenBothPhonesAreCarts() {
@@ -194,5 +196,20 @@ class AlertStateMachineJvmTest {
         val vsEpj = asm(myCart = true, peerCart = true)
         assertEquals(DevSettings.walkerVsEpjBiasDb, offset(vsEpj, BleConstants.CAT_EPJ))
         assertTrue(!vsEpj.isCartPair(id, BleConstants.CAT_EPJ))
+
+        // Stationary-pair quiet scope (shared by the RSSI and UWB paths): cart pairs count as EPJ pairs.
+        assertTrue("카트끼리는 EPJ쌍 억제 범위", both.isEpjQuietPair(id, BleConstants.CAT_WALKER))
+        assertTrue(!peerNotCart.isEpjQuietPair(id, BleConstants.CAT_WALKER))
+        assertTrue(!meNotCart.isEpjQuietPair(id, BleConstants.CAT_WALKER))
+        assertTrue(vsEpj.isEpjQuietPair(id, BleConstants.CAT_EPJ))
+        assertTrue(!vsForklift.isEpjQuietPair(id, BleConstants.CAT_FORKLIFT))
+
+        // UWB walker gate (writes state, so last): cart pair is judged, walker pairs stay blocked.
+        both.judgeUwbOnly(id, 1f, 1_000L)
+        assertNotNull("카트끼리는 UWB 도 판정", both.alertState[id])
+        peerNotCart.judgeUwbOnly(id, 1f, 1_000L)
+        assertNull("보행 작업자 쌍 UWB 는 계속 막힘", peerNotCart.alertState[id])
+        meNotCart.judgeUwbOnly(id, 1f, 1_000L)
+        assertNull("보행 작업자 쌍 UWB 는 계속 막힘", meNotCart.alertState[id])
     }
 }

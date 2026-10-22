@@ -960,8 +960,10 @@ class BleService : LifecycleService() {
                             if (loneWorker.sosActive) return   // my rescue request runs: no proximity judgment, so no new UWB session
                             // Walker gate mirror — if a UWB session opened between walkers that judgment (onDeviceDetected) filtered out,
                             //   judgeUwbOnly would revive the filtered device. Block session setup itself.
+                            //   Cart pairs are let through like the RSSI gate (peerCartMap is filled by onPeerCart earlier in this scan result).
                             if (myMode == "WALKER" && deviceId.startsWith(BleConstants.WALKER_PREFIX)
-                                && !(deviceId.contains("BEA_") && !BeaconRegistry.isVisitorBeacon(deviceId)) && !DevSettings.walkerDetectsWalker) return
+                                && !(deviceId.contains("BEA_") && !BeaconRegistry.isVisitorBeacon(deviceId)) && !DevSettings.walkerDetectsWalker
+                                && !(myCart && asm.peerCartMap[deviceId] == true)) return
                             // Record the 0x9ABC sighting (diagnostics only — not used for judgment) + pass the address = session (re)open path
                             peerUwbSeenMap[deviceId] = System.currentTimeMillis()
                             uwbRanger?.onPeerUwbAddressReceived(deviceId, uwbAddress)

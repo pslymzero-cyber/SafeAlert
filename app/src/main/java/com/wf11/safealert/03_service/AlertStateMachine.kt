@@ -274,6 +274,15 @@ class AlertStateMachine(
         fx.myCart && fx.myCategory == BleConstants.CAT_WALKER &&
             rCategory == BleConstants.CAT_WALKER && peerCartMap[deviceId] == true
 
+    /**
+     * Stationary-pair quiet scope shared by the RSSI and UWB paths so the two cannot drift: EPJ pairs (no forklift
+     * involved) plus cart-worker pairs, which count as EPJ pairs.
+     */
+    internal fun isEpjQuietPair(deviceId: String, rCategory: Int?): Boolean =
+        (rCategory != null && isCartPair(deviceId, rCategory)) ||
+            ((fx.myCategory == BleConstants.CAT_EPJ || rCategory == BleConstants.CAT_EPJ) &&
+                fx.myCategory != BleConstants.CAT_FORKLIFT && rCategory != BleConstants.CAT_FORKLIFT)
+
     // Display-string override map for devices in the reverse/loading special alert.
     //   Value = fx.makeStateLabel text (e.g. "{name} 지게차 후진 중! 주의!") → shown instead of the plain name in the overlay/list.
     internal val suddenLabelMap    = mutableMapOf<String, String>()
@@ -1025,9 +1034,7 @@ class AlertStateMachine(
         //   approach while moving cannot be suppressed by the gate's structure.
         //   Global flag ON = suppress all pairs (superset); EPJ-pair flag OFF = only the global flag applies
         //   (kill switch).
-        val epjQuietPair = isCartPair(deviceId, rCategory) ||
-            ((fx.myCategory == BleConstants.CAT_EPJ || rCategory == BleConstants.CAT_EPJ) &&
-            fx.myCategory != BleConstants.CAT_FORKLIFT && rCategory != BleConstants.CAT_FORKLIFT)
+        val epjQuietPair = isEpjQuietPair(deviceId, rCategory)
         val quietArmed = DevSettings.idleIdleSuppressEnabled ||
             (DevSettings.idleIdleSuppressEpjPairsEnabled && epjQuietPair)
         val idleIdleQuiet = quietArmed && payloadPresent &&
@@ -2038,7 +2045,8 @@ class AlertStateMachine(
         // Walker gate, second safety net — blocking session setup (onUwbAddressReceived) is the first line, but leftover
         //   samples from an already-open session arriving here must not revive a filtered device.
         if (fx.myMode == "WALKER" && deviceId.startsWith(BleConstants.WALKER_PREFIX)
-            && !(deviceId.contains("BEA_") && !BeaconRegistry.isVisitorBeacon(deviceId)) && !DevSettings.walkerDetectsWalker) return
+            && !(deviceId.contains("BEA_") && !BeaconRegistry.isVisitorBeacon(deviceId)) && !DevSettings.walkerDetectsWalker
+            && !(fx.myCart && peerCartMap[deviceId] == true)) return   // cart workers range each other (mirror of the RSSI gate)
         val rCategory = deviceCategoryMap[deviceId]
         val rState    = deviceStateMap[deviceId]
         val forkliftPair = fx.myCategory == BleConstants.CAT_FORKLIFT ||
@@ -2170,8 +2178,8 @@ class AlertStateMachine(
 
         // Stationary↔stationary reduction (idle-idle quiet) — UWB peers always have a payload cache, so recompute from it
         // Role pairs (same semantics as the RSSI gate) — EPJ↔EPJ and EPJ↔walker pairs ON by default; pairs with a forklift excluded.
-        val epjQuietPair = !forkliftPair &&
-            (fx.myCategory == BleConstants.CAT_EPJ || rCategory == BleConstants.CAT_EPJ)
+        //   Cart-worker pairs count as EPJ pairs (same as RSSI).
+        val epjQuietPair = isEpjQuietPair(deviceId, rCategory)
         val quietArmed = DevSettings.idleIdleSuppressEnabled ||
             (DevSettings.idleIdleSuppressEpjPairsEnabled && epjQuietPair)
         val idleIdleQuiet = quietArmed && ImuFusion.isStationary &&
