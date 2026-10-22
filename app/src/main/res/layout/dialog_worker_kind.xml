@@ -1,0 +1,152 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Worker kind picker: two cards in the same look as the main-screen role cards (card_role_walker).
+  The dialog plate (SA.Dialog.Alert) is sa_surface, the same color as the cards,
+  so the root uses sa_bg to make the cards stand out like on the main screen.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@color/sa_bg"
+    android:paddingHorizontal="@dimen/sa_space_lg"
+    android:paddingTop="@dimen/sa_space_lg"
+    android:paddingBottom="@dimen/sa_space_md">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="작업자 선택"
+        android:textSize="@dimen/sa_type_section"
+        android:textStyle="bold"
+        android:textColor="@color/sa_text_primary" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/sa_space_hairline"
+        android:text="고르면 바로 감시를 시작합니다"
+        android:textSize="@dimen/sa_type_caption"
+        android:textColor="@color/sa_text_tertiary" />
+
+    <androidx.cardview.widget.CardView
+        android:id="@+id/card_worker_walk"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/sa_space_md"
+        android:foreground="?attr/selectableItemBackground"
+        android:clickable="true"
+        android:focusable="true"
+        app:cardCornerRadius="@dimen/sa_radius_md"
+        app:cardElevation="0dp"
+        app:cardBackgroundColor="@color/sa_surface">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:paddingHorizontal="@dimen/sa_space_lg"
+            android:paddingVertical="@dimen/sa_space_md"
+            android:gravity="center_vertical">
+
+            <LinearLayout
+                android:layout_width="@dimen/sa_icon_badge"
+                android:layout_height="@dimen/sa_icon_badge"
+                android:gravity="center"
+                android:background="@drawable/shape_icon_bg_green"
+                android:layout_marginEnd="14dp">
+                <ImageView
+                    android:layout_width="26dp"
+                    android:layout_height="26dp"
+                    android:src="@drawable/ic_walker"
+                    android:contentDescription="@null" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="보행 작업자"
+                    android:textSize="@dimen/sa_type_section"
+                    android:textStyle="bold"
+                    android:textColor="@color/sa_text_primary" />
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/sa_space_hairline"
+                    android:text="걸어서 이동하며 일함"
+                    android:textSize="@dimen/sa_type_caption"
+                    android:textColor="@color/sa_text_tertiary" />
+            </LinearLayout>
+
+            <ImageView
+                style="@style/SA.ChevronRight"
+                android:contentDescription="@null" />
+        </LinearLayout>
+    </androidx.cardview.widget.CardView>
+
+    <androidx.cardview.widget.CardView
+        android:id="@+id/card_worker_cart"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/sa_space_sm"
+        android:foreground="?attr/selectableItemBackground"
+        android:clickable="true"
+        android:focusable="true"
+        app:cardCornerRadius="@dimen/sa_radius_md"
+        app:cardElevation="0dp"
+        app:cardBackgroundColor="@color/sa_surface">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:paddingHorizontal="@dimen/sa_space_lg"
+            android:paddingVertical="@dimen/sa_space_md"
+            android:gravity="center_vertical">
+
+            <LinearLayout
+                android:layout_width="@dimen/sa_icon_badge"
+                android:layout_height="@dimen/sa_icon_badge"
+                android:gravity="center"
+                android:background="@drawable/shape_icon_bg_green"
+                android:layout_marginEnd="14dp">
+                <ImageView
+                    android:layout_width="26dp"
+                    android:layout_height="26dp"
+                    android:src="@drawable/ic_cart"
+                    android:contentDescription="@null" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="카트 작업자"
+                    android:textSize="@dimen/sa_type_section"
+                    android:textStyle="bold"
+                    android:textColor="@color/sa_text_primary" />
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/sa_space_hairline"
+                    android:text="카트를 밀며 일함 · 카트끼리 서로 경보"
+                    android:textSize="@dimen/sa_type_caption"
+                    android:textColor="@color/sa_text_tertiary" />
+            </LinearLayout>
+
+            <ImageView
+                style="@style/SA.ChevronRight"
+                android:contentDescription="@null" />
+        </LinearLayout>
+    </androidx.cardview.widget.CardView>
+</LinearLayout>

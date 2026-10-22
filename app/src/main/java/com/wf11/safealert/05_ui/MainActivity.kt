@@ -47,6 +47,7 @@ import com.wf11.safealert.utils.SiteScope
 import com.wf11.safealert.utils.WorkerCode
 import com.wf11.safealert.databinding.ActivityMainBinding
 import com.wf11.safealert.databinding.DialogPitSelectBinding
+import com.wf11.safealert.databinding.DialogWorkerKindBinding
 import com.wf11.safealert.firebase.FirebaseManager
 import com.wf11.safealert.service.BleService
 import com.wf11.safealert.service.LoneWorkerMonitor
@@ -64,6 +65,7 @@ class MainActivity : AppCompatActivity() {
     private val prefs by lazy { getSharedPreferences("safealert_prefs", MODE_PRIVATE) }
     private var currentMode: String? = null
     private var pitAskOpen = false   // the equipment question for a restarted equipment session is on screen (askPitIfRestored)
+    private var workerKindOpen = false   // the worker-kind card dialog is on screen; a second tap must not open another one
     // Selected role (Category) — passed BleService → BleAdvertiser as bits[1:0] of the 1-byte payload
     private var currentCategory: Int = BleConstants.CAT_WALKER
     // Worker kind: a cart worker sends BleService.EXTRA_CART true (walker category, only the ext bit2 differs)
@@ -1067,12 +1069,22 @@ class MainActivity : AppCompatActivity() {
         return true
     }
 
-    /** Worker kind list: tapping an item starts that kind at once; tapping outside or back starts nothing. */
+    /**
+     * Worker kind card dialog (same look as the main-screen role cards): tapping a card starts that
+     * kind at once; cancel / outside tap / back start nothing. Never opens twice.
+     */
     private fun pickWorkerKind(onPicked: (cart: Boolean) -> Unit) {
-        AlertDialog.Builder(this)
-            .setTitle("작업자 선택")
-            .setItems(arrayOf("보행 작업자", "카트 작업자")) { _, i -> onPicked(i == 1) }
-            .show()
+        if (workerKindOpen) return
+        workerKindOpen = true
+        val dlg = DialogWorkerKindBinding.inflate(layoutInflater)
+        val dialog = AlertDialog.Builder(this)
+            .setView(dlg.root)
+            .setNegativeButton("취소", null)
+            .setOnDismissListener { workerKindOpen = false }
+            .create()
+        dlg.cardWorkerWalk.setOnClickListener { dialog.dismiss(); onPicked(false) }
+        dlg.cardWorkerCart.setOnClickListener { dialog.dismiss(); onPicked(true) }
+        dialog.show()
     }
 
     private fun pickScope(isFloor: Boolean) {
