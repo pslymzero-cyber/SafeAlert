@@ -366,6 +366,22 @@ class LoneWorkerLogic(var myBleId: String) {
         raiseStillBase(nowMs)
     }
 
+    /** Shared by onAccident and previewFall: disabled, in SOS, or an accident check already open. */
+    private fun fallShut(): Boolean = !enabled || mode == Mode.SOS || (mode == Mode.CHECKING && trigger == "fall")
+
+    /** Shared by onAccident and previewFall: safe-zone and power ignore conditions for an impact at trigMs. */
+    private fun fallDropped(trigMs: Long, shape: MotionAnalyzer.FallShape): Boolean =
+        (zone.insideAtImpact(trigMs) && (charging || !zoneFall.passes(shape) ||
+                (lastUnplugAt != Long.MIN_VALUE && trigMs - lastUnplugAt <= UNPLUG_FALL_MS))) ||
+            (lastPlugAt != Long.MIN_VALUE && trigMs - lastPlugAt <= PLUG_EXCEPT_MS)
+
+    /**
+     * Read-only: would onAccident accept an impact now (same conditions) — for the on-screen count only. Does not see the
+     * restart zone hold (hold.zoneExpired) or JudgeOrder deferral, which apply only when FALL arrives, so a candidate can
+     * rarely show and then vanish; the judgment is unchanged. Unknown posture (null) passes zoneFall.
+     */
+    fun previewFall(trigMs: Long, shape: MotionAnalyzer.FallShape): Boolean = !fallShut() && !fallDropped(trigMs, shape)
+
     /**
      * Fall (trigMs = impact sample time). Discarded when disabled, in SOS or during an accident check;
      * other ignore conditions are in rule 1 (class KDoc). A new trigger during suspicion only extends
@@ -373,12 +389,9 @@ class LoneWorkerLogic(var myBleId: String) {
      * it (EXIT_LAG_MS), it counts only if shape exceeds zoneFall.
      */
     fun onAccident(trigMs: Long, shape: MotionAnalyzer.FallShape = MotionAnalyzer.FallShape.ANY) {
-        if (order.keep { onAccident(trigMs, shape) } || !enabled || mode == Mode.SOS) return
-        if (mode == Mode.CHECKING && trigger == "fall") return
+        if (order.keep { onAccident(trigMs, shape) } || fallShut()) return
         hold.zoneExpired(trigMs + ZoneHistory.EXIT_LAG_MS)?.let { leaveZone(it) } // FALL comes 12 s after impact; first apply a restart zone hold (exit) that ended
-        if (zone.insideAtImpact(trigMs) && (charging || !zoneFall.passes(shape) ||
-                (lastUnplugAt != Long.MIN_VALUE && trigMs - lastUnplugAt <= UNPLUG_FALL_MS))) return
-        if (lastPlugAt != Long.MIN_VALUE && trigMs - lastPlugAt <= PLUG_EXCEPT_MS) return
+        if (fallDropped(trigMs, shape)) return
         if (accidentUntil == Long.MIN_VALUE) accidentFrom = trigMs
         impactAt = trigMs
         accidentUntil = maxOf(accidentUntil, trigMs + ACCIDENT_WATCH_MS)
@@ -571,12 +584,18 @@ class LoneWorkerLogic(var myBleId: String) {
      */
     data class Countdown(val kind: CountdownKind, val leftMs: Long, val buzzKey: Long?)
 
-    /** Read-only: one count in priority order SOS > response > fall > last minute of no-motion, or null. */
-    fun countdown(nowMs: Long): Countdown? {
+    /**
+     * Read-only: one count in priority order SOS > response > fall > fall candidate (30 s from the impact, key = impact time
+     * = buzzKey of the confirmed fall) > last minute of no-motion, or null. pendingAt/pendingShape = analyzer's candidate.
+     */
+    fun countdown(nowMs: Long, pendingAt: Long? = null, pendingShape: MotionAnalyzer.FallShape = MotionAnalyzer.FallShape.ANY): Countdown? {
         if (mode == Mode.SOS) return Countdown(CountdownKind.SOS, 0L, null)
         if (sosAt() != null) return Countdown(CountdownKind.RESPONSE, responseLeftMs(nowMs), null)
         fallOpenAt(nowMs)?.let {
             return Countdown(CountdownKind.FALL, (it - nowMs).coerceAtLeast(0L), maxOf(accidentFrom, impactAt))
+        }
+        if (pendingAt != null && nowMs < pendingAt + ACCIDENT_STILL_MS && previewFall(pendingAt, pendingShape)) {
+            return Countdown(CountdownKind.FALL, (pendingAt + ACCIDENT_STILL_MS - nowMs).coerceIn(0L, ACCIDENT_STILL_MS), pendingAt)
         }
         val still = stillOpenAt() ?: return null
         val left = (still - nowMs).coerceAtLeast(0L)

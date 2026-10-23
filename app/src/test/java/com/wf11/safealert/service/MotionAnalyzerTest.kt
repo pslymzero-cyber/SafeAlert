@@ -3,6 +3,7 @@ package com.wf11.safealert.service
 import com.wf11.safealert.service.MotionAnalyzer.Signal
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.math.PI
@@ -130,6 +131,7 @@ class MotionAnalyzerTest {
                 span(8320, 18_360, lying)
             }, null))) {
             assertTrue("${r.name}: not a fall", r.negative.times(Signal.FALL).isEmpty())
+            assertNull("${r.name}: no pending candidate left", r.negative.a.pendingImpactMs)
             r.control?.let { assertEquals("${r.name}: control", 1, it.times(Signal.FALL).size) }
         }
         assertEquals(60L, lowFall(60).a.fallShape.freeFallMs)
@@ -243,7 +245,13 @@ class MotionAnalyzerTest {
     @Test fun fall_reports_impact_time_not_decision_time() {
         val r = Run()
         r.fallHead()
-        r.span(3260, 17_000, lying)
+        assertEquals(3200L, r.a.pendingImpactMs)
+        r.span(3260, 15_180, lying)
+        assertEquals(3200L, r.a.pendingImpactMs)  // the candidate waits for the 12 s decision
+        val pending = r.a.pendingShape
+        r.span(15_180, 17_000, lying)
+        assertNull(r.a.pendingImpactMs)
+        assertEquals(r.a.fallShape.copy(postureDeg = null), pending)
         val falls = r.times(Signal.FALL)
         assertEquals(1, falls.size)
         assertEquals(3200L, r.a.eventMs)

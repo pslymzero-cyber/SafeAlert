@@ -214,6 +214,15 @@ class LoneWorkerStillCountTest {
         val render = sourceBlock(monitor, "private fun renderOnce()")
         assertTrue(render.indexOf("DevSettings.vibrationEnabled") in 0 until render.indexOf("VibrationHelper.vibrateCountdown"))
         assertTrue(noComments(serviceSource("LoneWorkerWakeLock.kt")).contains("stillCueAt()"))
+        // the fall candidate: one countdown call (the screen and the buzz share it), redrawn on a candidate change before the
+        // 1 s throttle, same time conversion as the fall passed to onAccident (same buzz key)
+        assertEquals(1, Regex("""logic\.countdown\(""").findAll(monitor).count())
+        assertTrue(monitor.contains("logic.countdown(t, sensors.pendingImpactAt, sensors.pendingShape)"))
+        val sensorEvent = sourceBlock(monitor, "private fun onSensorEvent(")
+        assertTrue(sensorEvent.indexOf("sensors.pendingImpactAt") in 0 until sensorEvent.indexOf("TICK_MIN_MS"))
+        val sensors = noComments(serviceSource("LoneWorkerSensors.kt"))
+        assertTrue(sensors.contains("analyzer.pendingImpactMs?.plus(accelSkew)"))
+        assertTrue(sensors.contains("analyzer.eventMs + accelSkew"))
     }
 
     /**

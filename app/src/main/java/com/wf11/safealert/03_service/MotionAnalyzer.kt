@@ -25,6 +25,8 @@ import kotlin.math.sqrt
  * vibration motor acceleration is far below the impact threshold, and missing a fall during an alarm is worse.
  *
  * Reports whether each closed 1 s window is walk-like via onWindow.
+ * A fall candidate waiting for the 12 s decision can be read (pendingImpactMs, pendingShape) for the on-screen count only;
+ * the judgment uses the FALL signal alone.
  */
 class MotionAnalyzer(
     private val impactG: Double = IMPACT_G,
@@ -111,6 +113,18 @@ class MotionAnalyzer(
     /** Fall shape of the last FALL signal. ANY before the first FALL. */
     var fallShape = FallShape.ANY
         private set
+
+    /**
+     * Sensor time (ms) of the impact while a fall candidate waits for its 12 s decision, else null. Read-only, for the
+     * on-screen count (the judgment never uses it).
+     */
+    val pendingImpactMs: Long? get() = if (candidate) impactT else null
+
+    /**
+     * What is known about the pending candidate so far: free-fall length and max G (posture is known only at the
+     * decision, so null). Meaningful only while pendingImpactMs is not null.
+     */
+    val pendingShape: FallShape get() = FallShape(candFfMs, candPeakG, null)
 
     // 1-second window accumulators
     private var curIdx = -1L

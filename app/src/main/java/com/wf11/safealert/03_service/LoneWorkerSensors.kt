@@ -69,6 +69,13 @@ class LoneWorkerSensors(
     var rangeMs2 = 0f
         private set
     val stalled: Boolean get() = stall.stalled
+    /**
+     * Impact time (elapsed) of a fall candidate waiting for the 12 s decision, else null. Same conversion as the one passed
+     * to onAccident (analyzer.eventMs + accelSkew), so it equals the buzz key of the confirmed FALL. accelSkew is re-fitted
+     * only when sensor time drifts over 60 s.
+     */
+    val pendingImpactAt: Long? get() = analyzer.pendingImpactMs?.plus(accelSkew)
+    val pendingShape: MotionAnalyzer.FallShape get() = analyzer.pendingShape
     /** A registered sensor is non-wakeup, so the CPU must be kept awake while monitoring. */
     val needsWake: Boolean
         get() = sensorsNeedCpuWake(registered, accel?.isWakeUpSensor == true, stepRegistered, stepSensor?.isWakeUpSensor == true)

@@ -125,20 +125,24 @@ class LoneWorkerMonitor(
     private var lastRest = LoneWorkerLogic.Rest.NONE
     /**
      * Main screen notice line, one of: monitoring stop pending, monitoring unavailable without a sensor, my own count toward
-     * an SOS (countdownBanner), otherwise why no-motion checking is paused (docked / waiting for movement).
+     * an SOS (countdownBanner; a fall counts from the impact moment), otherwise why no-motion checking is paused (docked / waiting for movement).
      */
     val banner: String? get() = when {
         !started -> null
         logic.stopAt != null -> "${LoneWorkerNotifier.RESCUER_OK} — ${LoneWorkerNotifier.RESCUER_STOP_SOON}"
         sensors.noSensor -> "사고·무동작 감시 불가 — 가속도 센서 없음 (동료 구조 요청 수신은 계속)"
-        else -> logic.countdown(now())?.let { countdownBanner(it) } ?: logic.rest.banner
+        else -> count(now())?.let { countdownBanner(it) } ?: logic.rest.banner
     }
     private var buzzedFall = Long.MIN_VALUE   // buzzKey of the last fall / no-motion count that already buzzed
     private var buzzedStill = Long.MIN_VALUE
+    private var shownPendingAt: Long? = null     // fall candidate last rendered (onSensorEvent redraws when it appears or ends)
     private var rendering = false
     private var renderAgain = false
 
     private fun now() = SystemClock.elapsedRealtime()
+
+    /** My own count: the judgment's, or the fall candidate's count from the impact — the screen and the weak buzz both use this. */
+    private fun count(t: Long) = logic.countdown(t, sensors.pendingImpactAt, sensors.pendingShape)
 
     // ── Start / stop ───────────────────────────────────────────
 
@@ -260,6 +264,8 @@ class LoneWorkerMonitor(
     private fun onSensorEvent(t: Long) {
         if (!started) return
         logic.sensorEventEnd(t)
+        // A fall candidate appearing or ending is drawn at once, not after the 1 s throttle (impact-moment count and buzz); no tick, so the judgment schedule is unchanged
+        sensors.pendingImpactAt.let { if (it != shownPendingAt) { shownPendingAt = it; render() } }
         if (logic.mode == lastMode && logic.rest == lastRest && t - lastTickAt < TICK_MIN_MS &&
             !(t >= dueFrom && logic.dueNow(t))) return
         lastTickAt = t
@@ -533,10 +539,11 @@ class LoneWorkerMonitor(
         val p = LoneWorkerAlarm.Pattern.of(mode, logic.soundingPeers().isNotEmpty())
         if (p != null) alarm.play(p, vibrates) else alarm.stop(vibrate = vibrates)
         sensors.gyroLog(audible.isNotEmpty(), vibrates)
-        // Weak double buzz once per count: a fall count (per accepted impact) or the last minute of a no-motion count.
+        // Weak double buzz once per count: a fall count (from the impact moment as a candidate — its key equals the confirmed
+        // fall's key, so confirming does not buzz again) or the last minute of a no-motion count.
         // The key is kept even with the vibration switch off, so switching it on later does not buzz for an old count.
         if (logic.stopAt == null && !sensors.noSensor) {
-            logic.countdown(t)?.let { c ->
+            count(t)?.let { c ->
                 val key = c.buzzKey ?: return@let
                 val fresh = when (c.kind) {
                     LoneWorkerLogic.CountdownKind.FALL -> (key != buzzedFall).also { buzzedFall = key }

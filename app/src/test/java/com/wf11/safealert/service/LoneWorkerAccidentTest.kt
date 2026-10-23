@@ -3,6 +3,7 @@ package com.wf11.safealert.service
 import com.wf11.safealert.service.LoneWorkerLogic.Mode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -90,8 +91,10 @@ class LoneWorkerAccidentTest {
             r.zoneEnteredAt?.let { l.onZone(true, it) }
             r.zoneExitAt?.let { l.onZone(false, it) }
             r.power?.let { (on, at) -> l.reportPower(on, at) }
+            val preview = l.previewFall(r.fallAt, r.shape)
             l.onAccident(r.fallAt, r.shape)
             for ((t, want) in r.seen) assertEquals("${r.name}: seen at $t", want, l.seenAt(t))
+            assertEquals("${r.name}: preview", r.seen.any { it.second == Mode.CHECKING }, preview)
             r.trigger?.let { assertEquals("${r.name}: trigger", it, l.trigger) }
         }
     }
@@ -342,6 +345,38 @@ class LoneWorkerAccidentTest {
 
     // An SOS in progress ignores a new fall: LoneWorkerLogicTest.restore_sos_survives_settle_disable_and_ack.
     // Disabled: no fall check opens, an open one is withdrawn: LoneWorkerLogicTest.disabled_never_checks_and_cancels_open_check_but_keeps_sos.
+
+    /**
+     * The screen count from the impact moment (a fall candidate): 30 s from the impact, the buzz key equals the confirmed
+     * fall's key, it takes only the no-count / last-minute-of-no-motion place, and an impact the judgment would drop
+     * (shut, SOS, check open) or one older than 30 s is not shown.
+     */
+    @Test fun fall_count_from_the_impact() {
+        val fall = LoneWorkerLogic.CountdownKind.FALL
+        val s = MotionAnalyzer.FallShape(300, 3.0, null)
+        val l = fallRuleOnly()
+        assertEquals(LoneWorkerLogic.Countdown(fall, 30_000L, 6_000L), l.countdown(6_000, 6_000, s))
+        assertEquals(LoneWorkerLogic.Countdown(fall, 18_000L, 6_000L), l.countdown(18_000, 6_000, s))
+        assertNull(l.countdown(36_000, 6_000, s))
+        assertNull(l.countdown(18_000))
+        l.onAccident(6_000, s)
+        assertEquals(6_000L, l.countdown(18_000)!!.buzzKey)   // the candidate's key: confirming does not buzz again
+        assertEquals(l.countdown(20_000), l.countdown(20_000, 19_000, s))   // the judgment's fall count comes first
+        assertEquals(Mode.CHECKING, l.seenAt(36_000))
+        assertEquals(LoneWorkerLogic.CountdownKind.RESPONSE, l.countdown(36_000, 35_000, s)!!.kind)
+        assertFalse(l.previewFall(36_000, s))
+        assertEquals(Mode.SOS, l.seenAt(96_000))
+        assertEquals(LoneWorkerLogic.CountdownKind.SOS, l.countdown(96_000, 95_000, s)!!.kind)
+        assertFalse(l.previewFall(96_000, s))
+
+        val still = newLogic(carried = true)
+        assertEquals(LoneWorkerLogic.CountdownKind.STILL, still.countdown(130_000)!!.kind)
+        assertEquals(LoneWorkerLogic.Countdown(fall, 25_000L, 125_000L), still.countdown(130_000, 125_000, s))
+
+        val off = fallRuleOnly().apply { setEnabled(false, 1_000) }
+        assertFalse(off.previewFall(6_000, s))
+        assertNull(off.countdown(6_000, 6_000, s))
+    }
 
     /** A second fall while a fall check is open neither reopens nor moves that check: SOS stays due 60 s after it opened. */
     @Test fun second_fall_during_open_fall_check_does_not_move_it() {
