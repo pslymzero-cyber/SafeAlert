@@ -352,7 +352,7 @@
                             android:text="SafeAlert v1.0.6" android:textStyle="bold" android:textColor="@color/sa_text_primary"
                             android:paddingTop="6dp" android:paddingBottom="6dp" />
                         <TextView style="@style/SA.Hint" android:layout_marginTop="0dp"
-                            android:text="Copyright 2024-2026 WF11 Team" />
+                            android:text="Copyright 2026 임효성 (Ian)" />
 
                         <!-- Open-source licenses -->
                         <Button android:id="@+id/btn_open_source_licenses"

@@ -181,7 +181,7 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Copyright 2024-2026 WF11 Team. All Rights Reserved."
+            android:text="Copyright 2026 임효성 (Ian). All Rights Reserved."
             android:textSize="@dimen/sa_type_hint"
             android:textColor="@color/sa_text_tertiary"
             android:layout_gravity="center_horizontal"
