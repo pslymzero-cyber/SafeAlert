@@ -25,14 +25,16 @@ class AlertStateMachineJvmTest {
 
     /**
      * DevSettings is an object singleton and prefs is lateinit, so it can't be read without init(Context).
-     * A fake SharedPreferences is plugged in by reflection so every getter returns the app default as is.
+     * A fake SharedPreferences is plugged in by reflection so every getter returns the app default as is
+     * (unless a test puts a value in intOverrides).
      * (Only autoSaveAlerts is forced to false to block the Firebase path - external I/O unrelated to judging.)
      */
+    private val intOverrides = mutableMapOf<String, Int>()
     private val fakePrefs = object : SharedPreferences {
         override fun getAll(): MutableMap<String, *> = mutableMapOf<String, Any>()
         override fun getString(key: String?, defValue: String?): String? = defValue
         override fun getStringSet(key: String?, defValues: MutableSet<String>?): MutableSet<String>? = defValues
-        override fun getInt(key: String?, defValue: Int): Int = defValue
+        override fun getInt(key: String?, defValue: Int): Int = key?.let { intOverrides[it] } ?: defValue
         override fun getLong(key: String?, defValue: Long): Long = defValue
         override fun getFloat(key: String?, defValue: Float): Float = defValue
         override fun getBoolean(key: String?, defValue: Boolean): Boolean =
@@ -186,6 +188,29 @@ class AlertStateMachineJvmTest {
         val walker = asm(BleConstants.CAT_WALKER, "WALKER", peerCart = true)
         assertEquals(0, offset(walker, BleConstants.CAT_WALKER))
         assertEquals(DevSettings.walkerVsEpjBiasDb, offset(walker, BleConstants.CAT_EPJ))
+
+        // EPJ·cart pairs and walker pairs may go negative down to -15 dB; forklift pairs stay 0~15; defaults unchanged.
+        val epj = asm(BleConstants.CAT_EPJ, "DEVICE", peerCart = false)
+        intOverrides["walker_vs_epj_bias_db"] = -7
+        assertEquals(-7, offset(walker, BleConstants.CAT_EPJ))
+        assertEquals(-7, offset(epj, BleConstants.CAT_WALKER))
+        intOverrides["epj_vs_epj_bias_db"] = -11
+        assertEquals(-11, offset(epj, BleConstants.CAT_EPJ))
+        intOverrides["walker_vs_walker_bias_db"] = -9
+        assertEquals(-9, offset(walker, BleConstants.CAT_WALKER))
+        assertEquals(DevSettings.DEFAULT_WALKER_VS_EQUIP_BIAS_DB, offset(walker, BleConstants.CAT_FORKLIFT))
+        assertEquals(DevSettings.DEFAULT_EQUIP_VS_EQUIP_BIAS_DB, offset(epj, BleConstants.CAT_FORKLIFT))
+        intOverrides["walker_vs_epj_bias_db"] = -20
+        intOverrides["epj_vs_epj_bias_db"] = -20
+        intOverrides["walker_vs_walker_bias_db"] = -20
+        intOverrides["walker_vs_equip_bias_db"] = -5
+        intOverrides["equip_vs_equip_bias_db"] = -5
+        assertEquals(-15, DevSettings.walkerVsEpjBiasDb)
+        assertEquals(-15, DevSettings.epjVsEpjBiasDb)
+        assertEquals(-15, DevSettings.walkerVsWalkerBiasDb)
+        assertEquals(0, DevSettings.walkerVsEquipBiasDb)
+        assertEquals(0, DevSettings.equipVsEquipBiasDb)
+        intOverrides.clear()
 
         // Stationary-pair quiet scope (shared by the RSSI and UWB paths) looks at categories only.
         val cart = asm(BleConstants.CAT_EPJ, "DEVICE", peerCart = true)

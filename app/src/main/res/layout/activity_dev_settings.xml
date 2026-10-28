@@ -298,10 +298,10 @@
                             android:layout_marginTop="@dimen/sa_space_xs" android:min="30" android:max="100" />
 
                         <View style="@style/SA.Divider" />
-                        <!-- Per-role early-warning offsets — pull effWarning/effDanger out to a longer distance per role pair -->
+                        <!-- Per-role early-warning offsets — pull effWarning/effDanger out to a longer distance per role pair; negative values pull them in -->
                         <TextView style="@style/SA.SubHeader" android:text="역할별 조기경보 오프셋" />
                         <TextView style="@style/SA.Hint" android:layout_marginTop="@dimen/sa_space_hairline"
-                            android:text="값이 클수록 더 먼 거리(약한 신호)에서 미리 경보합니다. 0=중립(일반 임계와 동일). 금속 캐빈 차폐로 신호가 약해지는 장비끼리도 놓치지 않도록 보정." />
+                            android:text="값이 클수록 더 먼 거리(약한 신호)에서 미리 경보합니다. 0=중립(일반 임계와 동일). 음수면 더 가까이 와야 경보합니다." />
 
                         <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
                             <TextView style="@style/SA.RowLabel" android:text="보행자 ↔ 지게차 (dB)" />
@@ -313,22 +313,40 @@
                             android:text="유효 0~15 dB (기본 6). 보행자와 지게차 사이 조기경보 강도. 가장 강하게 보호." />
 
                         <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
-                            <TextView style="@style/SA.RowLabel" android:text="보행자 ↔ EPJ (dB)" />
-                            <TextView android:id="@+id/tv_walker_epj_bias_val" style="@style/SA.Value" />
-                        </LinearLayout>
-                        <SeekBar android:id="@+id/seek_walker_epj_bias" android:layout_width="match_parent" android:layout_height="wrap_content"
-                            android:layout_marginTop="@dimen/sa_space_xs" android:max="15" />
-                        <TextView style="@style/SA.Hint" android:layout_marginTop="0dp"
-                            android:text="유효 0~15 dB (기본 2). EPJ(전동 파레트 잭)는 저속·동일공간 작업이라 지게차보다 완화." />
-
-                        <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
                             <TextView style="@style/SA.RowLabel" android:text="장비 ↔ 장비 (dB)" />
                             <TextView android:id="@+id/tv_equip_equip_bias_val" style="@style/SA.Value" />
                         </LinearLayout>
                         <SeekBar android:id="@+id/seek_equip_equip_bias" android:layout_width="match_parent" android:layout_height="wrap_content"
                             android:layout_marginTop="@dimen/sa_space_xs" android:max="15" />
                         <TextView style="@style/SA.Hint" android:layout_marginTop="0dp"
-                            android:text="유효 0~15 dB (기본 8). 지게차끼리·EPJ끼리·지게차↔EPJ. 금속 캐빈 차폐로 약해진 신호를 잡으려면 가장 큰 값 필요." />
+                            android:text="유효 0~15 dB (기본 8). 지게차끼리 · 지게차↔EPJ. 금속 캐빈 차폐로 약해진 신호를 잡으려면 가장 큰 값 필요." />
+
+                        <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
+                            <TextView style="@style/SA.RowLabel" android:text="보행자 ↔ EPJ·카트 (dB)" />
+                            <TextView android:id="@+id/tv_walker_epj_bias_val" style="@style/SA.Value" />
+                        </LinearLayout>
+                        <SeekBar android:id="@+id/seek_walker_epj_bias" android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:layout_marginTop="@dimen/sa_space_xs" android:max="30" />
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="0dp"
+                            android:text="유효 -15~15 dB (기본 2). EPJ·카트는 저속·같은 공간 작업이라 지게차보다 완화. 음수면 더 가까이 와야 울림." />
+
+                        <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
+                            <TextView style="@style/SA.RowLabel" android:text="EPJ·카트 ↔ EPJ·카트 (dB)" />
+                            <TextView android:id="@+id/tv_epj_epj_bias_val" style="@style/SA.Value" />
+                        </LinearLayout>
+                        <SeekBar android:id="@+id/seek_epj_epj_bias" android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:layout_marginTop="@dimen/sa_space_xs" android:max="30" />
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="0dp"
+                            android:text="유효 -15~15 dB (기본 -2). EPJ·카트끼리는 5m 공존이 정상. 낮출수록(음수) 더 가까이 와야 울림." />
+
+                        <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
+                            <TextView style="@style/SA.RowLabel" android:text="보행자 ↔ 보행자 (dB)" />
+                            <TextView android:id="@+id/tv_walker_walker_bias_val" style="@style/SA.Value" />
+                        </LinearLayout>
+                        <SeekBar android:id="@+id/seek_walker_walker_bias" android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:layout_marginTop="@dimen/sa_space_xs" android:max="30" />
+                        <TextView style="@style/SA.Hint" android:layout_marginTop="0dp"
+                            android:text="유효 -15~15 dB (기본 0). '보행자끼리 경보'를 켰을 때만 적용. 낮출수록 더 가까이 와야 울림." />
 
                     </LinearLayout>
                 </LinearLayout>

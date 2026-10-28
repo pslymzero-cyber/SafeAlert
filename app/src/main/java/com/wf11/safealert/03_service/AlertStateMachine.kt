@@ -423,9 +423,10 @@ class AlertStateMachine(
     /**
      * Computes the alert-threshold risk offset (dB) from the decoded hex (role, state).
      *   The returned (+) amount pulls the warning/danger thresholds out to a longer distance for an earlier
-     *   alert (fail-safe direction); a negative amount (EPJ↔EPJ default) pulls them in.
+     *   alert (fail-safe direction); a negative amount (EPJ↔EPJ default, or a negative walker↔EPJ / EPJ↔EPJ / walker↔walker setting) pulls them in.
      *   · Role: pedestrian↔forklift adds walkerVsEquipBiasDb, pedestrian↔EPJ walkerVsEpjBiasDb (mutual
-     *     protection); equipment↔equipment adds equipVsEquipBiasDb, or epjVsEpjBiasDb when both are EPJ.
+     *     protection); equipment↔equipment adds equipVsEquipBiasDb, or epjVsEpjBiasDb when both are EPJ;
+     *     pedestrian↔pedestrian walkerVsWalkerBiasDb (default 0; the pair reaches here only when walkerDetectsWalker is on).
      *   · State: if the other device is moving FORWARD and approaching (kfVel), add forwardApproachBiasDb as well.
      * The state bias is guarded by a per-deviceId hysteresis latch: even if kfVel jitters near the threshold,
      *   once forwardBiasLatchMap turns the bias on it stays until kfVel drops below threshold×RELEASE_FRAC, so
@@ -444,13 +445,14 @@ class AlertStateMachine(
             val rIsEpj      = rCategory == BleConstants.CAT_EPJ
             // Per role pair: pedestrian↔forklift gets a strong early warning (+6), pedestrian↔EPJ a milder one (+2).
             //   EPJs work slowly in the same space, so the forklift threshold would over-alert → a separate offset.
-            //   Equipment↔equipment gets equipVsEquipBiasDb below; only pedestrian↔pedestrian is 0.
+            //   Equipment↔equipment gets equipVsEquipBiasDb below; pedestrian↔pedestrian gets walkerVsWalkerBiasDb (default 0).
             if ((iAmWalker && rIsForklift) || (iAmForklift && rIsWalker)) {
                 offset += DevSettings.walkerVsEquipBiasDb
             }
             if ((iAmWalker && rIsEpj) || (iAmEpj && rIsWalker)) {
                 offset += DevSettings.walkerVsEpjBiasDb
             }
+            if (iAmWalker && rIsWalker) offset += DevSettings.walkerVsWalkerBiasDb
             // Equipment↔equipment (forklift/EPJ with each other) — only when both sides are equipment (mutually
             //   exclusive with the pedestrian branch). Covers the blind spot left because every pedestrian offset is
             //   pedestrian-only. Compensates for metal-cab shielding.

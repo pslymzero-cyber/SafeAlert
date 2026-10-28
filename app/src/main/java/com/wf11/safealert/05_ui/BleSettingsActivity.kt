@@ -120,10 +120,6 @@ class BleSettingsActivity : AppCompatActivity() {
         binding.seekBeaconGain.progress = (DevSettings.beaconGainPercent / 10).coerceIn(0, 30)
         updateBeaconGainLabel()
 
-        // EPJ↔EPJ offset — slider progress = offset+10 (-10~+15 dB → 0~25)
-        binding.seekEpjBias.progress = (DevSettings.epjVsEpjBiasDb + 10).coerceIn(0, 25)
-        updateEpjBiasLabel()
-
         // UWB precise distance toggle — switch disabled on unsupported devices
         binding.swUwb.isChecked = DevSettings.uwbEnabled
         if (!UwbRanger.isHardwareSupported(this)) {
@@ -282,11 +278,6 @@ class BleSettingsActivity : AppCompatActivity() {
             DevSettings.beaconGainPercent = binding.seekBeaconGain.progress * 10
             updateBeaconGainLabel()
             updateSectionSummaries()
-        })
-        // EPJ↔EPJ offset — saves progress-10 = offset (-10~+15 dB) (applied live)
-        binding.seekEpjBias.setOnSeekBarChangeListener(seek {
-            DevSettings.epjVsEpjBiasDb = binding.seekEpjBias.progress - 10
-            updateEpjBiasLabel()
         })
 
         // UWB toggle — applied live at once (BleService subscribes to SharedPreferences changes)
@@ -495,14 +486,6 @@ class BleSettingsActivity : AppCompatActivity() {
         val dbm = (pct - 100) / 5
         val sign = if (dbm > 0) "+" else ""
         binding.tvBeaconGain.text = "${pct}% (${sign}${dbm} dBm)"
-    }
-
-    private fun updateEpjBiasLabel() {
-        // Slider progress (0~25) - 10 = offset (-10~+15 dB). Negative = alert only when
-        // closer (distance discrimination), positive = alert earlier from farther.
-        val v = binding.seekEpjBias.progress - 10
-        val sign = if (v > 0) "+" else ""
-        binding.tvEpjBias.text = "${sign}${v} dB"
     }
 
     // UWB judging radius label — progress/2 = meters. Whole values show as "15m", half meters as "7.5m".

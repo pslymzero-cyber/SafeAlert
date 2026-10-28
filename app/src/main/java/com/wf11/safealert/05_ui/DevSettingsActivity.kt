@@ -111,13 +111,18 @@ class DevSettingsActivity : AppCompatActivity() {
         binding.etStaleMs.setText(DevSettings.signalStaleMs.toString())
         binding.etFbThrottle.setText(DevSettings.firebaseThrottleMs.toString())
         binding.etSpeedPush.setText(DevSettings.speedPushIntervalMs.toString())
-        // Per-role early-warning offset — SeekBar (0~15) value mapped directly
+        // Per-role early-warning offset — walker↔forklift and equip↔equip: SeekBar (0~15) value mapped directly;
+        //   the three -15~15 pairs (walker↔EPJ, EPJ↔EPJ, walker↔walker): SeekBar (0~30) progress = value + 15
         binding.seekWalkerEquipBias.progress = DevSettings.walkerVsEquipBiasDb
         binding.tvWalkerEquipBiasVal.text    = "${DevSettings.walkerVsEquipBiasDb} dB"
-        binding.seekWalkerEpjBias.progress   = DevSettings.walkerVsEpjBiasDb
+        binding.seekWalkerEpjBias.progress   = DevSettings.walkerVsEpjBiasDb + 15
         binding.tvWalkerEpjBiasVal.text      = "${DevSettings.walkerVsEpjBiasDb} dB"
         binding.seekEquipEquipBias.progress  = DevSettings.equipVsEquipBiasDb
         binding.tvEquipEquipBiasVal.text     = "${DevSettings.equipVsEquipBiasDb} dB"
+        binding.seekEpjEpjBias.progress      = DevSettings.epjVsEpjBiasDb + 15
+        binding.tvEpjEpjBiasVal.text         = "${DevSettings.epjVsEpjBiasDb} dB"
+        binding.seekWalkerWalkerBias.progress = DevSettings.walkerVsWalkerBiasDb + 15
+        binding.tvWalkerWalkerBiasVal.text   = "${DevSettings.walkerVsWalkerBiasDb} dB"
         // Reverse (forward) prep detection — Switch + sliders (recommended values by default)
         binding.switchReversePrep.isChecked      = DevSettings.reversePrepEnabled
         binding.seekReverseRise.progress         = DevSettings.reverseRiseDbm - 2
@@ -193,15 +198,29 @@ class DevSettingsActivity : AppCompatActivity() {
             binding.tvReverseHoldVal.text = "${v * 1000 + 1000} ms"
             DevSettings.reversePrepHoldMs = v * 1000L + 1000L
         })
-        // Per-role early-warning offset — applied live at once (0~15 mapped directly)
+        // Per-role early-warning offset — applied live at once (walker↔forklift and equip↔equip map 0~15 directly;
+        //   the three -15~15 pairs use progress = value+15 (0~30))
         binding.seekWalkerEquipBias.setOnSeekBarChangeListener(seekListener { v ->
             binding.tvWalkerEquipBiasVal.text = "$v dB"
             DevSettings.walkerVsEquipBiasDb = v
             updateSectionSummaries()
         })
-        binding.seekWalkerEpjBias.setOnSeekBarChangeListener(seekListener { v ->
-            binding.tvWalkerEpjBiasVal.text = "$v dB"
+        binding.seekWalkerEpjBias.setOnSeekBarChangeListener(seekListener { p ->
+            val v = p - 15
+            binding.tvWalkerEpjBiasVal.text = "${v} dB"
             DevSettings.walkerVsEpjBiasDb = v
+            updateSectionSummaries()
+        })
+        binding.seekEpjEpjBias.setOnSeekBarChangeListener(seekListener { p ->
+            val v = p - 15
+            binding.tvEpjEpjBiasVal.text = "${v} dB"
+            DevSettings.epjVsEpjBiasDb = v
+            updateSectionSummaries()
+        })
+        binding.seekWalkerWalkerBias.setOnSeekBarChangeListener(seekListener { p ->
+            val v = p - 15
+            binding.tvWalkerWalkerBiasVal.text = "${v} dB"
+            DevSettings.walkerVsWalkerBiasDb = v
             updateSectionSummaries()
         })
         binding.seekEquipEquipBias.setOnSeekBarChangeListener(seekListener { v ->
@@ -589,8 +608,8 @@ class DevSettingsActivity : AppCompatActivity() {
             // Speech only exists while the alarm sound is on
             (if (binding.switchSound.isChecked) " · 음성 ${onOff(binding.switchVoice.isChecked)}" else "")
         binding.secAlertSummary.text =
-            "경고 ${DevSettings.rssiWarning} · 위험 ${DevSettings.rssiDanger} dBm · 오프셋 ${binding.seekWalkerEquipBias.progress}/" +
-            "${binding.seekWalkerEpjBias.progress}/${binding.seekEquipEquipBias.progress} dB"
+            "경고 ${DevSettings.rssiWarning} · 위험 ${DevSettings.rssiDanger} dBm · 오프셋 ${DevSettings.walkerVsEquipBiasDb}/" +
+            "${DevSettings.walkerVsEpjBiasDb}/${DevSettings.equipVsEquipBiasDb} dB"
         binding.secParamSummary.text = "TTC ${DevSettings.ttcThresholdSec}s · 쿨다운 · 필터 · 에코"
         binding.secCoopSummary.text =
             "상호 RSSI ${onOff(binding.swReciprocalRssi.isChecked)} · 완화 +${binding.seekCoopSlack.progress} dB"

@@ -5,7 +5,7 @@
      The alert volume (50~100%) and the echo-deviation auto-calibration switch with its sub-items (tap
      the row to expand them) are shown here read-only; developer settings edits them.
      The two cooperation settings (mutual RSSI, relaxation) and the three UWB escalation
-     settings are in developer settings. The EPJ↔EPJ offset stays gone (code kept). -->
+     settings are in developer settings. The EPJ↔EPJ offset moved to developer settings '역할별 조기경보 오프셋'. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
@@ -316,39 +316,6 @@
                         <TextView
                             style="@style/SA.Hint"
                             android:text="등록된 모든 비콘의 감지 범위를 비율로 일괄 조절 · 100% = 기본 · 바꾸려면 눌러서 PIN 확인" />
-
-                        <!-- EPJ hidden — this block is gone (handlers and save logic kept; to bring it back, remove only the visibility) -->
-                        <LinearLayout
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:orientation="vertical"
-                            android:visibility="gone">
-                            <TextView
-                                style="@style/SA.SubHeader"
-                                android:text="EPJ끼리 근접 경보" />
-                            <TextView
-                                style="@style/SA.Hint"
-                                android:layout_marginTop="@dimen/sa_space_hairline"
-                                android:text="EPJ끼리는 5m 공존이 정상 · 값을 낮출수록(음수) 더 가까이(3m) 와야 울림" />
-                            <LinearLayout style="@style/SA.Row">
-                                <TextView
-                                    style="@style/SA.RowLabel"
-                                    android:text="조기경보 오프셋" />
-                                <TextView
-                                    android:id="@+id/tv_epj_bias"
-                                    style="@style/SA.Value"
-                                    android:text="-2 dB" />
-                            </LinearLayout>
-                            <SeekBar
-                                android:id="@+id/seek_epj_bias"
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:layout_marginTop="@dimen/sa_space_xs"
-                                android:max="25" />
-                            <TextView
-                                style="@style/SA.Hint"
-                                android:text="-10 ~ +15 dB (기본 -2). 0=일반 임계 · 음수=더 가까이서만(거리 변별) · 양수=더 멀리서 미리. 지게차가 끼면 장비↔장비 오프셋 적용." />
-                        </LinearLayout>
                     </LinearLayout>
                 </LinearLayout>
             </androidx.cardview.widget.CardView>

@@ -481,11 +481,12 @@ object DevSettings {
     // Walker↔EPJ early-alert offset (dB) — separate from (milder than) the forklift one.
     //   An EPJ (electric pallet jack) is slow and often works in the same space, so the forklift value (+6) would over-alert.
     //   Default +2 so it sounds only when closer. 0 = neutral (same as the normal thresholds). Shares the categoryBiasEnabled toggle.
+    //   Negative (down to -15) pulls the thresholds in so it alerts only when closer; edited in developer settings.
     private const val KEY_WALKER_VS_EPJ_BIAS_DB = "walker_vs_epj_bias_db"
     const val DEFAULT_WALKER_VS_EPJ_BIAS_DB = 2
     var walkerVsEpjBiasDb: Int
-        get() = prefs.getInt(KEY_WALKER_VS_EPJ_BIAS_DB, DEFAULT_WALKER_VS_EPJ_BIAS_DB).coerceIn(0, 15)
-        set(v) = prefs.edit().putInt(KEY_WALKER_VS_EPJ_BIAS_DB, v.coerceIn(0, 15)).apply()
+        get() = prefs.getInt(KEY_WALKER_VS_EPJ_BIAS_DB, DEFAULT_WALKER_VS_EPJ_BIAS_DB).coerceIn(-15, 15)
+        set(v) = prefs.edit().putInt(KEY_WALKER_VS_EPJ_BIAS_DB, v.coerceIn(-15, 15)).apply()
 
     // Equipment↔equipment (forklift/EPJ) early-alert offset (dB) — the walker offsets (+6/+2) apply only to walkers, so
     //   forklift pairs, EPJ pairs and forklift↔EPJ pairs would otherwise get 0 (blind spot). When metal-cab shielding weakens RSSI it
@@ -505,12 +506,21 @@ object DevSettings {
     //   Negative = pulls effWarning to a stronger signal (closer), alerting only on entering
     //   3m (simulation: open -7 / standard -3 → lightly shielded EPJ default -2).
     //   If a forklift is on either side, equipVsEquipBiasDb (heavy shielding, conservative
-    //   for the hazard source) applies. Shares the categoryBiasEnabled toggle.
+    //   for the hazard source) applies. Shares the categoryBiasEnabled toggle. Range -15~15, edited in developer settings.
     private const val KEY_EPJ_VS_EPJ_BIAS_DB = "epj_vs_epj_bias_db"
     const val DEFAULT_EPJ_VS_EPJ_BIAS_DB = -2
     var epjVsEpjBiasDb: Int
-        get() = prefs.getInt(KEY_EPJ_VS_EPJ_BIAS_DB, DEFAULT_EPJ_VS_EPJ_BIAS_DB).coerceIn(-10, 15)
-        set(v) = prefs.edit().putInt(KEY_EPJ_VS_EPJ_BIAS_DB, v.coerceIn(-10, 15)).apply()
+        get() = prefs.getInt(KEY_EPJ_VS_EPJ_BIAS_DB, DEFAULT_EPJ_VS_EPJ_BIAS_DB).coerceIn(-15, 15)
+        set(v) = prefs.edit().putInt(KEY_EPJ_VS_EPJ_BIAS_DB, v.coerceIn(-15, 15)).apply()
+
+    // Walker↔walker offset (dB) — only meaningful while walker-to-walker alerts (walkerDetectsWalker) are on
+    //   (when off, that pair is filtered out before judging). Default 0 = neutral; negative = must come closer to alert.
+    //   Shares the categoryBiasEnabled toggle.
+    private const val KEY_WALKER_VS_WALKER_BIAS_DB = "walker_vs_walker_bias_db"
+    const val DEFAULT_WALKER_VS_WALKER_BIAS_DB = 0
+    var walkerVsWalkerBiasDb: Int
+        get() = prefs.getInt(KEY_WALKER_VS_WALKER_BIAS_DB, DEFAULT_WALKER_VS_WALKER_BIAS_DB).coerceIn(-15, 15)
+        set(v) = prefs.edit().putInt(KEY_WALKER_VS_WALKER_BIAS_DB, v.coerceIn(-15, 15)).apply()
 
     // ── Cooperative alert relaxation slack (dB) — offsets per-phone TX/RX asymmetry ──
     //   (my phone stays silent while the peer's sounds)
