@@ -29,7 +29,6 @@ import com.wf11.safealert.ble.RssiPreFilter
 import com.wf11.safealert.firebase.JudgeLog
 import com.wf11.safealert.utils.AdminMode
 import com.wf11.safealert.utils.BeaconRegistry
-import com.wf11.safealert.ui.JudgeQuestion
 import com.wf11.safealert.ui.MainActivity
 import com.wf11.safealert.utils.DevSettings
 import com.wf11.safealert.utils.ImuFusion
@@ -525,7 +524,23 @@ class BleService : LifecycleService() {
 
     // Judgment state is owned by AlertStateMachine - the fields below alias the same instances (for reflection tests and remaining call sites)
     private val alertState = asm.alertState
-    private val judgeAsk = JudgeAsk { JudgeLog.holdDanger(it.peer, it.alertT, it.snap) }   // distance-question rules (recording only)
+    private val judgeAsk = JudgeAsk()   // distance-question rules (recording only)
+    private val askHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
+    /** 1 s tick on the main thread while one question is open: shows, hides and closes the sidebar block; never touches judgment. */
+    private val askTick = object : Runnable {
+        override fun run() {
+            runCatching {
+                askHandler.removeCallbacks(this)
+                val now = System.currentTimeMillis()
+                val canShow = JudgeLog.on &&
+                    JudgeAsk.showNow(myCategory, myCart, ImuFusion.isStationary, OverlayManager.sidebarOn && isScreenOn)
+                val a = judgeAsk.visible(now, canShow)
+                if (a != null) OverlayManager.showAsk(a.label, a.alertT, now) else OverlayManager.hideAsk()
+                if (judgeAsk.isOpen) askHandler.postDelayed(this, 1_000L)
+            }
+        }
+    }
     private val kalmanFilters = asm.kalmanFilters
     private val filterPreserveMap = asm.filterPreserveMap
     private val timeGateWaiveSet = asm.timeGateWaiveSet
@@ -660,6 +675,17 @@ class BleService : LifecycleService() {
                 })
             }.onFailure { Log.w(TAG, "공정 변경 화면 열기 실패: ${it.message}") }
         }
+        // Records the distance answer only; alert, sound, vibration and acknowledge stay as they are.
+        OverlayManager.onAskAnswer = { ans ->
+            runCatching {
+                val now = System.currentTimeMillis()
+                askHandler.removeCallbacks(askTick)
+                judgeAsk.answer(now)?.takeIf { JudgeLog.on }?.let { a ->
+                    JudgeLog.dist(myId, BleConstants.categoryName(myCategory), a.peer, a.alertT, a.shownAt ?: now, ans, a.start, now)
+                    now - a.alertT
+                }
+            }.getOrNull()
+        }
         // The singletons keep the fault reason for as long as the process lives. setFault suppresses repeat notices of the
         //   same reason, so unless the current value is inherited here, a fault raised before the service was recreated never
         //   reaches the new service.
@@ -676,8 +702,6 @@ class BleService : LifecycleService() {
                 if (stationary) {
                     // Became stationary → power saving after a 5 s debounce (cancelled if it moves meanwhile)
                     ecoHandler.postDelayed(ecoDowngradeRunnable, STATIONARY_ECO_DELAY_MS)
-                    // Held equipment distance questions go out once the vehicle stops (recording only)
-                    if (JudgeLog.on) runCatching { judgeAsk.stopped(System.currentTimeMillis()).forEach(::postJudgeDist) }
                 } else {
                     // Movement detected → back to ACTIVE at once (0 s, combat mode)
                     bleScanner?.setEcoMode(false)
@@ -1097,14 +1121,11 @@ class BleService : LifecycleService() {
         if (lastRssi != null) {
             filterPreserveMap[deviceId] = AlertStateMachine.FilterPreserveState(lastRssi, android.os.SystemClock.elapsedRealtime())
         }
-        val lostLevel = alertState[deviceId]?.first ?: BleConstants.LEVEL_SAFE   // judge data: read before the purge
         uwbRanger?.onDeviceLost(deviceId)    // clean up UWB candidates/sessions — before map removal (original order kept)
         // Single path for removing device state. cold = no snapshot → cold-clear at once, (deferred) filters included.
         //   Covers: alertState, all ASM state maps, the 5 BleService maps (the 3 dwell maps = clearDwellMute),
         //   the 3 uwb maps, echoDiffLive (persisted, then cleared). Registration: see ASM init and registerDeviceState.
         asm.registry.purge(deviceId, cold = lastRssi == null)
-        // A DANGER that ends by signal loss is an alert end too (distance question, recording only)
-        if (JudgeLog.on) judgeEdge(deviceId, lostLevel, BleConstants.LEVEL_SAFE, System.currentTimeMillis())
         sendAlertBroadcast(deviceId, BleConstants.LEVEL_SAFE)
         if (alertState.isEmpty()) {
             AlertSoundPlayer.stopSound()
@@ -1182,21 +1203,20 @@ class BleService : LifecycleService() {
         if (after != before && JudgeLog.on) judgeEdge(deviceId, before, after, now)
     }
 
-    /** Distance question edges (recording only, never reaches judgment): DANGER start / end of one peer. */
+    /**
+     * Distance question (recording only, never reaches judgment): a DANGER start opens the sidebar question;
+     * askTick shows, hides and closes it. Display always goes through the main Handler.
+     */
     private fun judgeEdge(deviceId: String, before: Int, after: Int, t: Long) {
+        if (!JudgeAsk.dangerStart(before, after)) return
         runCatching {
-            val d = BleConstants.LEVEL_DANGER
-            if (before < d && after == d) {
-                judgeAsk.start(deviceId, "${extractDisplayName(deviceId)} (${typeLabelOf(deviceId)})", t, JudgeLog.markDanger(deviceId, t))
-            } else if (before == d && after < d) {
-                // Also called by handleDeviceLost when a DANGER peer's signal is lost
-                val equipment = (myCategory == BleConstants.CAT_EPJ || myCategory == BleConstants.CAT_FORKLIFT) && !myCart
-                judgeAsk.end(deviceId, t, equipment, ImuFusion.isStationary)?.let(::postJudgeDist)
+            val label = "${extractDisplayName(deviceId)} (${typeLabelOf(deviceId)})"
+            if (judgeAsk.start(deviceId, label, t, JudgeLog.markDanger(deviceId, t))) {
+                askHandler.removeCallbacks(askTick)
+                askHandler.post(askTick)
             }
         }
     }
-
-    private fun postJudgeDist(a: JudgeAsk.Ask) = JudgeQuestion.postDist(this, a, myId, BleConstants.categoryName(myCategory))
 
     private val isScreenOn: Boolean
         get() = (getSystemService(Context.POWER_SERVICE) as PowerManager).isInteractive
@@ -2140,6 +2160,8 @@ class BleService : LifecycleService() {
         AlertVoice.shutdown()
         OverlayManager.onOverlayFault = null
         OverlayManager.onHeaderTap    = null
+        OverlayManager.onAskAnswer    = null
+        askHandler.removeCallbacksAndMessages(null)
         systemFault  = null
         txFault      = null
         soundFault   = null

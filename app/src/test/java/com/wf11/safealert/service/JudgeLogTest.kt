@@ -1,5 +1,6 @@
 package com.wf11.safealert.service
 
+import com.wf11.safealert.ble.BleConstants
 import com.wf11.safealert.firebase.JudgeLog
 import com.wf11.safealert.service.LoneWorkerLogic.JudgeEvent
 import com.wf11.safealert.service.LoneWorkerLogic.Mode
@@ -108,27 +109,43 @@ class JudgeLogTest {
             assertEquals("fall", tk); assertEquals("truth", tr["k"]); assertEquals(6_000L, tr["imp_t"]); assertEquals("fall", tr["truth"])
             assertEquals("self", tr["by"]); assertEquals(4_000L, tr["after_ms"]); assertEquals("ack", tr["close_why"]); assertEquals("WF11-ME", tr["dev"])
 
-            // Distance answer: the frame values copied at the danger start, uwb_m only when the sample was at most 1 s old
+            // Distance answer, DANGER-start values: markDanger returns four keys (uwb only when at most 1 s old) and emits nothing
             frame("JL3", "FORKLIFT", 60_000, -55)
             JudgeLog.uwb("ME", "JL3", 1.234f, 2, 60_500)
-            // markDanger only copies; JudgeAsk's decided callback keeps the copy of an alert that will be asked
-            JudgeLog.holdDanger("JL3", 61_000, JudgeLog.markDanger("JL3", 61_000))
             out.clear()
-            JudgeLog.dist("ME", "WALKER", "JL3", 61_000, "1to3", t = 73_000)
+            val start = JudgeLog.markDanger("JL3", 61_000)!!
+            assertEquals(-61, start["start_rssi"]); assertEquals(-55, start["start_ema"])
+            assertEquals(1_000L, start["start_frame_age_ms"]); assertEquals(1.23, start["start_uwb_m"]); assertEquals(4, start.size)
+            assertTrue(out.isEmpty())
+            assertNull(JudgeLog.markDanger("JL-none", 61_000))
+
+            // The tap-moment values (frame, uwb) plus the times and the start values, in one record
+            frame("JL3", "FORKLIFT", 66_000, -50)
+            JudgeLog.uwb("ME", "JL3", 0.8f, 2, 66_200, use = "measure")
+            out.clear()
+            JudgeLog.dist("ME", "WALKER", "JL3", 61_000, 63_000, "1to3", start, t = 67_000)
             val (dk, d) = out.single()
             assertEquals("prox", dk); assertEquals("dist", d["k"]); assertEquals("WF11-JL3", d["peer"]); assertEquals("FORKLIFT", d["peer_role"])
-            assertEquals(61_000L, d["alert_t"]); assertEquals("1to3", d["ans"]); assertEquals(12_000L, d["after_ms"])
-            assertEquals(1.23, d["uwb_m"]); assertEquals(-55, d["ema"]); assertTrue(d.containsKey("seq"))
-            assertEquals(1_000L, d["frame_age_ms"]); assertEquals("judge", d["uwb_use"])
+            assertEquals(61_000L, d["alert_t"]); assertEquals(2_000L, d["shown_ms"]); assertEquals(6_000L, d["after_ms"]); assertEquals("1to3", d["ans"])
+            assertEquals(-50, d["ema"]); assertEquals(1_000L, d["frame_age_ms"]); assertEquals(0.8, d["uwb_m"]); assertEquals("measure", d["uwb_use"])
+            assertTrue(d.containsKey("seq"))
+            assertEquals(-55, d["start_ema"]); assertEquals(1.23, d["start_uwb_m"]); assertEquals(1_000L, d["start_frame_age_ms"]); assertEquals(-61, d["start_rssi"])
+            // A UWB sample older than 1 s is left out; no start values means no start_ keys
             out.clear()
-            JudgeLog.holdDanger("JL3", 70_000, JudgeLog.markDanger("JL3", 70_000))
-            JudgeLog.dist("ME", "WALKER", "JL3", 70_000, "gt5", t = 71_000)
-            assertFalse(out.single().second.containsKey("uwb_m") || out.single().second.containsKey("uwb_use"))
-            // An alert that was not kept (never asked) still records the answer, without the frame copy
+            JudgeLog.dist("ME", "WALKER", "JL3", 70_000, 70_000, "gt5", null, t = 71_000)
+            val g = out.single().second
+            assertFalse(g.containsKey("uwb_m") || g.containsKey("uwb_use")); assertTrue(g.keys.none { it.startsWith("start_") }); assertTrue(g.containsKey("ema"))
+            // A peer without frame memory still records the answer, without frame values
             out.clear()
-            JudgeLog.markDanger("JL3", 80_000)
-            JudgeLog.dist("ME", "WALKER", "JL3", 80_000, "lt1", t = 81_000)
-            assertFalse(out.single().second.containsKey("ema"))
+            JudgeLog.dist("ME", "WALKER", "JL-none", 80_000, 80_000, "lt1", null, t = 81_000)
+            val n = out.single().second
+            assertEquals("lt1", n["ans"]); assertTrue(n.containsKey("alert_t")); assertFalse(n.containsKey("ema"))
+            // Recording off: dist emits nothing and markDanger returns null
+            out.clear()
+            JudgeLog.on = false
+            JudgeLog.dist("ME", "WALKER", "JL3", 90_000, 90_000, "lt1", null, t = 91_000)
+            assertTrue(out.isEmpty()); assertNull(JudgeLog.markDanger("JL3", 90_000))
+            JudgeLog.on = true
         }
     }
 
@@ -192,31 +209,57 @@ class JudgeLogTest {
     }
 
     @Test fun ask_rules_pick_which_alerts_get_a_question() {
-        // Walker phone: asked at once, within 2 min of the start, a peer once per 30 min, 4 per hour
-        val a = JudgeAsk()
-        fun ask(peer: String, start: Long, end: Long, equipment: Boolean = false, stopped: Boolean = false): JudgeAsk.Ask? {
-            a.start(peer, "$peer (지게차)", start)
-            return a.end(peer, end, equipment, stopped)
-        }
-        assertNull(ask("A", 0, 121_000))
-        assertEquals(JudgeAsk.Ask("A", "A (지게차)", 200_000, 0), ask("A", 200_000, 210_000))
-        assertNull(ask("A", 300_000, 310_000))
-        assertNotNull(ask("A", 2_000_000, 2_005_000))
-        assertNotNull(ask("B", 2_100_000, 2_105_000)); assertNotNull(ask("C", 2_200_000, 2_205_000))
-        assertNull(ask("D", 2_300_000, 2_305_000))
-        assertNotNull(ask("E", 3_900_000, 3_905_000))
+        // Only a rise to DANGER is asked
+        assertTrue(JudgeAsk.dangerStart(0, 2)); assertTrue(JudgeAsk.dangerStart(1, 2))
+        assertFalse(JudgeAsk.dangerStart(0, 1)); assertFalse(JudgeAsk.dangerStart(2, 2)); assertFalse(JudgeAsk.dangerStart(2, 1))
 
-        // Equipment phone: moving at the end holds the question until it stops (within 30 min); stopped at the end asks at once
-        val kept = mutableListOf<String>()
-        val e = JudgeAsk { kept += it.peer }
-        e.start("F", "F", 0); assertNull(e.end("F", 10_000, true, false))
-        assertTrue(e.stopped(10_000 + 31 * 60_000L).isEmpty())
-        e.start("G", "G", 0); assertNull(e.end("G", 10_000, true, false))
-        assertEquals(listOf("G"), e.stopped(10_000 + 10 * 60_000L).map { it.peer })
-        assertTrue(e.stopped(10_000 + 11 * 60_000L).isEmpty())
-        e.start("H", "H", 0); assertNotNull(e.end("H", 10_000, true, true))
-        // Held (F, G) and asked-now (H) alerts keep their frame copy; an alert ended too late does not
-        e.start("I", "I", 0); assertNull(e.end("I", 200_000, false, false))
-        assertEquals(listOf("F", "G", "H"), kept)
+        // When the block may be on screen: equipment (forklift / EPJ, not a cart) only while stopped; nobody without the sidebar
+        val w = BleConstants.CAT_WALKER; val ep = BleConstants.CAT_EPJ; val fk = BleConstants.CAT_FORKLIFT
+        assertTrue(JudgeAsk.showNow(w, false, false, true)); assertFalse(JudgeAsk.showNow(fk, false, false, true))
+        assertTrue(JudgeAsk.showNow(fk, false, true, true)); assertFalse(JudgeAsk.showNow(ep, false, false, true))
+        assertTrue(JudgeAsk.showNow(ep, true, false, true))
+        assertFalse(JudgeAsk.showNow(w, false, false, false)); assertFalse(JudgeAsk.showNow(fk, false, true, false))
+
+        // One at a time (never queued); counted when shown; closes 30 s after the alert start
+        val a = JudgeAsk()
+        val st = mapOf<String, Any?>("start_ema" to -55)
+        assertTrue(a.start("A", "A (지게차)", 0, st)); assertTrue(a.isOpen)
+        assertFalse(a.start("B", "B (지게차)", 5_000, null))
+        assertEquals(0L, a.visible(0, true)!!.shownAt); assertEquals(0L, a.visible(30_000, true)!!.shownAt)
+        assertNull(a.visible(30_001, true)); assertFalse(a.isOpen); assertNull(a.answer(30_002))
+
+        // Same peer once per 30 min (counted at 0, when it was shown)
+        assertFalse(a.start("A", "A (지게차)", 100_000, null))
+        assertTrue(a.start("A", "A (지게차)", 1_800_000, null))
+        assertEquals(1_800_000L, a.visible(1_800_000, true)!!.shownAt); a.answer(1_801_000)
+
+        // 4 per hour, counted when shown: B, C, D after A (0) and A again (1_800_000) fill the hour
+        val b = JudgeAsk()
+        assertTrue(b.start("A", "A", 0, null)); b.visible(0, true); b.answer(1_000)
+        for ((p, t) in listOf("B" to 200_000L, "C" to 400_000L, "D" to 600_000L)) {
+            assertTrue(b.start(p, p, t, null)); b.visible(t + 1_000, true); b.answer(t + 2_000)
+        }
+        assertFalse(b.start("E", "E", 700_000, null))
+        assertTrue(b.start("E", "E", 3_600_000, st))
+        val shown = b.visible(3_601_000, true)!!
+        val got = b.answer(3_602_000)!!
+        assertEquals("E", got.peer); assertEquals(shown.shownAt, got.shownAt); assertEquals(st, got.start)
+        assertNull(b.answer(3_603_000)); assertFalse(b.isOpen)
+        // Answering after 30 s from the alert start gets nothing and closes it
+        val c = JudgeAsk()
+        assertTrue(c.start("A", "A", 0, null)); c.visible(1_000, true)
+        assertNull(c.answer(30_001)); assertFalse(c.isOpen)
+
+        // Equipment phone: hidden while moving (answer impossible, question stays open); never shown within 30 s = not asked, no slot used
+        val f = JudgeAsk()
+        assertTrue(f.start("F", "F", 0, null))
+        assertNull(f.visible(10_000, false)); assertTrue(f.isOpen); assertNull(f.answer(11_000)); assertTrue(f.isOpen)
+        assertNull(f.visible(30_001, true)); assertFalse(f.isOpen)
+        assertTrue(f.start("F", "F", 40_000, null))
+        assertEquals(45_000L, f.visible(45_000, true)!!.shownAt)
+        assertNull(f.visible(46_000, false)); assertTrue(f.isOpen)
+        assertEquals(45_000L, f.visible(47_000, true)!!.shownAt)
+        assertEquals(40_000L, f.answer(50_000)!!.alertT)
+        assertFalse(f.start("F", "F", 100_000, null))
     }
 }

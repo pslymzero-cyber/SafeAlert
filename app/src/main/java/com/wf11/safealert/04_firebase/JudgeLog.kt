@@ -28,7 +28,6 @@ object JudgeLog {
     private const val LEVEL_GAP_MS = 2_000L
     private const val UWB_GAP_MS = 1_000L
     private const val UWB_FRESH_MS = 1_000L
-    private const val DANGER_MAX = 32
     private const val RING = 10
 
     /** Recording switch, raw-acceleration switch and experiment session name. Off by default. */
@@ -187,7 +186,7 @@ object JudgeLog {
         runCatching {
             val (role, fk, body) = synchronized(this) {
                 val p = peers[peer] ?: return
-                // Every sample, before the gap check: markDanger reads the latest one
+                // Every sample, before the gap check: markDanger and dist read the latest one
                 p.uwbM = uwbM; p.uwbMAt = t; p.uwbUse = use
                 if (p.uwbAt != Long.MIN_VALUE && t - p.uwbAt < UWB_GAP_MS) return
                 p.uwbAt = t
@@ -201,43 +200,47 @@ object JudgeLog {
         }
     }
 
-    // Frame copies of the alerts that will be asked, waiting for the distance answer (key peer@alertT)
-    private val dangers = object : LinkedHashMap<String, Map<String, Any?>>() {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Map<String, Any?>>?) = size > DANGER_MAX
-    }
-
     /**
-     * Copies the P1 frame memory (and a UWB distance at most 1 s old, with its uwb_use) at a DANGER start. Null when off. Never emits or keeps.
-     * frame_age_ms = age of that frame at the danger start (a Case A danger can start on a UWB sample while the frame is seconds old).
+     * The values of a DANGER start for the distance question: start_rssi, start_ema, start_frame_age_ms and, when a UWB
+     * distance at most 1 s old exists, start_uwb_m. Null when off or the peer has no frame memory. Never emits or keeps:
+     * the one question that gets asked holds this one map until its answer ([dist]).
+     * start_frame_age_ms = age of that frame at the danger start (a Case A danger can start on a UWB sample while the frame is seconds old).
      */
     fun markDanger(peer: String, t: Long): Map<String, Any?>? {
         if (!on) return null
         return runCatching {
             synchronized(this) {
-                val p = peers[peer]
-                val snap = if (p == null) linkedMapOf<String, Any?>() else proxBody(p)
-                if (p != null) snap["frame_age_ms"] = t - p.frameAt
-                if (p != null && p.uwbMAt != Long.MIN_VALUE && t - p.uwbMAt in 0..UWB_FRESH_MS) {
-                    snap["uwb_m"] = r2(p.uwbM.toDouble()); snap["uwb_use"] = p.uwbUse
-                }
-                snap
+                val p = peers[peer] ?: return@synchronized null
+                val m = linkedMapOf<String, Any?>("start_rssi" to p.rssi, "start_ema" to p.ema, "start_frame_age_ms" to t - p.frameAt)
+                if (p.uwbMAt != Long.MIN_VALUE && t - p.uwbMAt in 0..UWB_FRESH_MS) m["start_uwb_m"] = r2(p.uwbM.toDouble())
+                m
             }
         }.getOrNull()
     }
 
-    /** Keeps the DANGER-start copy of an alert that will be asked ([markDanger]), until its answer ([dist]). */
-    fun holdDanger(peer: String, alertT: Long, snap: Map<String, Any?>?) {
-        if (snap == null) return
-        synchronized(this) { dangers["$peer@$alertT"] = snap }
-    }
-
-    /** P4 — the distance answer (lt1 | 1to3 | 3to5 | gt5 | unknown) for the DANGER that started at alertT. Alone it is analysable. */
-    fun dist(me: String, role: String, peer: String, alertT: Long, ans: String, t: Long = System.currentTimeMillis()) {
+    /**
+     * P4 - the distance answer (lt1 | 1to3 | 3to5 | gt5 | unknown) given on the alert sidebar block, as one record:
+     * the values of the tap moment (that peer's P1 memory incl. the 10 s seq, frame_age_ms, and uwb_m / uwb_use when a
+     * sample at most 1 s old exists), the times (alert_t, shown_ms = first shown - alert_t, after_ms = tap - alert_t)
+     * and the DANGER-start values ([markDanger]). Built under the lock, sent outside it.
+     */
+    fun dist(
+        me: String, role: String, peer: String, alertT: Long, shownAt: Long, ans: String, start: Map<String, Any?>?,
+        t: Long = System.currentTimeMillis(),
+    ) {
         if (!on) return
         runCatching {
-            // Missing after a process restart: the record still carries peer / alert_t / ans / after_ms
-            val snap = synchronized(this) { dangers.remove("$peer@$alertT") } ?: emptyMap()
-            emitProx("dist", t, me, role, peer, linkedMapOf<String, Any?>("alert_t" to alertT, "ans" to ans, "after_ms" to t - alertT) + snap)
+            val now = synchronized(this) {
+                val p = peers[peer] ?: return@synchronized emptyMap<String, Any?>()
+                proxBody(p).apply {
+                    put("frame_age_ms", t - p.frameAt)
+                    if (p.uwbMAt != Long.MIN_VALUE && t - p.uwbMAt in 0..UWB_FRESH_MS) { put("uwb_m", r2(p.uwbM.toDouble())); put("uwb_use", p.uwbUse) }
+                }
+            }
+            emitProx(
+                "dist", t, me, role, peer,
+                linkedMapOf<String, Any?>("alert_t" to alertT, "shown_ms" to shownAt - alertT, "after_ms" to t - alertT, "ans" to ans) + now + (start ?: emptyMap()),
+            )
         }
     }
 

@@ -1,63 +1,80 @@
 package com.wf11.safealert.service
 
+import com.wf11.safealert.ble.BleConstants
+
 /**
- * Which proximity DANGER alerts get the distance question (SPEC_judgeB 2). Recording only - it never touches a
- * judgment. An alert is asked when it ended within [END_MS] of its start, the same peer was not asked in the last
- * [PEER_MS], and the phone asked fewer than [PER_HOUR] times in the last hour. A walker / cart / admin phone asks at
- * once; an equipment phone holds the question until the vehicle stops ([stopped]), for at most [STOP_MS].
- * [decided] hears every alert that will be asked (now or held), so only those keep their DANGER-start copy.
+ * Which proximity DANGER alerts get the distance question (SPEC_judgeE). Recording only - it never touches a judgment.
+ * Only a DANGER start is asked ([dangerStart]), one question at a time, each question open for [OPEN_MS] from the
+ * alert start. The same peer is asked at most once per [PEER_MS] and the phone at most [PER_HOUR] times per hour; both
+ * caps are counted when the block is first shown ([visible]), not when the question opens, so an alert that never
+ * got a visible block (equipment phone that never stopped, no sidebar) uses no slot.
  */
-class JudgeAsk(private val decided: (Ask) -> Unit = {}) {
+class JudgeAsk {
 
-    data class Ask(val peer: String, val label: String, val alertT: Long, val slot: Int, val snap: Map<String, Any?>? = null)
+    /** start = the values of the DANGER-start moment (JudgeLog.markDanger); shownAt = first shown time, null = not yet shown. */
+    data class Ask(
+        val peer: String,
+        val label: String,
+        val alertT: Long,
+        val start: Map<String, Any?>?,
+        val shownAt: Long? = null,
+    )
 
-    private class Open(val label: String, val start: Long, val snap: Map<String, Any?>?)
-
-    private val open = HashMap<String, Open>()
+    private var cur: Ask? = null
     private val lastAsked = HashMap<String, Long>()
     private val asked = ArrayDeque<Long>()
-    private val held = ArrayList<Pair<Ask, Long>>()
-    private var n = 0
 
-    /** A peer's alert rose to DANGER at t; snap is the measured values of that moment (kept only if it gets asked). */
-    @Synchronized
-    fun start(peer: String, label: String, t: Long, snap: Map<String, Any?>? = null) {
-        open.values.removeAll { t - it.start > END_MS }
-        open[peer] = Open(label, t, snap)
-    }
+    val isOpen: Boolean @Synchronized get() = cur != null
 
-    /** The alert ended at t (dropped below DANGER or the peer left). Returns the question to post now, if any. */
+    /** A peer's alert rose to DANGER at t. True = a question is now open (not yet counted). */
     @Synchronized
-    fun end(peer: String, t: Long, equipment: Boolean, stopped: Boolean): Ask? {
-        val o = open.remove(peer) ?: return null
-        if (t - o.start > END_MS) return null
+    fun start(peer: String, label: String, t: Long, start: Map<String, Any?>?): Boolean {
+        cur?.let { if (t - it.alertT <= OPEN_MS) return false }   // one at a time, never queued
         lastAsked.values.removeAll { t - it >= PEER_MS }
-        lastAsked[peer]?.let { if (o.start - it < PEER_MS) return null }
         while (asked.isNotEmpty() && t - asked.first() >= HOUR_MS) asked.removeFirst()
-        if (asked.size >= PER_HOUR) return null
-        // ponytail: the caps count when the question is decided, so a held ask that later expires still used its slot; count at post time if that matters
-        lastAsked[peer] = o.start
-        asked.addLast(t)
-        val ask = Ask(peer, o.label, o.start, n++ % PER_HOUR, o.snap)
-        decided(ask)
-        if (!equipment || stopped) return ask
-        held.add(ask to t)
-        return null
+        if (lastAsked.containsKey(peer) || asked.size >= PER_HOUR) return false
+        cur = Ask(peer, label, t, start)
+        return true
     }
 
-    /** The equipment phone stopped at t: the held questions that ended within [STOP_MS] go out now. */
+    /**
+     * The open question if its block should be on screen at t, else null. Closes it once [OPEN_MS] has passed.
+     * canShow false only hides it (the question stays open). The first visible call counts the two caps.
+     */
     @Synchronized
-    fun stopped(t: Long): List<Ask> {
-        val out = held.filter { t - it.second <= STOP_MS }.map { it.first }
-        held.clear()
-        return out
+    fun visible(t: Long, canShow: Boolean): Ask? {
+        val a = cur ?: return null
+        if (t - a.alertT > OPEN_MS) { cur = null; return null }
+        if (!canShow) return null
+        if (a.shownAt != null) return a
+        lastAsked[a.peer] = t
+        asked.addLast(t)
+        return a.copy(shownAt = t).also { cur = it }
+    }
+
+    /** An answer at t. Returns the closed question, or null if none is open, it was never shown, or it timed out. */
+    @Synchronized
+    fun answer(t: Long): Ask? {
+        val a = cur ?: return null
+        if (a.shownAt == null) return null
+        cur = null
+        return if (t - a.alertT > OPEN_MS) null else a
     }
 
     companion object {
-        const val END_MS = 120_000L
+        const val OPEN_MS = 30_000L
         const val PEER_MS = 30 * 60 * 1000L
         const val HOUR_MS = 60 * 60 * 1000L
         const val PER_HOUR = 4
-        const val STOP_MS = 30 * 60 * 1000L
+
+        /** Only a rise to DANGER is asked; a warning is not. */
+        fun dangerStart(before: Int, after: Int) = before < BleConstants.LEVEL_DANGER && after == BleConstants.LEVEL_DANGER
+
+        /**
+         * Whether the block may be on screen now. An equipment phone (forklift / EPJ, not a cart) only while stopped;
+         * walker, cart and admin phones at once. Without the sidebar on screen nothing can be shown.
+         */
+        fun showNow(category: Int, cart: Boolean, stationary: Boolean, sidebar: Boolean) =
+            sidebar && (stationary || cart || (category != BleConstants.CAT_EPJ && category != BleConstants.CAT_FORKLIFT))
     }
 }
