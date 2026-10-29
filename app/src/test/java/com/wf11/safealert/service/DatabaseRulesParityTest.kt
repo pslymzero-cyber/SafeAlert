@@ -1,6 +1,7 @@
 package com.wf11.safealert.service
 
 import com.wf11.safealert.ble.SosAdvert
+import com.wf11.safealert.utils.SitePin
 import com.wf11.safealert.utils.SiteScope
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -83,5 +84,25 @@ class DatabaseRulesParityTest {
             assertTrue(own, own.contains("\".indexOn\": [\"$key\"]"))
             assertTrue(key, page.contains("orderByChild('$key')"))
         }
+    }
+
+    // The site PIN nodes: only the check value (pub) is readable; the gate, the proof and the change log are not; the iteration
+    //   limits and hex lengths match SitePin; a change needs the stored gate as proof and the next version; the log is append-only.
+    @Test fun site_pin_rules_match_the_app() {
+        val s = repoFile("database.rules.json")
+        val a = s.indexOf("\"pin\": {")
+        val b = s.indexOf("\"pinlog\": {")
+        assertTrue(a >= 0 && b > a)
+        val pin = s.substring(a, b)
+        val log = s.substring(b)
+        assertTrue(pin.contains(">= ${SitePin.MIN_ITER}") && pin.contains("<= ${SitePin.MAX_ITER}"))
+        assertTrue(pin.contains("{32}") && pin.contains("{64}"))
+        assertTrue(pin.contains("newData.child('proof').val() === data.child('sec/gate').val()"))
+        assertTrue(pin.contains("data.child('pub/ver').val() + 1"))
+        val pub = pin.substring(pin.indexOf("\"pub\": {"), pin.indexOf("\"sec\": {"))
+        assertTrue(pub.contains("\".read\""))
+        assertTrue(!pin.substring(pin.indexOf("\"sec\": {")).contains("\".read\""))
+        assertTrue(!log.contains("\".read\""))
+        assertTrue(log.contains("!data.exists()"))
     }
 }
