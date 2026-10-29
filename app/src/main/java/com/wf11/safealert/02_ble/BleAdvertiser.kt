@@ -18,7 +18,9 @@ class BleAdvertiser(
     private val onStatusUpdate: ((String) -> Unit)? = null,
     // Cart worker marker (ext byte bit2). The advertiser is rebuilt on every start and a running phone never
     //   switches walker <-> cart, so a fixed constructor value is enough.
-    private val cart: Boolean = false
+    private val cart: Boolean = false,
+    // Admin marker (ext byte bit3), fixed per start like cart
+    private val admin: Boolean = false
 ) {
     companion object {
         private const val TAG = "BleAdvertiser"
@@ -321,7 +323,7 @@ class BleAdvertiser(
                 //   (ID limited to 12B → max 31B).
                 SosAdvert.serviceData(
                     BleConstants.encodePayload(category, currentState, currentTurnDir, currentRisk),
-                    BleConstants.encodeExt(currentInZone, currentSos, cart),
+                    BleConstants.encodeExt(currentInZone, currentSos, cart, admin),
                     if (sosExt) sosEpisode else 0,
                     sosHint
                 )

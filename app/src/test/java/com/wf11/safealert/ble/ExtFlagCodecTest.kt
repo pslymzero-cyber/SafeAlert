@@ -4,7 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 /**
- * ext byte (ServiceData byte[1]) bit0 = IN_ZONE, bit1 = SOS, bit2 = CART (older versions mask only bit0/bit1), and the frozen 1-byte payload layout (byte[0]).
+ * ext byte (ServiceData byte[1]) bit0 = IN_ZONE, bit1 = SOS, bit2 = CART, bit3 = ADMIN (read only by the PIN lookup; older versions mask only bit0/bit1), and the frozen 1-byte payload layout (byte[0]).
  * That the SOS advert keeps byte[0] untouched is SosAdvertTest's job (it builds the real service data).
  */
 class ExtFlagCodecTest {
@@ -15,7 +15,7 @@ class ExtFlagCodecTest {
      */
     @Test
     fun extByte_inZoneInBit0_sosInBit1() {
-        class Row(val label: String, val inZone: Boolean, val sos: Boolean, val byte: Int, val cart: Boolean = false)
+        class Row(val label: String, val inZone: Boolean, val sos: Boolean, val byte: Int, val cart: Boolean = false, val admin: Boolean = false)
         val rows = listOf(
             Row("row 1 neither (a missing byte is parsed as 0)", inZone = false, sos = false, byte = 0x00),
             Row("row 2 inZone", inZone = true, sos = false, byte = 0x01),
@@ -23,13 +23,20 @@ class ExtFlagCodecTest {
             Row("row 4 inZone+sos", inZone = true, sos = true, byte = 0x03),
             Row("row 5 cart", inZone = false, sos = false, byte = 0x04, cart = true),
             Row("row 6 inZone+sos+cart", inZone = true, sos = true, byte = 0x07, cart = true),
+            Row("row 7 admin", inZone = false, sos = false, byte = 0x08, admin = true),
+            Row("row 8 inZone+sos+cart+admin", inZone = true, sos = true, byte = 0x0F, cart = true, admin = true),
         )
         for (r in rows) {
-            assertEquals("${r.label}: encodeExt", r.byte, BleConstants.encodeExt(inZone = r.inZone, sos = r.sos, cart = r.cart))
+            assertEquals("${r.label}: encodeExt", r.byte, BleConstants.encodeExt(inZone = r.inZone, sos = r.sos, cart = r.cart, admin = r.admin))
             assertEquals("${r.label}: decodeSos", r.sos, BleConstants.decodeSos(r.byte))
             assertEquals("${r.label}: decodeCart", r.cart, BleConstants.decodeCart(r.byte))
+            assertEquals("${r.label}: decodeAdmin", r.admin, BleConstants.decodeAdmin(r.byte))
             assertEquals("${r.label}: older versions see bit0/bit1 only", BleConstants.encodeExt(inZone = r.inZone, sos = r.sos), r.byte and 0x03)
         }
+        // The admin marker alone is neither a cart nor an SOS nor an in-zone declaration
+        assertEquals(false, BleConstants.decodeCart(0x08))
+        assertEquals(false, BleConstants.decodeSos(0x08))
+        assertEquals(0, 0x08 and 0x01)
     }
 
     /** Deployed devices decode this 1-byte layout (CAT 7:6, STATE 5:4, TURN 3:2, RISK 1:0); it must never change. */

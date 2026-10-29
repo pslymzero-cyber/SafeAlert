@@ -35,6 +35,8 @@ object BleConstants {
     // Extension byte bit2: cart worker marker. Cart workers keep CAT_WALKER in byte[0]; older versions mask only
     //   bit0/bit1, so they simply see a walker
     const val EXT_FLAG_CART        = 0x04
+    // Extension byte bit3: admin marker. Only the PIN lookup reads it; older versions mask bit0-2, so they see a walker
+    const val EXT_ADMIN            = 0x08
 
     // RSSI >= threshold → alert (the closer the device, the nearer RSSI gets to 0)
     // Warning: from farther away (more negative); danger: closer (less negative).
@@ -147,9 +149,13 @@ object BleConstants {
         return (c or s or t or r).toByte()
     }
 
-    /** Builds the extension byte: bit0=IN_ZONE, bit1=SOS, bit2=CART. Independent of the first byte (encodePayload). */
-    fun encodeExt(inZone: Boolean, sos: Boolean, cart: Boolean = false): Int =
-        (if (inZone) EXT_FLAG_IN_ZONE else 0) or (if (sos) EXT_FLAG_SOS else 0) or (if (cart) EXT_FLAG_CART else 0)
+    /** Builds the extension byte: bit0=IN_ZONE, bit1=SOS, bit2=CART, bit3=ADMIN. Independent of the first byte (encodePayload). */
+    fun encodeExt(inZone: Boolean, sos: Boolean, cart: Boolean = false, admin: Boolean = false): Int =
+        (if (inZone) EXT_FLAG_IN_ZONE else 0) or (if (sos) EXT_FLAG_SOS else 0) or (if (cart) EXT_FLAG_CART else 0) or
+            (if (admin) EXT_ADMIN else 0)
+
+    /** Extracts ADMIN (bit3) from the extension byte. A missing byte arrives as 0, so false. */
+    fun decodeAdmin(ext: Int): Boolean = (ext and EXT_ADMIN) != 0
 
     /** Extracts CART (bit2) from the extension byte. A missing byte arrives as 0, so false. */
     fun decodeCart(ext: Int): Boolean = (ext and EXT_FLAG_CART) != 0

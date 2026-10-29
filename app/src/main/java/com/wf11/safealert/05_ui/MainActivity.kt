@@ -40,6 +40,7 @@ import com.wf11.safealert.R
 import com.wf11.safealert.ble.BleConstants
 import com.wf11.safealert.ble.LocalState
 import com.wf11.safealert.model.PitType
+import com.wf11.safealert.utils.AdminPin
 import com.wf11.safealert.utils.BeaconRegistry
 import com.wf11.safealert.utils.DevSettings
 import com.wf11.safealert.utils.OverlayManager
@@ -1109,7 +1110,7 @@ class MainActivity : AppCompatActivity() {
         dlg.cardWorkerWalk.setOnClickListener { dialog.dismiss(); onPicked(WorkerKind.WALK) }
         dlg.cardWorkerCart.setOnClickListener { dialog.dismiss(); onPicked(WorkerKind.CART) }
         // The admin card is behind the site PIN; cancelling the PIN starts nothing (a running monitoring stays untouched)
-        dlg.cardWorkerAdmin.setOnClickListener { dialog.dismiss(); showSitePinDialog("관리자") { _ -> onPicked(WorkerKind.ADMIN) } }
+        dlg.cardWorkerAdmin.setOnClickListener { dialog.dismiss(); showSitePinDialog("관리자") { pin -> AdminPin.save(this, DevSettings.siteCode, pin); onPicked(WorkerKind.ADMIN) } }
         dialog.show()
     }
 

@@ -115,7 +115,7 @@ object SitePinStore {
         }
     }
 
-    private fun parse(s: DataSnapshot): SitePin.Pub? = runCatching {
+    internal fun parse(s: DataSnapshot): SitePin.Pub? = runCatching {
         SitePin.Pub(
             s.child("salt").getValue(String::class.java)!!, s.child("hash").getValue(String::class.java)!!,
             s.child("iter").getValue(Long::class.java)!!.toInt(), s.child("ver").getValue(Long::class.java)!!,
