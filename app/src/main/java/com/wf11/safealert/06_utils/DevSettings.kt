@@ -632,12 +632,12 @@ object DevSettings {
         get() = prefs.getBoolean(KEY_UWB_ENABLED, true)
         set(v) = prefs.edit().putBoolean(KEY_UWB_ENABLED, v).apply()
 
-    // Force-enable UWB — with HW, permission and the system toggle satisfied, starts the UWB session even
-    //   when the uwbEnabled toggle is off. Unsupported HW, denied permission or system OFF cannot be bypassed
-    //   (forcing still can't open a session). Default OFF — for debugging/field verification.
+    // Force-enable UWB — passes only the uwbEnabled toggle (BleService.applyUwbLiveState). The -80 dBm start gate
+    //   (UwbRanger) still applies, so judgment is as before; unsupported HW, denied permission or system UWB off
+    //   cannot be bypassed. Default ON (user decision 2026-10-29); a phone with a stored value keeps it.
     private const val KEY_UWB_FORCE = "uwb_force"
     var uwbForce: Boolean
-        get() = prefs.getBoolean(KEY_UWB_FORCE, false)
+        get() = prefs.getBoolean(KEY_UWB_FORCE, true)
         set(v) = prefs.edit().putBoolean(KEY_UWB_FORCE, v).apply()
 
     // UWB measurement sample upload — pairs UWB true distance (m) with the same frame's BLE RSSI and writes them

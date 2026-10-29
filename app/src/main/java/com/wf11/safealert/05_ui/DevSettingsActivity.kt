@@ -609,7 +609,7 @@ class DevSettingsActivity : AppCompatActivity() {
             sys == false -> "→ 기기 UWB가 꺼져 있습니다. 시스템 설정에서 켜세요."
             err != null  -> if (active) "→ $err (자동 재시도 중)"
                             else "→ 초기화 실패: $err (자동 재시도 중)"
-            !active      -> if (DevSettings.uwbForce) "→ 강제 ON. 상대 UWB 기기가 잡히면 세션이 열립니다."
+            !active      -> if (DevSettings.uwbForce) "→ 강제 ON(UWB 토글 무시). 상대가 근접(시작 게이트 통과)하면 세션이 열립니다."
                             else "→ 대기 중. 상대가 근접(시작 게이트 통과)하면 세션이 열립니다."
             else         -> "→ UWB 실측 중 — 목록 거리가 m로 표시됩니다."
         }

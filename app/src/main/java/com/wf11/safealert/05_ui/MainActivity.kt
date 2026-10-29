@@ -576,7 +576,7 @@ class MainActivity : AppCompatActivity() {
         prefs.edit().putInt("running_category", category).apply()
         binding.layoutPermissionWarning.visibility = View.GONE
         // On UWB-capable devices also request the UWB_RANGING runtime permission — only the three BLE permissions are required
-        val wantUwb = UwbRanger.isHardwareSupported(this) &&
+        val wantUwb = (DevSettings.uwbEnabled || DevSettings.uwbForce) && UwbRanger.isHardwareSupported(this) &&
                 ContextCompat.checkSelfPermission(this, Manifest.permission.UWB_RANGING) !=
                     PackageManager.PERMISSION_GRANTED
         // Notification permission. On targetSdk 33+ without it even the foreground service's persistent notification
