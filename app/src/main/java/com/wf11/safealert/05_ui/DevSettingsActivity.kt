@@ -609,7 +609,8 @@ class DevSettingsActivity : AppCompatActivity() {
             (if (binding.switchSound.isChecked) " · 음성 ${onOff(binding.switchVoice.isChecked)}" else "")
         binding.secAlertSummary.text =
             "경고 ${DevSettings.rssiWarning} · 위험 ${DevSettings.rssiDanger} dBm · 오프셋 ${DevSettings.walkerVsEquipBiasDb}/" +
-            "${DevSettings.walkerVsEpjBiasDb}/${DevSettings.equipVsEquipBiasDb} dB"
+            "${DevSettings.equipVsEquipBiasDb}/${DevSettings.walkerVsEpjBiasDb}/${DevSettings.epjVsEpjBiasDb}/" +
+            "${DevSettings.walkerVsWalkerBiasDb} dB"
         binding.secParamSummary.text = "TTC ${DevSettings.ttcThresholdSec}s · 쿨다운 · 필터 · 에코"
         binding.secCoopSummary.text =
             "상호 RSSI ${onOff(binding.swReciprocalRssi.isChecked)} · 완화 +${binding.seekCoopSlack.progress} dB"
