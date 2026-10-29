@@ -14,7 +14,7 @@ import java.util.Locale
 /**
  * Judge-data records — fall and proximity measurements written to `wf11/judge/<fall|prox>/<SC>/<yyyyMMdd>/<push id>`
  * for offline learning. Recording only: it never changes a judgment, every public function swallows its exceptions,
- * and it does nothing until it is switched on (app start / developer settings). Roles arrive as names, so this
+ * and it does nothing until [sync] switches it on (app start / developer settings). Roles arrive as names, so this
  * layer does not depend on the ble or service packages.
  */
 object JudgeLog {
@@ -57,6 +57,15 @@ object JudgeLog {
         FirebaseDatabase.getInstance().reference.child(DevSettings.FIREBASE_ROOT).child("judge").child(kind)
             .child(scOf(rec["site"] as? String ?: "")).child(day).push().setValue(rec)
             .addOnFailureListener { Log.w(TAG, "판정 기록 실패: ${it.message}") }
+    }
+
+    /** Applies the developer settings (app start and every change of the three rows). */
+    fun sync() {
+        runCatching {
+            on = DevSettings.judgeLogEnabled
+            accOn = DevSettings.judgeLogAcc
+            session = DevSettings.judgeLogSession
+        }
     }
 
     fun scOf(site: String): String = if (Regex(SC_PATTERN).matches(site)) site else NOSITE

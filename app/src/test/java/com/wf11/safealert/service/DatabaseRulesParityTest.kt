@@ -1,6 +1,7 @@
 package com.wf11.safealert.service
 
 import com.wf11.safealert.ble.SosAdvert
+import com.wf11.safealert.firebase.JudgeLog
 import com.wf11.safealert.utils.SitePin
 import com.wf11.safealert.utils.SiteScope
 import org.junit.Assert.assertEquals
@@ -89,12 +90,22 @@ class DatabaseRulesParityTest {
     // The site PIN nodes: only the check value (pub) is readable; the gate, the proof and the change log are not; the iteration
     //   limits and hex lengths match SitePin; a change needs the stored gate as proof and the next version; the log is append-only.
     //   pinreq (PIN lookup): readable and indexed by at; only the creator creates (without an answer) or deletes; one answer, key unchanged.
+    //   judge (judge data, sits before pin): write-once, only fall / prox, writer uid, raw acceleration capped at JudgeLog.ACC_MAX, no read rule.
     @Test fun site_pin_rules_match_the_app() {
         val s = repoFile("database.rules.json")
         val a = s.indexOf("\"pin\": {")
         val b = s.indexOf("\"pinlog\": {")
         val c = s.indexOf("\"pinreq\": {")
         assertTrue(a >= 0 && b > a && c > b)
+        val j = s.indexOf("\"judge\": {")
+        assertTrue(j in 0 until a)
+        val judge = s.substring(j, a)
+        assertTrue(judge.contains("!data.exists() && newData.exists()"))
+        assertTrue(judge.contains("(\$kind === 'fall' || \$kind === 'prox')"))
+        assertTrue(judge.contains("newData.child('uid').val() === auth.uid"))
+        assertTrue(judge.contains("newData.val().length <= ${JudgeLog.ACC_MAX}"))
+        assertTrue(judge.contains("\$sc.matches(/${JudgeLog.SC_PATTERN}/)"))
+        assertTrue(!judge.contains("\".read\""))
         val pin = s.substring(a, b)
         val log = s.substring(b, c)
         val req = s.substring(c)

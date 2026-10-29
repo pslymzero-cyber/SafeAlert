@@ -16,6 +16,7 @@ import androidx.core.uwb.UwbManager
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 import com.wf11.safealert.BuildConfig
+import com.wf11.safealert.firebase.JudgeLog
 import com.wf11.safealert.firebase.SitePinStore
 import com.wf11.safealert.service.AlertVoice
 import com.wf11.safealert.service.BleService
@@ -140,6 +141,9 @@ class DevSettingsActivity : AppCompatActivity() {
         binding.swUwbForce.isChecked = DevSettings.uwbForce
         // UWB measurement sample upload — OFF by default. Disabled without hardware support, since there is no reason to turn it on.
         binding.swUwbProbeUpload.isChecked = DevSettings.uwbProbeUploadEnabled
+        binding.swJudgeLog.isChecked = DevSettings.judgeLogEnabled
+        binding.swJudgeLogAcc.isChecked = DevSettings.judgeLogAcc
+        binding.etJudgeLogSession.setText(DevSettings.judgeLogSession)
         refreshUwbDiag()
         // "협력·교환" — mutual RSSI exchange + cooperative acceptance relaxation (0~20 dB)
         binding.swReciprocalRssi.isChecked = DevSettings.reciprocalRssiEnabled
@@ -368,6 +372,15 @@ class DevSettingsActivity : AppCompatActivity() {
         // "UWB 고급" (UWB advanced) section — its 4 switches (probe upload, promote, speed promote, separation release) are
         // written immediately; AlertStateMachine reads them live.
         binding.swUwbProbeUpload.setOnCheckedChangeListener { _, c -> DevSettings.uwbProbeUploadEnabled = c; updateSectionSummaries() }
+        binding.swJudgeLog.setOnCheckedChangeListener { _, c -> DevSettings.judgeLogEnabled = c; JudgeLog.sync() }
+        binding.swJudgeLogAcc.setOnCheckedChangeListener { _, c -> DevSettings.judgeLogAcc = c; JudgeLog.sync() }
+        // Judge-record session name: an invalid name is refused by the setter and shown back as the stored one
+        run {
+            val et = binding.etJudgeLogSession
+            val commit: () -> Unit = { DevSettings.judgeLogSession = et.text.toString(); JudgeLog.sync() }
+            editCommitters += commit
+            et.setOnFocusChangeListener { _, hasFocus -> if (!hasFocus) { commit(); et.setText(DevSettings.judgeLogSession) } }
+        }
         binding.swUwbPromote.setOnCheckedChangeListener    { _, c -> DevSettings.uwbPromoteEnabled    = c; updateSectionSummaries() }
         binding.swUwbVelPromote.setOnCheckedChangeListener { _, c -> DevSettings.uwbVelPromoteEnabled = c; updateSectionSummaries() }
         binding.swUwbVelRelease.setOnCheckedChangeListener { _, c -> DevSettings.uwbVelReleaseEnabled = c; updateSectionSummaries() }
@@ -517,6 +530,7 @@ class DevSettingsActivity : AppCompatActivity() {
         DevSettings.resetToDefault()
         UwbCalibrator.applySite()   // The site may have gone back to the one entered at monitoring start
         loadValues()
+        JudgeLog.sync()   // Reset clears the stored values without firing the row listeners
         updateSectionSummaries()   // Also redraw the section header summaries with the defaults
         Toast.makeText(this, "기본값으로 초기화되었습니다", Toast.LENGTH_SHORT).show()
     }

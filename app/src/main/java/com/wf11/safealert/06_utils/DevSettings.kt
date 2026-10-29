@@ -650,6 +650,30 @@ object DevSettings {
         get() = prefs.getBoolean(KEY_UWB_PROBE_UPLOAD, false)
         set(v) = prefs.edit().putBoolean(KEY_UWB_PROBE_UPLOAD, v).apply()
 
+    // Judge data - fall / proximity measurements written to wf11/judge for offline learning (JudgeLog). It only
+    //   records, so alert behavior is identical either way. Default ON (user decision 2026-10-29), raw acceleration too.
+    private const val KEY_JUDGE_LOG = "judge_log_enabled"
+    var judgeLogEnabled: Boolean
+        get() = prefs.getBoolean(KEY_JUDGE_LOG, true)
+        set(v) = prefs.edit().putBoolean(KEY_JUDGE_LOG, v).apply()
+
+    private const val KEY_JUDGE_LOG_ACC = "judge_log_acc"
+    var judgeLogAcc: Boolean
+        get() = prefs.getBoolean(KEY_JUDGE_LOG_ACC, true)
+        set(v) = prefs.edit().putBoolean(KEY_JUDGE_LOG_ACC, v).apply()
+
+    // Experiment session name stamped on every judge record ("field" in daily use). Letters, digits and : . _ - up to 40;
+    //   anything else is refused (the old name stays), empty = back to "field".
+    private const val KEY_JUDGE_LOG_SESSION = "judge_log_session"
+    private val JUDGE_SESSION = Regex("[A-Za-z0-9:._-]{1,40}")
+    var judgeLogSession: String
+        get() = prefs.getString(KEY_JUDGE_LOG_SESSION, null)?.takeIf { JUDGE_SESSION.matches(it) } ?: "field"
+        set(v) {
+            val s = v.trim()
+            if (s.isEmpty()) prefs.edit().remove(KEY_JUDGE_LOG_SESSION).apply()
+            else if (JUDGE_SESSION.matches(s)) prefs.edit().putString(KEY_JUDGE_LOG_SESSION, s).apply()
+        }
+
     // Distance display mode — signal label in the detection list and floating widget.
     //   0 = dBm only (default) / 1 = meters for UWB-measured pairs only /
     //   2 = meters for all (non-UWB shows the RSSI estimate "약 X m").

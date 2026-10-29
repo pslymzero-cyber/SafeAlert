@@ -293,6 +293,20 @@
           }
         }
       },
+      "judge": {
+        "$kind": {
+          "$sc": {
+            "$day": {
+              "$id": {
+                ".write": "auth != null && !data.exists() && newData.exists() && $site.matches(/^[A-Za-z0-9_-]{1,32}$/) && ($kind === 'fall' || $kind === 'prox') && $sc.matches(/^[A-Z0-9_-]{1,12}$/) && $day.matches(/^[0-9]{8}$/)",
+                ".validate": "newData.hasChildren(['v','k','t','dev','uid']) && newData.child('uid').val() === auth.uid",
+                "acc": { ".validate": "newData.isString() && newData.val().length <= 20000" },
+                "seq": { ".validate": "newData.isString() && newData.val().length <= 2000" }
+              }
+            }
+          }
+        }
+      },
       "pin": {
         "$sc": {
           ".write": "auth != null && $site.matches(/^[A-Za-z0-9_-]{1,32}$/) && $sc.matches(/^[A-Z0-9_-]{1,12}$/) && newData.exists() && newData.child('sec/gate').val() !== data.child('sec/gate').val() && (data.exists() ? (newData.child('proof').val() === data.child('sec/gate').val() && newData.child('pub/ver').val() === data.child('pub/ver').val() + 1) : (newData.child('pub/ver').val() === 1 && !newData.child('proof').exists()))",
