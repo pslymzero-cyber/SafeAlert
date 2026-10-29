@@ -195,22 +195,28 @@ object JudgeLog {
         }
     }
 
-    // Frame copies taken at a DANGER start, waiting for the distance answer (key peer@alertT)
-    private val dangers = object : LinkedHashMap<String, LinkedHashMap<String, Any?>>() {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, LinkedHashMap<String, Any?>>?) = size > DANGER_MAX
+    // Frame copies of the alerts that will be asked, waiting for the distance answer (key peer@alertT)
+    private val dangers = object : LinkedHashMap<String, Map<String, Any?>>() {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Map<String, Any?>>?) = size > DANGER_MAX
     }
 
-    /** Copies the P1 frame memory (and a UWB distance at most 1 s old) at a DANGER start for the distance answer. Never emits. */
-    fun markDanger(peer: String, t: Long) {
-        if (!on) return
-        runCatching {
+    /** Copies the P1 frame memory (and a UWB distance at most 1 s old) at a DANGER start. Null when off. Never emits or keeps. */
+    fun markDanger(peer: String, t: Long): Map<String, Any?>? {
+        if (!on) return null
+        return runCatching {
             synchronized(this) {
                 val p = peers[peer]
                 val snap = if (p == null) linkedMapOf<String, Any?>() else proxBody(p)
                 if (p != null && p.uwbMAt != Long.MIN_VALUE && t - p.uwbMAt in 0..UWB_FRESH_MS) snap["uwb_m"] = r2(p.uwbM.toDouble())
-                dangers["$peer@$t"] = snap
+                snap
             }
-        }
+        }.getOrNull()
+    }
+
+    /** Keeps the DANGER-start copy of an alert that will be asked ([markDanger]), until its answer ([dist]). */
+    fun holdDanger(peer: String, alertT: Long, snap: Map<String, Any?>?) {
+        if (snap == null) return
+        synchronized(this) { dangers["$peer@$alertT"] = snap }
     }
 
     /** P4 — the distance answer (lt1 | 1to3 | 3to5 | gt5 | unknown) for the DANGER that started at alertT. Alone it is analysable. */

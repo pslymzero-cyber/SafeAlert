@@ -109,7 +109,8 @@ class JudgeLogTest {
             // Distance answer: the frame values copied at the danger start, uwb_m only when the sample was at most 1 s old
             frame("JL3", "FORKLIFT", 60_000, -55)
             JudgeLog.uwb("ME", "JL3", 1.234f, 2, 60_500)
-            JudgeLog.markDanger("JL3", 61_000)
+            // markDanger only copies; JudgeAsk's decided callback keeps the copy of an alert that will be asked
+            JudgeLog.holdDanger("JL3", 61_000, JudgeLog.markDanger("JL3", 61_000))
             out.clear()
             JudgeLog.dist("ME", "WALKER", "JL3", 61_000, "1to3", t = 73_000)
             val (dk, d) = out.single()
@@ -117,9 +118,14 @@ class JudgeLogTest {
             assertEquals(61_000L, d["alert_t"]); assertEquals("1to3", d["ans"]); assertEquals(12_000L, d["after_ms"])
             assertEquals(1.23, d["uwb_m"]); assertEquals(-55, d["ema"]); assertTrue(d.containsKey("seq"))
             out.clear()
-            JudgeLog.markDanger("JL3", 70_000)
+            JudgeLog.holdDanger("JL3", 70_000, JudgeLog.markDanger("JL3", 70_000))
             JudgeLog.dist("ME", "WALKER", "JL3", 70_000, "gt5", t = 71_000)
             assertFalse(out.single().second.containsKey("uwb_m"))
+            // An alert that was not kept (never asked) still records the answer, without the frame copy
+            out.clear()
+            JudgeLog.markDanger("JL3", 80_000)
+            JudgeLog.dist("ME", "WALKER", "JL3", 80_000, "lt1", t = 81_000)
+            assertFalse(out.single().second.containsKey("ema"))
         }
     }
 
@@ -198,12 +204,16 @@ class JudgeLogTest {
         assertNotNull(ask("E", 3_900_000, 3_905_000))
 
         // Equipment phone: moving at the end holds the question until it stops (within 30 min); stopped at the end asks at once
-        val e = JudgeAsk()
+        val kept = mutableListOf<String>()
+        val e = JudgeAsk { kept += it.peer }
         e.start("F", "F", 0); assertNull(e.end("F", 10_000, true, false))
         assertTrue(e.stopped(10_000 + 31 * 60_000L).isEmpty())
         e.start("G", "G", 0); assertNull(e.end("G", 10_000, true, false))
         assertEquals(listOf("G"), e.stopped(10_000 + 10 * 60_000L).map { it.peer })
         assertTrue(e.stopped(10_000 + 11 * 60_000L).isEmpty())
         e.start("H", "H", 0); assertNotNull(e.end("H", 10_000, true, true))
+        // Held (F, G) and asked-now (H) alerts keep their frame copy; an alert ended too late does not
+        e.start("I", "I", 0); assertNull(e.end("I", 200_000, false, false))
+        assertEquals(listOf("F", "G", "H"), kept)
     }
 }

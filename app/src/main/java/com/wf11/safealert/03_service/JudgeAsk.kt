@@ -5,12 +5,13 @@ package com.wf11.safealert.service
  * judgment. An alert is asked when it ended within [END_MS] of its start, the same peer was not asked in the last
  * [PEER_MS], and the phone asked fewer than [PER_HOUR] times in the last hour. A walker / cart / admin phone asks at
  * once; an equipment phone holds the question until the vehicle stops ([stopped]), for at most [STOP_MS].
+ * [decided] hears every alert that will be asked (now or held), so only those keep their DANGER-start copy.
  */
-class JudgeAsk {
+class JudgeAsk(private val decided: (Ask) -> Unit = {}) {
 
-    data class Ask(val peer: String, val label: String, val alertT: Long, val slot: Int)
+    data class Ask(val peer: String, val label: String, val alertT: Long, val slot: Int, val snap: Map<String, Any?>? = null)
 
-    private class Open(val label: String, val start: Long)
+    private class Open(val label: String, val start: Long, val snap: Map<String, Any?>?)
 
     private val open = HashMap<String, Open>()
     private val lastAsked = HashMap<String, Long>()
@@ -18,11 +19,11 @@ class JudgeAsk {
     private val held = ArrayList<Pair<Ask, Long>>()
     private var n = 0
 
-    /** A peer's alert rose to DANGER at t. */
+    /** A peer's alert rose to DANGER at t; snap is the measured values of that moment (kept only if it gets asked). */
     @Synchronized
-    fun start(peer: String, label: String, t: Long) {
+    fun start(peer: String, label: String, t: Long, snap: Map<String, Any?>? = null) {
         open.values.removeAll { t - it.start > END_MS }
-        open[peer] = Open(label, t)
+        open[peer] = Open(label, t, snap)
     }
 
     /** The alert ended at t (dropped below DANGER or the peer left). Returns the question to post now, if any. */
@@ -37,7 +38,8 @@ class JudgeAsk {
         // ponytail: the caps count when the question is decided, so a held ask that later expires still used its slot; count at post time if that matters
         lastAsked[peer] = o.start
         asked.addLast(t)
-        val ask = Ask(peer, o.label, o.start, n++ % PER_HOUR)
+        val ask = Ask(peer, o.label, o.start, n++ % PER_HOUR, o.snap)
+        decided(ask)
         if (!equipment || stopped) return ask
         held.add(ask to t)
         return null

@@ -525,7 +525,7 @@ class BleService : LifecycleService() {
 
     // Judgment state is owned by AlertStateMachine - the fields below alias the same instances (for reflection tests and remaining call sites)
     private val alertState = asm.alertState
-    private val judgeAsk = JudgeAsk()   // distance-question rules (recording only)
+    private val judgeAsk = JudgeAsk { JudgeLog.holdDanger(it.peer, it.alertT, it.snap) }   // distance-question rules (recording only)
     private val kalmanFilters = asm.kalmanFilters
     private val filterPreserveMap = asm.filterPreserveMap
     private val timeGateWaiveSet = asm.timeGateWaiveSet
@@ -677,7 +677,7 @@ class BleService : LifecycleService() {
                     // Became stationary → power saving after a 5 s debounce (cancelled if it moves meanwhile)
                     ecoHandler.postDelayed(ecoDowngradeRunnable, STATIONARY_ECO_DELAY_MS)
                     // Held equipment distance questions go out once the vehicle stops (recording only)
-                    runCatching { judgeAsk.stopped(System.currentTimeMillis()).forEach(::postJudgeDist) }
+                    if (JudgeLog.on) runCatching { judgeAsk.stopped(System.currentTimeMillis()).forEach(::postJudgeDist) }
                 } else {
                     // Movement detected → back to ACTIVE at once (0 s, combat mode)
                     bleScanner?.setEcoMode(false)
@@ -1097,11 +1097,14 @@ class BleService : LifecycleService() {
         if (lastRssi != null) {
             filterPreserveMap[deviceId] = AlertStateMachine.FilterPreserveState(lastRssi, android.os.SystemClock.elapsedRealtime())
         }
+        val lostLevel = alertState[deviceId]?.first ?: BleConstants.LEVEL_SAFE   // judge data: read before the purge
         uwbRanger?.onDeviceLost(deviceId)    // clean up UWB candidates/sessions — before map removal (original order kept)
         // Single path for removing device state. cold = no snapshot → cold-clear at once, (deferred) filters included.
         //   Covers: alertState, all ASM state maps, the 5 BleService maps (the 3 dwell maps = clearDwellMute),
         //   the 3 uwb maps, echoDiffLive (persisted, then cleared). Registration: see ASM init and registerDeviceState.
         asm.registry.purge(deviceId, cold = lastRssi == null)
+        // A DANGER that ends by signal loss is an alert end too (distance question, recording only)
+        if (JudgeLog.on) judgeEdge(deviceId, lostLevel, BleConstants.LEVEL_SAFE, System.currentTimeMillis())
         sendAlertBroadcast(deviceId, BleConstants.LEVEL_SAFE)
         if (alertState.isEmpty()) {
             AlertSoundPlayer.stopSound()
@@ -1176,10 +1179,9 @@ class BleService : LifecycleService() {
         runCatching {
             val d = BleConstants.LEVEL_DANGER
             if (before < d && after == d) {
-                JudgeLog.markDanger(deviceId, t)
-                judgeAsk.start(deviceId, "${extractDisplayName(deviceId)} (${typeLabelOf(deviceId)})", t)
+                judgeAsk.start(deviceId, "${extractDisplayName(deviceId)} (${typeLabelOf(deviceId)})", t, JudgeLog.markDanger(deviceId, t))
             } else if (before == d && after < d) {
-                // A peer removed from alertState reads SAFE, so it ends here too
+                // Also called by handleDeviceLost when a DANGER peer's signal is lost
                 val equipment = (myCategory == BleConstants.CAT_EPJ || myCategory == BleConstants.CAT_FORKLIFT) && !myCart
                 judgeAsk.end(deviceId, t, equipment, ImuFusion.isStationary)?.let(::postJudgeDist)
             }
