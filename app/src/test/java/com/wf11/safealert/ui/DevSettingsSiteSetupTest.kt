@@ -9,8 +9,10 @@ import android.widget.EditText
 import android.widget.Switch
 import android.widget.TextView
 import com.wf11.safealert.R
+import com.wf11.safealert.firebase.SitePinStore
 import com.wf11.safealert.service.DeviceStateRegistry
 import com.wf11.safealert.utils.DevSettings
+import com.wf11.safealert.utils.SitePin
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -25,6 +27,7 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.shadows.ShadowDialog
+import java.security.SecureRandom
 import java.time.Duration
 
 /**
@@ -37,10 +40,17 @@ import java.time.Duration
 @Config(sdk = [34])
 class DevSettingsSiteSetupTest {
 
+    private val oldRunner = SitePinStore.runner
+
     @Before
     fun setUp() {
         val app = RuntimeEnvironment.getApplication()
         app.getSharedPreferences("dev_settings", Context.MODE_PRIVATE).edit().clear().commit()
+        // No Firebase under Robolectric -> offline -> the cached site PIN decides (home site and the target site)
+        app.getSharedPreferences("site_pin", Context.MODE_PRIVATE).edit().clear().commit()
+        SitePinStore.runner = { it() }
+        SitePinStore.saveCache(app, "HOME1", SitePin.newRecord("1111122222", 1, "t", SecureRandom(), 1_000).pub)
+        SitePinStore.saveCache(app, "NEW2", SitePin.newRecord("3333344444", 1, "t", SecureRandom(), 1_000).pub)
         DevSettings.init(app)
         DevSettings.homeSiteCode = "HOME1"
         DevSettings.siteCode = "HOME1"
@@ -51,6 +61,8 @@ class DevSettingsSiteSetupTest {
     @After
     fun tearDown() {
         RuntimeEnvironment.getApplication().getSharedPreferences("dev_settings", Context.MODE_PRIVATE).edit().clear().commit()
+        RuntimeEnvironment.getApplication().getSharedPreferences("site_pin", Context.MODE_PRIVATE).edit().clear().commit()
+        SitePinStore.runner = oldRunner
     }
 
     private fun screen(): DevSettingsActivity = Robolectric.buildActivity(DevSettingsActivity::class.java).setup().get()
@@ -69,6 +81,15 @@ class DevSettingsSiteSetupTest {
         et.onFocusChangeListener.onFocusChange(et, false)
         idle()
     }
+
+    /** Types a PIN on the PIN dialog on screen and lets the check run. */
+    private fun typePin(pin: String) {
+        val dialog = ShadowDialog.getLatestDialog()
+        pin.forEach { dialog.findViewById<View>(keyIds[it - '0']).performClick() }
+        idle()
+    }
+
+    private val keyIds = listOf(R.id.btn0, R.id.btn1, R.id.btn2, R.id.btn3, R.id.btn4, R.id.btn5, R.id.btn6, R.id.btn7, R.id.btn8, R.id.btn9)
 
     private fun View.isInside(group: View): Boolean {
         var v: View? = parent as? View
@@ -127,13 +148,22 @@ class DevSettingsSiteSetupTest {
         answer(AlertDialog.BUTTON_NEGATIVE)
         assertEquals("취소하면 그대로", "HOME1", DevSettings.siteCode)
         assertEquals("HOME1", a.findViewById<EditText>(R.id.et_dev_site_code).text.toString())
+        // 확인해도 새 사업장의 PIN 창이 뜬다 — 취소하면 사업장도 칸도 그대로다
         a.enterSite("new2")
         answer(AlertDialog.BUTTON_POSITIVE)
+        ShadowDialog.getLatestDialog().cancel()
+        idle()
+        assertEquals("PIN 창을 닫으면 그대로", "HOME1", DevSettings.siteCode)
+        assertEquals("HOME1", a.findViewById<EditText>(R.id.et_dev_site_code).text.toString())
+        a.enterSite("new2")
+        answer(AlertDialog.BUTTON_POSITIVE)
+        typePin("3333344444")
         assertEquals("NEW2", DevSettings.siteCode)
         assertEquals("감시 시작 사업장은 그대로", "HOME1", DevSettings.homeSiteCode)
         // 사업장 칸을 비우면 감시 시작 때 넣은 사업장으로 돌아간다
         a.enterSite("")
         answer(AlertDialog.BUTTON_POSITIVE)
+        typePin("1111122222")
         assertEquals("빈 칸은 감시 시작 사업장으로 돌아간다", "HOME1", DevSettings.siteCode)
     }
 

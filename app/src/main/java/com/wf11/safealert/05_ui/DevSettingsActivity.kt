@@ -16,6 +16,7 @@ import androidx.core.uwb.UwbManager
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 import com.wf11.safealert.BuildConfig
+import com.wf11.safealert.firebase.SitePinStore
 import com.wf11.safealert.service.AlertVoice
 import com.wf11.safealert.service.BleService
 import com.wf11.safealert.service.CalibrationEngine
@@ -23,6 +24,7 @@ import com.wf11.safealert.service.DeviceStateRegistry
 import com.wf11.safealert.service.LoneWorkerSosSync
 import com.wf11.safealert.service.SosMail
 import com.wf11.safealert.utils.DevSettings
+import com.wf11.safealert.utils.SitePin
 import com.wf11.safealert.utils.SiteScope
 import com.wf11.safealert.utils.UwbCalibrator
 import com.wf11.safealert.utils.UwbRanger
@@ -408,6 +410,10 @@ class DevSettingsActivity : AppCompatActivity() {
                 .show()
         }
 
+        // Site PIN change: current PIN + connection needed; the row refreshes when the dialog closes
+        binding.btnChangeSitePin.setOnClickListener {
+            showChangeSitePinDialog(DevSettings.siteCode, onClosed = { refreshSitePinRow() })
+        }
         // App info — version display + link to open-source licenses
         binding.tvAppVersion.text = "SafeAlert v${BuildConfig.VERSION_NAME}"
         binding.btnOpenSourceLicenses.setOnClickListener {
@@ -450,7 +456,10 @@ class DevSettingsActivity : AppCompatActivity() {
             .setTitle("사업장 바꾸기")
             .setMessage("사업장을 ${cur.ifEmpty { "(없음)" }}에서 ${next}(으)로 바꿉니다. 경보 기록·구조 요청·비콘 목록·메일 주소가 " +
                 "${next} 사업장 것으로 바뀝니다. 바꿀까요?")
-            .setPositiveButton("바꾸기") { _, _ -> applySiteCode(next) }
+            .setPositiveButton("바꾸기") { _, _ ->
+                // The new site's PIN must match before the switch (cancel, wrong or locked leaves site and field as they were)
+                showSitePinDialog("사업장 바꾸기", site = next, onCancel = { et.setText(DevSettings.siteCode) }) { applySiteCode(next) }
+            }
             .setNegativeButton("취소") { _, _ -> et.setText(DevSettings.siteCode) }
             .setOnCancelListener { et.setText(DevSettings.siteCode) }
             .show()
@@ -467,6 +476,41 @@ class DevSettingsActivity : AppCompatActivity() {
         binding.etSosMailTo.setText(LoneWorkerSosSync.mailTo(this, DevSettings.siteCode))
         binding.etSosMailTo.isEnabled = DevSettings.siteCode.isNotEmpty()
         updateSectionSummaries()
+        refreshSitePinRow()
+    }
+
+    /** The site PIN row: state from the cache at once, then from the server; the change button needs a connection. */
+    private fun refreshSitePinRow() {
+        val sc = DevSettings.siteCode
+        val offlineLine = "\n인터넷에 연결되면 바꿀 수 있습니다"
+        val hint = "설정 · 비콘 관리 · 블루투스 설정 · 관리자에 쓰는 ${sc} 센터 PIN입니다. 바꾸려면 지금 PIN이 필요하고 " +
+            "인터넷에 연결돼 있어야 합니다. 바꾸면 ${sc} 관리자 폰에 알립니다."
+        binding.tvSitePinHint.text = hint
+        fun gate(online: Boolean) {
+            val ok = sc.isNotEmpty() && online
+            binding.btnChangeSitePin.isEnabled = ok
+            binding.btnChangeSitePin.alpha = if (ok) 1f else 0.4f
+            binding.tvSitePinHint.text = if (sc.isNotEmpty() && !online) hint + offlineLine else hint
+        }
+        if (sc.isEmpty()) {
+            binding.tvSitePinState.text = "확인 안 됨"
+            gate(false)
+            return
+        }
+        binding.tvSitePinState.text = if (SitePinStore.cached(this, sc) != null) "설정됨" else "확인 안 됨"
+        gate(false)
+        SitePinStore.fetch(this, sc) { st ->
+            if (isFinishing || isDestroyed || sc != DevSettings.siteCode) return@fetch
+            binding.tvSitePinState.text = when (st) {
+                is SitePin.State.Has -> "설정됨"
+                SitePin.State.None -> "없음"
+                SitePin.State.Unknown -> "확인 안 됨"
+            }
+        }
+        SitePinStore.checkOnline { online ->
+            if (isFinishing || isDestroyed || sc != DevSettings.siteCode) return@checkOnline
+            gate(online)
+        }
     }
 
     private fun resetValues() {
@@ -641,6 +685,7 @@ class DevSettingsActivity : AppCompatActivity() {
         binding.tvVoiceStatus.text = AlertVoice.status
         uwbDiagHandler.removeCallbacks(uwbDiagPoller)
         uwbDiagHandler.post(uwbDiagPoller)
+        refreshSitePinRow()
     }
 
     // Safety net for leaving the screen without a focus loss — commit all input fields

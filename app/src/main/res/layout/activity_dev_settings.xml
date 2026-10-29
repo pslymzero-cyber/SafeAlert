@@ -58,6 +58,18 @@
                         <EditText android:id="@+id/et_dev_site_code" android:layout_width="match_parent"
                             android:layout_height="wrap_content" android:inputType="textCapCharacters" android:maxLength="12"
                             android:textSize="@dimen/sa_type_body" android:textColor="@color/sa_text_primary" />
+                        <!-- Site PIN: state + change (the PIN of the site above; shared by settings, beacon management, BLE settings) -->
+                        <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
+                            <TextView style="@style/SA.RowLabel" android:text="센터 PIN" />
+                            <TextView android:id="@+id/tv_site_pin_state" style="@style/SA.Value" />
+                        </LinearLayout>
+                        <TextView android:id="@+id/tv_site_pin_hint" style="@style/SA.Hint" android:layout_marginTop="1dp" />
+                        <Button android:id="@+id/btn_change_site_pin"
+                            android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:layout_marginTop="@dimen/sa_space_md"
+                            android:text="PIN 바꾸기"
+                            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                            android:textColor="@color/sa_text_secondary" android:textSize="@dimen/sa_type_body" />
                         <!-- SOS mail — stored per site code -->
                         <TextView style="@style/SA.Label" android:layout_marginTop="10dp" android:text="구조 요청 메일 받는 주소 (이 사업장, 최대 5개)" />
                         <TextView style="@style/SA.Hint" android:layout_marginTop="1dp" android:text="단독 작업 중 구조 요청·해제를 이 주소들로 메일로 알립니다. 여러 주소는 쉼표(,)로 구분합니다. 회사 메일 주소(스크립트 허용 목록에 있는 주소)만 받을 수 있습니다. 비우면 보내지 않습니다. 사업장 코드가 있어야 입력할 수 있습니다." />
