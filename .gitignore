@@ -46,3 +46,6 @@ docs/presentation/contest/base_contest.pptx
 # JVM crash logs (hs_err) and JIT replay files (replay)
 hs_err_pid*.log
 replay_pid*.log
+
+# Judge data analysis: exported Firebase JSON and outputs carry device IDs, site codes and answers - never commit
+scripts/judge-ml/data/
