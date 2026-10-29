@@ -5,7 +5,12 @@ import android.content.Context
 import android.content.Intent
 import android.content.res.ColorStateList
 import android.graphics.PixelFormat
+import android.graphics.Typeface
 import android.provider.Settings
+import android.text.SpannableStringBuilder
+import android.text.Spanned
+import android.text.style.ForegroundColorSpan
+import android.text.style.StyleSpan
 import android.util.Log
 import android.view.ContextThemeWrapper
 import android.view.Gravity
@@ -20,6 +25,9 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.wf11.safealert.R
 import com.wf11.safealert.service.BleService
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlin.math.abs
 
 /**
@@ -42,6 +50,8 @@ import kotlin.math.abs
  * - The handle and header are the drag points. The list takes touches first, so nothing is attached to the root.
  * - During an alert, pushing the header all the way off screen sends ACTION_MUTE_ALL (acknowledge all).
  *   The sidebar is not removed.
+ * - During a DANGER alert a distance question block sits under the list (showAsk / hideAsk) - recording only.
+ *   While it is open the panel stays expanded even with an empty list, and its buttons are unrelated to acknowledge and drag.
  * - All colors and dimensions come from res tokens (sa_*). No literal colors in code.
  */
 object OverlayManager {
@@ -54,6 +64,7 @@ object OverlayManager {
     private const val LIST_MAX_HEIGHT_DP  = 280   // a longer list scrolls inside the sidebar
     private const val DISMISS_RATIO       = 0.45f // pushing this fraction of the width off screen = drag all the way
     private const val SNAP_DURATION_MS    = 160L
+    private const val ASK_DONE_MS         = 1000L // how long the done line stays before the block closes
 
     private var windowManager: WindowManager? = null
     private var rootView: ViewGroup? = null
@@ -69,6 +80,13 @@ object OverlayManager {
     private var hintView: TextView? = null
     private var collapseView: TextView? = null
     private var adapter: HazardAdapter? = null
+
+    /** Distance question block (overlay_ask). null = no sidebar. */
+    private var askView: View? = null
+
+    /** Alert start time of the question now on the block, for the elapsed-seconds line. */
+    private var askAlertT = 0L
+    private val askDoneHide = Runnable { hideAsk() }
 
     private var pulseAnimator: ValueAnimator? = null
     private var snapAnimator: ValueAnimator? = null
@@ -112,6 +130,15 @@ object OverlayManager {
      * Called when the header or the "공정 변경" badge is tapped while expanded with no hazards; entry point for process (role) change.
      */
     var onHeaderTap: (() -> Unit)? = null
+
+    /**
+     * Called with the answer code (lt1 | 1to3 | 3to5 | gt5 | unknown) when an answer button is tapped.
+     * Returns ms from the alert start to the tap once recorded, null if the question is already closed.
+     */
+    var onAskAnswer: ((String) -> Long?)? = null
+
+    /** true = the sidebar window is actually attached to the screen. */
+    val sidebarOn: Boolean get() = rootView != null
 
     private fun setFault(reason: String?) {
         if (overlayFaultReason == reason) return
@@ -158,7 +185,9 @@ object OverlayManager {
         // An alert makes the manual-expand flag moot; clear it here so the panel collapses again when the alert ends.
         if (hazards.isNotEmpty()) manualExpand = false
 
-        val nowCollapsed = hazards.isEmpty() && !manualExpand
+        // The question block keeps the panel open even when the list is empty (the alert ended or was acknowledged).
+        val asking = askView?.visibility == View.VISIBLE
+        val nowCollapsed = hazards.isEmpty() && !manualExpand && !asking
         if (collapsed != nowCollapsed) {
             handleView?.visibility = if (nowCollapsed) View.VISIBLE else View.GONE
             panelView?.visibility  = if (nowCollapsed) View.GONE    else View.VISIBLE
@@ -178,8 +207,8 @@ object OverlayManager {
         dividerView?.visibility  = bodyVis
         listView?.visibility     = bodyVis
         hintView?.visibility     = bodyVis
-        actionView?.visibility   = if (idle) View.VISIBLE else View.GONE
-        collapseView?.visibility = if (idle) View.VISIBLE else View.GONE
+        actionView?.visibility   = if (idle && !asking) View.VISIBLE else View.GONE
+        collapseView?.visibility = if (idle && !asking) View.VISIBLE else View.GONE
 
         if (idle) {
             titleView?.text = if (roleLabel.isNotEmpty()) roleLabel else "감시 중"
@@ -199,6 +228,62 @@ object OverlayManager {
         }
     }
 
+    /**
+     * Shows (or refreshes) the distance question block under the list. Recording only: no sound, vibration or acknowledge.
+     * Called once a second while a question is open, so the elapsed seconds tick.
+     */
+    fun showAsk(label: String, alertT: Long, now: Long) {
+        val v = askView ?: return
+        val wasHidden = v.visibility != View.VISIBLE
+        askAlertT = alertT
+        v.findViewById<TextView>(R.id.overlay_ask_who).text = label
+        val sec  = ((now - alertT) / 1000L).coerceAtLeast(0L)
+        val head = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date(alertT)) + " 울림 · "
+        val num  = "${sec}초"
+        val sb = SpannableStringBuilder(head).append(num).append(" 지남")
+        sb.setSpan(StyleSpan(Typeface.BOLD), head.length, head.length + num.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        sb.setSpan(
+            ForegroundColorSpan(ContextCompat.getColor(v.context, R.color.sa_text_primary)),
+            head.length, head.length + num.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+        )
+        v.findViewById<TextView>(R.id.overlay_ask_time).text = sb
+        // A tick must not undo the done state; only a fresh question (hidden before) resets to the question view.
+        if (wasHidden) {
+            v.removeCallbacks(askDoneHide)
+            v.findViewById<View>(R.id.overlay_ask_q).visibility = View.VISIBLE
+            v.findViewById<View>(R.id.overlay_ask_done).visibility = View.GONE
+            v.findViewById<View>(R.id.overlay_ask_done_sub).visibility = View.GONE
+            v.visibility = View.VISIBLE
+            val ctx = rootView?.context ?: return
+            updateContent(ctx, lastHazards, lastRole)
+            applyGeometry(ctx)
+        }
+    }
+
+    /** Hides the block; with an empty list the panel collapses again. */
+    fun hideAsk() {
+        val v = askView ?: return
+        if (v.visibility == View.GONE) return
+        v.removeCallbacks(askDoneHide)
+        v.visibility = View.GONE
+        val ctx = rootView?.context ?: return
+        updateContent(ctx, lastHazards, lastRole)
+    }
+
+    private fun answerAsk(code: String, label: String) {
+        val v = askView ?: return
+        val after = runCatching { onAskAnswer?.invoke(code) }.getOrNull()
+        if (after == null) { hideAsk(); return }
+        v.findViewById<View>(R.id.overlay_ask_q).visibility = View.GONE
+        v.findViewById<View>(R.id.overlay_ask_done).visibility = View.VISIBLE
+        v.findViewById<TextView>(R.id.overlay_ask_done_sub).apply {
+            text = "${label} · 울린 뒤 ${after / 1000L}초"
+            visibility = View.VISIBLE
+        }
+        v.removeCallbacks(askDoneHide)
+        v.postDelayed(askDoneHide, ASK_DONE_MS)
+    }
+
     private fun createSidebar(context: Context) {
         val wm     = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
         val themed = ContextThemeWrapper(context, R.style.Theme_SafeAlert)
@@ -214,6 +299,7 @@ object OverlayManager {
         val list     = root.findViewById<RecyclerView>(R.id.overlay_list)
         val hint     = root.findViewById<TextView>(R.id.overlay_hint)
         val collapse = root.findViewById<TextView>(R.id.overlay_collapse)
+        val ask      = root.findViewById<View>(R.id.overlay_ask)
         val ad       = HazardAdapter(themed)
 
         list.layoutManager = LinearLayoutManager(themed)
@@ -225,6 +311,13 @@ object OverlayManager {
         header.setOnTouchListener(buildDragTouchListener { requestRoleChange() })
         action.setOnClickListener   { requestRoleChange() }
         collapse.setOnClickListener { collapseManually() }
+        // Answer buttons only; the block itself swallows stray touches and no drag listener is attached.
+        listOf(
+            R.id.overlay_ask_lt1 to "lt1", R.id.overlay_ask_1to3 to "1to3", R.id.overlay_ask_3to5 to "3to5",
+            R.id.overlay_ask_gt5 to "gt5", R.id.overlay_ask_unknown to "unknown"
+        ).forEach { (id, code) ->
+            root.findViewById<TextView>(id).setOnClickListener { answerAsk(code, (it as TextView).text.toString()) }
+        }
 
         val lp = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -256,6 +349,7 @@ object OverlayManager {
             listView      = list
             hintView      = hint
             collapseView  = collapse
+            askView       = ask
             adapter       = ad
             currentDanger = null
             collapsed     = true      // match the layout default (only the handle VISIBLE)
@@ -277,6 +371,7 @@ object OverlayManager {
             listView      = null
             hintView      = null
             collapseView  = null
+            askView       = null
             adapter       = null
             currentDanger = null
             collapsed     = null
@@ -305,7 +400,7 @@ object OverlayManager {
      * an accidental tap during an alert must never hide the alert list.
      */
     private fun requestRoleChange() {
-        if (lastHazards.isNotEmpty()) return
+        if (lastHazards.isNotEmpty() || askView?.visibility == View.VISIBLE) return   // never open process change while answering
         runCatching { onHeaderTap?.invoke() }
     }
 
@@ -520,6 +615,8 @@ object OverlayManager {
      *   0 hazard targets means 'collapsed', not removal — removing it here would lose the process-change entry.
      */
     fun hideOverlay() {
+        askView?.removeCallbacks(askDoneHide)
+        askView = null
         pulseAnimator?.cancel(); pulseAnimator = null
         snapAnimator?.cancel();  snapAnimator  = null
         headerView?.alpha = 1.0f

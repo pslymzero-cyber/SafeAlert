@@ -10,6 +10,8 @@
       screen edge and it looks like a 'floating card' again.
     · The header row (overlay_header) and the handle are the drag grips. The list takes touches first,
       so the listeners go on these two, not on the root.
+    · The distance question block (overlay_ask) is a sibling under the list. It takes touches only on its own
+      buttons, and the drag listeners stay on the handle and header alone.
     · All colors are SA tokens; no literal colors in code. Spacing and text sizes use SA dimens.
     · No Material widgets — this is inflated from a Service context, so only plain widgets are used.
 -->
@@ -102,6 +104,177 @@
             android:clipToPadding="false"
             android:overScrollMode="never"
             android:scrollbars="none" />
+
+        <!-- Distance question block (recording only), a sibling under the list. Shown while one question is open. -->
+        <LinearLayout
+            android:id="@+id/overlay_ask"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="@dimen/sa_space_sm"
+            android:layout_marginEnd="@dimen/sa_space_sm"
+            android:layout_marginTop="@dimen/sa_space_sm"
+            android:padding="@dimen/sa_space_sm"
+            android:orientation="vertical"
+            android:background="@drawable/shape_overlay_ask"
+            android:clickable="true"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:id="@+id/overlay_ask_q"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:textSize="@dimen/sa_type_section"
+                    android:textStyle="bold"
+                    android:textColor="@color/sa_text_primary"
+                    android:text="지금 상대와 거리는?" />
+
+                <TextView
+                    android:id="@+id/overlay_ask_who"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/sa_space_hairline"
+                    android:textSize="@dimen/sa_type_caption"
+                    android:textColor="@color/sa_accent"
+                    android:maxLines="1"
+                    android:ellipsize="end" />
+
+                <!-- Tabular figures keep the block from jittering as the seconds tick. -->
+                <TextView
+                    android:id="@+id/overlay_ask_time"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:textSize="@dimen/sa_type_caption"
+                    android:textColor="@color/sa_accent"
+                    android:fontFeatureSettings="tnum"
+                    android:maxLines="1" />
+
+                <!-- 3 + 2 grid: the wide button spans two columns so its left edge meets the second top button. -->
+                <GridLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/sa_space_sm"
+                    android:columnCount="3">
+
+                    <TextView
+                        android:id="@+id/overlay_ask_lt1"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_margin="@dimen/sa_space_hairline"
+                        android:layout_columnWeight="1"
+                        android:minHeight="@dimen/sa_touch_min"
+                        android:gravity="center"
+                        android:background="@drawable/shape_overlay_ask_btn"
+                        android:textSize="@dimen/sa_type_value"
+                        android:textStyle="bold"
+                        android:textColor="@color/sa_text_primary"
+                        android:maxLines="1"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:text="1m 안" />
+
+                    <TextView
+                        android:id="@+id/overlay_ask_1to3"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_margin="@dimen/sa_space_hairline"
+                        android:layout_columnWeight="1"
+                        android:minHeight="@dimen/sa_touch_min"
+                        android:gravity="center"
+                        android:background="@drawable/shape_overlay_ask_btn"
+                        android:textSize="@dimen/sa_type_value"
+                        android:textStyle="bold"
+                        android:textColor="@color/sa_text_primary"
+                        android:maxLines="1"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:text="1~3m" />
+
+                    <TextView
+                        android:id="@+id/overlay_ask_3to5"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_margin="@dimen/sa_space_hairline"
+                        android:layout_columnWeight="1"
+                        android:minHeight="@dimen/sa_touch_min"
+                        android:gravity="center"
+                        android:background="@drawable/shape_overlay_ask_btn"
+                        android:textSize="@dimen/sa_type_value"
+                        android:textStyle="bold"
+                        android:textColor="@color/sa_text_primary"
+                        android:maxLines="1"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:text="3~5m" />
+
+                    <TextView
+                        android:id="@+id/overlay_ask_gt5"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_margin="@dimen/sa_space_hairline"
+                        android:layout_columnWeight="1"
+                        android:minHeight="@dimen/sa_touch_min"
+                        android:gravity="center"
+                        android:background="@drawable/shape_overlay_ask_btn"
+                        android:textSize="@dimen/sa_type_value"
+                        android:textStyle="bold"
+                        android:textColor="@color/sa_text_primary"
+                        android:maxLines="1"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:text="5m 넘음" />
+
+                    <TextView
+                        android:id="@+id/overlay_ask_unknown"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_margin="@dimen/sa_space_hairline"
+                        android:minHeight="@dimen/sa_touch_min"
+                        android:gravity="center"
+                        android:background="@drawable/shape_overlay_ask_btn"
+                        android:textSize="@dimen/sa_type_value"
+                        android:textStyle="bold"
+                        android:textColor="@color/sa_text_primary"
+                        android:maxLines="1"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:layout_columnSpan="2"
+                        android:layout_columnWeight="2"
+                        android:text="모르겠어요" />
+                </GridLayout>
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/sa_space_sm"
+                    android:textSize="@dimen/sa_type_hint"
+                    android:textColor="@color/sa_text_tertiary"
+                    android:text="30초 안에 누르면 기록돼요. 경보 · 확인은 그대로예요." />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/overlay_ask_done"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textSize="@dimen/sa_type_value"
+                android:textStyle="bold"
+                android:textColor="@color/sa_safe"
+                android:text="기록했어요"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/overlay_ask_done_sub"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/sa_space_hairline"
+                android:textSize="@dimen/sa_type_caption"
+                android:textColor="@color/sa_text_secondary"
+                android:visibility="gone" />
+        </LinearLayout>
 
         <TextView
             android:id="@+id/overlay_hint"
