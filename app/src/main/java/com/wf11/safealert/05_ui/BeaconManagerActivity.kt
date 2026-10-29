@@ -290,7 +290,7 @@ class BeaconManagerActivity : AppCompatActivity() {
                 val sender = getSharedPreferences("safealert_prefs", MODE_PRIVATE)
                     .getString("device_id", "기기") ?: "기기"
                 // Upload (including overwriting the same name) only after the settings PIN check
-                showDevPinDialog {
+                showSitePinDialog("비콘 관리") {
                     Toast.makeText(this, "전송 중...", Toast.LENGTH_SHORT).show()
                     FirebaseManager.uploadBeaconSet(name, json, selected.size, sender) { ok ->
                         runOnUiThread {
@@ -398,7 +398,7 @@ class BeaconManagerActivity : AppCompatActivity() {
             .setTitle("세트 삭제")
             .setMessage("'${set.name}' 공유 세트를 클라우드에서 삭제합니다.\n(내 기기에 등록된 비콘은 삭제되지 않습니다)")
             .setPositiveButton("삭제") { _, _ ->
-                showDevPinDialog {
+                showSitePinDialog("비콘 관리") {
                     FirebaseManager.deleteBeaconSet(set.key) { ok ->
                         runOnUiThread {
                             Toast.makeText(this, if (ok) "삭제됨: ${set.name}" else "삭제 실패", Toast.LENGTH_SHORT).show()

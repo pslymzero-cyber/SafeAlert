@@ -3,12 +3,15 @@ package com.wf11.safealert.ui
 import android.content.pm.PackageManager
 import android.view.MotionEvent
 import android.view.View
-import com.wf11.safealert.BuildConfig
+import android.os.Looper
 import com.wf11.safealert.R
+import com.wf11.safealert.firebase.SitePinStore
 import com.wf11.safealert.utils.DevSettings
+import com.wf11.safealert.utils.SitePin
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.After
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -18,17 +21,29 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.shadows.ShadowDialog
+import java.security.SecureRandom
 
 /** When the BLE settings screen opens, beacon reception strength, UWB use and the filter strength are locked (until the PIN is confirmed). */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class BleSettingsPinGateTest {
 
+    private val pin = "4829175306"
+    private val oldRunner = SitePinStore.runner
+
     @Before
     fun setUp() {
-        DevSettings.init(RuntimeEnvironment.getApplication())
+        val app = RuntimeEnvironment.getApplication()
+        DevSettings.init(app)
         uwbHardware(true)   // so a disabled UWB switch is the lock's doing, not missing hardware
+        // No Firebase under Robolectric -> offline -> the cached check value of the site decides
+        DevSettings.siteCode = "PINT"
+        SitePinStore.runner = { it() }
+        SitePinStore.saveCache(app, "PINT", SitePin.newRecord(pin, 1, "test", SecureRandom(), 1_000).pub)
     }
+
+    @After
+    fun tearDown() { SitePinStore.runner = oldRunner }
 
     private fun uwbHardware(present: Boolean) =
         shadowOf(RuntimeEnvironment.getApplication().packageManager).setSystemFeature(PackageManager.FEATURE_UWB, present)
@@ -39,7 +54,8 @@ class BleSettingsPinGateTest {
         val dialog = ShadowDialog.getLatestDialog()
         val keys = listOf(R.id.btn0, R.id.btn1, R.id.btn2, R.id.btn3, R.id.btn4,
                           R.id.btn5, R.id.btn6, R.id.btn7, R.id.btn8, R.id.btn9)
-        BuildConfig.DEV_PIN.forEach { dialog.findViewById<View>(keys[it - '0']).performClick() }
+        pin.forEach { dialog.findViewById<View>(keys[it - '0']).performClick() }
+        shadowOf(Looper.getMainLooper()).idle()
         return activity
     }
 

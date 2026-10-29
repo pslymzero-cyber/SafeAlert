@@ -15,9 +15,6 @@ android {
         versionCode 175
         versionName "1.2.19"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
-        // Settings PIN — injected at build time (BuildConfig + CI Secrets). The real value is never kept in the repo.
-        //   Precedence: -PdevPin / ~/.gradle/gradle.properties devPin → env var SA_DEV_PIN → '000'
-        buildConfigField "String", "DEV_PIN", "\"${project.findProperty('devPin') ?: System.getenv('SA_DEV_PIN') ?: '000'}\""
         // SOS mail script URL — precedence: -PsosMailUrl / ~/.gradle/gradle.properties sosMailUrl → env var SA_SOS_MAIL_URL → empty.
         //   Empty turns the mail feature off. Never put the real URL in the repo (not even the project's gradle.properties).
         buildConfigField "String", "SOS_MAIL_URL", "\"${(project.findProperty('sosMailUrl') ?: System.getenv('SA_SOS_MAIL_URL') ?: '').toString().trim()}\""

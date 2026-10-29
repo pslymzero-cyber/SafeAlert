@@ -304,13 +304,13 @@ class MainActivity : AppCompatActivity() {
         binding.cardRoleForklift.setOnClickListener { requireSiteCode { requireWorkerCode { startAsPitOperator() } } }
         binding.btnStop.setOnClickListener       { if (!LoneWorkerUi.blockIfOwnSos(this)) stopServiceImmediately() }
         binding.btnSwitchRole.setOnClickListener { confirmSwitchRole() }   // Role switch
-        binding.cardSettings.setOnClickListener  { showDevPinDialog { startActivity(Intent(this, DevSettingsActivity::class.java)) } }
+        binding.cardSettings.setOnClickListener  { requireSiteCode { showSitePinDialog("개발자 설정") { startActivity(Intent(this, DevSettingsActivity::class.java)) } } }
         binding.cardBleSettings.setOnClickListener {
             startActivity(Intent(this, BleSettingsActivity::class.java))
         }
         // Beacon management (register, safe zone, delete, search, receive shared) opens after a PIN check
         binding.cardBeacon.setOnClickListener    {
-            showDevPinDialog { startActivity(Intent(this, BeaconManagerActivity::class.java)) }
+            requireSiteCode { showSitePinDialog("비콘 관리") { startActivity(Intent(this, BeaconManagerActivity::class.java)) } }
         }
         binding.btnTestAlert.setOnClickListener  { toggleTestAlert() }
         binding.tvMutedIndicator.setOnClickListener {

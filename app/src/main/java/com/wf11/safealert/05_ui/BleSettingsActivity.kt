@@ -74,7 +74,7 @@ class BleSettingsActivity : AppCompatActivity() {
         lockDevManaged()   // Lock after wiring listeners; order doesn't change the result, but shows intent
         listOf(binding.groupBeaconGain, binding.rowUwb, binding.rgKalmanPreset).forEach { row ->
             row.setOnClickListener {
-                if (!pinUnlocked) showDevPinDialog { pinUnlocked = true; applyPinGate() }
+                if (!pinUnlocked) showSitePinDialog("블루투스 설정") { pinUnlocked = true; applyPinGate() }
             }
         }
         applyPinGate()   // After listeners: match clickable (set by setOnClickListener) to the lock state
