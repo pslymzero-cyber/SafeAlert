@@ -67,9 +67,16 @@ class LoneWorkerLogic(var myBleId: String) {
         data class Fall(val impT: Long, val take: String, val zoneIn: Boolean, val charging: Boolean,
                         val plugAgoMs: Long?, val unplugAgoMs: Long?) : JudgeEvent()
 
-        /** A mode change. trig is the trigger before the change when closing; why is the close reason (to WATCHING only). */
+        /**
+         * A mode change. trig is the trigger before the change when closing; why is the close reason (to WATCHING)
+         * or restore on a restored SOS (since 0, not a new SOS).
+         */
         data class ModeChange(val from: Mode, val to: Mode, val trig: String, val why: String,
-                              val sinceMs: Long, val impT: Long?) : JudgeEvent()
+                              val sinceMs: Long, val impT: Long?) : JudgeEvent() {
+            /** Fall question: a fall check or fall SOS closed on this phone - not a restore, not the feature turned off. */
+            val asksFall: Boolean
+                get() = to == Mode.WATCHING && trig == "fall" && why != "restore" && why != "off" && impT != null
+        }
     }
 
     /** Judge-data hook (recording only, the default does nothing). Never changes a judgment. */
@@ -537,7 +544,7 @@ class LoneWorkerLogic(var myBleId: String) {
     fun restoreSos(trigger: String, nowMs: Long, agoMs: Long = 0L) {
         closeCheck(nowMs, why = "restore")
         this.trigger = trigger
-        toSos(nowMs - agoMs)
+        toSos(nowMs - agoMs, "restore")
     }
 
     /**
@@ -768,8 +775,8 @@ class LoneWorkerLogic(var myBleId: String) {
         judge(ev)
     }
 
-    private fun toSos(nowMs: Long) {
-        val ev = JudgeEvent.ModeChange(mode, Mode.SOS, trigger, "", nowMs - modeSinceMs, fallImp(trigger))
+    private fun toSos(nowMs: Long, why: String = "") {
+        val ev = JudgeEvent.ModeChange(mode, Mode.SOS, trigger, why, if (why.isEmpty()) nowMs - modeSinceMs else 0L, fallImp(trigger))
         mode = Mode.SOS
         modeSinceMs = nowMs
         clearAccident()

@@ -1,0 +1,91 @@
+package com.wf11.safealert.ui
+
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import androidx.core.app.NotificationCompat
+import com.wf11.safealert.R
+import com.wf11.safealert.firebase.JudgeLog
+
+/**
+ * Judge-learning questions (recording only, never touches a judgment). The fall question is a heads-up notification
+ * with three buttons answered by [JudgeAnswerReceiver]. Notification ids already used elsewhere: 1001, 1002, 4242,
+ * 4300 and 4301..4350 - keep new ones away from them.
+ */
+object JudgeQuestion {
+
+    const val CHANNEL_ID = "judge_ask"
+    const val FALL_ID = 4401
+    const val DIST_BASE = 4402
+    const val REQ_FALL = 4411
+    const val TIMEOUT_MS = 30 * 60 * 1000L
+
+    const val EXTRA_ME = "me"
+    const val EXTRA_ROLE = "role"
+    const val EXTRA_IMP_T = "imp_t"
+    const val EXTRA_CLOSE_T = "close_t"
+    const val EXTRA_WHY = "why"
+    const val EXTRA_TRUTH = "truth"
+
+    private fun channel(ctx: Context) {
+        runCatching {
+            val ch = NotificationChannel(CHANNEL_ID, "판정 학습 질문", NotificationManager.IMPORTANCE_HIGH).apply {
+                setSound(null, null)
+                enableVibration(false)
+                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+            }
+            (ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(ch)
+        }
+    }
+
+    /** A fall check or fall SOS closed on this phone: ask whether the person really fell. */
+    fun postFall(ctx: Context, me: String, role: String, impT: Long, closeT: Long, why: String) {
+        runCatching {
+            channel(ctx)
+            val title = if (why == "rescuer") "작업자가 실제로 넘어졌나요?" else "방금 실제로 넘어지셨나요?"
+            val text = if (why == "walk") "넘어짐 확인 창이 걸음으로 닫혔어요. 답하면 판정을 더 정확하게 만드는 데 쓰여요."
+            else "판정을 더 정확하게 만드는 데만 쓰여요. 구조 요청과 경보에는 영향이 없어요."
+            val b = NotificationCompat.Builder(ctx, CHANNEL_ID)
+                .setSmallIcon(R.drawable.ic_shield)
+                .setContentTitle(title)
+                .setContentText(text)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                .setTimeoutAfter(TIMEOUT_MS)
+            listOf("넘어졌어요" to "fall", "아니요" to "no", "모르겠어요" to "unknown").forEachIndexed { i, (label, truth) ->
+                val intent = Intent(ctx, JudgeAnswerReceiver::class.java)
+                    .putExtra(EXTRA_ME, me).putExtra(EXTRA_ROLE, role).putExtra(EXTRA_IMP_T, impT)
+                    .putExtra(EXTRA_CLOSE_T, closeT).putExtra(EXTRA_WHY, why).putExtra(EXTRA_TRUTH, truth)
+                val pi = PendingIntent.getBroadcast(ctx, REQ_FALL + i, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+                b.addAction(0, label, pi)
+            }
+            (ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).notify(FALL_ID, b.build())
+        }
+    }
+}
+
+/** Fall question buttons: records the answer only and removes the notification, never opens the app. */
+class JudgeAnswerReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        runCatching {
+            val now = System.currentTimeMillis()
+            val why = intent.getStringExtra(JudgeQuestion.EXTRA_WHY) ?: ""
+            JudgeLog.truth(
+                me = intent.getStringExtra(JudgeQuestion.EXTRA_ME) ?: "",
+                role = intent.getStringExtra(JudgeQuestion.EXTRA_ROLE) ?: "",
+                impT = intent.getLongExtra(JudgeQuestion.EXTRA_IMP_T, 0L),
+                truth = intent.getStringExtra(JudgeQuestion.EXTRA_TRUTH) ?: "unknown",
+                by = if (why == "rescuer") "rescuer" else "self",
+                afterMs = now - intent.getLongExtra(JudgeQuestion.EXTRA_CLOSE_T, now),
+                closeWhy = why,
+                t = now,
+            )
+            (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).cancel(JudgeQuestion.FALL_ID)
+        }
+    }
+}

@@ -9,6 +9,7 @@ import android.util.Log
 import com.wf11.safealert.ble.SosAdvert
 import com.wf11.safealert.firebase.JudgeLog
 import com.wf11.safealert.firebase.SosRemote
+import com.wf11.safealert.ui.JudgeQuestion
 import com.wf11.safealert.utils.BeaconRegistry
 import com.wf11.safealert.utils.DevSettings
 
@@ -88,6 +89,7 @@ class LoneWorkerMonitor(
     private var started = false
     /** Step sensor present but physical activity permission missing (for the main screen warning). */
     val stepPermissionMissing: Boolean get() = started && sensors.stepPermissionMissing
+    // name is BleService.myId (not bleId, which carries the DEVICE / WALKER prefix): it is also the judge-data dev, so fall and proximity records share one dev
     private var name = ""
     private var roleName = ""
 
@@ -98,8 +100,11 @@ class LoneWorkerMonitor(
         when (e) {
             is LoneWorkerLogic.JudgeEvent.Fall ->
                 JudgeLog.fallTake(name, roleName, e.impT, e.take, e.zoneIn, e.charging, e.plugAgoMs, e.unplugAgoMs)
-            is LoneWorkerLogic.JudgeEvent.ModeChange ->
+            is LoneWorkerLogic.JudgeEvent.ModeChange -> {
                 JudgeLog.mode(name, roleName, e.from.name, e.to.name, e.trig, e.why, e.sinceMs, e.impT)
+                // Wall clock: the answer receiver measures after_ms with it (this monitor's now() is elapsedRealtime)
+                e.impT?.let { if (JudgeLog.on && e.asksFall) JudgeQuestion.postFall(ctx, name, roleName, it, System.currentTimeMillis(), e.why) }
+            }
         }
     }
     /** Equipment mode: an equipment selection in BleConstants.categoryName — decided by role only. */

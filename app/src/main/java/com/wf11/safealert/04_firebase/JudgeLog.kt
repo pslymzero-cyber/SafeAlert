@@ -68,7 +68,9 @@ object JudgeLog {
         }
     }
 
-    fun scOf(site: String): String = if (Regex(SC_PATTERN).matches(site)) site else NOSITE
+    private val SC_RE = Regex(SC_PATTERN)
+
+    fun scOf(site: String): String = if (SC_RE.matches(site)) site else NOSITE
 
     /** One record as a flat map (pure — the test target). Null body values are left out. */
     internal fun rec(k: String, t: Long, me: String, role: String, e: Env, body: Map<String, Any?>): Map<String, Any> {
@@ -217,7 +219,7 @@ object JudgeLog {
         }
     }
 
-    /** F3 — a monitoring mode change. why only when closing. The `truth` field name is kept free for the later answer. */
+    /** F3 — a monitoring mode change. why only when closing (or restore on a restored SOS). The answer is a separate [truth] record. */
     fun mode(
         me: String, role: String, from: String, to: String, trig: String, why: String, sinceMs: Long, impT: Long?,
         t: Long = System.currentTimeMillis(),
@@ -228,6 +230,21 @@ object JudgeLog {
                 linkedMapOf(
                     "from" to from, "to" to to, "trig" to trig, "why" to why.ifEmpty { null },
                     "since_ms" to sinceMs, "imp_t" to impT,
+                )
+            }
+        }
+    }
+
+    /** F4 — the fall question answer (fall | no | unknown) for one closed fall episode. */
+    fun truth(
+        me: String, role: String, impT: Long, truth: String, by: String, afterMs: Long, closeWhy: String,
+        t: Long = System.currentTimeMillis(),
+    ) {
+        if (!on) return
+        runCatching {
+            emit("fall", "truth", t, me, role) {
+                linkedMapOf(
+                    "imp_t" to impT, "truth" to truth, "by" to by, "after_ms" to afterMs, "close_why" to closeWhy.ifEmpty { null },
                 )
             }
         }

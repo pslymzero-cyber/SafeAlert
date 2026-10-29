@@ -108,6 +108,9 @@
             </intent-filter>
         </receiver>
 
+        <!-- Fall question buttons: records the answer only -->
+        <receiver android:name=".ui.JudgeAnswerReceiver" android:exported="false" />
+
         <!-- Sends pending SOS mail requests once a network is available, even after monitoring has stopped -->
         <service
             android:name=".service.SosMailJob"

@@ -97,6 +97,13 @@ class JudgeLogTest {
             // Site code: valid kept, otherwise NOSITE
             assertEquals("WF11", JudgeLog.scOf("WF11"))
             assertEquals("NOSITE", JudgeLog.scOf("wf11")); assertEquals("NOSITE", JudgeLog.scOf(""))
+
+            // Fall question answer
+            out.clear()
+            JudgeLog.truth("ME", "WALKER", 6_000, "fall", "self", 4_000, "ack", t = 50_000)
+            val (tk, tr) = out.single()
+            assertEquals("fall", tk); assertEquals("truth", tr["k"]); assertEquals(6_000L, tr["imp_t"]); assertEquals("fall", tr["truth"])
+            assertEquals("self", tr["by"]); assertEquals(4_000L, tr["after_ms"]); assertEquals("ack", tr["close_why"]); assertEquals("WF11-ME", tr["dev"])
         }
     }
 
@@ -115,6 +122,15 @@ class JudgeLogTest {
         assertTrue(l.ackWorking(45_000))
         val ack = ev.last() as JudgeEvent.ModeChange
         assertEquals(JudgeEvent.ModeChange(Mode.CHECKING, Mode.WATCHING, "fall", "ack", 9_000, 6_000), ack)
+        // Which closes ask the fall question: ack yes; a walk close (no impact time) and the feature turned off no
+        assertTrue(ack.asksFall)
+        assertFalse(JudgeEvent.ModeChange(Mode.CHECKING, Mode.WATCHING, "fall", "off", 1, 6_000).asksFall)
+        // A restored SOS is marked restore with since 0
+        ev.clear()
+        newLogic().apply { onJudge = { ev += it } }.restoreSos("fall", 5_000, 45_000)
+        val restored = ev.last() as JudgeEvent.ModeChange
+        assertEquals(Mode.SOS, restored.to); assertEquals("restore", restored.why); assertEquals(0L, restored.sinceMs)
+        assertFalse(JudgeEvent.ModeChange(Mode.CHECKING, Mode.WATCHING, "fall", "restore", 1, 6_000).asksFall)
 
         // Still check closed by walking: why walk, no impact time
         ev.clear()
@@ -123,6 +139,7 @@ class JudgeLogTest {
         s.walk(185_000, 10)
         val walk = ev.last() as JudgeEvent.ModeChange
         assertEquals(Mode.WATCHING, walk.to); assertEquals("still", walk.trig); assertEquals("walk", walk.why); assertNull(walk.impT)
+        assertFalse(walk.asksFall)
 
         // SOS closed by cancelSos: sos_cancel, or the named reason (one-hour release)
         for ((why, expect) in listOf("" to "sos_cancel", "auto_1h" to "auto_1h")) {
