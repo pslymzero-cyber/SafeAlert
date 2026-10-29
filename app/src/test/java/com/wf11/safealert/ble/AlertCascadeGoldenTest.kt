@@ -4,6 +4,7 @@ import android.app.NotificationManager
 import androidx.lifecycle.Lifecycle
 import com.wf11.safealert.service.BleService
 import com.wf11.safealert.service.BootRestoreReceiver
+import com.wf11.safealert.ui.JudgeAnswerReceiver
 import com.wf11.safealert.support.BleServiceTestHarness
 import com.wf11.safealert.support.BleServiceTestHarness.assertGoldenScenario
 import com.wf11.safealert.support.BleServiceTestHarness.runGoldenScenario
@@ -62,7 +63,8 @@ class AlertCascadeGoldenTest {
         val appShadow = shadowOf(RuntimeEnvironment.getApplication())
         val ownReceivers = appShadow.registeredReceivers.filter {
             it.broadcastReceiver::class.java.name.startsWith("com.wf11.safealert") &&
-                it.broadcastReceiver !is BootRestoreReceiver   // manifest-declared static receiver
+                it.broadcastReceiver !is BootRestoreReceiver &&   // manifest-declared static receiver
+                it.broadcastReceiver !is JudgeAnswerReceiver   // manifest-declared static receiver (fall question buttons)
         }
         assertTrue(
             "onCreate() 미실행인데 앱 자체 BroadcastReceiver 가 등록됐다: $ownReceivers",

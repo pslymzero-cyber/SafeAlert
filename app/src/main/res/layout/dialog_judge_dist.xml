@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Distance question dialog (judge learning): same plate as the worker kind picker. No measured distance is shown here. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@color/sa_bg"
+    android:paddingHorizontal="@dimen/sa_space_lg"
+    android:paddingTop="@dimen/sa_space_lg"
+    android:paddingBottom="@dimen/sa_space_md">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="상대와 거리는 대략?"
+        android:textSize="@dimen/sa_type_section"
+        android:textStyle="bold"
+        android:textColor="@color/sa_text_primary" />
+
+    <TextView
+        android:id="@+id/tv_judge_dist_sub"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/sa_space_hairline"
+        android:textSize="@dimen/sa_type_caption"
+        android:textColor="@color/sa_accent" />
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btn_dist_lt1"
+        style="@style/SA.Button"
+        android:layout_marginTop="@dimen/sa_space_md"
+        android:minHeight="56dp"
+        android:text="1m 안"
+        android:textSize="@dimen/sa_type_section"
+        android:textStyle="bold"
+        android:textColor="@color/sa_text_primary"
+        android:backgroundTint="@color/sa_surface" />
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btn_dist_1to3"
+        style="@style/SA.Button"
+        android:layout_marginTop="@dimen/sa_space_sm"
+        android:minHeight="56dp"
+        android:text="1~3m"
+        android:textSize="@dimen/sa_type_section"
+        android:textStyle="bold"
+        android:textColor="@color/sa_text_primary"
+        android:backgroundTint="@color/sa_surface" />
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btn_dist_3to5"
+        style="@style/SA.Button"
+        android:layout_marginTop="@dimen/sa_space_sm"
+        android:minHeight="56dp"
+        android:text="3~5m"
+        android:textSize="@dimen/sa_type_section"
+        android:textStyle="bold"
+        android:textColor="@color/sa_text_primary"
+        android:backgroundTint="@color/sa_surface" />
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btn_dist_gt5"
+        style="@style/SA.Button"
+        android:layout_marginTop="@dimen/sa_space_sm"
+        android:minHeight="56dp"
+        android:text="5m 넘음"
+        android:textSize="@dimen/sa_type_section"
+        android:textStyle="bold"
+        android:textColor="@color/sa_text_primary"
+        android:backgroundTint="@color/sa_surface" />
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btn_dist_unknown"
+        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/sa_space_md"
+        android:minHeight="56dp"
+        android:text="모르겠어요"
+        android:textAllCaps="false"
+        android:textColor="@color/sa_text_primary"
+        app:strokeColor="@color/sa_stroke"
+        app:cornerRadius="@dimen/sa_radius_sm" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginTop="@dimen/sa_space_md"
+        android:text="경보가 울린 순간의 거리로 답해 주세요"
+        android:textSize="@dimen/sa_type_caption"
+        android:textColor="@color/sa_text_tertiary" />
+</LinearLayout>

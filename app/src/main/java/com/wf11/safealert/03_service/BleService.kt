@@ -29,6 +29,7 @@ import com.wf11.safealert.ble.RssiPreFilter
 import com.wf11.safealert.firebase.JudgeLog
 import com.wf11.safealert.utils.AdminMode
 import com.wf11.safealert.utils.BeaconRegistry
+import com.wf11.safealert.ui.JudgeQuestion
 import com.wf11.safealert.ui.MainActivity
 import com.wf11.safealert.utils.DevSettings
 import com.wf11.safealert.utils.ImuFusion
@@ -524,6 +525,7 @@ class BleService : LifecycleService() {
 
     // Judgment state is owned by AlertStateMachine - the fields below alias the same instances (for reflection tests and remaining call sites)
     private val alertState = asm.alertState
+    private val judgeAsk = JudgeAsk()   // distance-question rules (recording only)
     private val kalmanFilters = asm.kalmanFilters
     private val filterPreserveMap = asm.filterPreserveMap
     private val timeGateWaiveSet = asm.timeGateWaiveSet
@@ -674,6 +676,8 @@ class BleService : LifecycleService() {
                 if (stationary) {
                     // Became stationary → power saving after a 5 s debounce (cancelled if it moves meanwhile)
                     ecoHandler.postDelayed(ecoDowngradeRunnable, STATIONARY_ECO_DELAY_MS)
+                    // Held equipment distance questions go out once the vehicle stops (recording only)
+                    runCatching { judgeAsk.stopped(System.currentTimeMillis()).forEach(::postJudgeDist) }
                 } else {
                     // Movement detected → back to ACTIVE at once (0 s, combat mode)
                     bleScanner?.setEcoMode(false)
@@ -1022,7 +1026,12 @@ class BleService : LifecycleService() {
         val before = alertState[deviceId]?.first ?: BleConstants.LEVEL_SAFE
         asm.processAlert(deviceId, rssi, remoteState, remoteTurn, payloadPresent, peerEchoRssi, nowMs)
         val after = alertState[deviceId]?.first ?: BleConstants.LEVEL_SAFE
-        if (after != before && JudgeLog.on) JudgeLog.level(myId, deviceId, before, after, nowMs()) // judge data (recording only)
+        // judge data (recording only); the clock is read once and shared
+        if (after != before && JudgeLog.on) {
+            val t = nowMs()
+            JudgeLog.level(myId, deviceId, before, after, t)
+            judgeEdge(deviceId, before, after, t)
+        }
     }
 
     /** The scan callback's detection handler (applyMode); a named method so tests can drive the real path, like handleDeviceLost. */
@@ -1158,7 +1167,26 @@ class BleService : LifecycleService() {
         // judge data (recording only; the rate limit lives in JudgeLog)
         if (after != before) JudgeLog.level(myId, deviceId, before, after, now)
         JudgeLog.uwb(myId, deviceId, uwbD, after, now)
+        // After the uwb line, so the sample that raised DANGER is the fresh uwb_m
+        if (after != before && JudgeLog.on) judgeEdge(deviceId, before, after, now)
     }
+
+    /** Distance question edges (recording only, never reaches judgment): DANGER start / end of one peer. */
+    private fun judgeEdge(deviceId: String, before: Int, after: Int, t: Long) {
+        runCatching {
+            val d = BleConstants.LEVEL_DANGER
+            if (before < d && after == d) {
+                JudgeLog.markDanger(deviceId, t)
+                judgeAsk.start(deviceId, "${extractDisplayName(deviceId)} (${typeLabelOf(deviceId)})", t)
+            } else if (before == d && after < d) {
+                // A peer removed from alertState reads SAFE, so it ends here too
+                val equipment = (myCategory == BleConstants.CAT_EPJ || myCategory == BleConstants.CAT_FORKLIFT) && !myCart
+                judgeAsk.end(deviceId, t, equipment, ImuFusion.isStationary)?.let(::postJudgeDist)
+            }
+        }
+    }
+
+    private fun postJudgeDist(a: JudgeAsk.Ask) = JudgeQuestion.postDist(this, a, myId, BleConstants.categoryName(myCategory))
 
     private val isScreenOn: Boolean
         get() = (getSystemService(Context.POWER_SERVICE) as PowerManager).isInteractive

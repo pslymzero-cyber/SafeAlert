@@ -5,6 +5,7 @@ import com.wf11.safealert.service.LoneWorkerLogic.JudgeEvent
 import com.wf11.safealert.service.LoneWorkerLogic.Mode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -104,6 +105,21 @@ class JudgeLogTest {
             val (tk, tr) = out.single()
             assertEquals("fall", tk); assertEquals("truth", tr["k"]); assertEquals(6_000L, tr["imp_t"]); assertEquals("fall", tr["truth"])
             assertEquals("self", tr["by"]); assertEquals(4_000L, tr["after_ms"]); assertEquals("ack", tr["close_why"]); assertEquals("WF11-ME", tr["dev"])
+
+            // Distance answer: the frame values copied at the danger start, uwb_m only when the sample was at most 1 s old
+            frame("JL3", "FORKLIFT", 60_000, -55)
+            JudgeLog.uwb("ME", "JL3", 1.234f, 2, 60_500)
+            JudgeLog.markDanger("JL3", 61_000)
+            out.clear()
+            JudgeLog.dist("ME", "WALKER", "JL3", 61_000, "1to3", t = 73_000)
+            val (dk, d) = out.single()
+            assertEquals("prox", dk); assertEquals("dist", d["k"]); assertEquals("WF11-JL3", d["peer"]); assertEquals("FORKLIFT", d["peer_role"])
+            assertEquals(61_000L, d["alert_t"]); assertEquals("1to3", d["ans"]); assertEquals(12_000L, d["after_ms"])
+            assertEquals(1.23, d["uwb_m"]); assertEquals(-55, d["ema"]); assertTrue(d.containsKey("seq"))
+            out.clear()
+            JudgeLog.markDanger("JL3", 70_000)
+            JudgeLog.dist("ME", "WALKER", "JL3", 70_000, "gt5", t = 71_000)
+            assertFalse(out.single().second.containsKey("uwb_m"))
         }
     }
 
@@ -164,5 +180,30 @@ class JudgeLogTest {
             assertTrue(c.ffMs >= 200); assertTrue(c.peakG > 2.5); assertTrue(c.postN > 0)
             if (pass) assertEquals(a.eventMs, c.impactT)
         }
+    }
+
+    @Test fun ask_rules_pick_which_alerts_get_a_question() {
+        // Walker phone: asked at once, within 2 min of the start, a peer once per 30 min, 4 per hour
+        val a = JudgeAsk()
+        fun ask(peer: String, start: Long, end: Long, equipment: Boolean = false, stopped: Boolean = false): JudgeAsk.Ask? {
+            a.start(peer, "$peer (지게차)", start)
+            return a.end(peer, end, equipment, stopped)
+        }
+        assertNull(ask("A", 0, 121_000))
+        assertEquals(JudgeAsk.Ask("A", "A (지게차)", 200_000, 0), ask("A", 200_000, 210_000))
+        assertNull(ask("A", 300_000, 310_000))
+        assertNotNull(ask("A", 2_000_000, 2_005_000))
+        assertNotNull(ask("B", 2_100_000, 2_105_000)); assertNotNull(ask("C", 2_200_000, 2_205_000))
+        assertNull(ask("D", 2_300_000, 2_305_000))
+        assertNotNull(ask("E", 3_900_000, 3_905_000))
+
+        // Equipment phone: moving at the end holds the question until it stops (within 30 min); stopped at the end asks at once
+        val e = JudgeAsk()
+        e.start("F", "F", 0); assertNull(e.end("F", 10_000, true, false))
+        assertTrue(e.stopped(10_000 + 31 * 60_000L).isEmpty())
+        e.start("G", "G", 0); assertNull(e.end("G", 10_000, true, false))
+        assertEquals(listOf("G"), e.stopped(10_000 + 10 * 60_000L).map { it.peer })
+        assertTrue(e.stopped(10_000 + 11 * 60_000L).isEmpty())
+        e.start("H", "H", 0); assertNotNull(e.end("H", 10_000, true, true))
     }
 }

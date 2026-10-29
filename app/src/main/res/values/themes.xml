@@ -51,6 +51,14 @@
         <item name="android:textColor">@color/sa_accent</item>
     </style>
 
+    <!-- Hosts the distance question dialog (JudgeDistActivity): no window of its own, only the dialog shows -->
+    <style name="Theme.SafeAlert.Translucent" parent="Theme.SafeAlert">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowAnimationStyle">@null</item>
+        <item name="android:backgroundDimEnabled">false</item>
+    </style>
+
     <!-- PIN dialog keypad button -->
     <style name="PinButton">
         <item name="android:layout_width">0dp</item>

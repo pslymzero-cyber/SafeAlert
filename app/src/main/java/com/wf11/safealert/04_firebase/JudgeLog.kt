@@ -27,6 +27,8 @@ object JudgeLog {
     private const val PEERS_MAX = 256
     private const val LEVEL_GAP_MS = 2_000L
     private const val UWB_GAP_MS = 1_000L
+    private const val UWB_FRESH_MS = 1_000L
+    private const val DANGER_MAX = 32
     private const val RING = 10
 
     /** Recording switch, raw-acceleration switch and experiment session name. Off by default. */
@@ -106,6 +108,7 @@ object JudgeLog {
         var offPl = 0; var offBc = 0; var offGg = 0; var echo = 0; var effW = 0; var effD = 0
         var levelAt = Long.MIN_VALUE
         var uwbAt = Long.MIN_VALUE
+        var uwbM = 0f; var uwbMAt = Long.MIN_VALUE
         val ring = ArrayDeque<Sec>()
     }
 
@@ -140,24 +143,35 @@ object JudgeLog {
         }
     }
 
-    private fun proxBody(peer: String, p: Peer, site: String): Map<String, Any?> = linkedMapOf(
-        "peer" to FirebaseManager.withSite(BeaconRegistry.shortFullId(peer), site), "peer_role" to p.peerRole,
+    private fun proxBody(p: Peer): LinkedHashMap<String, Any?> = linkedMapOf<String, Any?>(
+        "peer_role" to p.peerRole,
         "rssi" to p.rssi, "med" to p.med, "pre" to p.pre, "kf" to p.kf, "kf_vel" to r2(p.kfVel),
         "ema" to p.ema, "avg1s" to p.avg1s, "off_pl" to p.offPl, "off_bc" to p.offBc, "off_gg" to p.offGg,
         "echo" to p.echo, "eff_w" to p.effW, "eff_d" to p.effD,
         "seq" to p.ring.joinToString(";") { "${it.ema},${String.format(Locale.US, "%.1f", it.vel)}" },
     )
 
+    /** Sends one proximity record. Runs OUTSIDE the lock: the peer id needs the site, which comes from [env]. */
+    private fun emitProx(
+        k: String, t: Long, me: String, role: String, peer: String, body: Map<String, Any?>,
+        extra: (Env) -> Map<String, Any?> = { emptyMap() },
+    ) {
+        val e = env() ?: return
+        val peerId = linkedMapOf<String, Any?>("peer" to FirebaseManager.withSite(BeaconRegistry.shortFullId(peer), e.site))
+        sink("prox", rec(k, t, me, role, e, peerId + body + extra(e)))
+    }
+
     /** P2 — a proximity level changed (prev → level). At most one per peer per 2 s; needs the peer's frame memory. */
     fun level(me: String, peer: String, prev: Int, level: Int, t: Long) {
         if (!on) return
         runCatching {
-            synchronized(this) {
+            val (role, body) = synchronized(this) {
                 val p = peers[peer] ?: return
                 if (p.levelAt != Long.MIN_VALUE && t - p.levelAt < LEVEL_GAP_MS) return
                 p.levelAt = t
-                emit("prox", "level", t, me, p.myRole) { e -> proxBody(peer, p, e.site) + mapOf("prev" to prev, "level" to level) }
+                p.myRole to proxBody(p).apply { put("prev", prev); put("level", level) }
             }
+            emitProx("level", t, me, role, peer, body)
         }
     }
 
@@ -165,21 +179,47 @@ object JudgeLog {
     fun uwb(me: String, peer: String, uwbM: Float, level: Int, t: Long) {
         if (!on) return
         runCatching {
-            synchronized(this) {
+            val (role, fk, body) = synchronized(this) {
                 val p = peers[peer] ?: return
+                // Every sample, before the gap check: markDanger reads the latest one
+                p.uwbM = uwbM; p.uwbMAt = t
                 if (p.uwbAt != Long.MIN_VALUE && t - p.uwbAt < UWB_GAP_MS) return
                 p.uwbAt = t
                 // Same pair rule as AlertStateMachine.judgeUwbOnly
                 val fk = p.myRole == "FORKLIFT" || p.peerRole == "FORKLIFT"
-                emit("prox", "uwb", t, me, p.myRole) { e ->
-                    proxBody(peer, p, e.site) + mapOf(
-                        "uwb_m" to r2(uwbM.toDouble()),
-                        "warn_m" to r2(if (fk) e.fkWarn else e.pairWarn),
-                        "dang_m" to r2(if (fk) e.fkDang else e.pairDang),
-                        "level" to level,
-                    )
-                }
+                Triple(p.myRole, fk, proxBody(p).apply { put("uwb_m", r2(uwbM.toDouble())); put("level", level) })
             }
+            emitProx("uwb", t, me, role, peer, body) { e ->
+                mapOf("warn_m" to r2(if (fk) e.fkWarn else e.pairWarn), "dang_m" to r2(if (fk) e.fkDang else e.pairDang))
+            }
+        }
+    }
+
+    // Frame copies taken at a DANGER start, waiting for the distance answer (key peer@alertT)
+    private val dangers = object : LinkedHashMap<String, LinkedHashMap<String, Any?>>() {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, LinkedHashMap<String, Any?>>?) = size > DANGER_MAX
+    }
+
+    /** Copies the P1 frame memory (and a UWB distance at most 1 s old) at a DANGER start for the distance answer. Never emits. */
+    fun markDanger(peer: String, t: Long) {
+        if (!on) return
+        runCatching {
+            synchronized(this) {
+                val p = peers[peer]
+                val snap = if (p == null) linkedMapOf<String, Any?>() else proxBody(p)
+                if (p != null && p.uwbMAt != Long.MIN_VALUE && t - p.uwbMAt in 0..UWB_FRESH_MS) snap["uwb_m"] = r2(p.uwbM.toDouble())
+                dangers["$peer@$t"] = snap
+            }
+        }
+    }
+
+    /** P4 — the distance answer (lt1 | 1to3 | 3to5 | gt5 | unknown) for the DANGER that started at alertT. Alone it is analysable. */
+    fun dist(me: String, role: String, peer: String, alertT: Long, ans: String, t: Long = System.currentTimeMillis()) {
+        if (!on) return
+        runCatching {
+            // Missing after a process restart: the record still carries peer / alert_t / ans / after_ms
+            val snap = synchronized(this) { dangers.remove("$peer@$alertT") } ?: emptyMap()
+            emitProx("dist", t, me, role, peer, linkedMapOf<String, Any?>("alert_t" to alertT, "ans" to ans, "after_ms" to t - alertT) + snap)
         }
     }
 
