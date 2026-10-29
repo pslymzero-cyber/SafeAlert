@@ -885,7 +885,7 @@ class BleService : LifecycleService() {
         //   can change the work process. Show it before the Bluetooth check — even if BT is off and we return early below,
         //   the process-change entry point must stay alive.
         updateFloatingOverlay()
-        if (myAdmin) AdminLink.start(this, DevSettings.siteCode) else AdminLink.stop()
+        if (myAdmin) AdminLink.start(this, DevSettings.siteCode, myId) else AdminLink.stop()
         AdminMode.active = myAdmin   // the SOS listener (10 s tick) widens to the whole site while true; hb / SOS role stays WALKER
         // Always on for every role — no-motion and fall checks must run even with Bluetooth off
         loneWorker.start(

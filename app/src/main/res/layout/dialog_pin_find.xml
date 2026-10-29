@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- PIN find: the waiting / result state (title, wait box, body, own phone line) and the PIN-shown state (big PIN, countdown). -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:paddingStart="@dimen/sa_space_xxl"
+    android:paddingEnd="@dimen/sa_space_xxl"
+    android:paddingTop="36dp"
+    android:paddingBottom="28dp"
+    android:background="@drawable/shape_dialog_bg">
+
+    <TextView
+        android:id="@+id/tv_title"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_horizontal"
+        android:textSize="22sp"
+        android:textStyle="bold"
+        android:textColor="@color/sa_text_primary" />
+
+    <TextView
+        android:id="@+id/tv_sub"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginTop="6dp"
+        android:gravity="center"
+        android:textSize="14sp"
+        android:textColor="@color/sa_text_tertiary" />
+
+    <LinearLayout
+        android:id="@+id/box_wait"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="22dp"
+        android:padding="14dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:background="@drawable/shape_icon_bg_blue">
+
+        <ProgressBar
+            android:id="@+id/pb_spin"
+            style="?android:attr/progressBarStyleSmall"
+            android:layout_width="22dp"
+            android:layout_height="22dp"
+            android:layout_marginEnd="12dp"
+            android:indeterminateTint="@color/sa_accent" />
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/tv_wait_main"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:textColor="@color/sa_text_primary" />
+
+            <TextView
+                android:id="@+id/tv_wait_sub"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:textSize="12sp"
+                android:textColor="@color/sa_accent_soft"
+                android:visibility="gone" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/tv_big_pin"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="26dp"
+        android:gravity="center"
+        android:fontFamily="monospace"
+        android:letterSpacing="0.08"
+        android:textSize="34sp"
+        android:textStyle="bold"
+        android:textColor="@color/sa_text_primary"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/tv_left"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:gravity="center"
+        android:textSize="13sp"
+        android:textColor="@color/sa_warning"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/tv_text"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:lineSpacingMultiplier="1.3"
+        android:textSize="13.5sp"
+        android:textColor="@color/sa_text_secondary" />
+
+    <TextView
+        android:id="@+id/tv_me"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="14dp"
+        android:textSize="12sp"
+        android:textColor="@color/sa_text_tertiary" />
+
+    <TextView
+        android:id="@+id/btn_action"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:layout_marginTop="18dp"
+        android:gravity="center"
+        android:clickable="true"
+        android:focusable="true"
+        android:textSize="15sp"
+        android:textStyle="bold" />
+</LinearLayout>

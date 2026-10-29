@@ -50,6 +50,7 @@ import com.wf11.safealert.databinding.ActivityMainBinding
 import com.wf11.safealert.databinding.DialogPitSelectBinding
 import com.wf11.safealert.databinding.DialogWorkerKindBinding
 import com.wf11.safealert.firebase.FirebaseManager
+import com.wf11.safealert.service.AdminLink
 import com.wf11.safealert.service.BleService
 import com.wf11.safealert.service.LoneWorkerMonitor
 import com.wf11.safealert.utils.UwbCalibrator
@@ -334,6 +335,20 @@ class MainActivity : AppCompatActivity() {
         requestBatteryOptimizationOnStart()
         requestOverlayPermissionIfNeeded()  // Request overlay permission
         handleSwitchRoleIntent(intent)      // Entered via the persistent notification's switch action
+        handlePinRequestIntent(intent)      // Entered via an admin's "PIN 찾기 요청" notification
+    }
+
+    // The admin's PIN lookup notification: show the approval window once (the extras are removed so a re-creation skips it).
+    private fun handlePinRequestIntent(i: Intent?) {
+        if (i?.getStringExtra(AdminLink.EXTRA_REQ_ID) == null) return
+        val site = i.getStringExtra(AdminLink.EXTRA_REQ_SITE).orEmpty()
+        val id = i.getStringExtra(AdminLink.EXTRA_REQ_ID).orEmpty()
+        val by = i.getStringExtra(AdminLink.EXTRA_REQ_BY).orEmpty()
+        val code = i.getStringExtra(AdminLink.EXTRA_REQ_CODE).orEmpty()
+        val loc = i.getStringExtra(AdminLink.EXTRA_REQ_LOC).orEmpty()
+        listOf(AdminLink.EXTRA_REQ_SITE, AdminLink.EXTRA_REQ_ID, AdminLink.EXTRA_REQ_BY, AdminLink.EXTRA_REQ_CODE, AdminLink.EXTRA_REQ_LOC)
+            .forEach { i.removeExtra(it) }
+        if (site.isNotBlank() && id.isNotBlank()) showPinApproval(site, id, by, code, loc)
     }
 
     // Path for a notification action tapped while the app is already open.
@@ -342,6 +357,7 @@ class MainActivity : AppCompatActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handleSwitchRoleIntent(intent)
+        handlePinRequestIntent(intent)
     }
 
     override fun onResume() {

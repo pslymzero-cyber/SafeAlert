@@ -32,6 +32,8 @@ import com.wf11.safealert.utils.SitePin
 //     first   — set the site's first PIN (new PIN, then once more) and save it to the server.
 //     change  — current PIN, new PIN, once more; needs the server (current PIN is the proof).
 //   Lockout after consecutive errors (PinLockout) — while locked, shows the remaining time instead of the input.
+//   "PIN을 모르시나요?" (first step of verify / change) and the lock window's "PIN 찾기" open PIN find (PinFind) for the same site;
+//   onForgot == null means that default, and its [PIN 입력하기] reopens this dialog with the same callbacks.
 //   A missing server answer on a first look (no cache, offline) is not counted as a wrong try.
 fun Activity.showSitePinDialog(
     title: String,
@@ -64,10 +66,12 @@ private fun Activity.openSitePinDialog(
         onClosed?.invoke()
         return
     }
+    val forgot: () -> Unit = onForgot
+        ?: { showPinFind(site) { openSitePinDialog(title, site, change, onCancel, null, onClosed, onSuccess) } }
     val lockout = PinLockout(PrefsPinStore(getSharedPreferences(PIN_LOCKOUT_PREFS, Context.MODE_PRIVATE)))
     val lockedMs = lockout.remainingLockMs(pinNow())
     if (lockedMs > 0L) {
-        showPinLockedNotice(lockedMs, onForgot)
+        showPinLockedNotice(lockedMs, forgot)
         onCancel?.invoke()
         onClosed?.invoke()
         return
@@ -124,6 +128,7 @@ private fun Activity.openSitePinDialog(
     fun close(ok: Boolean) { succeeded = ok; dialog.dismiss() }
 
     fun render() {
+        pb.tvForgot.visibility = if (mode != MODE_FIRST && step == 0) View.VISIBLE else View.GONE
         pb.tvTitle.text = if (mode == MODE_FIRST) "${site} 센터 PIN 정하기" else title
         pb.tvSub.text = when {
             step == 2 -> "새 PIN을 한 번 더 입력하세요"
@@ -156,7 +161,7 @@ private fun Activity.openSitePinDialog(
     fun wrong(r: PinLockout.Result) {
         when (r) {
             is PinLockout.Result.Wrong -> { message("PIN이 올바르지 않습니다 (남은 시도 ${r.triesLeft}회)", cDanger); clearInput() }
-            is PinLockout.Result.Locked -> { close(false); showPinLockedNotice(r.remainingMs, onForgot) }
+            is PinLockout.Result.Locked -> { close(false); showPinLockedNotice(r.remainingMs, forgot) }
             PinLockout.Result.Ok -> Unit
         }
     }
@@ -266,10 +271,7 @@ private fun Activity.openSitePinDialog(
             message(null, cDanger)
         }
     }
-    if (onForgot != null) {
-        pb.tvForgot.visibility = View.VISIBLE
-        pb.tvForgot.setOnClickListener { close(false); onForgot() }
-    }
+    pb.tvForgot.setOnClickListener { close(false); forgot() }
     dialog.setOnDismissListener {
         alive = false
         if (!succeeded) onCancel?.invoke()
@@ -305,6 +307,11 @@ private class PrefsPinStore(private val p: SharedPreferences) : PinLockout.Store
             .putInt("lock_boot", s.lockBoot)
             .commit()
     }
+}
+
+/** Clears this phone's PIN lockout (an admin approved a PIN lookup for the person holding the phone). */
+internal fun Context.clearPinLockout() {
+    PrefsPinStore(getSharedPreferences(PIN_LOCKOUT_PREFS, Context.MODE_PRIVATE)).save(PinLockout.State())
 }
 
 private fun Context.pinNow() = PinLockout.Now(
