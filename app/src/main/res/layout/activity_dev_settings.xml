@@ -671,6 +671,21 @@
                             <TextView style="@style/SA.Hint"
                                 android:text="켜면 UWB 토글이 꺼져 있어도 UWB 지원 폰은 UWB 세션을 엽니다. 거리 시작 기준(−80dBm 보다 강할 때)은 그대로라 경보 판정은 지금과 같습니다. 하드웨어 미지원 · 권한 거부 · 폰 UWB 설정 꺼짐은 넘지 못합니다. 기본 켜짐." />
 
+                            <!-- Measure-only UWB extension (judge data, recording only) -->
+                            <LinearLayout style="@style/SA.Row">
+                                <TextView style="@style/SA.RowLabel" android:text="측정용 UWB" />
+                                <Switch android:id="@+id/sw_uwb_measure" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                            </LinearLayout>
+                            <TextView style="@style/SA.Hint"
+                                android:text="이미 잡힌 상대가 렉 · 파렛트 뒤로 가서 신호가 약해져도 UWB 거리를 계속 재서 판정 데이터로만 남깁니다. 경보 판정에는 쓰지 않습니다. UWB 폰은 배터리를 더 씁니다." />
+
+                            <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
+                                <TextView style="@style/SA.RowLabel" android:text="측정 유지 기준(dBm)" />
+                                <EditText android:id="@+id/et_uwb_measure_gate" style="@style/SA.EditNumber" android:inputType="number|numberSigned" />
+                            </LinearLayout>
+                            <TextView style="@style/SA.Hint" android:layout_marginTop="0dp"
+                                android:text="유효 -100~-80 dBm (기본 -95)." />
+
                             <!-- UWB measured-sample upload — collects distance evidence for the performance spec -->
                             <LinearLayout style="@style/SA.Row">
                                 <TextView style="@style/SA.RowLabel" android:text="UWB 실측 표본 업로드" />

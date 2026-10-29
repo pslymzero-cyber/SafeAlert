@@ -139,6 +139,8 @@ class DevSettingsActivity : AppCompatActivity() {
         updateReversePrepEnabled()
         // Restore the UWB force switch state + initial refresh of the diagnostic line
         binding.swUwbForce.isChecked = DevSettings.uwbForce
+        binding.swUwbMeasure.isChecked = DevSettings.uwbMeasureEnabled
+        binding.etUwbMeasureGate.setText(DevSettings.uwbMeasureGateDbm.toString())
         // UWB measurement sample upload — OFF by default. Disabled without hardware support, since there is no reason to turn it on.
         binding.swUwbProbeUpload.isChecked = DevSettings.uwbProbeUploadEnabled
         binding.swJudgeLog.isChecked = DevSettings.judgeLogEnabled
@@ -300,6 +302,8 @@ class DevSettingsActivity : AppCompatActivity() {
             refreshUwbDiag()
             updateSectionSummaries()
         }
+        // Measure-only UWB — UwbRanger reads the switch and the floor through a lambda at every reconcile, so no service nudge
+        binding.swUwbMeasure.setOnCheckedChangeListener { _, c -> DevSettings.uwbMeasureEnabled = c }
 
         // ── Spinner: write on selection ────────────────────────────────────
         //   scanPeriod and advertise rebuild the scanner/advertiser when applied → write only when the value actually changes
@@ -352,6 +356,7 @@ class DevSettingsActivity : AppCompatActivity() {
         bindIntField (binding.etEmaWarmup,           { DevSettings.emaWarmupPushes },        { DevSettings.emaWarmupPushes = it })
         bindIntField (binding.etPreserveBand,        { DevSettings.filterPreserveBandDb },   { DevSettings.filterPreserveBandDb = it })
         bindIntField (binding.etWakeRssi,            { DevSettings.wakeRssiDbm },            { DevSettings.wakeRssiDbm = it })
+        bindIntField (binding.etUwbMeasureGate,      { DevSettings.uwbMeasureGateDbm },      { DevSettings.uwbMeasureGateDbm = it })
         bindLongField(binding.etStaleMs,             { DevSettings.signalStaleMs },          { DevSettings.signalStaleMs = it })
         bindLongField(binding.etFbThrottle,          { DevSettings.firebaseThrottleMs },     { DevSettings.firebaseThrottleMs = it })
         bindLongField(binding.etSpeedPush,           { DevSettings.speedPushIntervalMs },    { DevSettings.speedPushIntervalMs = it })
