@@ -26,6 +26,7 @@ import com.wf11.safealert.ble.BleScanCallback
 import com.wf11.safealert.ble.KalmanFilter
 import com.wf11.safealert.ble.MedianFilter
 import com.wf11.safealert.ble.RssiPreFilter
+import com.wf11.safealert.utils.AdminMode
 import com.wf11.safealert.utils.BeaconRegistry
 import com.wf11.safealert.ui.MainActivity
 import com.wf11.safealert.utils.DevSettings
@@ -65,6 +66,7 @@ class BleService : LifecycleService() {
         const val K_PIT_ASK            = "pit_ask"
         const val EXTRA_CATEGORY       = "extra_category"       // sender role Category (CAT_*)
         const val EXTRA_CART           = "extra_cart"           // ACTION_START_DEVICE only: started as a cart worker (EPJ signal + ext bit2 label; absent = false)
+        const val EXTRA_ADMIN          = "extra_admin"         // ACTION_START_WALKER only: started as an admin (walker signal + ext bit3; absent = false)
         const val EXTRA_PSTATE         = "extra_pstate"         // STATE value for ACTION_TEST_STATE (PSTATE_*)
         const val EXTRA_ALERT_LEVEL    = "extra_alert_level"
         const val EXTRA_DISPLAY_NAME   = "extra_display_name"
@@ -107,6 +109,8 @@ class BleService : LifecycleService() {
     private var myCategory = BleConstants.CAT_WALKER
     // Cart worker = EPJ (DEVICE, CAT_EPJ) + ext bit2 label; display / advert / save only, never judgment. Rewritten at every start; restored from running_cart.
     private var myCart = false
+    // Admin = walking worker started from the admin card; display / advert / SOS scope only, never judgment. Restored from running_admin.
+    private var myAdmin = false
     private var testRunnable: Runnable? = null
     private val testHandler = android.os.Handler(android.os.Looper.getMainLooper())
 
@@ -719,6 +723,7 @@ class BleService : LifecycleService() {
                 myCategory = if (migrate) BleConstants.CAT_EPJ else prefs.getInt("running_category",
                     if (savedMode == "DEVICE") BleConstants.CAT_FORKLIFT else BleConstants.CAT_WALKER)
                 myCart = savedCart
+                myAdmin = !migrate && savedMode == "WALKER" && prefs.getBoolean("running_admin", false)
                 if (!startForegroundTyped("${myRoleName()} 실행 중", "재시작됨")) return failStart(startId)
                 myMode = restoreMode
                 if (migrate) {
@@ -756,6 +761,7 @@ class BleService : LifecycleService() {
                 // DEVICE mode is EPJ (01) or forklift (10) — told apart by the Category extra (default forklift)
                 myCategory = intent.getIntExtra(EXTRA_CATEGORY, BleConstants.CAT_FORKLIFT)
                 myCart = intent.getBooleanExtra(EXTRA_CART, false)   // cart worker = EPJ signal + ext bit2 label
+                myAdmin = false
                 // Save the mode: used by onStartCommand to restore after a START_STICKY restart
                 saveRunningMode(myMode, myId, myCategory)
                 clearPitAsk()   // started from the screen, right after the equipment picker
@@ -771,6 +777,7 @@ class BleService : LifecycleService() {
                 myMode = "WALKER"
                 myCategory = BleConstants.CAT_WALKER   // always walker
                 myCart = false   // only a walking worker starts here; a cart worker starts as DEVICE / CAT_EPJ
+                myAdmin = intent.getBooleanExtra(EXTRA_ADMIN, false)   // admin = walker signal + admin marker / site-wide SOS
                 saveRunningMode(myMode, myId, myCategory)
                 clearPitAsk()
                 loneWorker.keepRunning() // Drops a pending stop after a rescuer's release
@@ -843,6 +850,7 @@ class BleService : LifecycleService() {
             .putString("device_id", id)
             .putInt("running_category", category)   // for restoring the role
             .putBoolean("running_cart", myCart)     // cart worker flag (rewritten at every start)
+            .putBoolean("running_admin", myAdmin)   // admin flag (rewritten at every start)
             .putLong(BootRestoreReceiver.K_STARTED_AT, System.currentTimeMillis())   // stop records older than this are ignored
             .commit()   // synchronous save — async .apply() loss would desync restore and stop
     }
@@ -877,6 +885,7 @@ class BleService : LifecycleService() {
         //   can change the work process. Show it before the Bluetooth check — even if BT is off and we return early below,
         //   the process-change entry point must stay alive.
         updateFloatingOverlay()
+        AdminMode.active = myAdmin   // the SOS listener (10 s tick) widens to the whole site while true; hb / SOS role stays WALKER
         // Always on for every role — no-motion and fall checks must run even with Bluetooth off
         loneWorker.start(
             (if (myMode == "DEVICE") BleConstants.DEVICE_PREFIX else BleConstants.WALKER_PREFIX) + myId,
@@ -1625,6 +1634,7 @@ class BleService : LifecycleService() {
 
     /** My own role name for display (mine only): a cart worker (EPJ signal) is named as such, otherwise equipment keeps its name. */
     private fun myRoleName(): String = when {
+        myAdmin -> "관리자"
         myCart -> "카트 작업자"
         myCategory == BleConstants.CAT_EPJ || myCategory == BleConstants.CAT_FORKLIFT -> categoryRoleName(myCategory)
         else -> "보행 작업자"
@@ -2034,6 +2044,7 @@ class BleService : LifecycleService() {
         speedPushHandler.removeCallbacks(speedPushRunnable)   // stop speed transmit polling
         ImuFusion.stop()
         loneWorker.stop()
+        AdminMode.active = false
         uwbRanger?.stop(); uwbRanger = null
         AlertSoundPlayer.stopSound()
         VibrationHelper.stopVibration(this)
@@ -2092,6 +2103,7 @@ class BleService : LifecycleService() {
         DeviceStateRegistry.live = null   // drop the instrumentation live reference (avoids leaking the service)
         DevSettings.unregisterOnChange(devPrefsListener)   // unregister live settings propagation
         if (isRunning) stopAll()
+        AdminMode.active = false   // also when stopAll was skipped
         releaseAlertWakeLock()   // release even when stopAll was skipped (e.g. the !isRunning path)
         releaseDetectionWakeLock()   // same as above
         super.onDestroy()

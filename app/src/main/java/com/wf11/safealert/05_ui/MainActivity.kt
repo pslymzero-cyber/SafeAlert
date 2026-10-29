@@ -65,11 +65,13 @@ class MainActivity : AppCompatActivity() {
     private val prefs by lazy { getSharedPreferences("safealert_prefs", MODE_PRIVATE) }
     private var currentMode: String? = null
     private var pitAskOpen = false   // the equipment question for a restarted equipment session is on screen (askPitIfRestored)
+    private enum class WorkerKind { WALK, CART, ADMIN }
     private var workerKindOpen = false   // the worker-kind card dialog is on screen; a second tap must not open another one
     // Selected role (Category) — passed BleService → BleAdvertiser as bits[1:0] of the 1-byte payload
     private var currentCategory: Int = BleConstants.CAT_WALKER
     // Worker kind: a cart worker sends BleService.EXTRA_CART true (walker category, only the ext bit2 differs)
     private var currentCart: Boolean = false
+    private var currentAdmin: Boolean = false   // walker-side monitoring started from the admin card (display / SOS scope only)
     private var testAlertRunning = false
 
     // Detected-device list — replaced wholesale with each BleService.alertState snapshot.
@@ -300,7 +302,7 @@ class MainActivity : AppCompatActivity() {
         // There is a single equipment card. The chosen equipment sets the role (Category) —
         //   picking a role first and then equipment could make the two disagree.
         //   EPJ and walkie stacker are picked from the equipment list.
-        binding.cardRoleWalker.setOnClickListener   { requireSiteCode { requireWorkerCode { pickWorkerKind { cart -> onWorkerPicked(cart) } } } }
+        binding.cardRoleWalker.setOnClickListener   { requireSiteCode { requireWorkerCode { pickWorkerKind(::onWorkerPicked) } } }
         binding.cardRoleForklift.setOnClickListener { requireSiteCode { requireWorkerCode { startAsPitOperator() } } }
         binding.btnStop.setOnClickListener       { if (!LoneWorkerUi.blockIfOwnSos(this)) stopServiceImmediately() }
         binding.btnSwitchRole.setOnClickListener { confirmSwitchRole() }   // Role switch
@@ -540,15 +542,19 @@ class MainActivity : AppCompatActivity() {
     }
 
     /** A kind picked on the worker card: a cart worker starts exactly like an EPJ (DEVICE, CAT_EPJ), only flagged as a cart. */
-    private fun onWorkerPicked(cart: Boolean) {
-        if (cart) onRoleSelected("DEVICE", BleConstants.CAT_EPJ, true)
-        else onRoleSelected("WALKER", BleConstants.CAT_WALKER, false)
+    private fun onWorkerPicked(kind: WorkerKind) {
+        when (kind) {
+            WorkerKind.CART  -> onRoleSelected("DEVICE", BleConstants.CAT_EPJ, true)
+            WorkerKind.WALK  -> onRoleSelected("WALKER", BleConstants.CAT_WALKER, false)
+            WorkerKind.ADMIN -> onRoleSelected("WALKER", BleConstants.CAT_WALKER, false, admin = true)   // monitors as a walker, flagged admin
+        }
     }
 
-    private fun onRoleSelected(mode: String, category: Int, cart: Boolean = false) {
+    private fun onRoleSelected(mode: String, category: Int, cart: Boolean = false, admin: Boolean = false) {
         currentMode = mode
         currentCategory = category
         currentCart = cart
+        currentAdmin = admin
         // Save the role (Category) for restore — keeps labels consistent after a START_STICKY service restart or app relaunch
         prefs.edit().putInt("running_category", category).apply()
         binding.layoutPermissionWarning.visibility = View.GONE
@@ -675,6 +681,7 @@ class MainActivity : AppCompatActivity() {
             putExtra(BleService.EXTRA_ID, id)
             putExtra(BleService.EXTRA_CATEGORY, currentCategory)   // Pass the role Category
             putExtra(BleService.EXTRA_CART, mode == "DEVICE" && currentCart)
+            putExtra(BleService.EXTRA_ADMIN, mode == "WALKER" && currentAdmin)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent)
         else startService(intent)
@@ -684,6 +691,7 @@ class MainActivity : AppCompatActivity() {
             .putLong("running_since", since)
             .putInt("running_category", currentCategory)
             .putBoolean("running_cart", mode == "DEVICE" && currentCart)
+            .putBoolean("running_admin", mode == "WALKER" && currentAdmin)
             .apply()
         showRunningUi(mode, since)
     }
@@ -696,6 +704,7 @@ class MainActivity : AppCompatActivity() {
             .remove("running_mode")
             .remove("running_since")
             .remove("running_category")
+            .remove("running_admin")
             .commit()
         currentMode = null
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)   // Allow the screen to turn off after stopping
@@ -759,13 +768,13 @@ class MainActivity : AppCompatActivity() {
             .setMessage("현재 감시를 중지하고 '${target}' 역할로 다시 시작합니다.\n전환 중 1~2초간 감시가 중단됩니다.")
             .setPositiveButton("전환") { _, _ ->
                 // To a worker: pick walking/cart worker first; cancelling the list leaves the equipment monitoring running
-                if (workerSide) performSwitchRole(true) else pickWorkerKind { cart -> performSwitchRole(false, cart) }
+                if (workerSide) performSwitchRole(true) else pickWorkerKind { kind -> performSwitchRole(false, kind) }
             }
             .setNegativeButton("취소", null)
             .show()
     }
 
-    private fun performSwitchRole(toEquipment: Boolean, cart: Boolean = false) {
+    private fun performSwitchRole(toEquipment: Boolean, kind: WorkerKind = WorkerKind.WALK) {
         if (LoneWorkerUi.blockIfOwnSos(this)) return   // An SOS started while the confirm dialog was open
         stopServiceImmediately()
         // 800ms delay between stop and restart — if ACTION_STOP handling (BLE teardown) overlaps the new start,
@@ -775,7 +784,7 @@ class MainActivity : AppCompatActivity() {
             if (LoneWorkerUi.blockIfOwnSos(this)) return@postDelayed   // An SOS started while waiting to switch
             // Switching to equipment also asks to pick the equipment — the chosen equipment sets the role
             if (toEquipment) startAsPitOperator()
-            else onWorkerPicked(cart)
+            else onWorkerPicked(kind)
         }, 800L)
     }
 
@@ -785,6 +794,7 @@ class MainActivity : AppCompatActivity() {
         currentMode = mode
         currentCategory = prefs.getInt("running_category", BleConstants.CAT_WALKER)  // Restore role
         currentCart = prefs.getBoolean("running_cart", false)
+        currentAdmin = mode == "WALKER" && prefs.getBoolean("running_admin", false)
         showRunningUi(mode, since)
     }
 
@@ -807,6 +817,8 @@ class MainActivity : AppCompatActivity() {
         binding.tvRunningId.text = WorkerCode.startId(mode == "WALKER" || currentCart, DevSettings.workerCode, prefs.getString("display_name", "") ?: "") { myId() }
         // Dark UI — apply the role background photo/icon/TEST accent (visuals only, no functional change)
         applyRoleVisuals(currentCategory)
+        binding.tvAdminScope.visibility = if (currentAdmin) View.VISIBLE else View.GONE
+        binding.tvAdminScope.text = "${DevSettings.siteCode} 센터 전체 구조 요청 받음"
         // Show Bluetooth state immediately
         val btManager = getSystemService(android.bluetooth.BluetoothManager::class.java)
         binding.tvBleStatus.text = when {
@@ -817,6 +829,7 @@ class MainActivity : AppCompatActivity() {
 
     /** Category (CAT_*) -> role name on the running card (walkers: walking or cart worker). No emoji — iv_role_icon (vector) shows the icon. */
     private fun roleDisplayName(category: Int): String = when {
+        currentAdmin                         -> "관리자"
         currentCart                          -> "카트 작업자"
         category == BleConstants.CAT_EPJ      -> "EPJ 작업자"
         category == BleConstants.CAT_FORKLIFT -> "지게차"
@@ -832,7 +845,9 @@ class MainActivity : AppCompatActivity() {
      *   stopServiceImmediately hides them when returning to the selection screen.
      */
     private fun applyRoleVisuals(category: Int) {
-        val (bgRes, iconRes, accent) = if (currentCart) {
+        val (bgRes, iconRes, accent) = if (currentAdmin) {
+            Triple(R.drawable.bg_walker, R.drawable.ic_shield, 0xFF4ADE80.toInt())   // admin: walker-side green, shield icon
+        } else if (currentCart) {
             Triple(R.drawable.bg_walker, R.drawable.ic_cart, 0xFF4ADE80.toInt())   // cart worker: worker-side green, cart icon
         } else when (category) {
             BleConstants.CAT_FORKLIFT -> Triple(R.drawable.bg_forklift, R.drawable.ic_forklift, 0xFFF97316.toInt())
@@ -1082,7 +1097,7 @@ class MainActivity : AppCompatActivity() {
      * Worker kind card dialog (same look as the main-screen role cards): tapping a card starts that
      * kind at once; cancel / outside tap / back start nothing. Never opens twice.
      */
-    private fun pickWorkerKind(onPicked: (cart: Boolean) -> Unit) {
+    private fun pickWorkerKind(onPicked: (WorkerKind) -> Unit) {
         if (workerKindOpen) return
         workerKindOpen = true
         val dlg = DialogWorkerKindBinding.inflate(layoutInflater)
@@ -1091,8 +1106,10 @@ class MainActivity : AppCompatActivity() {
             .setNegativeButton("취소", null)
             .setOnDismissListener { workerKindOpen = false }
             .create()
-        dlg.cardWorkerWalk.setOnClickListener { dialog.dismiss(); onPicked(false) }
-        dlg.cardWorkerCart.setOnClickListener { dialog.dismiss(); onPicked(true) }
+        dlg.cardWorkerWalk.setOnClickListener { dialog.dismiss(); onPicked(WorkerKind.WALK) }
+        dlg.cardWorkerCart.setOnClickListener { dialog.dismiss(); onPicked(WorkerKind.CART) }
+        // The admin card is behind the site PIN; cancelling the PIN starts nothing (a running monitoring stays untouched)
+        dlg.cardWorkerAdmin.setOnClickListener { dialog.dismiss(); showSitePinDialog("관리자") { _ -> onPicked(WorkerKind.ADMIN) } }
         dialog.show()
     }
 

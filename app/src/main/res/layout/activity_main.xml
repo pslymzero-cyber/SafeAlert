@@ -182,6 +182,16 @@
                             app:cornerRadius="14dp"/>
                     </LinearLayout>
 
+                    <!-- Admin only: which scope of rescue requests this phone receives -->
+                    <TextView
+                        android:id="@+id/tv_admin_scope"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="@dimen/sa_space_sm"
+                        android:textSize="@dimen/sa_type_body"
+                        android:textColor="@color/sa_text_secondary"
+                        android:visibility="gone" />
+
                     <!-- My equipment state/speed — updated only from localSnapshot (received data has no effect) -->
                     <TextView
                         android:id="@+id/tv_local_state"

@@ -99,7 +99,7 @@ class LoneWorkerResume(private val ctx: Context) {
          * The user stopped: clears the run-restore key together with the restart state. Returns the same editor (the caller commits).
          */
         fun clearOnUserStop(editor: SharedPreferences.Editor): SharedPreferences.Editor =
-            editor.remove("running_mode").remove("running_since").remove("running_category").remove(KEY)
+            editor.remove("running_mode").remove("running_since").remove("running_category").remove("running_admin").remove(KEY)
     }
 
     private var last: State? = null

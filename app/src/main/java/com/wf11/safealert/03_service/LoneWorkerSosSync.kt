@@ -10,6 +10,7 @@ import com.wf11.safealert.BuildConfig
 import com.google.firebase.database.ServerValue
 import com.wf11.safealert.firebase.FirebaseConfig
 import com.wf11.safealert.firebase.SosRemote
+import com.wf11.safealert.utils.AdminMode
 import com.wf11.safealert.utils.DevSettings
 import com.wf11.safealert.utils.SiteScope
 import java.net.HttpURLConnection
@@ -312,7 +313,7 @@ class LoneWorkerSosSync(
     private fun attachIfNeeded() {
         val site = DevSettings.siteCode
         val path = if (site.isEmpty()) "" else SosRemote.nodePath(DevSettings.FIREBASE_ROOT, site)
-        val all = DevSettings.sosAllSite
+        val all = DevSettings.sosAllSite || AdminMode.active   // an admin hears every SOS of the site; the setting itself is never written
         val f = DevSettings.floor
         val p = DevSettings.proc
         val z = DevSettings.zone
