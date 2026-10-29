@@ -1156,6 +1156,14 @@ class BleService : LifecycleService() {
         }
     }
 
+    // Measure-only sample (UwbRanger keeps the session below the start gate) — recording only: never judged, shown or learned.
+    //   Quiet states mirror onUwbSampleReceived so the record stream looks like the judge stream there.
+    private fun onUwbMeasureSample(deviceId: String, distM: Float) {
+        if (myZoneInside || loneWorker.sosActive) return
+        JudgeLog.uwb(myId, deviceId, distM, alertState[deviceId]?.first ?: BleConstants.LEVEL_SAFE,
+            System.currentTimeMillis(), use = "measure")
+    }
+
     // ── Case A decision — measured UWB distance is the sole authority (RSSI never involved) ─────────────
     //   Uses none of the RSSI pipeline (median/EMA/Kalman/warm-up/Time-Gate/streak/1s average).
     //   Level comes only from the measured distance and the role-pair radii (forklift pair 15/8m, others
@@ -2021,7 +2029,11 @@ class BleService : LifecycleService() {
             },
             // Immediate callback per measured sample — drives Case A (exclusive decision). Decouples the decision
             //   cycle from the BLE scan and shortens it to the UWB report cycle (FREQUENT ~120ms) (decide on receipt, no buffering).
-            onUwbSample = { id, dist -> onUwbSampleReceived(id, dist) }
+            onUwbSample = { id, dist -> onUwbSampleReceived(id, dist) },
+            // Measure-only keep below the start gate (judge data): allowed only while recording and the switch are both on,
+            //   otherwise null = the ranger behaves exactly as before.
+            measureGate = { if (JudgeLog.on && DevSettings.uwbMeasureEnabled) DevSettings.uwbMeasureGateDbm else null },
+            onMeasureSample = { id, dist -> onUwbMeasureSample(id, dist) }
         )
         uwbRanger = ranger
         lifecycleScope.launch {

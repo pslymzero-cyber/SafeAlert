@@ -640,6 +640,21 @@ object DevSettings {
         get() = prefs.getBoolean(KEY_UWB_FORCE, true)
         set(v) = prefs.edit().putBoolean(KEY_UWB_FORCE, v).apply()
 
+    // Measure-only UWB (judge data, record only) — a session already open above the -80 dBm start gate is kept until its
+    //   peers weaken to uwbMeasureGateDbm; those samples go to JudgeLog only (use "measure") and never reach the
+    //   alert decision, the screen or learning. No new session is opened below -80, so judgment is as before.
+    //   Needs the judge-data recording switch too. Default ON (user decision 2026-10-29).
+    private const val KEY_UWB_MEASURE_ENABLED = "uwb_measure_enabled"
+    var uwbMeasureEnabled: Boolean
+        get() = prefs.getBoolean(KEY_UWB_MEASURE_ENABLED, true)
+        set(v) = prefs.edit().putBoolean(KEY_UWB_MEASURE_ENABLED, v).apply()
+
+    private const val KEY_UWB_MEASURE_GATE_DBM = "uwb_measure_gate_dbm"
+    const val DEFAULT_UWB_MEASURE_GATE_DBM = -95   // measure-keep floor (dBm); the start gate stays -80
+    var uwbMeasureGateDbm: Int
+        get() = prefs.getInt(KEY_UWB_MEASURE_GATE_DBM, DEFAULT_UWB_MEASURE_GATE_DBM).coerceIn(-100, -80)
+        set(v) = prefs.edit().putInt(KEY_UWB_MEASURE_GATE_DBM, v.coerceIn(-100, -80)).apply()
+
     // UWB measurement sample upload — pairs UWB true distance (m) with the same frame's BLE RSSI and writes them
     //   to uwb_probe/<yyyyMMdd>. It is the only evidence of how many meters the thresholds (-78/-65dBm) really are,
     //   so turn it on only in field measurement sessions. OFF = no upload at all (default). It only records,

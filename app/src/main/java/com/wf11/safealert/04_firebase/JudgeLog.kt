@@ -175,8 +175,11 @@ object JudgeLog {
         }
     }
 
-    /** P3 — one UWB distance sample with this pair's warn / danger distances and the level after judgment. At most 1 per peer per 1 s. */
-    fun uwb(me: String, peer: String, uwbM: Float, level: Int, t: Long) {
+    /**
+     * P3 — one UWB distance sample with this pair's warn / danger distances and the level after judgment. At most 1 per peer per 1 s.
+     * use = "judge" (the sample fed the decision) or "measure" (record-only, kept below the start gate; level is then just the current one).
+     */
+    fun uwb(me: String, peer: String, uwbM: Float, level: Int, t: Long, use: String = "judge") {
         if (!on) return
         runCatching {
             val (role, fk, body) = synchronized(this) {
@@ -187,7 +190,7 @@ object JudgeLog {
                 p.uwbAt = t
                 // Same pair rule as AlertStateMachine.judgeUwbOnly
                 val fk = p.myRole == "FORKLIFT" || p.peerRole == "FORKLIFT"
-                Triple(p.myRole, fk, proxBody(p).apply { put("uwb_m", r2(uwbM.toDouble())); put("level", level) })
+                Triple(p.myRole, fk, proxBody(p).apply { put("uwb_m", r2(uwbM.toDouble())); put("level", level); put("use", use) })
             }
             emitProx("uwb", t, me, role, peer, body) { e ->
                 mapOf("warn_m" to r2(if (fk) e.fkWarn else e.pairWarn), "dang_m" to r2(if (fk) e.fkDang else e.pairDang))

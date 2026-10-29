@@ -49,7 +49,8 @@ import java.util.concurrent.ConcurrentHashMap
  * Safety invariant: every UWB call is wrapped in try/catch and silently falls back to RSSI on failure.
  * [uwbDistances] holds only finite measurements (alert and distance-display pipelines use RSSI when absent),
  * and this class makes no alert decisions: it stores measurements and kinematics, pushes each sample to
- * onUwbSample, and notifies the status line.
+ * onUwbSample, and notifies the status line. Peers kept alive as "measure" (see measureDesiredLocked) are the
+ * exception: their samples go to onMeasureSample only and never touch any of the above.
  *
  * Address convergence: a scope is single-use and each scope has a new local address. Re-advertising a new
  * scope (= new address) on every target change makes the peer poll a stale address, so both sides reconfigure
@@ -69,7 +70,9 @@ class UwbRanger(
     private val onLocalAddressChanged: ((ByteArray) -> Unit)? = null,
     private val rssiOf: ((String) -> Int?)? = null,   // deviceId → recent smoothed RSSI (dBm) — session priority (rankOf) and start gate
     private val forkliftPairOf: ((String) -> Boolean)? = null,   // deviceId → whether the pair includes a forklift — for priority bias
-    private val onUwbSample: ((String, Float) -> Unit)? = null   // per-sample callback (deviceId, distance m) — drives UWB-led decisions
+    private val onUwbSample: ((String, Float) -> Unit)? = null,   // per-sample callback (deviceId, distance m) — drives UWB-led decisions
+    private val measureGate: (() -> Int?)? = null,                // measure-keep RSSI floor (dBm) while measuring is allowed, else null
+    private val onMeasureSample: ((String, Float) -> Unit)? = null   // record-only sink for measure-kept peers (judge data)
 ) {
     companion object {
         private const val TAG = "UwbRanger"
@@ -81,6 +84,9 @@ class UwbRanger(
         private const val FORKLIFT_RANK_BIAS_DB = 12          // forklift-pair priority bias — keeps the 15m warning winning the single session
         private const val MULTICAST_MAX = 6                  // max controlees one controller ranges at once (hardware headroom; tuning point)
         private const val UWB_START_RSSI_GATE_DBM = -80      // UWB only for peers stronger (closer) than this; others stay on RSSI (Case B)
+        // ponytail: an outside peer stronger than this ends the measure-keep and the radio returns to standby so the
+        //   peer can start a judge session. Tuning point: lower = less delay for that peer, but less measure data.
+        private const val MEASURE_YIELD_RSSI_DBM = -85
 
         // Approach-speed kinematics — dt continuity window, smoothing factor, separation deadband
         private const val KIN_DT_MIN_MS = 60L         // denser samples amplify derivative noise — keep the previous reference point
@@ -109,6 +115,18 @@ class UwbRanger(
         @Volatile var liveInitError: String? = null
             private set
 
+        /**
+         * Which session members stay as measure-only peers (pure). Empty when measuring is off (gate null) or an outside
+         * peer is stronger than MEASURE_YIELD_RSSI_DBM; otherwise members in (gate, UWB_START_RSSI_GATE_DBM].
+         */
+        internal fun measureKeep(
+            members: Collection<String>, others: Collection<String>, rssiOf: (String) -> Int?, gate: Int?
+        ): List<String> {
+            if (gate == null) return emptyList()
+            if (others.any { (rssiOf(it) ?: Int.MIN_VALUE) > MEASURE_YIELD_RSSI_DBM }) return emptyList()
+            return members.filter { id -> rssiOf(id)?.let { it > gate && it <= UWB_START_RSSI_GATE_DBM } == true }
+        }
+
         /** Records the renewAndStart reconfiguration result as the diagnostic reason. stage=null → success (clears it). */
         internal fun noteRebuild(stage: String?, e: Exception? = null) {
             liveInitError = if (stage == null) null else "재구성 실패($stage): ${e?.message}"
@@ -125,7 +143,8 @@ class UwbRanger(
         val role: Role,
         val controllerId: String?,          // CONTROLEE: controller to join
         val controllerPayload: ByteArray?,  // CONTROLEE: that controller's 4-byte OOB
-        val controlees: List<String>        // CONTROLLER: controlee deviceId list to range (priority order)
+        val controlees: List<String>,       // CONTROLLER: controlee deviceId list to range (priority order)
+        val measure: Boolean = false        // keep the running session only to record distances (judge data)
     )
 
     /**
@@ -145,6 +164,9 @@ class UwbRanger(
     /** deviceId (fullId) → approach kinematics for BleService speed promotion / separation release (absent = none) */
     val uwbKinematics: MutableMap<String, UwbKin> = ConcurrentHashMap()
     private val lastSampleMap = ConcurrentHashMap<String, Pair<Long, Float>>()   // deviceId → (time, distance) of the previous sample
+
+    /** Session peers kept only to record distances (read outside the lock by deliverSample) — never feed decisions */
+    internal val measureIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
     /** This device's 2-byte UWB local address (new value on every scope renewal) */
     @Volatile var localAddress: ByteArray? = null
@@ -278,6 +300,7 @@ class UwbRanger(
         servedControlees.clear()
         servedAddrToId.clear()
         candidates.clear()
+        measureIds.clear()
         uwbDistances.clear()
         uwbKinematics.clear()
         lastSampleMap.clear()
@@ -329,6 +352,7 @@ class UwbRanger(
     //   Far peers stay on RSSI: their distant NLOS samples would pollute the learned Δ. RSSI is therefore both
     //   the session admission gate and the priority (rankOf: slot allocation, controller selection).
     //   DevSettings.uwbForce remains valid as the run gate (forced start ignoring uwbEnabled, in BleService).
+    //   Only an already-open session may stay below this gate as "measure" (measureDesiredLocked); no session is opened for it.
 
     // ── Reconfiguration (reconcile) ──────────────────────────────────────────────────
 
@@ -339,6 +363,34 @@ class UwbRanger(
      * mismatched links silently stay on RSSI.
      */
     private fun computeDesiredLocked(): Desired {
+        val judge = computeJudgeDesiredLocked()
+        return if (judge.role == Role.NONE) measureDesiredLocked() ?: judge else judge
+    }
+
+    /**
+     * Measure-keep target (pure): only when the judge target is standby, the current session's peers that fell to
+     * (measureGate, -80] stay in the session. Never opens a session. Null → the judge target (standby = close).
+     */
+    private fun measureDesiredLocked(): Desired? {
+        val gate = measureGate?.invoke() ?: return null
+        if (rangingJob == null) return null
+        val members: List<String> = when (role) {
+            Role.CONTROLLER -> servedControlees.filter { (id, addr) ->
+                val p = candidates[id]; p != null && p.size >= 2 && p.copyOf(2).contentEquals(addr)
+            }.keys.toList()
+            Role.CONTROLEE -> activeControllerId?.takeIf { id ->
+                candidates[id]?.contentEquals(activeControllerPayload ?: ByteArray(0)) == true
+            }?.let { listOf(it) } ?: emptyList()
+            Role.NONE -> return null
+        }
+        val others = candidates.keys.filter { it !in members }
+        val kept = measureKeep(members, others, { rssiOf?.invoke(it) }, gate)
+        if (kept.isEmpty()) return null
+        return if (role == Role.CONTROLLER) Desired(Role.CONTROLLER, null, null, kept, measure = true)
+        else Desired(Role.CONTROLEE, activeControllerId, activeControllerPayload, emptyList(), measure = true)
+    }
+
+    private fun computeJudgeDesiredLocked(): Desired {
         if (candidates.isEmpty()) return Desired(Role.NONE, null, null, emptyList())
         val joinable = ArrayList<String>()      // peer outranks me + advertises controller (4B) → join candidate
         val controllable = ArrayList<String>()  // I outrank + peer advertises controlee (2B) → ranging candidate
@@ -419,6 +471,8 @@ class UwbRanger(
     private fun reconcileLocked() {
         if (stopped || uwbManager == null) return
         val d = computeDesiredLocked()
+        if (d.measure) { keepMeasureLocked(d, flip = false); return }
+        unmarkMeasureLocked(d)
         if (!needsRebuildLocked(d)) return
         // Live controller keeps the controller target and only the controlee set changed — converge with a dynamic
         //   multicast delta instead of a full reconfiguration (new scope = new address = re-advertise = address chase).
@@ -427,6 +481,33 @@ class UwbRanger(
             return
         }
         scheduleRestartLocked(REJOIN_DELAY_MS)
+    }
+
+    /**
+     * Keeps the running session as measure-only (synchronized blocks only). flip=false (reconcile): the first time, just
+     * schedule the same short restart that the judge path uses to close the session, so judge samples stop at exactly
+     * the time they do today. flip=true (that restart firing): mark every session peer as measure and clear the three
+     * maps like stopActiveLocked, so no stale distance or speed outlives the flip. A live controller then trims peers
+     * below the measure floor with the usual dynamic multicast delta.
+     */
+    private fun keepMeasureLocked(d: Desired, flip: Boolean) {
+        val members = servedControlees.keys + listOfNotNull(activeControllerId)
+        if (members.any { it !in measureIds }) {
+            if (!flip) { scheduleRestartLocked(REJOIN_DELAY_MS); return }
+            for (id in members) {
+                measureIds.add(id)
+                uwbDistances.remove(id); uwbKinematics.remove(id); lastSampleMap.remove(id)
+            }
+            publishDiag()
+        }
+        if (role == Role.CONTROLLER && !sameAsActiveLocked(d)) applyControleeDeltaLocked(d)
+    }
+
+    /** Peers back above the start gate (or newly chosen) are judge peers again from this moment */
+    private fun unmarkMeasureLocked(d: Desired) {
+        if (measureIds.isEmpty()) return
+        measureIds.removeAll(d.controlees.toSet())
+        d.controllerId?.let { measureIds.remove(it) }
     }
 
     /** Schedules a reconfiguration (in synchronized blocks only), debounced; renew does the stop when it fires */
@@ -459,6 +540,7 @@ class UwbRanger(
         activeControllerId?.let { uwbDistances.remove(it); uwbKinematics.remove(it); lastSampleMap.remove(it) }
         servedControlees.clear()
         servedAddrToId.clear()
+        measureIds.clear()
         activeControllerId = null
         activeControllerPayload = null
         activeControllerAddrHex = null
@@ -470,6 +552,7 @@ class UwbRanger(
     private fun dropServedLocked(id: String) {
         val addr = servedControlees.remove(id)
         if (addr != null) servedAddrToId.remove(addr.toHex())
+        measureIds.remove(id)
         uwbDistances.remove(id)
         uwbKinematics.remove(id)
         lastSampleMap.remove(id)
@@ -530,7 +613,7 @@ class UwbRanger(
                 for ((id, addr) in toRemove) {
                     servedAddrToId.remove(addr.toHex())
                     if (!want.containsKey(id)) {
-                        servedControlees.remove(id); uwbDistances.remove(id)
+                        servedControlees.remove(id); uwbDistances.remove(id); measureIds.remove(id)
                         uwbKinematics.remove(id); lastSampleMap.remove(id)
                     }
                 }
@@ -553,6 +636,8 @@ class UwbRanger(
             if (stopped) return
             val mgr = uwbManager ?: return
             val desired = computeDesiredLocked()
+            if (desired.measure) { keepMeasureLocked(desired, flip = true); return }   // where the judge path would stop the session
+            unmarkMeasureLocked(desired)
             if (rangingJob != null && sameAsActiveLocked(desired)) return   // already running as targeted — keep it
             // If the target narrowed to a controlee-set change before the delayed schedule fired, delegate to the delta
             //   instead of tearing down the live session — a full reconfiguration causes address chase.
@@ -798,15 +883,7 @@ class UwbRanger(
                 val d = result.position.distance?.value ?: return
                 if (!d.isFinite()) return   // Drop NaN/±Inf: would corrupt kinematics/calibration and make roundToInt throw
                 val id = peerIdForResult(result.device) ?: return
-                uwbDistances[id] = d
-                publishDiag()
-                val now = System.currentTimeMillis()
-                updateKinematics(id, d, now)
-                onUwbSample?.invoke(id, d)   // Push at once; decisions don't wait for the BLE scan cycle (lower latency)
-                if (now - lastStatusAt >= STATUS_THROTTLE_MS) {
-                    lastStatusAt = now
-                    onStatus?.invoke("UWB 거리: ${shortId(id)} ${"%.1f".format(d)}m")
-                }
+                deliverSample(id, d, System.currentTimeMillis())
             }
             is RangingResult.RangingResultPeerDisconnected -> {
                 val id = peerIdForResult(result.device)
@@ -814,6 +891,19 @@ class UwbRanger(
                 onPeerDisconnected(id)
             }
             else -> { /* Unknown result type: ignore */ }
+        }
+    }
+
+    /** One finite sample: measure-kept peers go to the record-only sink and return before any decision-feeding store */
+    internal fun deliverSample(id: String, d: Float, now: Long) {
+        if (id in measureIds) { onMeasureSample?.invoke(id, d); return }
+        uwbDistances[id] = d
+        publishDiag()
+        updateKinematics(id, d, now)
+        onUwbSample?.invoke(id, d)   // Push at once; decisions don't wait for the BLE scan cycle (lower latency)
+        if (now - lastStatusAt >= STATUS_THROTTLE_MS) {
+            lastStatusAt = now
+            onStatus?.invoke("UWB 거리: ${shortId(id)} ${"%.1f".format(d)}m")
         }
     }
 
@@ -885,8 +975,13 @@ class UwbRanger(
     private fun onSessionEnded(gen: Int, reason: String) {
         if (stopped || gen != sessionGen) return
         Log.d(TAG, "UWB 세션 종료($reason) role=$role")
+        // Measure-only session: today this session would already have been closed at -80 (standby), so a 10s backoff
+        //   could block a new restart (scheduleRestartLocked ignores calls while one is pending) and delay another
+        //   peer's judge session by up to 10s. Restart in 250ms instead.
+        val members = servedControlees.keys + listOfNotNull(activeControllerId)
+        val measureOnly = members.isNotEmpty() && members.all { it in measureIds }
         stopActiveLocked()
-        scheduleRestartLocked(RESTART_BACKOFF_MS)
+        scheduleRestartLocked(if (measureOnly) REJOIN_DELAY_MS else RESTART_BACKOFF_MS)
     }
 
     private fun shortId(deviceId: String): String =
