@@ -88,13 +88,16 @@ class DatabaseRulesParityTest {
 
     // The site PIN nodes: only the check value (pub) is readable; the gate, the proof and the change log are not; the iteration
     //   limits and hex lengths match SitePin; a change needs the stored gate as proof and the next version; the log is append-only.
+    //   pinreq (PIN lookup): readable and indexed by at; only the creator creates (without an answer) or deletes; one answer, key unchanged.
     @Test fun site_pin_rules_match_the_app() {
         val s = repoFile("database.rules.json")
         val a = s.indexOf("\"pin\": {")
         val b = s.indexOf("\"pinlog\": {")
-        assertTrue(a >= 0 && b > a)
+        val c = s.indexOf("\"pinreq\": {")
+        assertTrue(a >= 0 && b > a && c > b)
         val pin = s.substring(a, b)
-        val log = s.substring(b)
+        val log = s.substring(b, c)
+        val req = s.substring(c)
         assertTrue(pin.contains(">= ${SitePin.MIN_ITER}") && pin.contains("<= ${SitePin.MAX_ITER}"))
         assertTrue(pin.contains("{32}") && pin.contains("{64}"))
         assertTrue(pin.contains("newData.child('proof').val() === data.child('sec/gate').val()"))
@@ -104,5 +107,14 @@ class DatabaseRulesParityTest {
         assertTrue(!pin.substring(pin.indexOf("\"sec\": {")).contains("\".read\""))
         assertTrue(!log.contains("\".read\""))
         assertTrue(log.contains("!data.exists()"))
+        val reqRules = req.substring(0, req.indexOf("\"\$id\": {"))
+        assertTrue(reqRules.contains("\".read\": \"auth != null\"") && reqRules.contains("\".indexOn\": [\"at\"]"))
+        assertTrue(req.contains("!data.exists() && newData.child('uid').val() === auth.uid && !newData.child('ans').exists()"))
+        assertTrue(req.contains("data.exists() && !newData.exists() && data.child('uid').val() === auth.uid"))
+        assertTrue(req.contains("!data.child('ans').exists() && newData.child('ans').exists()"))
+        assertTrue(req.contains("newData.child('pub').val() === data.child('pub').val()"))
+        val ans = req.substring(req.indexOf("\"ans\": {"))
+        assertTrue(ans.contains("hasChildren(['epk', 'iv', 'ct', 'by'])"))
+        for (k in listOf("epk", "iv", "ct", "by")) assertTrue(ans.contains("\"$k\": {"))
     }
 }

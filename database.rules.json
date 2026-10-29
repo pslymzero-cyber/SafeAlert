@@ -329,6 +329,31 @@
             "$other": { ".validate": false }
           }
         }
+      },
+      "pinreq": {
+        "$sc": {
+          ".read": "auth != null",
+          ".indexOn": ["at"],
+          "$id": {
+            ".write": "auth != null && $site.matches(/^[A-Za-z0-9_-]{1,32}$/) && $sc.matches(/^[A-Z0-9_-]{1,12}$/) && ((!data.exists() && newData.child('uid').val() === auth.uid && !newData.child('ans').exists()) || (data.exists() && !newData.exists() && data.child('uid').val() === auth.uid) || (data.exists() && newData.exists() && !data.child('ans').exists() && newData.child('ans').exists() && newData.child('uid').val() === data.child('uid').val() && newData.child('pub').val() === data.child('pub').val() && newData.child('at').val() === data.child('at').val()))",
+            ".validate": "newData.hasChildren(['uid', 'pub', 'to', 'at'])",
+            "uid": { ".validate": "newData.isString()" },
+            "pub": { ".validate": "newData.isString() && newData.val().length >= 40 && newData.val().length <= 200" },
+            "code": { ".validate": "newData.isString() && newData.val().length <= 10" },
+            "loc": { ".validate": "newData.isString() && newData.val().length <= 24" },
+            "to": { "$aid": { ".validate": "$aid.matches(/^[A-Za-z0-9_-]{1,24}$/) && newData.val() === true" } },
+            "at": { ".validate": "newData.isNumber() && newData.val() <= now + 60000" },
+            "ans": {
+              ".validate": "newData.hasChildren(['epk', 'iv', 'ct', 'by'])",
+              "epk": { ".validate": "newData.isString() && newData.val().length <= 200" },
+              "iv": { ".validate": "newData.isString() && newData.val().length <= 40" },
+              "ct": { ".validate": "newData.isString() && newData.val().length <= 120" },
+              "by": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 40" },
+              "$other": { ".validate": false }
+            },
+            "$other": { ".validate": false }
+          }
+        }
       }
     }
   }
