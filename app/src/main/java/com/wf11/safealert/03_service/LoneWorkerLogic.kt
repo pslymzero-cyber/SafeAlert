@@ -61,6 +61,29 @@ class LoneWorkerLogic(var myBleId: String) {
 
     enum class Mode { WATCHING, CHECKING, SOS }
 
+    /** Pure-value events for the judge-data record (recording only; see JudgeLog). */
+    sealed class JudgeEvent {
+        /** One FALL that reached onAccident: take = watch | shut | dropped. */
+        data class Fall(val impT: Long, val take: String, val zoneIn: Boolean, val charging: Boolean,
+                        val plugAgoMs: Long?, val unplugAgoMs: Long?) : JudgeEvent()
+
+        /** A mode change. trig is the trigger before the change when closing; why is the close reason (to WATCHING only). */
+        data class ModeChange(val from: Mode, val to: Mode, val trig: String, val why: String,
+                              val sinceMs: Long, val impT: Long?) : JudgeEvent()
+    }
+
+    /** Judge-data hook (recording only, the default does nothing). Never changes a judgment. */
+    var onJudge: (JudgeEvent) -> Unit = {}
+
+    private fun judge(e: JudgeEvent) { runCatching { onJudge(e) } }
+
+    private fun fallImp(trig: String): Long? = impactAt.takeIf { trig == "fall" && it != Long.MIN_VALUE }
+
+    private fun fallJudge(trigMs: Long, take: String) = judge(JudgeEvent.Fall(
+        trigMs, take, zone.insideAtImpact(trigMs), charging,
+        lastPlugAt.takeIf { it != Long.MIN_VALUE }?.let { trigMs - it },
+        lastUnplugAt.takeIf { it != Long.MIN_VALUE }?.let { trigMs - it }))
+
     /**
      * Why no-motion checking is paused, with its notice text (main screen banner,
      * notification sentence fragment). Accident detection never pauses.
@@ -253,7 +276,7 @@ class LoneWorkerLogic(var myBleId: String) {
             raiseStillBase(nowMs)
         } else {
             clearAccident()
-            closeCheck(nowMs)
+            closeCheck(nowMs, why = "off")
             // No tick follows this path in the monitor (applySettings): a peer siren held back by this phone's own check window starts now
             peerStore.ring(nowMs)
         }
@@ -281,7 +304,7 @@ class LoneWorkerLogic(var myBleId: String) {
         if (on) {
             if (!restart) lastPlugAt = atMs
             if (mounted) raiseStillBase(atMs) // Mounting on equipment starts counting equipment idle time from then
-            closeCheck(atMs)
+            closeCheck(atMs, why = "charger")
             if (mode != Mode.SOS) clearAccident()
         } else {
             if (!restart) lastUnplugAt = atMs
@@ -357,7 +380,7 @@ class LoneWorkerLogic(var myBleId: String) {
      * Closes the mounted no-motion window on a turn or 3 s shake (time t); input later than an already-passed SOS
      * deadline does not close it, since the deadline judgment (waiting for sensor data) comes first.
      */
-    private fun closeMounted(t: Long) { if (t <= (sosAt() ?: Long.MAX_VALUE)) closeCheck(t, "still") }
+    private fun closeMounted(t: Long) { if (t <= (sosAt() ?: Long.MAX_VALUE)) closeCheck(t, "still", "mount") }
 
     /** The accelerometer has not responded for 1 min: end the movement wait and count as carried. */
     fun sensorSilent(nowMs: Long) {
@@ -389,9 +412,10 @@ class LoneWorkerLogic(var myBleId: String) {
      * it (EXIT_LAG_MS), it counts only if shape exceeds zoneFall.
      */
     fun onAccident(trigMs: Long, shape: MotionAnalyzer.FallShape = MotionAnalyzer.FallShape.ANY) {
-        if (order.keep { onAccident(trigMs, shape) } || fallShut()) return
+        if (order.keep { onAccident(trigMs, shape) }) return
+        if (fallShut()) { fallJudge(trigMs, "shut"); return }
         hold.zoneExpired(trigMs + ZoneHistory.EXIT_LAG_MS)?.let { leaveZone(it) } // FALL comes 12 s after impact; first apply a restart zone hold (exit) that ended
-        if (fallDropped(trigMs, shape)) return
+        if (fallDropped(trigMs, shape)) { fallJudge(trigMs, "dropped"); return }
         if (accidentUntil == Long.MIN_VALUE) accidentFrom = trigMs
         impactAt = trigMs
         accidentUntil = maxOf(accidentUntil, trigMs + ACCIDENT_WATCH_MS)
@@ -401,6 +425,7 @@ class LoneWorkerLogic(var myBleId: String) {
         while (true) base = firstDistinct(base) ?: break
         lastDistinctAt = if (base > trigMs) base else minOf(lastDistinctAt, trigMs)
         if (mode != Mode.CHECKING || floorAt <= trigMs) floorAt = base
+        fallJudge(trigMs, "watch")
     }
 
     /**
@@ -456,7 +481,7 @@ class LoneWorkerLogic(var myBleId: String) {
     /** "괜찮아요": closes the open check window and also ends any ongoing accident suspicion. */
     fun ackWorking(nowMs: Long): Boolean {
         if (mode != Mode.CHECKING) return false
-        closeCheck(nowMs)
+        closeCheck(nowMs, why = "ack")
         clearAccident()
         peerStore.ring(nowMs) // No tick follows this path in the monitor: peer sirens held back by the check window start now
         return true
@@ -468,10 +493,10 @@ class LoneWorkerLogic(var myBleId: String) {
      * only while the button is still the rescuer's button, the phone stops monitoring after RESCUER_STOP_DELAY_MS. The
      * worker's own window and the default (the one-hour automatic release) never schedule a stop.
      */
-    fun cancelSos(nowMs: Long, rescuer: Boolean = false): Boolean {
+    fun cancelSos(nowMs: Long, rescuer: Boolean = false, why: String = ""): Boolean {
         if (mode != Mode.SOS) return false
         if (rescuer && rescuerButton(nowMs)) stopAt = nowMs + RESCUER_STOP_DELAY_MS
-        toWatching(nowMs)
+        toWatching(nowMs, why.ifEmpty { if (rescuer) "rescuer" else "sos_cancel" })
         peerStore.ring(nowMs) // No tick follows this path in the monitor: peer sirens held back by my SOS start now (not while a stop is pending: canSound)
         return true
     }
@@ -510,7 +535,7 @@ class LoneWorkerLogic(var myBleId: String) {
      * agoMs = how long ago the SOS began, so modeSinceMs is when it began and the rescuer's button is timed from then.
      */
     fun restoreSos(trigger: String, nowMs: Long, agoMs: Long = 0L) {
-        closeCheck(nowMs)
+        closeCheck(nowMs, why = "restore")
         this.trigger = trigger
         toSos(nowMs - agoMs)
     }
@@ -570,7 +595,7 @@ class LoneWorkerLogic(var myBleId: String) {
             zoneSettled = s.zoneSettled
         }
         if (hold.powerHeld(nowMs)) hold.holdCheck(s.check) else if (s.check.isNotEmpty()) toChecking(s.check, nowMs, nowMs)
-        if (zoneSettled) closeCheck(nowMs, "still") // Restoring a settled state neither opens nor holds a no-motion window
+        if (zoneSettled) closeCheck(nowMs, "still", "restore") // Restoring a settled state neither opens nor holds a no-motion window
     }
 
     fun responseLeftMs(nowMs: Long): Long = sosAt()?.let { (it - nowMs).coerceAtLeast(0L) } ?: 0L
@@ -682,9 +707,9 @@ class LoneWorkerLogic(var myBleId: String) {
     private fun onDistinct(t: Long) {
         if (t > lastDistinctAt) lastDistinctAt = t
         floorAt = t
-        if (mounted) return closeCheck(t, "fall") // Mounted: steps don't reset/close no-motion; they still close the accident window
+        if (mounted) return closeCheck(t, "fall", "walk") // Mounted: steps don't reset/close no-motion; they still close the accident window
         raiseStillBase(t)
-        closeCheck(t)
+        closeCheck(t, why = "walk")
     }
 
     private fun carry(t: Long) {
@@ -701,9 +726,9 @@ class LoneWorkerLogic(var myBleId: String) {
      * Single close rule: closes the open check window (only that kind if kind is given) together with the restored window
      * held during the power hold. SOS ends only via cancelSos; accident suspicion is ended by the caller.
      */
-    private fun closeCheck(t: Long, kind: String = "") {
+    private fun closeCheck(t: Long, kind: String = "", why: String) {
         hold.dropCheck(kind)
-        if (mode == Mode.CHECKING && (kind.isEmpty() || trigger == kind)) toWatching(t)
+        if (mode == Mode.CHECKING && (kind.isEmpty() || trigger == kind)) toWatching(t, why)
     }
 
     private fun clearAccident() {
@@ -719,30 +744,36 @@ class LoneWorkerLogic(var myBleId: String) {
         hold.zoneExpired(nowMs)?.let { leaveZone(it) }
         if (!hold.zoneHeld && zone.inside &&!zoneSettled && nowMs - zone.since >= ZONE_SETTLE_MS) {
             zoneSettled = true
-            closeCheck(nowMs, "still")
+            closeCheck(nowMs, "still", "zone")
         }
     }
 
-    private fun toWatching(nowMs: Long) {
+    private fun toWatching(nowMs: Long, why: String) {
+        val ev = JudgeEvent.ModeChange(mode, Mode.WATCHING, trigger, why, nowMs - modeSinceMs, fallImp(trigger))
         raiseStillBase(nowMs)
         mode = Mode.WATCHING
         trigger = ""
         modeSinceMs = nowMs
+        judge(ev)
     }
 
     /** floor = step-count floor (the deadline in sensor time), nowMs = actual open time (start of the response time). */
     private fun toChecking(trig: String, floor: Long, nowMs: Long) {
+        val ev = JudgeEvent.ModeChange(mode, Mode.CHECKING, trig, "", nowMs - modeSinceMs, fallImp(trig))
         mode = Mode.CHECKING
         trigger = trig
         modeSinceMs = nowMs
         floorAt = floor
         shakeFloorAt = floor
+        judge(ev)
     }
 
     private fun toSos(nowMs: Long) {
+        val ev = JudgeEvent.ModeChange(mode, Mode.SOS, trigger, "", nowMs - modeSinceMs, fallImp(trigger))
         mode = Mode.SOS
         modeSinceMs = nowMs
         clearAccident()
+        judge(ev)
     }
 
     /**

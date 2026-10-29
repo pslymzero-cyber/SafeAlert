@@ -7,6 +7,7 @@ import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import com.wf11.safealert.ble.SosAdvert
+import com.wf11.safealert.firebase.JudgeLog
 import com.wf11.safealert.firebase.SosRemote
 import com.wf11.safealert.utils.BeaconRegistry
 import com.wf11.safealert.utils.DevSettings
@@ -63,7 +64,7 @@ class LoneWorkerMonitor(
         var uiListener: (() -> Unit)? = null
     }
 
-    private var logic = LoneWorkerLogic("")
+    private var logic = freshLogic()
     private val alarm = LoneWorkerAlarm(ctx, setAlarmVolume)
     private val handler = Handler(Looper.getMainLooper())
     private val sync = LoneWorkerSosSync(ctx, handler,
@@ -89,6 +90,18 @@ class LoneWorkerMonitor(
     val stepPermissionMissing: Boolean get() = started && sensors.stepPermissionMissing
     private var name = ""
     private var roleName = ""
+
+    /** A fresh logic wired to the judge-data log (recording only). name / roleName are read when an event fires. */
+    private fun freshLogic() = LoneWorkerLogic("").also { it.onJudge = ::judge }
+
+    private fun judge(e: LoneWorkerLogic.JudgeEvent) {
+        when (e) {
+            is LoneWorkerLogic.JudgeEvent.Fall ->
+                JudgeLog.fallTake(name, roleName, e.impT, e.take, e.zoneIn, e.charging, e.plugAgoMs, e.unplugAgoMs)
+            is LoneWorkerLogic.JudgeEvent.ModeChange ->
+                JudgeLog.mode(name, roleName, e.from.name, e.to.name, e.trig, e.why, e.sinceMs, e.impT)
+        }
+    }
     /** Equipment mode: an equipment selection in BleConstants.categoryName — decided by role only. */
     private val equipment: Boolean get() = roleName == "FORKLIFT" || roleName == "EPJ"
     private var lastMode = LoneWorkerLogic.Mode.WATCHING
@@ -222,7 +235,7 @@ class LoneWorkerMonitor(
         sidLabels.clear()
         sidMissUntil.clear()
         // Keep the server's active record and the saved own SOS — only a release on the requester's phone clears it
-        logic = LoneWorkerLogic("") // Clear so stale peer entries don't revive on restart
+        logic = freshLogic() // Clear so stale peer entries don't revive on restart
         if (current === this) current = null
         uiListener?.invoke()
     }
@@ -429,7 +442,7 @@ class LoneWorkerMonitor(
     private fun releaseOldSos() {
         if (logic.mode != LoneWorkerLogic.Mode.SOS || !sosOverdue()) return
         val t = now()
-        logic.cancelSos(t) // First, so the render the resolve triggers finds no SOS whose stored one is gone
+        logic.cancelSos(t, why = "auto_1h") // First, so the render the resolve triggers finds no SOS whose stored one is gone
         logic.holdStill(t)
         sync.resolve(auto = true)
     }

@@ -114,7 +114,7 @@ class LoneWorkerRescuerStopTest {
         assertTrue(cancel.contains("logic.cancelSos(t, rescuer)"))
         // The one-hour automatic release passes no rescuer flag
         val oldSos = sourceBlock(monitor, "    private fun releaseOldSos() {")
-        assertTrue(oldSos.contains("logic.cancelSos(t)"))
+        assertTrue(oldSos.contains("logic.cancelSos(t, why = \"auto_1h\")")) // names the close reason for the judge-data log, still no rescuer flag
         assertFalse(oldSos.contains("rescuer"))
         assertTrue(cancel.contains("resume.clear()"))
         assertTrue(cancel.contains("handler.postDelayed(stopRunnable"))

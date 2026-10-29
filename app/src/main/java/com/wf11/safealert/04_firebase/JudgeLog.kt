@@ -1,0 +1,226 @@
+package com.wf11.safealert.firebase
+
+import android.util.Log
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.database.FirebaseDatabase
+import com.wf11.safealert.BuildConfig
+import com.wf11.safealert.utils.BeaconRegistry
+import com.wf11.safealert.utils.DevSettings
+import com.wf11.safealert.utils.SiteScope
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+/**
+ * Judge-data records — fall and proximity measurements written to `wf11/judge/<fall|prox>/<SC>/<yyyyMMdd>/<push id>`
+ * for offline learning. Recording only: it never changes a judgment, every public function swallows its exceptions,
+ * and it does nothing until it is switched on (app start / developer settings). Roles arrive as names, so this
+ * layer does not depend on the ble or service packages.
+ */
+object JudgeLog {
+
+    private const val TAG = "JudgeLog"
+    const val V = 1
+    const val ACC_MAX = 20_000
+    const val SC_PATTERN = "^[A-Z0-9_-]{1,12}\$"
+    const val NOSITE = "NOSITE"
+    private const val PEERS_MAX = 256
+    private const val LEVEL_GAP_MS = 2_000L
+    private const val UWB_GAP_MS = 1_000L
+    private const val RING = 10
+
+    /** Recording switch, raw-acceleration switch and experiment session name. Off by default. */
+    @Volatile var on = false
+    @Volatile var accOn = false
+    @Volatile var session = "field"
+
+    /** The Android-side snapshot one record needs. */
+    data class Env(
+        val site: String, val scope: Map<String, String>, val app: String, val uid: String,
+        val fkWarn: Double, val fkDang: Double, val pairWarn: Double, val pairDang: Double,
+    )
+
+    /** Null while not signed in: such a record is dropped (the rules require the uid). */
+    internal var env: () -> Env? = {
+        val uid = runCatching { FirebaseAuth.getInstance().currentUser?.uid }.getOrNull()
+        if (uid == null) null else Env(
+            DevSettings.siteCode, SiteScope.fields(DevSettings.floor, DevSettings.proc, DevSettings.zone),
+            BuildConfig.VERSION_NAME, uid,
+            DevSettings.uwbForkliftWarnMeters.toDouble(), DevSettings.uwbForkliftDangerMeters.toDouble(),
+            DevSettings.uwbPairWarnMeters.toDouble(), DevSettings.uwbPairDangerMeters.toDouble(),
+        )
+    }
+
+    /** Where a finished record goes. A failed write is only logged. */
+    internal var sink: (kind: String, rec: Map<String, Any>) -> Unit = { kind, rec ->
+        val day = SimpleDateFormat("yyyyMMdd", Locale.US).format(Date((rec["t"] as? Long) ?: System.currentTimeMillis()))
+        FirebaseDatabase.getInstance().reference.child(DevSettings.FIREBASE_ROOT).child("judge").child(kind)
+            .child(scOf(rec["site"] as? String ?: "")).child(day).push().setValue(rec)
+            .addOnFailureListener { Log.w(TAG, "판정 기록 실패: ${it.message}") }
+    }
+
+    fun scOf(site: String): String = if (Regex(SC_PATTERN).matches(site)) site else NOSITE
+
+    /** One record as a flat map (pure — the test target). Null body values are left out. */
+    internal fun rec(k: String, t: Long, me: String, role: String, e: Env, body: Map<String, Any?>): Map<String, Any> {
+        val m = LinkedHashMap<String, Any>()
+        m["v"] = V
+        m["k"] = k
+        m["t"] = t
+        m["dev"] = FirebaseManager.withSite(me, e.site)
+        m["role"] = role
+        m["site"] = e.site
+        m.putAll(e.scope)
+        m["app"] = e.app
+        m["sess"] = session
+        m["uid"] = e.uid
+        for ((key, v) in body) if (v != null) m[key] = v
+        return m
+    }
+
+    private fun emit(kind: String, k: String, t: Long, me: String, role: String, body: (Env) -> Map<String, Any?>) {
+        val e = env() ?: return
+        sink(kind, rec(k, t, me, role, e, body(e)))
+    }
+
+    private fun r2(d: Double) = Math.round(d * 100.0) / 100.0
+
+    // ── P1: last frame per peer (memory only) ────────────────────────────────────────────────
+
+    private class Sec(var sec: Long, var ema: Int, var vel: Double)
+
+    private class Peer {
+        var myRole = ""; var peerRole = ""
+        var rssi = 0; var med = 0; var pre = 0; var kf = 0; var kfVel = 0.0; var ema = 0; var avg1s = 0
+        var offPl = 0; var offBc = 0; var offGg = 0; var echo = 0; var effW = 0; var effD = 0
+        var levelAt = Long.MIN_VALUE
+        var uwbAt = Long.MIN_VALUE
+        val ring = ArrayDeque<Sec>()
+    }
+
+    // Least recently seen peer goes first; one lock for frame / level / uwb (UWB samples and scan frames may differ in thread)
+    private val peers = object : LinkedHashMap<String, Peer>(64, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Peer>?) = size > PEERS_MAX
+    }
+
+    /** P1 — called on every processAlert frame: keeps the latest values and a 10 s ring of 1 s summaries. Never emits. */
+    fun frame(
+        peer: String, myRole: String, peerRole: String, t: Long, rssi: Int, med: Int, pre: Int, kf: Int, kfVel: Double,
+        ema: Int, avg1s: Int, offPl: Int, offBc: Int, offGg: Int, echo: Int, effW: Int, effD: Int,
+    ) {
+        if (!on) return
+        runCatching {
+            synchronized(this) {
+                val p = peers.getOrPut(peer) { Peer() }
+                p.myRole = myRole; p.peerRole = peerRole
+                p.rssi = rssi; p.med = med; p.pre = pre; p.kf = kf; p.kfVel = kfVel; p.ema = ema; p.avg1s = avg1s
+                p.offPl = offPl; p.offBc = offBc; p.offGg = offGg; p.echo = echo; p.effW = effW; p.effD = effD
+                val sec = t / 1000
+                val last = p.ring.lastOrNull()
+                if (last != null && last.sec == sec) {
+                    last.ema = ema; last.vel = kfVel
+                } else if (p.ring.size >= RING) {
+                    // Reuse the oldest entry: no allocation per frame in steady state (runs on the scan callback)
+                    p.ring.removeFirst().also { it.sec = sec; it.ema = ema; it.vel = kfVel }.let { p.ring.addLast(it) }
+                } else {
+                    p.ring.addLast(Sec(sec, ema, kfVel))
+                }
+            }
+        }
+    }
+
+    private fun proxBody(peer: String, p: Peer, site: String): Map<String, Any?> = linkedMapOf(
+        "peer" to FirebaseManager.withSite(BeaconRegistry.shortFullId(peer), site), "peer_role" to p.peerRole,
+        "rssi" to p.rssi, "med" to p.med, "pre" to p.pre, "kf" to p.kf, "kf_vel" to r2(p.kfVel),
+        "ema" to p.ema, "avg1s" to p.avg1s, "off_pl" to p.offPl, "off_bc" to p.offBc, "off_gg" to p.offGg,
+        "echo" to p.echo, "eff_w" to p.effW, "eff_d" to p.effD,
+        "seq" to p.ring.joinToString(";") { "${it.ema},${String.format(Locale.US, "%.1f", it.vel)}" },
+    )
+
+    /** P2 — a proximity level changed (prev → level). At most one per peer per 2 s; needs the peer's frame memory. */
+    fun level(me: String, peer: String, prev: Int, level: Int, t: Long) {
+        if (!on) return
+        runCatching {
+            synchronized(this) {
+                val p = peers[peer] ?: return
+                if (p.levelAt != Long.MIN_VALUE && t - p.levelAt < LEVEL_GAP_MS) return
+                p.levelAt = t
+                emit("prox", "level", t, me, p.myRole) { e -> proxBody(peer, p, e.site) + mapOf("prev" to prev, "level" to level) }
+            }
+        }
+    }
+
+    /** P3 — one UWB distance sample with this pair's warn / danger distances and the level after judgment. At most 1 per peer per 1 s. */
+    fun uwb(me: String, peer: String, uwbM: Float, level: Int, t: Long) {
+        if (!on) return
+        runCatching {
+            synchronized(this) {
+                val p = peers[peer] ?: return
+                if (p.uwbAt != Long.MIN_VALUE && t - p.uwbAt < UWB_GAP_MS) return
+                p.uwbAt = t
+                // Same pair rule as AlertStateMachine.judgeUwbOnly
+                val fk = p.myRole == "FORKLIFT" || p.peerRole == "FORKLIFT"
+                emit("prox", "uwb", t, me, p.myRole) { e ->
+                    proxBody(peer, p, e.site) + mapOf(
+                        "uwb_m" to r2(uwbM.toDouble()),
+                        "warn_m" to r2(if (fk) e.fkWarn else e.pairWarn),
+                        "dang_m" to r2(if (fk) e.fkDang else e.pairDang),
+                        "level" to level,
+                    )
+                }
+            }
+        }
+    }
+
+    // ── Fall records ─────────────────────────────────────────────────────────────────────────
+
+    /** F1 — the 12 s decision of one impact candidate (pass or drop). acc / accT0 / accDt only when raw acceleration was kept. */
+    fun fallCand(
+        me: String, role: String, impT: Long, ffMs: Long, peakG: Double, impG: Double, deg: Double?, postN: Int,
+        postAct: Int, preOk: Boolean, pass: Boolean, why: String, acc: String?, accT0: Long?, accDt: Double?,
+        t: Long = System.currentTimeMillis(),
+    ) {
+        if (!on) return
+        runCatching {
+            emit("fall", "cand", t, me, role) {
+                linkedMapOf(
+                    "imp_t" to impT, "ff_ms" to ffMs, "peak_g" to r2(peakG), "imp_g" to r2(impG), "deg" to deg?.let(::r2),
+                    "post_n" to postN, "post_act" to postAct, "pre_ok" to preOk, "pass" to pass, "why" to why,
+                    "acc" to acc, "acc_t0" to accT0, "acc_dt" to accDt?.let(::r2),
+                )
+            }
+        }
+    }
+
+    /** F2 — what onAccident did with one FALL: watch (suspicion opened) | shut | dropped. */
+    fun fallTake(
+        me: String, role: String, impT: Long, take: String, zoneIn: Boolean, charging: Boolean,
+        plugAgoMs: Long?, unplugAgoMs: Long?, t: Long = System.currentTimeMillis(),
+    ) {
+        if (!on) return
+        runCatching {
+            emit("fall", "fall", t, me, role) {
+                linkedMapOf(
+                    "imp_t" to impT, "take" to take, "zone_in" to zoneIn, "charging" to charging,
+                    "plug_ago_ms" to plugAgoMs, "unplug_ago_ms" to unplugAgoMs,
+                )
+            }
+        }
+    }
+
+    /** F3 — a monitoring mode change. why only when closing. The `truth` field name is kept free for the later answer. */
+    fun mode(
+        me: String, role: String, from: String, to: String, trig: String, why: String, sinceMs: Long, impT: Long?,
+        t: Long = System.currentTimeMillis(),
+    ) {
+        if (!on) return
+        runCatching {
+            emit("fall", "mode", t, me, role) {
+                linkedMapOf(
+                    "from" to from, "to" to to, "trig" to trig, "why" to why.ifEmpty { null },
+                    "since_ms" to sinceMs, "imp_t" to impT,
+                )
+            }
+        }
+    }
+}

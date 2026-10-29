@@ -186,8 +186,7 @@ object FirebaseManager {
      * over BLE is physically inside the same center, so my center code applies as is — the path (`alerts/{site}/...`)
      * and the `site` field already rest on the same assumption.
      */
-    fun withSite(id: String): String {
-        val site = DevSettings.siteCode
+    fun withSite(id: String, site: String = DevSettings.siteCode): String {
         return if (site.isEmpty() || id.isEmpty()) id else "$site-$id"
     }
 
