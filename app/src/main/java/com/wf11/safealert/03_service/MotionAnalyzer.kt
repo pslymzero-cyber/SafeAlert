@@ -30,6 +30,8 @@ import kotlin.math.sqrt
  */
 class MotionAnalyzer(
     private val impactG: Double = IMPACT_G,
+    // onWindow stays last: existing callers pass it as a trailing lambda
+    private val onCandidate: (Candidate) -> Unit = {},
     private val onWindow: (Window) -> Unit = {}
 ) {
 
@@ -48,6 +50,16 @@ class MotionAnalyzer(
             /** A shape that exceeds every threshold — the default for onAccident(trigMs) called without a shape. */
             val ANY = FallShape(Long.MAX_VALUE, Double.MAX_VALUE, null)
         }
+    }
+
+    /** The 12 s decision of one impact candidate (pass, or the drop reason), for the judge-data record only. */
+    data class Candidate(
+        val impactT: Long, val ffMs: Long, val peakG: Double, val impactG: Double, val postN: Int, val postActive: Int,
+        val deg: Double?, val preValid: Boolean, val pass: Boolean, val why: String
+    )
+
+    private fun cand(deg: Double?, why: String) {
+        runCatching { onCandidate(Candidate(impactT, candFfMs, candPeakG, impactG, postN, postActive, deg, candPreValid, why.isEmpty(), why)) }
     }
 
     /**
@@ -286,11 +298,18 @@ class MotionAnalyzer(
 
         // Decision point
         candidate = false
-        if (postN == 0 || postActive >= POST_MAX_ACTIVE) return false
+        if (postN == 0 || postActive >= POST_MAX_ACTIVE) {
+            cand(null, if (postN == 0) "post_none" else "post_active")
+            return false
+        }
         // If the pre-fall posture is unknown (right after service start), treat it as a posture change — missing a fall is worse
         val deg = if (candPreValid) angleDeg(postX / postN, postY / postN, postZ / postN, candPreX, candPreY, candPreZ) else null
-        if (deg != null && !(deg >= POSTURE_DEG)) return false // A NaN angle is not a tip-over
+        if (deg != null && !(deg >= POSTURE_DEG)) { // A NaN angle is not a tip-over
+            cand(deg, "posture")
+            return false
+        }
         fallShape = FallShape(candFfMs, candPeakG, deg)
+        cand(deg, "")
         return true
     }
 

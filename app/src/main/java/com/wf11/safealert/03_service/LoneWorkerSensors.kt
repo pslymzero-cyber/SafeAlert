@@ -13,6 +13,7 @@ import android.os.Handler
 import android.os.SystemClock
 import android.util.Log
 import androidx.core.content.ContextCompat
+import com.wf11.safealert.firebase.JudgeLog
 import java.util.Locale
 import kotlin.math.sqrt
 
@@ -33,6 +34,8 @@ class LoneWorkerSensors(
     private val ctx: Context,
     private val handler: Handler,
     private val logic: () -> LoneWorkerLogic,
+    /** This phone's id and role name, for the judge-data record. */
+    private val judgeWho: () -> Pair<String, String>,
     private val onEvent: (Long) -> Unit
 ) : SensorEventListener2 {
 
@@ -44,6 +47,50 @@ class LoneWorkerSensors(
         private const val FLUSH_RETRY_MS = 2_000L
         /** Maximum sensor batch latency (us). */
         private const val MAX_BATCH_US = (LoneWorkerLogic.MAX_BATCH_MS * 1_000L).toInt()
+        /** Raw acceleration kept for the judge-data record: 1024 samples (about 20 s at 50 Hz), slice impact-3 s .. impact+12 s. */
+        private const val ACC_RING = 1024
+        private const val ACC_BEFORE_MS = 3_000L
+        private const val ACC_AFTER_MS = 12_000L
+    }
+
+    private val accT = LongArray(ACC_RING)
+    private val accX = FloatArray(ACC_RING)
+    private val accY = FloatArray(ACC_RING)
+    private val accZ = FloatArray(ACC_RING)
+    private var accN = 0L
+
+    /** Judge-data (recording only): the candidate's decision plus, if kept, its raw acceleration slice. */
+    private fun judgeCand(c: MotionAnalyzer.Candidate) {
+        if (!JudgeLog.on) return
+        var acc: String? = null
+        var accT0: Long? = null
+        var accDt: Double? = null
+        if (JudgeLog.accOn) {
+            val n = minOf(accN, ACC_RING.toLong()).toInt()
+            val start = if (accN > ACC_RING) (accN % ACC_RING).toInt() else 0
+            val sb = StringBuilder()
+            var first = Long.MIN_VALUE
+            var last = Long.MIN_VALUE
+            var count = 0
+            for (i in 0 until n) {
+                val j = (start + i) % ACC_RING
+                val ts = accT[j]
+                if (ts < c.impactT - ACC_BEFORE_MS || ts > c.impactT + ACC_AFTER_MS) continue
+                if (count++ == 0) first = ts else sb.append(';')
+                last = ts
+                sb.append(Math.round(accX[j] / MotionAnalyzer.G * 1000)).append(',')
+                    .append(Math.round(accY[j] / MotionAnalyzer.G * 1000)).append(',')
+                    .append(Math.round(accZ[j] / MotionAnalyzer.G * 1000))
+            }
+            if (count > 0 && sb.length <= JudgeLog.ACC_MAX) {
+                acc = sb.toString()
+                accT0 = first + accelSkew
+                if (count >= 2) accDt = (last - first).toDouble() / (count - 1) // The sensor can run faster than 50 Hz
+            }
+        }
+        val who = judgeWho()
+        JudgeLog.fallCand(who.first, who.second, c.impactT + accelSkew, c.ffMs, c.peakG, c.impactG, c.deg, c.postN,
+            c.postActive, c.preValid, c.pass, c.why, acc, accT0, accDt)
     }
 
     private var sm: SensorManager? = null
@@ -119,7 +166,8 @@ class LoneWorkerSensors(
         rangeMs2 = s.maximumRange
         val impactG = MotionAnalyzer.impactGFor(rangeMs2)
         Log.i(TAG, "가속도 센서 wakeUp=${s.isWakeUpSensor} fifoMax=${s.fifoMaxEventCount} range=${s.maximumRange} impactG=$impactG")
-        analyzer = MotionAnalyzer(impactG) { w -> logic().onWindow(w.copy(endMs = w.endMs + accelSkew)) }
+        analyzer = MotionAnalyzer(impactG, onWindow = { w -> logic().onWindow(w.copy(endMs = w.endMs + accelSkew)) },
+            onCandidate = ::judgeCand)
         if (!m.registerListener(this, s, 20_000, MAX_BATCH_US, handler)) {
             Log.w(TAG, "가속도 센서 등록 실패 — 판정 유지, 다시 등록")
             return
@@ -240,6 +288,11 @@ class LoneWorkerSensors(
                 stall.onEvent(t)
                 accelSkew = skewFor(rawMs, t, accelSkew)
                 val v = event.values
+                if (JudgeLog.on && JudgeLog.accOn) { // Raw ring for the judge-data record (before add: the decision sample is already in)
+                    val j = (accN % ACC_RING).toInt()
+                    accT[j] = rawMs; accX[j] = v[0]; accY[j] = v[1]; accZ[j] = v[2]
+                    accN++
+                }
                 // Samples during this app's vibration are excluded from activity stats only; fall detection still gets them
                 when (analyzer.add(rawMs, v[0], v[1], v[2], masked = VibrationHelper.window.covers(rawMs + accelSkew))) {
                     MotionAnalyzer.Signal.MOVED -> logic().onMoved(rawMs + accelSkew)

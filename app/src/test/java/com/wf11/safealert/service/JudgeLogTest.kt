@@ -134,5 +134,18 @@ class JudgeLogTest {
             assertTrue(o.cancelSos(400_000, why = why))
             assertEquals(expect, (ev.last() as JudgeEvent.ModeChange).why)
         }
+
+        // Motion analyzer: one candidate per 12 s decision — pass (lying after the fall) or posture drop (still upright)
+        for ((after, pass, why) in listOf(Triple(LYING_STILL, true, ""), Triple(UPRIGHT_STILL, false, "posture"))) {
+            val cands = mutableListOf<MotionAnalyzer.Candidate>()
+            val a = MotionAnalyzer(onCandidate = { cands += it })
+            val falls = a.feed(0, 3_000) { UPRIGHT_STILL }.size + a.feed(3_000, 3_260) { FREE_FALL_SAMPLE }.size +
+                a.feed(3_260, 3_320) { IMPACT_SAMPLE }.size + a.feed(3_320, 18_320) { after }.count { it.second == MotionAnalyzer.Signal.FALL }
+            assertEquals(if (pass) 1 else 0, falls)
+            val c = cands.single()
+            assertEquals(pass, c.pass); assertEquals(why, c.why)
+            assertTrue(c.ffMs >= 200); assertTrue(c.peakG > 2.5); assertTrue(c.postN > 0)
+            if (pass) assertEquals(a.eventMs, c.impactT)
+        }
     }
 }

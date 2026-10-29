@@ -8,6 +8,7 @@ import com.wf11.safealert.ble.KalmanFilter
 import com.wf11.safealert.ble.MedianFilter
 import com.wf11.safealert.ble.RssiPreFilter
 import com.wf11.safealert.firebase.FirebaseManager
+import com.wf11.safealert.firebase.JudgeLog
 import com.wf11.safealert.utils.BeaconRegistry
 import com.wf11.safealert.utils.DevSettings
 import com.wf11.safealert.utils.ImuFusion
@@ -943,6 +944,7 @@ class AlertStateMachine(
         val totalOffset = payloadOffset + beaconOffset + beaconGlobalGain + echoCalDb
         val effWarning = BleConstants.rssiWarning - totalOffset
         val effDanger  = BleConstants.rssiDanger  - totalOffset
+        JudgeLog.frame(deviceId, BleConstants.categoryName(fx.myCategory), BleConstants.categoryName(rCategory), now, inputRssi, medianValue, preFiltered, kalmanRssi, kfVel, pEma, avg1sec, payloadOffset, beaconOffset, beaconGlobalGain, echoCalDb, effWarning, effDanger) // judge data (memory only, recording)
 
         // ── Case A (UWB↔UWB) exclusive judgment: early branch ─────────────────────────────
         //   Only for pairs with a fresh UWB measurement (uwbJudgeModeExclusive) is this device's alert decision

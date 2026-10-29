@@ -133,7 +133,7 @@ class LoneWorkerMonitor(
     private val sidLabels = HashMap<Int, String>()   // Short ID → beacon label cache (found labels only), cleared in stop
     private val sidMissUntil = HashMap<Int, Long>()  // Unlabeled short ID → time it may be looked up again
     private val power = LoneWorkerPower(ctx) { onPowerRaw(it, false) }
-    private val sensors = LoneWorkerSensors(ctx, handler, { logic }) { onSensorEvent(it) }
+    private val sensors = LoneWorkerSensors(ctx, handler, { logic }, { name to roleName }) { onSensorEvent(it) }
     private val resume = LoneWorkerResume(ctx)
     private var lastRest = LoneWorkerLogic.Rest.NONE
     /**

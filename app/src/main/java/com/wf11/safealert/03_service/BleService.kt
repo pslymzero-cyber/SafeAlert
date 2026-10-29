@@ -26,6 +26,7 @@ import com.wf11.safealert.ble.BleScanCallback
 import com.wf11.safealert.ble.KalmanFilter
 import com.wf11.safealert.ble.MedianFilter
 import com.wf11.safealert.ble.RssiPreFilter
+import com.wf11.safealert.firebase.JudgeLog
 import com.wf11.safealert.utils.AdminMode
 import com.wf11.safealert.utils.BeaconRegistry
 import com.wf11.safealert.ui.MainActivity
@@ -1017,8 +1018,12 @@ class BleService : LifecycleService() {
         refreshNotification()
     }
 
-    private fun processAlert(deviceId: String, rssi: Int, remoteState: Int = 0x00, remoteTurn: Int = BleConstants.TURN_STRAIGHT, payloadPresent: Boolean = false, peerEchoRssi: Int = BleConstants.NO_ECHO_RSSI, nowMs: () -> Long = { System.currentTimeMillis() }) =
+    private fun processAlert(deviceId: String, rssi: Int, remoteState: Int = 0x00, remoteTurn: Int = BleConstants.TURN_STRAIGHT, payloadPresent: Boolean = false, peerEchoRssi: Int = BleConstants.NO_ECHO_RSSI, nowMs: () -> Long = { System.currentTimeMillis() }) {
+        val before = alertState[deviceId]?.first ?: BleConstants.LEVEL_SAFE
         asm.processAlert(deviceId, rssi, remoteState, remoteTurn, payloadPresent, peerEchoRssi, nowMs)
+        val after = alertState[deviceId]?.first ?: BleConstants.LEVEL_SAFE
+        if (after != before && JudgeLog.on) JudgeLog.level(myId, deviceId, before, after, nowMs()) // judge data (recording only)
+    }
 
     /** The scan callback's detection handler (applyMode); a named method so tests can drive the real path, like handleDeviceLost. */
     private fun handleDeviceDetected(deviceId: String, rssi: Int, remoteState: Int, remoteTurn: Int, payloadPresent: Boolean, peerEchoRssi: Int, peerInZone: Boolean, peerSos: Boolean) {
@@ -1146,7 +1151,14 @@ class BleService : LifecycleService() {
     //   (processAlert returns early in Case A, so no double alert). Escalate = 1 sample, immediately
     //   (minimum latency); de-escalate = 3 consecutive confirming samples or separating kinematics
     //   (separatingStreak≥3, closing<0) + hysteresis (keep threshold+0.5m).
-    private fun judgeUwbOnly(deviceId: String, uwbD: Float, now: Long) = asm.judgeUwbOnly(deviceId, uwbD, now)
+    private fun judgeUwbOnly(deviceId: String, uwbD: Float, now: Long) {
+        val before = alertState[deviceId]?.first ?: BleConstants.LEVEL_SAFE
+        asm.judgeUwbOnly(deviceId, uwbD, now)
+        val after = alertState[deviceId]?.first ?: BleConstants.LEVEL_SAFE
+        // judge data (recording only; the rate limit lives in JudgeLog)
+        if (after != before) JudgeLog.level(myId, deviceId, before, after, now)
+        JudgeLog.uwb(myId, deviceId, uwbD, after, now)
+    }
 
     private val isScreenOn: Boolean
         get() = (getSystemService(Context.POWER_SERVICE) as PowerManager).isInteractive
