@@ -80,10 +80,12 @@ class JudgeLogTest {
             JudgeLog.uwb("ME", "JL1", 7.0f, 2, 20_999); assertEquals(3, out.size)
             val fk = out.last().second
             assertEquals("uwb", fk["k"]); assertEquals(7.12, fk["uwb_m"]); assertEquals(15.0, fk["warn_m"]); assertEquals(8.0, fk["dang_m"])
+            assertEquals("judge", fk["use"]); assertEquals(8_000L, fk["frame_age_ms"])   // last JL1 frame was at 12_000
             frame("JL2", "WALKER", 30_000, -70)
-            JudgeLog.uwb("ME", "JL2", 2.5f, 1, 30_000)
+            JudgeLog.uwb("ME", "JL2", 2.5f, 1, 30_000, use = "measure")
             val wk = out.last().second
             assertEquals(5.0, wk["warn_m"]); assertEquals(3.0, wk["dang_m"]); assertEquals(1, wk["level"])
+            assertEquals("measure", wk["use"]); assertEquals(0L, wk["frame_age_ms"])
 
             // fall records: absent values are left out
             out.clear()
@@ -117,10 +119,11 @@ class JudgeLogTest {
             assertEquals("prox", dk); assertEquals("dist", d["k"]); assertEquals("WF11-JL3", d["peer"]); assertEquals("FORKLIFT", d["peer_role"])
             assertEquals(61_000L, d["alert_t"]); assertEquals("1to3", d["ans"]); assertEquals(12_000L, d["after_ms"])
             assertEquals(1.23, d["uwb_m"]); assertEquals(-55, d["ema"]); assertTrue(d.containsKey("seq"))
+            assertEquals(1_000L, d["frame_age_ms"]); assertEquals("judge", d["uwb_use"])
             out.clear()
             JudgeLog.holdDanger("JL3", 70_000, JudgeLog.markDanger("JL3", 70_000))
             JudgeLog.dist("ME", "WALKER", "JL3", 70_000, "gt5", t = 71_000)
-            assertFalse(out.single().second.containsKey("uwb_m"))
+            assertFalse(out.single().second.containsKey("uwb_m") || out.single().second.containsKey("uwb_use"))
             // An alert that was not kept (never asked) still records the answer, without the frame copy
             out.clear()
             JudgeLog.markDanger("JL3", 80_000)

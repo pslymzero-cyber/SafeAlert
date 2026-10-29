@@ -109,6 +109,8 @@ object JudgeLog {
         var levelAt = Long.MIN_VALUE
         var uwbAt = Long.MIN_VALUE
         var uwbM = 0f; var uwbMAt = Long.MIN_VALUE
+        var frameAt = Long.MIN_VALUE   // time of the last P1 frame — a record's age against it tells how stale the frame values are
+        var uwbUse = ""                // use of the last uwb sample (judge | measure)
         val ring = ArrayDeque<Sec>()
     }
 
@@ -126,7 +128,7 @@ object JudgeLog {
         runCatching {
             synchronized(this) {
                 val p = peers.getOrPut(peer) { Peer() }
-                p.myRole = myRole; p.peerRole = peerRole
+                p.myRole = myRole; p.peerRole = peerRole; p.frameAt = t
                 p.rssi = rssi; p.med = med; p.pre = pre; p.kf = kf; p.kfVel = kfVel; p.ema = ema; p.avg1s = avg1s
                 p.offPl = offPl; p.offBc = offBc; p.offGg = offGg; p.echo = echo; p.effW = effW; p.effD = effD
                 val sec = t / 1000
@@ -178,6 +180,7 @@ object JudgeLog {
     /**
      * P3 — one UWB distance sample with this pair's warn / danger distances and the level after judgment. At most 1 per peer per 1 s.
      * use = "judge" (the sample fed the decision) or "measure" (record-only, kept below the start gate; level is then just the current one).
+     * frame_age_ms = how long ago the last P1 frame (the rssi / ema values on the record) was taken.
      */
     fun uwb(me: String, peer: String, uwbM: Float, level: Int, t: Long, use: String = "judge") {
         if (!on) return
@@ -185,12 +188,12 @@ object JudgeLog {
             val (role, fk, body) = synchronized(this) {
                 val p = peers[peer] ?: return
                 // Every sample, before the gap check: markDanger reads the latest one
-                p.uwbM = uwbM; p.uwbMAt = t
+                p.uwbM = uwbM; p.uwbMAt = t; p.uwbUse = use
                 if (p.uwbAt != Long.MIN_VALUE && t - p.uwbAt < UWB_GAP_MS) return
                 p.uwbAt = t
                 // Same pair rule as AlertStateMachine.judgeUwbOnly
                 val fk = p.myRole == "FORKLIFT" || p.peerRole == "FORKLIFT"
-                Triple(p.myRole, fk, proxBody(p).apply { put("uwb_m", r2(uwbM.toDouble())); put("level", level); put("use", use) })
+                Triple(p.myRole, fk, proxBody(p).apply { put("uwb_m", r2(uwbM.toDouble())); put("level", level); put("use", use); put("frame_age_ms", t - p.frameAt) })
             }
             emitProx("uwb", t, me, role, peer, body) { e ->
                 mapOf("warn_m" to r2(if (fk) e.fkWarn else e.pairWarn), "dang_m" to r2(if (fk) e.fkDang else e.pairDang))
@@ -203,14 +206,20 @@ object JudgeLog {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Map<String, Any?>>?) = size > DANGER_MAX
     }
 
-    /** Copies the P1 frame memory (and a UWB distance at most 1 s old) at a DANGER start. Null when off. Never emits or keeps. */
+    /**
+     * Copies the P1 frame memory (and a UWB distance at most 1 s old, with its uwb_use) at a DANGER start. Null when off. Never emits or keeps.
+     * frame_age_ms = age of that frame at the danger start (a Case A danger can start on a UWB sample while the frame is seconds old).
+     */
     fun markDanger(peer: String, t: Long): Map<String, Any?>? {
         if (!on) return null
         return runCatching {
             synchronized(this) {
                 val p = peers[peer]
                 val snap = if (p == null) linkedMapOf<String, Any?>() else proxBody(p)
-                if (p != null && p.uwbMAt != Long.MIN_VALUE && t - p.uwbMAt in 0..UWB_FRESH_MS) snap["uwb_m"] = r2(p.uwbM.toDouble())
+                if (p != null) snap["frame_age_ms"] = t - p.frameAt
+                if (p != null && p.uwbMAt != Long.MIN_VALUE && t - p.uwbMAt in 0..UWB_FRESH_MS) {
+                    snap["uwb_m"] = r2(p.uwbM.toDouble()); snap["uwb_use"] = p.uwbUse
+                }
                 snap
             }
         }.getOrNull()
