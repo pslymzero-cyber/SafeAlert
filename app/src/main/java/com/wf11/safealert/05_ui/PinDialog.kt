@@ -232,15 +232,13 @@ private fun Activity.openSitePinDialog(
                 if (mode == MODE_FIRST) {
                     SitePinStore.writeFirst(this, site, newPin, by) { saved(it, "${site} 센터 PIN을 정했습니다") }
                 } else {
+                    // writeChange checks the connection itself (offline → saved(false))
                     val pub = curPub
-                    SitePinStore.checkOnline { online ->
-                        if (!alive) return@checkOnline
-                        if (!online || pub == null) {
-                            Toast.makeText(this, "인터넷에 연결되면 바꿀 수 있습니다", Toast.LENGTH_LONG).show()
-                            close(false)
-                        } else {
-                            SitePinStore.writeChange(this, site, curPin, pub, newPin, by) { saved(it, "센터 PIN을 바꿨습니다") }
-                        }
+                    if (pub == null) {
+                        Toast.makeText(this, "인터넷에 연결되면 바꿀 수 있습니다", Toast.LENGTH_LONG).show()
+                        close(false)
+                    } else {
+                        SitePinStore.writeChange(this, site, curPin, pub, newPin, by) { saved(it, "센터 PIN을 바꿨습니다") }
                     }
                 }
             }

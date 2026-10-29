@@ -61,7 +61,11 @@ object SitePinStore {
 
     // ---- server ----
 
-    /** Waits up to 4 s for ".info/connected" to turn true; an initial false does not end the wait. Calls back once, on main. */
+    /**
+     * Waits up to 4 s for ".info/connected" to turn true; an initial false does not end the wait. Calls back once, on main.
+     * Android RTDB drops an idle connection after 60 s and an .info listener does not reopen it, so a real read of the
+     * public /version node is started first to wake the connection.
+     */
     fun checkOnline(cb: (Boolean) -> Unit) {
         val done = AtomicBoolean(false)
         var ref: DatabaseReference? = null
@@ -75,6 +79,7 @@ object SitePinStore {
         }
         timeout = Runnable { finish(false) }
         val ok = runCatching {
+            FirebaseDatabase.getInstance().getReference("version").get()
             ref = FirebaseDatabase.getInstance().getReference(".info/connected")
             listener = object : ValueEventListener {
                 override fun onDataChange(s: DataSnapshot) { if (s.getValue(Boolean::class.java) == true) main.post { finish(true) } }
@@ -120,7 +125,8 @@ object SitePinStore {
 
     /** PBKDF2 decision off the main thread. */
     fun judge(input: String, state: SitePin.State, cb: (SitePin.Verdict) -> Unit) {
-        runner { val v = SitePin.check(input, state); main.post { cb(v) } }
+        // A malformed cached record must not leave the dialog waiting forever: drop it and ask for the server.
+        runner { val v = runCatching { SitePin.check(input, state) }.getOrDefault(SitePin.Verdict.NeedOnline); main.post { cb(v) } }
     }
 
     /** Who made the change: the worker code if there is one, else the device model. */
