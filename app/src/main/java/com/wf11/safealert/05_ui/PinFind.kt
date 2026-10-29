@@ -172,10 +172,19 @@ fun Activity.showPinFind(site: String, onEnterPin: () -> Unit) {
             end("받은 PIN을 풀지 못했습니다. 다시 요청하세요")
             return
         }
-        applicationContext.clearPinLockout()   // the admin checked the person holding this phone, so a PIN lock ends here
-        cleanup()
-        dialog.dismiss()
-        showPinShown(site, pin, by, onEnterPin)
+        // Any signed-in app may write the one answer, so the PIN is checked against this site's check value first:
+        //   only a real PIN is shown and only a real PIN lifts this phone's PIN lock. No cached value → shown, lock kept.
+        val pub = SitePinStore.cached(applicationContext, site)
+        if (pub == null) { cleanup(); dialog.dismiss(); showPinShown(site, pin, by, onEnterPin); return }
+        b.tvWaitSub.text = "받은 PIN 확인 중…"
+        SitePinStore.judge(pin, SitePin.State.Has(pub)) { v ->
+            if (!dialog.isShowing) return@judge
+            if (v != SitePin.Verdict.Ok) { end("받은 PIN이 맞지 않습니다. 다시 요청하세요"); return@judge }
+            applicationContext.clearPinLockout()   // the admin checked the person holding this phone, so a PIN lock ends here
+            cleanup()
+            dialog.dismiss()
+            showPinShown(site, pin, by, onEnterPin)
+        }
     }
 
     fun sendRequest() {
