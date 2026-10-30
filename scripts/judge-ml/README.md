@@ -169,3 +169,33 @@ python app_model.py selftest
 - 기록이 모자라면(접근 100건 · 넘어짐 각 8건 미만) 그 모델은 바꾸지 않는다. `prior` 는 학습 전 자리표시로 되돌린다.
 - 결과의 `cv` 는 5분 묶음 · 층화 교차검증 값이다. 모델 파일을 바꾸면 앱 테스트(AiJudgeTest)가 계산 일치를 확인하고, 앱에 반영하려면 새 버전을 배포한다.
 - `compare`: 같은 기록에서 **지금 규칙 · 폰 모델 · 회사 AI** 를 정답(접근 = UWB 거리 단계, 넘어짐 = 실험 세션 · 질문 답)과 견준다. 결과는 `data/compare/compare_report.md`(표) · `compare_prox.csv` · `compare_fall.csv`. 회사 AI 는 위 AI 설정(환경 변수)과 `ai_rules_*.md` 를 그대로 쓰고, 접근은 단계마다 `--per-level`(기본 30)건만 묻는다. 비용 상한 `--max-usd`(접근 · 넘어짐 각각), 먼저 `--dry-run` 으로 건수 · 비용을 본다. 회사 AI 없이 보려면 `--no-ai`.
+
+## 자동 내보내기 (회사 PC 에서 주소로 받기)
+
+GitHub Actions '판정 데이터 내보내기'(`.github/workflows/judge-export.yml`)가 매일 03:30(한국 시간)에, 또는 Actions 화면에서 **Run workflow** 를 누를 때 `wf11/judge` 를 읽어 암호화한 파일을 아래 고정 주소에 올린다. 저장소가 공개라서 파일은 늘 암호화되고, 키 없이는 열 수 없다.
+
+`https://github.com/pslymzero-cyber/SafeAlert/releases/download/judge-data/judge.json.gz.enc`
+
+**처음 한 번 — 개인 PC (PowerShell)**
+1. 키를 만들어 GitHub 비밀값으로 넣고, 회사로 가져갈 파일에도 적는다(화면에는 나오지 않는다).
+
+   ```
+   $k = python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+   $k | gh secret set JUDGE_EXPORT_KEY --repo pslymzero-cyber/SafeAlert
+   Set-Content -Path "$env:USERPROFILE\judge_export_key.txt" -Value $k -NoNewline
+   ```
+
+2. GitHub Actions 에서 '판정 데이터 내보내기' → **Run workflow** 로 한 번 돌려 주소에 파일이 생기는지 본다.
+
+**회사 PC**
+1. 키 파일의 내용을 환경 변수로 넣는다(새 터미널부터 적용). 키는 Claude 에게 보여 주지 않는다.
+
+   ```
+   setx JUDGE_EXPORT_KEY "<키 파일 내용>"
+   ```
+
+2. `pip install -r requirements.txt`(cryptography 가 새로 들어감)
+3. 받기: `python judge_ml.py fetch` → 이 폴더에 `judge.json` 이 생긴다. 그다음은 지금처럼 `load judge.json` · `python app_model.py compare judge.json` 등.
+
+- 매번 어제 · 오늘과 새 날짜만 Firebase 에서 다시 읽고, 그 전 날짜는 지난번 파일에서 그대로 가져온다. Firebase 에서 지운 날도 파일에는 남는다.
+- 회사망이 github.com 을 막으면 `HTTPS_PROXY` 환경 변수를 넣거나 IT 에 허용을 요청한다.
