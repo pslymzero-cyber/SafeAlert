@@ -1309,14 +1309,22 @@ def export(out, prev_path=None):
 
 
 def fetch(url, out):
+    import ssl
+    # Python 3.13+ adds strict X.509 checks that reject company HTTPS-inspection CAs browsers accept ("Basic Constraints
+    #   of CA cert not marked critical"). Only those are turned off: the chain and host name are still verified, and a
+    #   changed file would not decrypt anyway.
+    ctx = ssl.create_default_context()
+    ctx.verify_flags &= ~ssl.VERIFY_X509_STRICT
     req = urllib.request.Request(url, headers={"User-Agent": "safealert-judge-ml"})
     try:
-        with urllib.request.urlopen(req, timeout=600) as r:
+        with urllib.request.urlopen(req, timeout=600, context=ctx) as r:
             blob = r.read()
     except urllib.error.HTTPError as e:
         sys.exit(f"받기 실패 (HTTP {e.code}). 아직 내보낸 적이 없거나 주소가 다릅니다: {url}")
     except urllib.error.URLError as e:
-        sys.exit(f"받기 실패 ({e.reason}). 회사망이 github.com 을 막으면 HTTPS_PROXY 환경 변수를 넣으세요.")
+        sys.exit(f"받기 실패 ({e.reason}).\n브라우저나 PowerShell 로 받은 뒤 그 파일로 다시 실행하세요:\n"
+                 f"  Invoke-WebRequest {url} -OutFile judge.json.gz.enc -UseBasicParsing\n"
+                 f"  python judge_ml.py fetch --url file:///<judge.json.gz.enc 의 전체 경로, / 로>")
     data = unseal(blob)
     if data is None:
         sys.exit("암호를 풀지 못했습니다. JUDGE_EXPORT_KEY 가 개인 PC 에서 만든 키와 같은지 확인하세요.")
