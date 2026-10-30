@@ -152,3 +152,18 @@ Claude API 키(`anthropic`)로 부르면, 답을 거절당한 요청은 서버�
 | `train/*_ai_judge.csv` · `real/*_ai_judge.csv` | AI 판단 |
 | `ai_usage.csv` | AI 호출마다의 토큰 · 비용 |
 | `relabel_*.md` · `ai_train_*.md` · `report_*.md` | 결과 보고 |
+
+## 앱에 넣는 작은 모델 (app_model.py)
+
+폰 안 'AI 판단 표시'(개발자 설정, 기본 꺼짐)가 쓰는 모델 두 개를 만든다. 앱 코드는 그대로 두고 `app/src/main/assets/ai/` 의 파일만 바뀐다.
+
+```
+python app_model.py train <내보낸 judge.json>
+python app_model.py prior
+python app_model.py selftest
+```
+
+- `prox.json`: 블루투스 값(지금 프레임 + 직전 10초) → 거리. 정답 = `uwb` 기록의 UWB 거리(판정용 · 측정용).
+- `fall.json`: 충격 후보 요약 → 넘어짐 확률. 정답 = 실험 세션 `test:fall:…` / `test:no:…`(한 폰에서 15초 안 첫 후보만), 또는 넘어짐 질문 답.
+- 기록이 모자라면(접근 100건 · 넘어짐 각 8건 미만) 그 모델은 바꾸지 않는다. `prior` 는 학습 전 자리표시로 되돌린다.
+- 결과의 `cv` 는 5분 묶음 · 층화 교차검증 값이다. 모델 파일을 바꾸면 앱 테스트(AiJudgeTest)가 계산 일치를 확인하고, 앱에 반영하려면 새 버전을 배포한다.
