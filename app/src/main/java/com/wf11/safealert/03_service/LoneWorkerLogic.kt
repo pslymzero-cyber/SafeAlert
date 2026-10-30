@@ -437,7 +437,8 @@ class LoneWorkerLogic(var myBleId: String) {
             fallJudge(trigMs, "shut", pass); return
         }
         hold.zoneExpired(trigMs + ZoneHistory.EXIT_LAG_MS)?.let { leaveZone(it) } // FALL comes 12 s after impact; first apply a restart zone hold (exit) that ended
-        if (fallDropped(trigMs, shape)) { fallJudge(trigMs, "dropped", pass); return }
+        // A not-a-fall impact on a phone resting on a charger or an equipment mount (charging, not carried) is not on the body: no drop to ask
+        if (fallDropped(trigMs, shape) || (!pass && charging && !carried)) { fallJudge(trigMs, "dropped", pass); return }
         dropOnly = if (accidentUntil == Long.MIN_VALUE) !pass else dropOnly && !pass
         if (accidentUntil == Long.MIN_VALUE) accidentFrom = trigMs
         impactAt = trigMs

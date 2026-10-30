@@ -241,6 +241,14 @@ class JudgeLogTest {
             assertEquals(a.eventMs, c.impactT)
             assertEquals(c.ffMs, a.fallShape.freeFallMs)
         }
+        // Moving on after the impact (post_active) is IMPACT too: the record keeps deg null, the shape keeps the posture (safe-zone criteria)
+        val moving = mutableListOf<MotionAnalyzer.Candidate>()
+        val am = MotionAnalyzer(onCandidate = { moving += it })
+        am.feed(0, 3_000) { UPRIGHT_STILL }; am.feed(3_000, 3_260) { FREE_FALL_SAMPLE }; am.feed(3_260, 3_320) { IMPACT_SAMPLE }
+        val tailM = am.feed(3_320, 18_320) { t -> if (t / 200 % 2 == 0L) LYING_STILL else UPRIGHT_STILL }
+        assertEquals(1, tailM.count { it.second == MotionAnalyzer.Signal.IMPACT })
+        assertEquals("post_active", moving.single().why); assertNull(moving.single().deg)
+        assertNotNull(am.fallShape.postureDeg)
     }
 
     @Test fun ask_rules_pick_which_alerts_get_a_question() {
