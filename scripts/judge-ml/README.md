@@ -197,5 +197,7 @@ GitHub Actions '판정 데이터 내보내기'(`.github/workflows/judge-export.y
 2. `pip install -r requirements.txt`(cryptography 가 새로 들어감)
 3. 받기: `python judge_ml.py fetch` → 이 폴더에 `judge.json` 이 생긴다. 그다음은 지금처럼 `load judge.json` · `python app_model.py compare judge.json` 등.
 
-- 매번 어제 · 오늘과 새 날짜만 Firebase 에서 다시 읽고, 그 전 날짜는 지난번 파일에서 그대로 가져온다. Firebase 에서 지운 날도 파일에는 남는다.
+- 매번 지난번 내보낸 날부터(보통 어제 · 오늘)와 새 날짜만 Firebase 에서 다시 읽고, 그 전 날짜는 지난번 파일에서 그대로 가져온다. 하루 거르면 다음 실행이 그만큼 더 읽어 메운다. Firebase 에서 지운 날도 파일에는 남는다.
+- 그날 기록이 다음 날 새벽 3시 반(매일 내보내는 때)보다 늦게 올라오면(폰이 오프라인이었다가 나중에 보낸 것) 파일에서 빠질 수 있다.
+- 키를 바꾸면 다음 실행이 지난번 파일을 못 풀어 처음부터 다시 읽는다(이때 Firebase 에서 이미 지운 날은 빠진다). 회사 PC 의 키도 같이 바꾼다.
 - 회사망이 github.com 을 막으면 `HTTPS_PROXY` 환경 변수를 넣거나 IT 에 허용을 요청한다.

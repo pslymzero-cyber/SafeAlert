@@ -1246,25 +1246,25 @@ def seal(obj):
 
 
 def unseal(blob):
+    """None when the blob was sealed with another key."""
     import gzip
     from cryptography.fernet import InvalidToken
     try:
         return json.loads(gzip.decompress(_fernet().decrypt(blob)).decode("utf-8"))
     except InvalidToken:
-        sys.exit("암호를 풀지 못했습니다. JUDGE_EXPORT_KEY 가 개인 PC 에서 만든 키와 같은지 확인하세요.")
+        return None
 
 
-def collect(fb, prev, today, root="wf11"):
-    """The judge node read day by day (each read stays far under the 256 MB response limit), merged into prev.
-    Days already in prev are not read again, except yesterday and today, which may still be growing. Days deleted from
-    Firebase stay in the export."""
-    from datetime import timedelta
-    cut = (datetime.strptime(today, "%Y%m%d") - timedelta(days=1)).strftime("%Y%m%d")
-    judge, fetched = json.loads(json.dumps(prev or {})), 0
+def collect(fb, prev, since=None, root="wf11"):
+    """The judge node read day by day (each read stays far under the 256 MB response limit), merged into prev (changed
+    in place). Days already in prev are read again from `since` on (yyyyMMdd of the previous export, so normally
+    yesterday and today, which may still be growing; a missed run is caught up); without `since` every day is read.
+    Days deleted from Firebase stay in the export."""
+    judge, fetched = prev if prev is not None else {}, 0
     for kind in sorted(fb(f"{root}/judge", True) or {}):
         for sc in sorted(fb(f"{root}/judge/{kind}", True) or {}):
             for day in sorted(fb(f"{root}/judge/{kind}/{sc}", True) or {}):
-                if day in judge.get(kind, {}).get(sc, {}) and day < cut:
+                if day in judge.get(kind, {}).get(sc, {}) and since and day < since:
                     continue
                 judge.setdefault(kind, {}).setdefault(sc, {})[day] = fb(f"{root}/judge/{kind}/{sc}/{day}", False) or {}
                 fetched += 1
@@ -1297,8 +1297,12 @@ def export(out, prev_path=None):
         sys.exit("DB · KEY 환경 변수(저장소 시크릿 FIREBASE_DB_URL · FIREBASE_DB_SECRET)가 없습니다.")
     from datetime import timedelta, timezone
     kst = timezone(timedelta(hours=9))
-    prev = unseal(Path(prev_path).read_bytes()).get("judge", {}) if prev_path and Path(prev_path).exists() else {}
-    judge, fetched = collect(fb_reader(db, key), prev, datetime.now(kst).strftime("%Y%m%d"))
+    old = unseal(Path(prev_path).read_bytes()) if prev_path and Path(prev_path).exists() else {}
+    if old is None:   # the key was replaced: start over (days already deleted from Firebase drop out)
+        print("지난번 파일을 이 키로 풀지 못해 처음부터 다시 읽습니다 (키를 바꿨다면 정상).")
+        old = {}
+    since = (old.get("exported_at") or "")[:10].replace("-", "") or None
+    judge, fetched = collect(fb_reader(db, key), old.get("judge", {}), since)
     blob = seal({"judge": judge, "exported_at": datetime.now(kst).isoformat(timespec="seconds")})
     Path(out).write_bytes(blob)
     print(f"판정 기록 {count_records(judge)}건 (이번에 읽은 날 {fetched}개) · {len(blob):,}바이트 -> {out}")
@@ -1314,6 +1318,8 @@ def fetch(url, out):
     except urllib.error.URLError as e:
         sys.exit(f"받기 실패 ({e.reason}). 회사망이 github.com 을 막으면 HTTPS_PROXY 환경 변수를 넣으세요.")
     data = unseal(blob)
+    if data is None:
+        sys.exit("암호를 풀지 못했습니다. JUDGE_EXPORT_KEY 가 개인 PC 에서 만든 키와 같은지 확인하세요.")
     Path(out).write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     print(f"판정 기록 {count_records(data.get('judge', {}))}건 (내보낸 때 {data.get('exported_at', '?')}) -> {out}")
 
@@ -1336,12 +1342,16 @@ def selftest_export():
             return {k: True for k in node} if shallow else node
 
         prev = {"fall": {"WF11": {"20261028": {"old": {"k": "kept"}}, "20261029": {"old": {"k": "stale"}}}}}
-        judge, fetched = collect(fb, prev, "20261030")
+        judge, fetched = collect(fb, prev, "20261029")                  # the previous export ran on the 29th
         day = judge["fall"]["WF11"]
-        assert day["20261028"] == {"old": {"k": "kept"}}, day           # an older day already exported is not read again
-        assert day["20261029"] == {"id20261029": {"k": "cand"}}, day    # yesterday and today are read again
+        assert day["20261028"] == {"old": {"k": "kept"}}, day           # a day finished before that export is not read again
+        assert day["20261029"] == {"id20261029": {"k": "cand"}}, day    # the export's own day and later are read again
         assert fetched == 2 and count_records(judge) == 3, (fetched, judge)
-        assert unseal(seal({"judge": judge})) == {"judge": judge}
+        assert collect(fb, judge, "20261028")[1] == 3                     # a daily run was missed: its day is caught up
+        blob = seal({"judge": judge})
+        assert unseal(blob) == {"judge": judge}
+        os.environ["JUDGE_EXPORT_KEY"] = Fernet.generate_key().decode()
+        assert unseal(blob) is None                                       # another key: export starts over, fetch stops
     finally:
         if saved is None:
             os.environ.pop("JUDGE_EXPORT_KEY", None)
@@ -1390,7 +1400,7 @@ def main(argv=None):
     sub.add_parser("selftest", help="가짜 데이터 · 대역 AI 로 전 과정 점검")
     s = sub.add_parser("export", help="(GitHub Actions 용) Firebase 판정 기록 -> 암호화 파일")
     s.add_argument("--out", default="judge.json.gz.enc")
-    s.add_argument("--prev", help="지난번 내보낸 파일(있으면 합치고 어제 · 오늘만 다시 읽음)")
+    s.add_argument("--prev", help="지난번 내보낸 파일(있으면 합치고 지난번 내보낸 날부터만 다시 읽음)")
     s = sub.add_parser("fetch", help="고정 주소에서 판정 기록을 받아 풀기 -> judge.json")
     s.add_argument("--url", default=EXPORT_URL)
     s.add_argument("--out", default="judge.json")

@@ -1,7 +1,8 @@
 # Judge-data export: reads {firebaseRoot}/judge (wf11/judge) with the admin secret, encrypts it with JUDGE_EXPORT_KEY and
 #   puts it at one fixed address, so the company PC only runs `python judge_ml.py fetch` (scripts/judge-ml/README.md).
 #   The repository is public: the file is always encrypted, and nothing from the records is printed to the log.
-#   Each run reads only yesterday, today and days not exported yet; earlier days come from the previous export.
+#   Each run reads again the days from the previous export on (normally yesterday and today) plus new days; earlier
+#   days come from the previous export, so a missed run is caught up by the next one.
 # Address: https://github.com/<repo>/releases/download/judge-data/judge.json.gz.enc
 #   The judge-data release is a prerelease and never 'latest' (the app's update reads the APK address from Firebase anyway).
 name: 판정 데이터 내보내기
@@ -27,30 +28,55 @@ jobs:
         with:
           python-version: '3.11'
 
+      # A missing secret fails a button run, but the daily run only warns and skips,
+      #   so no failure mail arrives every day before the key is set up.
       - name: 시크릿 확인
+        id: creds
         env:
           DB: ${{ secrets.FIREBASE_DB_URL }}
           KEY: ${{ secrets.FIREBASE_DB_SECRET }}
           JUDGE_EXPORT_KEY: ${{ secrets.JUDGE_EXPORT_KEY }}
+          EVENT: ${{ github.event_name }}
         run: |
           MISS=""
           [ -n "$DB" ] || MISS="$MISS FIREBASE_DB_URL"
           [ -n "$KEY" ] || MISS="$MISS FIREBASE_DB_SECRET"
           [ -n "$JUDGE_EXPORT_KEY" ] || MISS="$MISS JUDGE_EXPORT_KEY"
           if [ -n "$MISS" ]; then
-            echo "::error::저장소 시크릿 미설정 —$MISS (scripts/judge-ml/README.md '자동 내보내기')"
-            exit 1
+            if [ "$EVENT" = "workflow_dispatch" ]; then
+              echo "::error::저장소 시크릿 미설정 —$MISS (scripts/judge-ml/README.md '자동 내보내기')"
+              exit 1
+            fi
+            echo "::warning::저장소 시크릿 미설정 —$MISS, 매일 실행은 건너뜀"
+            echo "missing=$MISS" >> "$GITHUB_OUTPUT"
           fi
 
       - name: 준비
+        if: steps.creds.outputs.missing == ''
         run: pip install -q pandas numpy cryptography
 
+      # Only a missing release or file means a first export. Any other failure stops the run (the next day retries), so a
+      #   hiccup never replaces the history: days already deleted from Firebase live only in this file.
       - name: 지난번 파일 받기
+        if: steps.creds.outputs.missing == ''
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release download judge-data -p judge.json.gz.enc -O prev.enc || echo "처음 내보냄"
+        run: |
+          if names=$(gh release view judge-data --json assets -q '.assets[].name' 2>err.txt); then
+            if grep -qx 'judge.json.gz.enc' <<< "$names"; then
+              gh release download judge-data -p judge.json.gz.enc -O prev.enc
+            else
+              echo "처음 내보냄 (파일 없음)"
+            fi
+          elif grep -qi "not found" err.txt; then
+            echo "처음 내보냄"
+          else
+            cat err.txt
+            exit 1
+          fi
 
       - name: 판정 기록 읽기 · 암호화
+        if: steps.creds.outputs.missing == ''
         env:
           DB: ${{ secrets.FIREBASE_DB_URL }}
           KEY: ${{ secrets.FIREBASE_DB_SECRET }}
@@ -58,6 +84,7 @@ jobs:
         run: python scripts/judge-ml/judge_ml.py export --out judge.json.gz.enc --prev prev.enc
 
       - name: 고정 주소에 올리기
+        if: steps.creds.outputs.missing == ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
