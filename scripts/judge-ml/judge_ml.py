@@ -1215,7 +1215,139 @@ def selftest():
             os.environ.pop("JUDGE_AI_STYLE", None)
         else:
             os.environ["JUDGE_AI_STYLE"] = saved
+    selftest_export()
     print("\nselftest 통과")
+
+
+# ── export / fetch: judge records at one fixed, encrypted address ──────────
+# The repository is public, so the export is encrypted (Fernet = AES-128-CBC + HMAC) with JUDGE_EXPORT_KEY.
+# export runs in GitHub Actions (judge-export.yml) with the admin secret; fetch runs on the company PC with the key only.
+
+EXPORT_URL = "https://github.com/pslymzero-cyber/SafeAlert/releases/download/judge-data/judge.json.gz.enc"
+
+
+def _fernet():
+    key = os.environ.get("JUDGE_EXPORT_KEY", "").strip()
+    if not key:
+        sys.exit("JUDGE_EXPORT_KEY 환경 변수가 없습니다. README '자동 내보내기'대로 키를 넣으세요.")
+    try:
+        from cryptography.fernet import Fernet
+    except ImportError:
+        sys.exit("cryptography 가 없습니다. pip install -r requirements.txt 를 다시 실행하세요.")
+    try:
+        return Fernet(key.encode())
+    except ValueError:
+        sys.exit("JUDGE_EXPORT_KEY 형식이 맞지 않습니다. 키를 앞뒤 공백 없이 그대로 넣었는지 확인하세요.")
+
+
+def seal(obj):
+    import gzip
+    return _fernet().encrypt(gzip.compress(json.dumps(obj, ensure_ascii=False).encode("utf-8")))
+
+
+def unseal(blob):
+    import gzip
+    from cryptography.fernet import InvalidToken
+    try:
+        return json.loads(gzip.decompress(_fernet().decrypt(blob)).decode("utf-8"))
+    except InvalidToken:
+        sys.exit("암호를 풀지 못했습니다. JUDGE_EXPORT_KEY 가 개인 PC 에서 만든 키와 같은지 확인하세요.")
+
+
+def collect(fb, prev, today, root="wf11"):
+    """The judge node read day by day (each read stays far under the 256 MB response limit), merged into prev.
+    Days already in prev are not read again, except yesterday and today, which may still be growing. Days deleted from
+    Firebase stay in the export."""
+    from datetime import timedelta
+    cut = (datetime.strptime(today, "%Y%m%d") - timedelta(days=1)).strftime("%Y%m%d")
+    judge, fetched = json.loads(json.dumps(prev or {})), 0
+    for kind in sorted(fb(f"{root}/judge", True) or {}):
+        for sc in sorted(fb(f"{root}/judge/{kind}", True) or {}):
+            for day in sorted(fb(f"{root}/judge/{kind}/{sc}", True) or {}):
+                if day in judge.get(kind, {}).get(sc, {}) and day < cut:
+                    continue
+                judge.setdefault(kind, {}).setdefault(sc, {})[day] = fb(f"{root}/judge/{kind}/{sc}/{day}", False) or {}
+                fetched += 1
+    return judge, fetched
+
+
+def fb_reader(db, key):
+    import urllib.parse
+
+    def get(path, shallow):
+        q = {"auth": key, **({"shallow": "true"} if shallow else {})}
+        url = f"{db.rstrip('/')}/{path}.json?{urllib.parse.urlencode(q)}"
+        try:
+            with urllib.request.urlopen(url, timeout=180) as r:
+                return json.loads(r.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:   # never print the URL: it carries the secret
+            sys.exit(f"Firebase 읽기 실패: {path} (HTTP {e.code})")
+        except urllib.error.URLError as e:
+            sys.exit(f"Firebase 연결 실패: {path} ({e.reason})")
+    return get
+
+
+def count_records(judge):
+    return sum(len(d) for k in judge.values() for s in k.values() for d in s.values() if isinstance(d, (dict, list)))
+
+
+def export(out, prev_path=None):
+    db, key = os.environ.get("DB", ""), os.environ.get("KEY", "")
+    if not db or not key:
+        sys.exit("DB · KEY 환경 변수(저장소 시크릿 FIREBASE_DB_URL · FIREBASE_DB_SECRET)가 없습니다.")
+    from datetime import timedelta, timezone
+    kst = timezone(timedelta(hours=9))
+    prev = unseal(Path(prev_path).read_bytes()).get("judge", {}) if prev_path and Path(prev_path).exists() else {}
+    judge, fetched = collect(fb_reader(db, key), prev, datetime.now(kst).strftime("%Y%m%d"))
+    blob = seal({"judge": judge, "exported_at": datetime.now(kst).isoformat(timespec="seconds")})
+    Path(out).write_bytes(blob)
+    print(f"판정 기록 {count_records(judge)}건 (이번에 읽은 날 {fetched}개) · {len(blob):,}바이트 -> {out}")
+
+
+def fetch(url, out):
+    req = urllib.request.Request(url, headers={"User-Agent": "safealert-judge-ml"})
+    try:
+        with urllib.request.urlopen(req, timeout=600) as r:
+            blob = r.read()
+    except urllib.error.HTTPError as e:
+        sys.exit(f"받기 실패 (HTTP {e.code}). 아직 내보낸 적이 없거나 주소가 다릅니다: {url}")
+    except urllib.error.URLError as e:
+        sys.exit(f"받기 실패 ({e.reason}). 회사망이 github.com 을 막으면 HTTPS_PROXY 환경 변수를 넣으세요.")
+    data = unseal(blob)
+    Path(out).write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    print(f"판정 기록 {count_records(data.get('judge', {}))}건 (내보낸 때 {data.get('exported_at', '?')}) -> {out}")
+
+
+def selftest_export():
+    try:
+        from cryptography.fernet import Fernet
+    except ImportError:
+        print("cryptography 없음: 내보내기 점검은 건너뜀")
+        return
+    saved = os.environ.get("JUDGE_EXPORT_KEY")
+    os.environ["JUDGE_EXPORT_KEY"] = Fernet.generate_key().decode()
+    try:
+        tree = {"fall": {"WF11": {d: {f"id{d}": {"k": "cand"}} for d in ("20261028", "20261029", "20261030")}}}
+
+        def fb(path, shallow):
+            node = tree
+            for part in path.split("/")[2:]:   # wf11/judge/<kind>/<sc>/<day>
+                node = node.get(part, {})
+            return {k: True for k in node} if shallow else node
+
+        prev = {"fall": {"WF11": {"20261028": {"old": {"k": "kept"}}, "20261029": {"old": {"k": "stale"}}}}}
+        judge, fetched = collect(fb, prev, "20261030")
+        day = judge["fall"]["WF11"]
+        assert day["20261028"] == {"old": {"k": "kept"}}, day           # an older day already exported is not read again
+        assert day["20261029"] == {"id20261029": {"k": "cand"}}, day    # yesterday and today are read again
+        assert fetched == 2 and count_records(judge) == 3, (fetched, judge)
+        assert unseal(seal({"judge": judge})) == {"judge": judge}
+    finally:
+        if saved is None:
+            os.environ.pop("JUDGE_EXPORT_KEY", None)
+        else:
+            os.environ["JUDGE_EXPORT_KEY"] = saved
+    print("내보내기 · 받기 점검 통과")
 
 
 def main(argv=None):
@@ -1256,6 +1388,12 @@ def main(argv=None):
     sub.add_parser("dist-check", help="거리 답 점검: 답한 시간별 UWB 일치, 답한 구간별 신호 세기")
     sub.add_parser("rssi-check", help="신호별 거리 편차: UWB 거리 기준, 가려짐 의심 구역, 앱 문턱이 놓치는 건")
     sub.add_parser("selftest", help="가짜 데이터 · 대역 AI 로 전 과정 점검")
+    s = sub.add_parser("export", help="(GitHub Actions 용) Firebase 판정 기록 -> 암호화 파일")
+    s.add_argument("--out", default="judge.json.gz.enc")
+    s.add_argument("--prev", help="지난번 내보낸 파일(있으면 합치고 어제 · 오늘만 다시 읽음)")
+    s = sub.add_parser("fetch", help="고정 주소에서 판정 기록을 받아 풀기 -> judge.json")
+    s.add_argument("--url", default=EXPORT_URL)
+    s.add_argument("--out", default="judge.json")
     a = ap.parse_args(argv)
     data = Path(a.data)
     try:
@@ -1287,6 +1425,10 @@ def main(argv=None):
             rssi_check(data)
         elif a.cmd == "eval":
             evaluate(data, a.kind)
+        elif a.cmd == "export":
+            export(a.out, a.prev)
+        elif a.cmd == "fetch":
+            fetch(a.url, a.out)
         else:
             selftest()
     except AiError as e:

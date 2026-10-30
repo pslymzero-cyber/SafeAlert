@@ -1,0 +1,68 @@
+# Judge-data export: reads {firebaseRoot}/judge (wf11/judge) with the admin secret, encrypts it with JUDGE_EXPORT_KEY and
+#   puts it at one fixed address, so the company PC only runs `python judge_ml.py fetch` (scripts/judge-ml/README.md).
+#   The repository is public: the file is always encrypted, and nothing from the records is printed to the log.
+#   Each run reads only yesterday, today and days not exported yet; earlier days come from the previous export.
+# Address: https://github.com/<repo>/releases/download/judge-data/judge.json.gz.enc
+#   The judge-data release is a prerelease and never 'latest' (the app's update reads the APK address from Firebase anyway).
+name: 판정 데이터 내보내기
+
+on:
+  schedule:
+    - cron: '30 18 * * *'   # every day 03:30 KST
+  workflow_dispatch:
+
+concurrency:
+  group: judge-export
+  cancel-in-progress: false
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04   # pinned for reproducible runs
+    permissions:
+      contents: write   # to upload the release asset
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 시크릿 확인
+        env:
+          DB: ${{ secrets.FIREBASE_DB_URL }}
+          KEY: ${{ secrets.FIREBASE_DB_SECRET }}
+          JUDGE_EXPORT_KEY: ${{ secrets.JUDGE_EXPORT_KEY }}
+        run: |
+          MISS=""
+          [ -n "$DB" ] || MISS="$MISS FIREBASE_DB_URL"
+          [ -n "$KEY" ] || MISS="$MISS FIREBASE_DB_SECRET"
+          [ -n "$JUDGE_EXPORT_KEY" ] || MISS="$MISS JUDGE_EXPORT_KEY"
+          if [ -n "$MISS" ]; then
+            echo "::error::저장소 시크릿 미설정 —$MISS (scripts/judge-ml/README.md '자동 내보내기')"
+            exit 1
+          fi
+
+      - name: 준비
+        run: pip install -q pandas numpy cryptography
+
+      - name: 지난번 파일 받기
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download judge-data -p judge.json.gz.enc -O prev.enc || echo "처음 내보냄"
+
+      - name: 판정 기록 읽기 · 암호화
+        env:
+          DB: ${{ secrets.FIREBASE_DB_URL }}
+          KEY: ${{ secrets.FIREBASE_DB_SECRET }}
+          JUDGE_EXPORT_KEY: ${{ secrets.JUDGE_EXPORT_KEY }}
+        run: python scripts/judge-ml/judge_ml.py export --out judge.json.gz.enc --prev prev.enc
+
+      - name: 고정 주소에 올리기
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view judge-data >/dev/null 2>&1; then
+            gh release create judge-data --prerelease --latest=false --title "판정 데이터 (암호화)" \
+              --notes "판정 기록 암호화 파일. 회사 PC 에서 python judge_ml.py fetch 로 받는다(scripts/judge-ml/README.md)."
+          fi
+          gh release upload judge-data judge.json.gz.enc --clobber
