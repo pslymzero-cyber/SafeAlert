@@ -10,7 +10,9 @@ package com.wf11.safealert.service
  *   (the SOS exit button reads "구조자 확인" once the SOS is RESCUER_BUTTON_MS old)
  *
  * Rule 1 (accident): a single fall signal raises accident suspicion for 5 min from its impact time (no prior-movement condition).
- * If there is no clear movement for 30 s within that time, the accident check window ("fall", 1 min) opens. It does not depend
+ * If there is no clear movement for 30 s within that time, the accident check window ("fall", 1 min) opens. A watch opened
+ * only by not-a-fall impacts also counts phone motion (MOVED): its window opens 30 s after the last MOVED, at most 60 s
+ * after the watch base unless equipment-mounted. It does not depend
  * on docking or the safe zone, except that the fall is ignored if at the moment of impact (not when FALL arrived) the phone was
  * inside the safe zone (from the moment of entry, raw inside; outside if an exit is confirmed within 12 s after the impact) and
  * charging (an actual unplug after the impact means it was charging, as does an actual unplug within 10 s before the impact —
@@ -108,6 +110,8 @@ class LoneWorkerLogic(var myBleId: String) {
         const val ZONE_SETTLE_MS = 60_000L
         const val ACCIDENT_WATCH_MS = 300_000L
         const val ACCIDENT_STILL_MS = 30_000L
+        /** In a not-a-fall-only watch, phone motion (MOVED) postpones the window at most this long after the watch base unless equipment-mounted (user decision 2026-10-30). */
+        const val DROP_MOVE_CAP_MS = 60_000L
         const val ACCIDENT_RESPONSE_MS = 60_000L
         /** Last minute of the no-motion count: screen text and weak vibration start here. Not used by judgment. */
         const val COUNTDOWN_STILL_MS = 60_000L
@@ -224,6 +228,8 @@ class LoneWorkerLogic(var myBleId: String) {
     private var accidentUntil = Long.MIN_VALUE
     /** Time of the last accepted impact — read only by countdown (screen / weak vibration), never by judgment. Not saved. */
     private var impactAt = Long.MIN_VALUE
+    /** Time of the last MOVED; read only by accidentOpenAt while dropOnly. Never saved (after a restart the window falls back to base + 30 s, the earlier time). */
+    private var movedAt = Long.MIN_VALUE
     /**
      * The current accident watch was opened only by not-a-fall impacts (window texts '폰을 떨어뜨렸나요?'); a passed fall
      * in the same watch wins. Re-derived by every new watch, not saved (a restored window shows the fall texts).
@@ -383,8 +389,16 @@ class LoneWorkerLogic(var myBleId: String) {
     private fun firstDistinct(after: Long): Long? =
         if (stepsAvailable) walk.firstWithin(after, DISTINCT_STEPS, DISTINCT_STEP_WINDOW_MS) else walk.firstRunEnd(after, STRONG_RUN_MS)
 
-    /** Movement (MOVED) only refreshes the no-motion timer. It does not close an open check window. */
-    fun onMoved(nowMs: Long) { if (!order.keep { onMoved(nowMs) }) { stillHeld = false; raiseStillBase(nowMs) } }
+    /**
+     * Movement (MOVED) refreshes the no-motion timer and, in a not-a-fall-only watch, postpones the accident window
+     * (accidentOpenAt). It never closes an open check window.
+     */
+    fun onMoved(nowMs: Long) {
+        if (!order.keep { onMoved(nowMs) }) {
+            stillHeld = false; raiseStillBase(nowMs)
+            if (nowMs > movedAt) movedAt = nowMs
+        }
+    }
     /**
      * Equipment turn (BleService TX polling, default 0.5 s, only when not going straight): when mounted, restarts the
      * no-motion count and closes the no-motion window. Being a real-time value stamped with the polling time, it is
@@ -672,12 +686,18 @@ class LoneWorkerLogic(var myBleId: String) {
     private fun sensedTo(): Long = if (stepsAvailable) minOf(walk.closedTo, walk.stepSeenTo) else walk.closedTo
 
     /**
-     * Deadline to open the accident check window: 30 s after the last clear movement
-     * (or the trigger if none). None beyond the 5-minute suspicion.
+     * Deadline to open the accident check window. Fall watch: 30 s after the last clear movement (or the trigger if none).
+     * Not-a-fall-only watch: also 30 s after the last MOVED, capped at base + DROP_MOVE_CAP_MS unless mounted. None beyond
+     * the 5-minute suspicion.
      */
     private fun accidentOpenAt(): Long? {
         if (accidentUntil == Long.MIN_VALUE) return null
-        val at = maxOf(accidentFrom, lastDistinctAt) + ACCIDENT_STILL_MS
+        val base = maxOf(accidentFrom, lastDistinctAt)
+        var at = base + ACCIDENT_STILL_MS
+        if (dropOnly) {
+            at = maxOf(base, movedAt) + ACCIDENT_STILL_MS
+            if (!mounted) at = minOf(at, base + DROP_MOVE_CAP_MS)
+        }
         return if (at <= accidentUntil) at else null
     }
 

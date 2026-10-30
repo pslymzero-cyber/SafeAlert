@@ -457,4 +457,84 @@ class LoneWorkerAccidentTest {
         assertEquals(Mode.CHECKING, n.seenAt(130_000))
         assertTrue(n.dropWindow)
     }
+
+    /**
+     * A watch opened only by not-a-fall impacts also counts phone motion (MOVED): the window opens 30 s after the last
+     * MOVED, at most 60 s after the watch base unless equipment-mounted (then no cap); a fall watch ignores MOVED. A MOVED
+     * at or before the deadline that arrives before the data covers it postpones the window; one later than LATE_MS does
+     * not close a window that already opened.
+     */
+    @Test fun drop_watch_waits_for_the_phone_to_stop_moving() {
+        fun LoneWorkerLogic.moving(from: Long, to: Long) { for (t in from..to step 1_000L) onMoved(t) }
+
+        // (a) stops moving: the window opens 30 s after the last MOVED (1.2.25 opened it at 31 s)
+        val a = fallRuleOnly()
+        a.onAccident(1_000, pass = false)
+        a.moving(2_000, 20_000)
+        assertEquals("a 31s", Mode.WATCHING, a.seenAt(31_000))
+        assertEquals("a 49.999s", Mode.WATCHING, a.seenAt(49_999))
+        assertEquals("a 50s", Mode.CHECKING, a.seenAt(50_000))
+        assertTrue("a drop", a.dropWindow)
+
+        // (b) keeps moving, carried: capped at base + 60 s; MOVED never closes an open window
+        val b = fallRuleOnly()
+        b.onAccident(1_000, pass = false)
+        b.moving(2_000, 60_000)
+        assertEquals("b 60.999s", Mode.WATCHING, b.seenAt(60_999))
+        assertEquals("b 61s", Mode.CHECKING, b.seenAt(61_000))
+        assertTrue("b drop", b.dropWindow)
+        b.onMoved(62_000)
+        assertEquals("b after MOVED", Mode.CHECKING, b.seenAt(70_000))
+
+        // (c) mounted: no cap, the window waits until the equipment stops
+        val c = newLogic(charging = true).apply { setEquipment(true, 0L); stillMs = 3_600_000L }
+        assertTrue(c.mounted)
+        c.onAccident(20_000, pass = false)
+        c.moving(21_000, 120_000)
+        assertEquals("c 80s", Mode.WATCHING, c.seenAt(80_000))
+        assertEquals("c 149.999s", Mode.WATCHING, c.seenAt(149_999))
+        assertEquals("c 150s", Mode.CHECKING, c.seenAt(150_000))
+        assertTrue("c drop", c.dropWindow)
+
+        // (d) a fall watch ignores MOVED
+        val d = fallRuleOnly()
+        d.onAccident(1_000)
+        d.moving(2_000, 20_000)
+        assertEquals("d 30.999s", Mode.WATCHING, d.seenAt(30_999))
+        assertEquals("d 31s", Mode.CHECKING, d.seenAt(31_000))
+        assertFalse("d fall", d.dropWindow)
+
+        // (e) a passed fall joins a postponed drop watch after its 30 s point: the fall rule applies at once
+        val e = fallRuleOnly()
+        e.onAccident(1_000, pass = false)
+        e.moving(2_000, 35_000)
+        assertEquals("e 35s", Mode.WATCHING, e.seenAt(35_000))
+        e.moving(36_000, 41_000)
+        e.onAccident(30_000)
+        assertEquals("e 42s", Mode.CHECKING, e.seenAt(42_000))
+        assertFalse("e fall", e.dropWindow)
+
+        // (f) judge order: the deadline (40 s) waits for sensor data; a MOVED arriving before the data covers it postpones it
+        val f = fallRuleOnly()
+        f.onAccident(1_000, pass = false)
+        f.moving(2_000, 10_000)
+        f.seenAt(20_000)
+        assertEquals("f 41s", Mode.WATCHING, f.modeAt(41_000))
+        assertTrue("f waits", f.waitingOnSensors(41_000))
+        f.onMoved(25_000)
+        f.sensed(41_000)
+        assertEquals("f after MOVED", Mode.WATCHING, f.modeAt(41_000))
+        assertEquals("f 54.999s", Mode.WATCHING, f.seenAt(54_999))
+        assertEquals("f 55s", Mode.CHECKING, f.seenAt(55_000))
+        // counterpart: the data never covers the deadline, it is judged LATE_MS after it; a later MOVED does not close the window
+        val g = fallRuleOnly()
+        g.onAccident(1_000, pass = false)
+        g.moving(2_000, 10_000)
+        g.seenAt(20_000)
+        assertEquals("g 41s", Mode.WATCHING, g.modeAt(41_000))
+        assertEquals("g late", Mode.CHECKING, g.modeAt(40_000 + late))
+        g.onMoved(25_000)
+        g.sensed(46_000)
+        assertEquals("g after late MOVED", Mode.CHECKING, g.modeAt(46_000))
+    }
 }
