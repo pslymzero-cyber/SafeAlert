@@ -722,7 +722,7 @@
                                 <Switch android:id="@+id/sw_ai_show" android:layout_width="wrap_content" android:layout_height="wrap_content" />
                             </LinearLayout>
                             <TextView style="@style/SA.Hint"
-                                android:text="폰 안 모델이 추정한 거리 · 넘어짐 확률을 기기 목록 · 경보 사이드바 · 확인 창에 보여 줍니다(시연용). 경보 · 구조 요청은 그대로입니다. 기본 꺼짐." />
+                                android:text="폰 안 모델이 추정한 거리 · 넘어짐 확률을 기기 목록 · 경보 사이드바 · 확인 창에 보여 줍니다(시연용). 경보 · 구조 요청은 그대로입니다. 기본 켜짐." />
 
                             <View style="@style/SA.Divider" />
 

@@ -690,10 +690,10 @@ object DevSettings {
         }
 
     // AI judgment display (demo) - shows the on-phone model's distance / fall probability next to the rule judgment.
-    //   Display and recording only, never changes an alert. Default OFF.
+    //   Display and recording only, never changes an alert. Default ON (user decision 2026-10-30).
     private const val KEY_AI_SHOW = "ai_show"
     var aiShow: Boolean
-        get() = prefs.getBoolean(KEY_AI_SHOW, false)
+        get() = prefs.getBoolean(KEY_AI_SHOW, true)
         set(v) = prefs.edit().putBoolean(KEY_AI_SHOW, v).apply()
 
     // Distance display mode — signal label in the detection list and floating widget.
