@@ -81,6 +81,7 @@
         <activity android:name=".ui.BleSettingsActivity" android:exported="false" />
         <activity android:name=".ui.OpenSourceLicensesActivity" android:exported="false" />
         <activity android:name=".ui.LoneWorkerActivity" android:exported="false" android:launchMode="singleTop" android:excludeFromRecents="true" android:showWhenLocked="true" android:turnScreenOn="true" />
+        <activity android:name=".ui.JudgeActActivity" android:exported="false" android:theme="@style/Theme.SafeAlert.Translucent" android:excludeFromRecents="true" android:taskAffinity="" android:configChanges="orientation|screenSize|keyboardHidden" />
 
         <!-- FileProvider for installing APKs -->
         <provider

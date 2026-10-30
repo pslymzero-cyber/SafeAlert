@@ -325,16 +325,20 @@ object JudgeLog {
         }
     }
 
-    /** F4 — the fall question answer (fall | no | unknown) for one closed fall episode. */
+    /**
+     * F4 — the fall question / impact question answer (fall | no | unknown) for one impact or closed fall episode.
+     * act = what the impact was (walk | run | put_down | drop | charge | fall | unknown); null for the rescuer 3-button answer.
+     */
     fun truth(
         me: String, role: String, impT: Long, truth: String, by: String, afterMs: Long, closeWhy: String,
-        t: Long = System.currentTimeMillis(),
+        t: Long = System.currentTimeMillis(), act: String? = null,
     ) {
         if (!on) return
         runCatching {
             emit("fall", "truth", t, me, role) {
                 linkedMapOf(
                     "imp_t" to impT, "truth" to truth, "by" to by, "after_ms" to afterMs, "close_why" to closeWhy.ifEmpty { null },
+                    "act" to act,
                 )
             }
         }

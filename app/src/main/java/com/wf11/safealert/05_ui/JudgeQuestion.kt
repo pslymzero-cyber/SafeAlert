@@ -7,15 +7,19 @@ import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import com.wf11.safealert.R
 import com.wf11.safealert.firebase.JudgeLog
+import java.text.SimpleDateFormat
+import java.util.Locale
 
 /**
  * Judge-learning questions (recording only, never touches a judgment). The fall question is a heads-up notification
  * with three buttons answered by [JudgeAnswerReceiver]; the distance question lives in the alert sidebar (OverlayManager),
- * not here. Notification ids already used elsewhere: 1001, 1002, 4242,
- * 4300 and 4301..4350 - keep new ones away from them.
+ * not here. The impact question (postAct) is a notification that opens [JudgeActActivity], a card with seven answers;
+ * the answer is recorded with JudgeLog.truth(act = ...). Notification ids already used elsewhere: 1001, 1002, 4242,
+ * 4300 and 4301..4350, 4401 (fall question), 4402 (impact question) - keep new ones away from them.
  */
 object JudgeQuestion {
 
@@ -23,6 +27,32 @@ object JudgeQuestion {
     const val FALL_ID = 4401
     const val REQ_FALL = 4411
     const val TIMEOUT_MS = 30 * 60 * 1000L
+
+    const val ACT_CHANNEL_ID = "judge_act"
+    const val ACT_ID = 4402
+    const val REQ_ACT = 4421
+    const val ACT_WINDOW_MS = 5 * 60 * 1000L
+    const val EXTRA_IMP_WALL = "imp_wall"
+    const val EXTRA_POSTED = "posted"
+
+    /** Impact question answers: label to record code, in card order. */
+    val ACTS: List<Pair<String, String>> = listOf(
+        "걷는 중" to "walk", "뛰는 중" to "run", "폰 내려놓음" to "put_down", "폰 떨어뜨림" to "drop",
+        "충전기 꽂음" to "charge", "넘어짐" to "fall", "모르겠어요" to "unknown",
+    )
+
+    /** Answer code to the truth value the analysis expects. */
+    fun truthOf(act: String): String = when (act) {
+        "fall" -> "fall"
+        "unknown" -> "unknown"
+        else -> "no"
+    }
+
+    /** Both times are elapsedRealtime, so a wall-clock change cannot expire or revive a question. */
+    fun actExpired(postedEl: Long, nowEl: Long): Boolean = nowEl - postedEl > ACT_WINDOW_MS
+
+    /** Elapsed-realtime impact time to wall clock. */
+    fun wallOf(elapsedT: Long): Long = System.currentTimeMillis() - (SystemClock.elapsedRealtime() - elapsedT)
 
     const val EXTRA_ME = "me"
     const val EXTRA_ROLE = "role"
@@ -39,6 +69,48 @@ object JudgeQuestion {
                 lockscreenVisibility = Notification.VISIBILITY_PUBLIC
             }
             (ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(ch)
+        }
+    }
+
+    private fun actChannel(ctx: Context) {
+        runCatching {
+            val ch = NotificationChannel(ACT_CHANNEL_ID, "충격 질문", NotificationManager.IMPORTANCE_HIGH).apply {
+                setSound(null, null)
+                enableVibration(true)
+                vibrationPattern = longArrayOf(0, 120)
+                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+            }
+            (ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(ch)
+        }
+    }
+
+    /**
+     * An impact happened (impT = elapsed time of the candidate): ask what it was. One notification id, so a new question
+     * replaces the previous one. Equipment phones (forklift / EPJ, not carts) get it silently, others one short vibration.
+     */
+    fun postAct(ctx: Context, me: String, role: String, impT: Long, why: String) {
+        runCatching {
+            val impWall = wallOf(impT)
+            val equipment = (role == "FORKLIFT" || role == "EPJ") &&
+                !ctx.getSharedPreferences("safealert_prefs", Context.MODE_PRIVATE).getBoolean("running_cart", false)
+            val chId = if (equipment) { channel(ctx); CHANNEL_ID } else { actChannel(ctx); ACT_CHANNEL_ID }
+            val intent = Intent(ctx, JudgeActActivity::class.java)
+                .putExtra(EXTRA_ME, me).putExtra(EXTRA_ROLE, role).putExtra(EXTRA_IMP_T, impT)
+                .putExtra(EXTRA_IMP_WALL, impWall).putExtra(EXTRA_POSTED, SystemClock.elapsedRealtime())
+                .putExtra(EXTRA_WHY, why)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            val pi = PendingIntent.getActivity(ctx, REQ_ACT, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+            val hms = SimpleDateFormat("HH:mm:ss", Locale.US).format(impWall)
+            val b = NotificationCompat.Builder(ctx, chId)
+                .setSmallIcon(R.drawable.ic_shield)
+                .setContentTitle("방금 충격이 있었어요")
+                .setContentText("${hms} · 무엇이었는지 눌러서 알려 주세요")
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                .setContentIntent(pi)
+                .addAction(0, "답하기", pi)
+                .setTimeoutAfter(ACT_WINDOW_MS)
+            (ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).notify(ACT_ID, b.build())
         }
     }
 

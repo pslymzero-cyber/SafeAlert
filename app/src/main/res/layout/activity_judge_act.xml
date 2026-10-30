@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/judgeActRoot"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#99000000"
+    android:clickable="true"
+    android:focusable="false">
+
+    <LinearLayout
+        android:id="@+id/judgeActCard"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_vertical"
+        android:layout_marginHorizontal="16dp"
+        android:background="@drawable/shape_dialog_bg"
+        android:clickable="true"
+        android:focusable="false"
+        android:orientation="vertical"
+        android:paddingStart="18dp"
+        android:paddingTop="22dp"
+        android:paddingEnd="18dp"
+        android:paddingBottom="16dp">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="방금 무엇이었나요?"
+            android:textColor="@color/sa_text_primary"
+            android:textSize="20sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/judgeActTime"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:textColor="@color/sa_accent"
+            android:textSize="13sp" />
+
+        <LinearLayout
+            android:id="@+id/judgeActAnswers"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:orientation="vertical" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:lineSpacingMultiplier="1.2"
+            android:text="넘어짐 판단을 더 정확하게 만드는 데만 써요. 경보 · 구조 요청과는 상관없어요."
+            android:textColor="@color/sa_text_tertiary"
+            android:textSize="12sp" />
+    </LinearLayout>
+</FrameLayout>
