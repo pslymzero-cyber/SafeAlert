@@ -183,18 +183,18 @@ class JudgeLogTest {
         l.onAccident(40_000)
         assertEquals("shut", (ev.last() as JudgeEvent.Fall).take)
         assertTrue((ev.last() as JudgeEvent.Fall).asks) // a passed fall is asked at once even inside an open window
-        // the close question asks the impact that opened the window, not the later fall
-        assertTrue(l.closeAsks(6_000)); assertFalse(l.closeAsks(40_000))
+        // the close question asks the impact that opened the window, not the later fall (which goes out late as 'open')
+        assertNull(l.lateAskWhy(6_000)); assertEquals("open", l.lateAskWhy(40_000))
         assertTrue(l.ackWorking(45_000))
         val ack = ev.last() as JudgeEvent.ModeChange
         assertEquals(JudgeEvent.ModeChange(Mode.CHECKING, Mode.WATCHING, "fall", "ack", 9_000, 6_000, true), ack)
-        assertFalse(l.closeAsks(6_000)) // WATCHING again: trigger is empty
+        assertEquals("moved", l.lateAskWhy(6_000)) // WATCHING again: no window will ask it
         // two passed falls before the window opens: the window's close question asks the later one (so the earlier delayed question goes out as 'open')
         val two = fallRuleOnly()
         two.onAccident(6_000); two.onAccident(20_000)
-        assertFalse(two.closeAsks(20_000)) // still WATCHING
+        assertEquals("moved", two.lateAskWhy(20_000)) // still WATCHING
         assertEquals(Mode.CHECKING, two.seenAt(36_000))
-        assertTrue(two.closeAsks(20_000)); assertFalse(two.closeAsks(6_000))
+        assertNull(two.lateAskWhy(20_000)); assertEquals("open", two.lateAskWhy(6_000))
         // A not-a-fall impact (pass = false) reports the rule result on its take and on the window's mode changes
         val dev = mutableListOf<JudgeEvent>()
         val dl = fallRuleOnly().apply { onJudge = { dev += it } }

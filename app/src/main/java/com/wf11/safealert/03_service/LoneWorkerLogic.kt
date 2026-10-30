@@ -94,10 +94,16 @@ class LoneWorkerLogic(var myBleId: String) {
     private fun fallImp(trig: String): Long? = impactAt.takeIf { trig == "fall" && it != Long.MIN_VALUE }
 
     /**
-     * Read-only (recording only, never read by judgment): true when the open fall check window or fall SOS will ask this
-     * impact when it closes. WATCHING has no trigger, so false.
+     * Read-only (recording only, never read by judgment): why the held-back watch question for impT goes out ~30 s after the
+     * impact. null when the open fall check window or fall SOS will ask this impact when it closes; "moved" when still
+     * WATCHING (the person moved, so no window opened); "open" when another impact's window / SOS or a no-motion window is
+     * open and its close question does not ask this impact.
      */
-    fun closeAsks(impT: Long): Boolean = fallImp(trigger) == impT
+    fun lateAskWhy(impT: Long): String? = when {
+        fallImp(trigger) == impT -> null
+        mode == Mode.WATCHING -> "moved"
+        else -> "open"
+    }
 
     private fun fallJudge(trigMs: Long, take: String, pass: Boolean, asks: Boolean = true) = judge(JudgeEvent.Fall(
         trigMs, take, zone.insideAtImpact(trigMs), charging,

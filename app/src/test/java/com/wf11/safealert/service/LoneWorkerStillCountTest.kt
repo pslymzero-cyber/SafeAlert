@@ -234,6 +234,12 @@ class LoneWorkerStillCountTest {
         assertFalse(sensors.contains("JudgeQuestion.postAct("))
         // MOVED carries when the phone last really moved, not the MOVED sample time
         assertTrue(sensors.contains("MotionAnalyzer.Signal.MOVED -> logic().onMoved(rawMs + accelSkew, analyzer.lastActiveMs + accelSkew)"))
+        // the held-back watch question asks the logic why (null when the window's close question asks it)
+        assertTrue(sourceBlock(monitor, "private fun judge(").contains("logic.lateAskWhy(impT)"))
+        // after an answer the next unanswered impact question opens, shown again without sound or vibration
+        val act = noComments(repoFile("app/src/main/java/com/wf11/safealert/05_ui/JudgeActActivity.kt"))
+        assertTrue(act.indexOf("JudgeQuestion.nextPending(impT, nowEl)") in 0 until act.indexOf("JudgeQuestion.show(applicationContext, next, quiet = true)"))
+        assertTrue(noComments(repoFile("app/src/main/java/com/wf11/safealert/05_ui/JudgeQuestion.kt")).contains(".setSilent(quiet)"))
     }
 
     /**

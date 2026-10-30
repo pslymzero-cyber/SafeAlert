@@ -106,15 +106,14 @@ class LoneWorkerMonitor(
                 // Asked once per watch (the impact that started it) plus each passed fall (e.asks); a not-a-fall impact inside an open
                 // check window or SOS is covered by that window's / SOS's close question. No check window opened (shut | dropped):
                 // ask what the impact was now. A watch fall is asked after the window closes; shortly after the 30 s stillness check
-                // it is asked here unless an open window's close question will ask it (closeAsks): "moved" when the phone is still
+                // it is asked here unless an open window's close question will ask it (lateAskWhy): "moved" when the phone is still
                 // WATCHING (the person moved so no window opened), "open" when another impact's check window / SOS or a no-motion
                 // window is open and its close question does not ask this impact
                 if (JudgeLog.on && e.asks && e.take != "watch") JudgeQuestion.postAct(ctx, name, roleName, e.impT, e.take)
                 if (JudgeLog.on && e.asks && e.take == "watch") {
                     val impT = e.impT
                     handler.postDelayed({
-                        if (started && JudgeLog.on && !logic.closeAsks(impT))
-                            JudgeQuestion.postAct(ctx, name, roleName, impT, if (logic.mode == LoneWorkerLogic.Mode.WATCHING) "moved" else "open")
+                        if (started && JudgeLog.on) logic.lateAskWhy(impT)?.let { JudgeQuestion.postAct(ctx, name, roleName, impT, it) }
                     }, LoneWorkerLogic.ACCIDENT_STILL_MS + ASK_MOVED_MARGIN_MS)
                 }
             }

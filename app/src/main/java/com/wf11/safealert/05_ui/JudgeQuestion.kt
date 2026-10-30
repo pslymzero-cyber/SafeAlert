@@ -139,7 +139,7 @@ object JudgeQuestion {
         }
     }
 
-    /** Shows [a] in the one impact notification, for the rest of its 5 minutes; [quiet] = shown again after an answer, no new sound or vibration. */
+    /** Shows [a] in the one impact notification, for the rest of its 5 minutes; [quiet] = shown again after an answer, no new sound or vibration (even when the notification was dismissed or timed out). */
     fun show(ctx: Context, a: ActAsk, quiet: Boolean) {
         runCatching {
             val equipment = (a.role == "FORKLIFT" || a.role == "EPJ") &&
@@ -155,7 +155,7 @@ object JudgeQuestion {
                 .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
                 .setContentIntent(pi)
                 .addAction(0, "답하기", pi)
-                .setOnlyAlertOnce(quiet)
+                .setSilent(quiet)
                 .setTimeoutAfter((ACT_WINDOW_MS - (SystemClock.elapsedRealtime() - a.posted)).coerceAtLeast(1L))
             (ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).notify(ACT_ID, b.build())
         }
