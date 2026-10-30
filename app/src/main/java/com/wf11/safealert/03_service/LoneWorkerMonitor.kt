@@ -54,6 +54,8 @@ class LoneWorkerMonitor(
 
     companion object {
         private const val REFRESH_MS = 5_000L
+        /** After the stillness check could have opened the window: still WATCHING then means the person moved (judge-data question only). */
+        private const val ASK_MOVED_MARGIN_MS = 10_000L
         private const val TICK_MIN_MS = 1_000L
         private const val BEACON_NOTE_MS = 2_000L
         private const val SID_MISS_MS = 30_000L
@@ -100,8 +102,16 @@ class LoneWorkerMonitor(
         when (e) {
             is LoneWorkerLogic.JudgeEvent.Fall -> {
                 JudgeLog.fallTake(name, roleName, e.impT, e.take, e.zoneIn, e.charging, e.plugAgoMs, e.unplugAgoMs)
-                // No check window opened (shut | dropped): ask what the impact was now. A watch fall is asked after the window closes.
+                // No check window opened (shut | dropped): ask what the impact was now. A watch fall is asked after the window closes,
+                // or - if the person moved so no window opened by then (still WATCHING) - shortly after the 30 s stillness check
                 if (JudgeLog.on && e.take != "watch") JudgeQuestion.postAct(ctx, name, roleName, e.impT, e.take)
+                if (JudgeLog.on && e.take == "watch") {
+                    val impT = e.impT
+                    handler.postDelayed({
+                        if (started && JudgeLog.on && logic.mode == LoneWorkerLogic.Mode.WATCHING)
+                            JudgeQuestion.postAct(ctx, name, roleName, impT, "moved")
+                    }, LoneWorkerLogic.ACCIDENT_STILL_MS + ASK_MOVED_MARGIN_MS)
+                }
             }
             is LoneWorkerLogic.JudgeEvent.ModeChange -> {
                 JudgeLog.mode(name, roleName, e.from.name, e.to.name, e.trig, e.why, e.sinceMs, e.impT)
