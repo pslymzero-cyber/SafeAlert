@@ -42,6 +42,13 @@ class LoneWorkerResumeTest : RestartKit() {
         assertEquals(Mode.CHECKING, l.mode)
         assertEquals("fall", l.trigger)
         assertEquals(LoneWorkerLogic.ACCIDENT_RESPONSE_MS, l.responseLeftMs(5_000))
+        // impactAt is not saved: the first impact after the restart is the restored window's close-question impact
+        val wev = mutableListOf<LoneWorkerLogic.JudgeEvent>()
+        l.onJudge = { wev += it }
+        l.onAccident(8_000, pass = false)
+        assertFalse((wev.last() as LoneWorkerLogic.JudgeEvent.Fall).asks) // inside the open window the close question covers it
+        assertTrue(l.ackWorking(9_000))
+        assertEquals(8_000L, (wev.last() as LoneWorkerLogic.JudgeEvent.ModeChange).impT)
 
         // The same for an open no-motion check
         val oldStill = newLogic(carried = true)
@@ -67,6 +74,18 @@ class LoneWorkerResumeTest : RestartKit() {
         assertNotNull("within 5 min", kept.snapshot(5_000).accidentUntil)
         assertEquals("within 5 min", Mode.CHECKING, kept.modeAt(5_000 + LoneWorkerLogic.LATE_MS))
         assertEquals("within 5 min", "fall", kept.trigger)
+
+        // a restored watch still WATCHING: the first impact after the restart takes the place of the impact that opened it (asked, close impact)
+        val kev = mutableListOf<LoneWorkerLogic.JudgeEvent>()
+        val back = reboot(old, savedAt = 10_000, now = 12_000, wallGap = 2_000, bootNow = boot)
+        back.onJudge = { kev += it }
+        back.onAccident(20_000, pass = false)
+        val take = kev.last() as LoneWorkerLogic.JudgeEvent.Fall
+        assertEquals("watch", take.take); assertTrue(take.asks)
+        assertEquals(Mode.CHECKING, back.seenAt(31_000))
+        assertEquals("fall", back.trigger)
+        assertTrue(back.ackWorking(35_000))
+        assertEquals(20_000L, (kev.last() as LoneWorkerLogic.JudgeEvent.ModeChange).impT)
 
         // charged during the downtime: a real plug, the suspicion ends
         val carried = newLogic(carried = true)

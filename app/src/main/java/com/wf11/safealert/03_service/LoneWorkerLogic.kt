@@ -238,8 +238,10 @@ class LoneWorkerLogic(var myBleId: String) {
     private var accidentFrom = Long.MIN_VALUE
     private var accidentUntil = Long.MIN_VALUE
     /**
-     * Time of the impact that started the current watch, or of the latest passed fall in it (watch or open fall window) -
-     * read only by countdown (weak vibration key) and fallImp (close question), never by judgment. Not saved.
+     * Time of the impact that started the current watch, or of the latest passed fall in it before its window opened (an
+     * open window keeps the impact that opened it) - read only by countdown (weak vibration key) and fallImp (close
+     * question), never by judgment. Not saved: after a restart the first impact takes that place (a restored watch may buzz
+     * once more at it, buzz key maxOf(accidentFrom, impactAt)).
      */
     private var impactAt = Long.MIN_VALUE
     /**
@@ -466,8 +468,10 @@ class LoneWorkerLogic(var myBleId: String) {
      */
     fun onAccident(trigMs: Long, shape: MotionAnalyzer.FallShape = MotionAnalyzer.FallShape.ANY, pass: Boolean = true) {
         if (order.keep { onAccident(trigMs, shape, pass) }) return
+        val first = impactAt == Long.MIN_VALUE // impactAt is not saved: after a restart the first impact takes the place of the impact that opened the watch
         if (fallShut()) {
             if (pass && mode == Mode.CHECKING) dropOnly = false // a passed fall inside the open window: the stronger (fall) texts win; the close question still asks the impact that opened the window
+            if (first && mode == Mode.CHECKING) impactAt = trigMs // restored open window: this impact stands in for the one that opened it
             fallJudge(trigMs, "shut", pass, asks = pass || (mode != Mode.SOS && mode != Mode.CHECKING)); return
         }
         hold.zoneExpired(trigMs + ZoneHistory.EXIT_LAG_MS)?.let { leaveZone(it) } // FALL comes 12 s after impact; first apply a restart zone hold (exit) that ended
@@ -480,7 +484,7 @@ class LoneWorkerLogic(var myBleId: String) {
             // held input in arrival order, so every MOVED before this judgment was applied before onAccident: pre-impact motion
             movedAt = Long.MIN_VALUE
         }
-        if (fresh || pass) impactAt = trigMs
+        if (fresh || first || pass) impactAt = trigMs
         accidentUntil = maxOf(accidentUntil, trigMs + ACCIDENT_WATCH_MS)
         // Recount clear movement from post-impact records only — movement that relied on pre-impact
         // steps is excluded from the accident baseline; closed windows stay closed
@@ -488,7 +492,7 @@ class LoneWorkerLogic(var myBleId: String) {
         while (true) base = firstDistinct(base) ?: break
         lastDistinctAt = if (base > trigMs) base else minOf(lastDistinctAt, trigMs)
         if (mode != Mode.CHECKING || floorAt <= trigMs) floorAt = base
-        fallJudge(trigMs, "watch", pass, asks = fresh || pass)
+        fallJudge(trigMs, "watch", pass, asks = fresh || first || pass)
     }
 
     /**
