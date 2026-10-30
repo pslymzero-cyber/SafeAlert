@@ -1204,14 +1204,15 @@ class BleService : LifecycleService() {
     }
 
     /**
-     * Distance question (recording only, never reaches judgment): a DANGER start opens the sidebar question;
-     * askTick shows, hides and closes it. Display always goes through the main Handler.
+     * Distance question (recording only, never reaches judgment): every WARNING or DANGER start opens the sidebar
+     * question (start_lv = the level that started it); askTick shows, hides and closes it. Display always goes through
+     * the main Handler.
      */
     private fun judgeEdge(deviceId: String, before: Int, after: Int, t: Long) {
-        if (!JudgeAsk.dangerStart(before, after)) return
+        if (!JudgeAsk.alertStart(before, after)) return
         runCatching {
             val label = "${extractDisplayName(deviceId)} (${typeLabelOf(deviceId)})"
-            if (judgeAsk.start(deviceId, label, t, JudgeLog.markDanger(deviceId, t))) {
+            if (judgeAsk.start(deviceId, label, t, JudgeLog.markDanger(deviceId, t)?.plus("start_lv" to after))) {
                 askHandler.removeCallbacks(askTick)
                 askHandler.post(askTick)
             }

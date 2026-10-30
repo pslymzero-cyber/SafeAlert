@@ -210,9 +210,10 @@ class JudgeLogTest {
     }
 
     @Test fun ask_rules_pick_which_alerts_get_a_question() {
-        // Only a rise to DANGER is asked
-        assertTrue(JudgeAsk.dangerStart(0, 2)); assertTrue(JudgeAsk.dangerStart(1, 2))
-        assertFalse(JudgeAsk.dangerStart(0, 1)); assertFalse(JudgeAsk.dangerStart(2, 2)); assertFalse(JudgeAsk.dangerStart(2, 1))
+        // Every rise into WARNING or DANGER is asked; staying or falling back is not
+        assertTrue(JudgeAsk.alertStart(0, 1)); assertTrue(JudgeAsk.alertStart(0, 2)); assertTrue(JudgeAsk.alertStart(1, 2))
+        assertFalse(JudgeAsk.alertStart(1, 1)); assertFalse(JudgeAsk.alertStart(2, 2)); assertFalse(JudgeAsk.alertStart(2, 1))
+        assertFalse(JudgeAsk.alertStart(1, 0))
 
         // When the block may be on screen: equipment (forklift / EPJ, not a cart) only while stopped; nobody without the sidebar
         val w = BleConstants.CAT_WALKER; val ep = BleConstants.CAT_EPJ; val fk = BleConstants.CAT_FORKLIFT
@@ -221,37 +222,34 @@ class JudgeLogTest {
         assertTrue(JudgeAsk.showNow(ep, true, false, true))
         assertFalse(JudgeAsk.showNow(w, false, false, false)); assertFalse(JudgeAsk.showNow(fk, false, true, false))
 
-        // One at a time (never queued); counted when shown; closes 30 s after the alert start
+        // One at a time (never queued); closes 30 s after the alert start
         val a = JudgeAsk()
-        val st = mapOf<String, Any?>("start_ema" to -55)
+        val st = mapOf<String, Any?>("start_ema" to -55, "start_lv" to 1)
         assertTrue(a.start("A", "A (지게차)", 0, st)); assertTrue(a.isOpen)
         assertFalse(a.start("B", "B (지게차)", 5_000, null))
         assertEquals(0L, a.visible(0, true)!!.shownAt); assertEquals(0L, a.visible(30_000, true)!!.shownAt)
         assertNull(a.visible(30_001, true)); assertFalse(a.isOpen); assertNull(a.answer(30_002))
 
-        // Same peer once per 30 min (counted at 0, when it was shown)
-        assertFalse(a.start("A", "A (지게차)", 100_000, null))
-        assertTrue(a.start("A", "A (지게차)", 1_800_000, null))
-        assertEquals(1_800_000L, a.visible(1_800_000, true)!!.shownAt); a.answer(1_801_000)
-
-        // 4 per hour, counted when shown: B, C, D after A (0) and A again (1_800_000) fill the hour
+        // No per-peer or per-hour cap: the same peer is asked again as soon as the last question is closed,
+        // and every alert of the hour gets its question (user decision 2026-10-30)
+        assertTrue(a.start("A", "A (지게차)", 31_000, null))
+        assertEquals(31_000L, a.visible(31_000, true)!!.shownAt); a.answer(32_000)
         val b = JudgeAsk()
-        assertTrue(b.start("A", "A", 0, null)); b.visible(0, true); b.answer(1_000)
-        for ((p, t) in listOf("B" to 200_000L, "C" to 400_000L, "D" to 600_000L)) {
-            assertTrue(b.start(p, p, t, null)); b.visible(t + 1_000, true); b.answer(t + 2_000)
+        for ((i, p) in listOf("A", "A", "B", "A", "C", "A", "D").withIndex()) {
+            val t = i * 40_000L
+            assertTrue(b.start(p, p, t, st)); b.visible(t + 1_000, true); assertEquals(p, b.answer(t + 2_000)!!.peer)
         }
-        assertFalse(b.start("E", "E", 700_000, null))
-        assertTrue(b.start("E", "E", 3_600_000, st))
-        val shown = b.visible(3_601_000, true)!!
-        val got = b.answer(3_602_000)!!
+        assertTrue(b.start("E", "E", 400_000, st))
+        val shown = b.visible(401_000, true)!!
+        val got = b.answer(402_000)!!
         assertEquals("E", got.peer); assertEquals(shown.shownAt, got.shownAt); assertEquals(st, got.start)
-        assertNull(b.answer(3_603_000)); assertFalse(b.isOpen)
+        assertNull(b.answer(403_000)); assertFalse(b.isOpen)
         // Answering after 30 s from the alert start gets nothing and closes it
         val c = JudgeAsk()
         assertTrue(c.start("A", "A", 0, null)); c.visible(1_000, true)
         assertNull(c.answer(30_001)); assertFalse(c.isOpen)
 
-        // Equipment phone: hidden while moving (answer impossible, question stays open); never shown within 30 s = not asked, no slot used
+        // Equipment phone: hidden while moving (answer impossible, question stays open); never shown within 30 s = not asked
         val f = JudgeAsk()
         assertTrue(f.start("F", "F", 0, null))
         assertNull(f.visible(10_000, false)); assertTrue(f.isOpen); assertNull(f.answer(11_000)); assertTrue(f.isOpen)
@@ -261,6 +259,6 @@ class JudgeLogTest {
         assertNull(f.visible(46_000, false)); assertTrue(f.isOpen)
         assertEquals(45_000L, f.visible(47_000, true)!!.shownAt)
         assertEquals(40_000L, f.answer(50_000)!!.alertT)
-        assertFalse(f.start("F", "F", 100_000, null))
+        assertTrue(f.start("F", "F", 100_000, null))   // the same peer's next alert is asked again
     }
 }
