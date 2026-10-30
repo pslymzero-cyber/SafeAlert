@@ -69,6 +69,8 @@ class MotionAnalyzerTest {
         three.span(5_000, 8_000, walking(3.0, 2.0))
         three.span(8_000, 12_000, still)
         assertTrue(three.times(Signal.MOVED).isNotEmpty())
+        assertEquals("three: last motion", 8_000L, three.a.lastActiveMs)
+        assertTrue("three: MOVED keeps coming after the stop", three.times(Signal.MOVED).last() >= 10_000)
     }
 
     /**
@@ -258,5 +260,20 @@ class MotionAnalyzerTest {
         assertTrue(falls[0] - r.a.eventMs >= 12_000)
         // and the single FALL is decided by 16.2 s
         assertTrue(falls[0] <= 16_200)
+
+        // lastActiveMs: motion up to the decision reads as the impact; MOVED left over from it after the decision does not
+        // raise it, and motion after the quiet windows (decision window and the next) does
+        val struggle = { t: Long -> floatArrayOf((9.81 + 3.0 * sin(2 * PI * 2 * sec(t))).toFloat(), 0f, 0f) }
+        val s = Run()
+        s.fallHead()
+        s.span(3260, 5_200, lying)
+        s.span(5_200, 11_200, struggle)   // struggles on the floor 2-8 s after the impact, then lies still
+        s.span(11_200, 25_000, lying)
+        assertTrue(s.times(Signal.FALL).isEmpty()); assertEquals(1, s.times(Signal.IMPACT).size)
+        assertTrue("MOVED after the decision", s.times(Signal.MOVED).any { it > 15_200 })
+        assertEquals(3_200L, s.a.lastActiveMs)
+        s.span(25_000, 30_000, struggle)  // moved again later
+        s.span(30_000, 32_000, lying)
+        assertEquals(30_000L, s.a.lastActiveMs)
     }
 }

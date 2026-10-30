@@ -485,10 +485,12 @@ class LoneWorkerAccidentTest {
     @Test fun drop_watch_waits_for_the_phone_to_stop_moving() {
         fun LoneWorkerLogic.moving(from: Long, to: Long) { for (t in from..to step 1_000L) onMoved(t) }
 
-        // (a) stops moving: the window opens 30 s after the last MOVED (1.2.25 opened it at 31 s)
+        // (a) stops moving: the window opens 30 s after the phone last moved (1.2.25 opened it at 31 s); MOVED keeps coming a
+        // few seconds after it stops, carrying that time (MotionAnalyzer.lastActiveMs)
         val a = fallRuleOnly()
         a.onAccident(1_000, pass = false)
         a.moving(2_000, 20_000)
+        for (t in 21_000L..27_000L step 1_000L) a.onMoved(t, 20_000)
         assertEquals("a 31s", Mode.WATCHING, a.seenAt(31_000))
         assertEquals("a 49.999s", Mode.WATCHING, a.seenAt(49_999))
         assertEquals("a 50s", Mode.CHECKING, a.seenAt(50_000))
@@ -555,12 +557,27 @@ class LoneWorkerAccidentTest {
         g.sensed(46_000)
         assertEquals("g after late MOVED", Mode.CHECKING, g.modeAt(46_000))
 
-        // (h) MOVED before the not-a-fall judgment is pre-impact motion: not counted (window 30 s after the impact)
+        // (h) motion up to the not-a-fall judgment (a struggle after the impact) counts only to the impact; the left-over MOVED
+        // after the judgment carries the impact time (MotionAnalyzer reads motion up to the decision as the impact): window 30 s after the impact
         val h = fallRuleOnly()
-        h.onMoved(5_000)
-        h.onAccident(1_000, pass = false)
+        h.moving(2_000, 11_000)            // struggles after the impact at 1 s
+        h.onMoved(12_000, 11_000)
+        h.onAccident(1_000, pass = false)  // judged at 13 s: not a fall
+        for (t in 14_000L..18_000L step 1_000L) h.onMoved(t, 1_000) // left-over MOVED
         assertEquals("h 30.999s", Mode.WATCHING, h.seenAt(30_999))
         assertEquals("h 31s", Mode.CHECKING, h.seenAt(31_000))
         assertTrue("h drop", h.dropWindow)
+
+        // (i) a second drop in a continuing drop watch: handled until it dropped again at 20 s; motion up to that impact's
+        // judgment (32 s) counts only to the impact, so the window opens 30 s after it (not after the left-over MOVED)
+        val i = fallRuleOnly()
+        i.onAccident(1_000, pass = false)
+        i.moving(2_000, 20_000)
+        for (t in 21_000L..27_000L step 1_000L) i.onMoved(t, 21_000)
+        i.onAccident(20_000, pass = false)
+        for (t in 33_000L..39_000L step 1_000L) i.onMoved(t, 20_000)
+        assertEquals("i 49.999s", Mode.WATCHING, i.seenAt(49_999))
+        assertEquals("i 50s", Mode.CHECKING, i.seenAt(50_000))
+        assertTrue("i drop", i.dropWindow)
     }
 }

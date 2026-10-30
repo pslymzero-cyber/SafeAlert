@@ -232,6 +232,8 @@ class LoneWorkerStillCountTest {
         // a not-a-fall impact comes through the signal path; judgeCand records only and asks nothing
         assertTrue(sensors.contains("MotionAnalyzer.Signal.IMPACT -> logic().onAccident(analyzer.eventMs + accelSkew, analyzer.fallShape, pass = false)"))
         assertFalse(sensors.contains("JudgeQuestion.postAct("))
+        // MOVED carries when the phone last really moved, not the MOVED sample time
+        assertTrue(sensors.contains("MotionAnalyzer.Signal.MOVED -> logic().onMoved(rawMs + accelSkew, analyzer.lastActiveMs + accelSkew)"))
     }
 
     /**

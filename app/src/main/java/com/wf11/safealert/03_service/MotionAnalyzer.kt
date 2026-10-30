@@ -139,6 +139,16 @@ class MotionAnalyzer(
      */
     val pendingShape: FallShape get() = FallShape(candFfMs, candPeakG, null)
 
+    /**
+     * Sensor time (ms) of the end of the last active 1-second window: when the phone last really moved. MOVED keeps firing
+     * for up to ~7 s after the phone stops (3 of the last 10 windows), so this, not the MOVED sample time, says when it
+     * stopped. At a fall decision it drops to the impact time, and the decision window and the one after it (a settling
+     * window) never raise it: motion up to the judgment reads as the impact. 0 before any active window.
+     */
+    var lastActiveMs = 0L
+        private set
+    private var quietIdx = -1L // last window index that cannot raise lastActiveMs (decision window + 1)
+
     // 1-second window accumulators
     private var curIdx = -1L
     private var n = 0
@@ -195,6 +205,7 @@ class MotionAnalyzer(
         ffStart = -1L; ffPreValid = false; armedEnd = -1L; armedPreValid = false
         candidate = false; postN = 0; postX = 0.0; postY = 0.0; postZ = 0.0; postActive = 0
         lowRuns.clear(); impactDue = false
+        lastActiveMs = 0L; quietIdx = -1L
     }
 
     fun add(tMs: Long, x: Float, y: Float, z: Float, masked: Boolean = false): Signal {
@@ -243,6 +254,7 @@ class MotionAnalyzer(
             activeMask = if (gap >= 64) 0L else activeMask shl gap.toInt()
         }
         if (active) activeMask = activeMask or 1L
+        if (active && curIdx > quietIdx) lastActiveMs = (curIdx + 1) * WINDOW_MS
         // Empty windows between the closed window and the new one are pushed in as still before judging
         val empty = nextIdx - curIdx - 1
         if (empty > 0) activeMask = if (empty >= 64) 0L else activeMask shl empty.toInt()
@@ -305,6 +317,7 @@ class MotionAnalyzer(
 
         // Decision point
         candidate = false
+        if (lastActiveMs > impactT) lastActiveMs = impactT; quietIdx = curIdx + 1
         if (postN == 0 || postActive >= POST_MAX_ACTIVE) {
             fallShape = FallShape(candFfMs, candPeakG, null); eventMs = impactT; impactDue = true
             cand(null, if (postN == 0) "post_none" else "post_active")

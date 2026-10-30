@@ -23,8 +23,9 @@ import kotlin.math.sqrt
  * Sensor glue for lone-worker monitoring: accelerometer / step sensor registration, sensor time conversion, accelerometer
  * signal gap check, flush.
  *
- * Accelerometer samples go through MotionAnalyzer; MOVED is passed to LoneWorkerLogic via onMoved, a fall via onAccident with
- * the impact sample time, and each closed 1 s window (walk-like or not) via onWindow. Steps (TYPE_STEP_DETECTOR) go to onStep
+ * Accelerometer samples go through MotionAnalyzer; MOVED is passed to LoneWorkerLogic via onMoved (with when the phone last
+ * really moved, MotionAnalyzer.lastActiveMs), a fall via onAccident with the impact sample time, and each closed 1 s window
+ * (walk-like or not) via onWindow. Steps (TYPE_STEP_DETECTOR) go to onStep
  * with the corrected time and whether the app was vibrating then — only steps inside walk-like windows count. Vibration spans
  * are judged on times converted to the elapsed base, for both accelerometer and steps. The step sensor is registered only
  * with the physical activity permission on API 29+.
@@ -300,7 +301,7 @@ class LoneWorkerSensors(
                 }
                 // Samples during this app's vibration are excluded from activity stats only; fall detection still gets them
                 when (analyzer.add(rawMs, v[0], v[1], v[2], masked = VibrationHelper.window.covers(rawMs + accelSkew))) {
-                    MotionAnalyzer.Signal.MOVED -> logic().onMoved(rawMs + accelSkew)
+                    MotionAnalyzer.Signal.MOVED -> logic().onMoved(rawMs + accelSkew, analyzer.lastActiveMs + accelSkew)
                     MotionAnalyzer.Signal.FALL -> logic().onAccident(analyzer.eventMs + accelSkew, analyzer.fallShape)
                     MotionAnalyzer.Signal.IMPACT -> logic().onAccident(analyzer.eventMs + accelSkew, analyzer.fallShape, pass = false)
                     MotionAnalyzer.Signal.NONE -> {}
