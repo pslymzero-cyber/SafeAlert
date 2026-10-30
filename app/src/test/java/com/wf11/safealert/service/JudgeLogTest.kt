@@ -182,11 +182,19 @@ class JudgeLogTest {
         assertEquals("fall", open.trig); assertEquals(6_000L, open.impT); assertEquals(true, open.pass)
         l.onAccident(40_000)
         assertEquals("shut", (ev.last() as JudgeEvent.Fall).take)
-        assertFalse((ev.last() as JudgeEvent.Fall).asks) // inside the open window: the close question covers it
+        assertTrue((ev.last() as JudgeEvent.Fall).asks) // a passed fall is asked at once even inside an open window
+        // the close question asks the impact that opened the window, not the later fall
+        assertTrue(l.closeAsks(6_000)); assertFalse(l.closeAsks(40_000))
         assertTrue(l.ackWorking(45_000))
         val ack = ev.last() as JudgeEvent.ModeChange
-        // the passed fall inside the open window is the close question's impact
-        assertEquals(JudgeEvent.ModeChange(Mode.CHECKING, Mode.WATCHING, "fall", "ack", 9_000, 40_000, true), ack)
+        assertEquals(JudgeEvent.ModeChange(Mode.CHECKING, Mode.WATCHING, "fall", "ack", 9_000, 6_000, true), ack)
+        assertFalse(l.closeAsks(6_000)) // WATCHING again: trigger is empty
+        // two passed falls before the window opens: the window's close question asks the later one (so the earlier delayed question goes out as 'open')
+        val two = fallRuleOnly()
+        two.onAccident(6_000); two.onAccident(20_000)
+        assertFalse(two.closeAsks(20_000)) // still WATCHING
+        assertEquals(Mode.CHECKING, two.seenAt(36_000))
+        assertTrue(two.closeAsks(20_000)); assertFalse(two.closeAsks(6_000))
         // A not-a-fall impact (pass = false) reports the rule result on its take and on the window's mode changes
         val dev = mutableListOf<JudgeEvent>()
         val dl = fallRuleOnly().apply { onJudge = { dev += it } }
@@ -309,5 +317,12 @@ class JudgeLogTest {
         for (i in 2L..17L) assertTrue(JudgeQuestion.firstAsk(9_000_000L + i))
         assertTrue(JudgeQuestion.firstAsk(9_000_001L))   // evicted by then: asked once more
         assertFalse(JudgeQuestion.firstAsk(9_000_017L))
+        // Unanswered impact questions are kept: newest first, the answered one and ones past 5 minutes are dropped, the same impact replaces
+        fun ask(t: Long, posted: Long, why: String = "moved") = JudgeQuestion.ActAsk("ME", "WALKER", t, 0L, posted, why)
+        JudgeQuestion.addPending(ask(8_000_001, 1_000)); JudgeQuestion.addPending(ask(8_000_002, 2_000)); JudgeQuestion.addPending(ask(8_000_003, 3_000))
+        JudgeQuestion.addPending(ask(8_000_002, 2_000, "open"))
+        assertEquals(ask(8_000_002, 2_000, "open"), JudgeQuestion.nextPending(8_000_003, 4_000))
+        assertNull(JudgeQuestion.nextPending(8_000_002, 301_500)) // 8_000_001 is past 5 minutes by then
+        assertNull(JudgeQuestion.nextPending(0, 301_500)) // empty
     }
 }

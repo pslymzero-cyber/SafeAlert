@@ -18,7 +18,8 @@ import java.util.Locale
  * Judge-learning questions (recording only, never touches a judgment). The fall question is a heads-up notification
  * with three buttons answered by [JudgeAnswerReceiver]; the distance question lives in the alert sidebar (OverlayManager),
  * not here. The impact question (postAct) is a notification that opens [JudgeActActivity], a card with seven answers;
- * the answer is recorded with JudgeLog.truth(act = ...). Notification ids already used elsewhere: 1001, 1002, 4242,
+ * the answer is recorded with JudgeLog.truth(act = ...). The notification shows the newest question; unanswered earlier
+ * ones are kept and the next card opens after one is answered. Notification ids already used elsewhere: 1001, 1002, 4242,
  * 4300 and 4301..4350, 4401 (fall question), 4402 (impact question) - keep new ones away from them.
  */
 object JudgeQuestion {
@@ -84,14 +85,26 @@ object JudgeQuestion {
         }
     }
 
-    /**
-     * An impact happened (impT = elapsed time of the candidate): ask what it was. One notification id, so a new question
-     * replaces the previous one. Equipment phones (forklift / EPJ, not carts) get it silently, others one short vibration.
-     */
-    /** One posted impact question; [latestAct] is the newest, so a card answered meanwhile can open it right after. */
+    /** One posted impact question. */
     data class ActAsk(val me: String, val role: String, val impT: Long, val impWall: Long, val posted: Long, val why: String)
 
-    @Volatile var latestAct: ActAsk? = null
+    /** Unanswered impact questions, oldest first (at most [ASKED_MAX]); process memory only (an app restart clears it). */
+    private val pending = ArrayList<ActAsk>()
+
+    /** Keeps an asked question until it is answered or its 5 minutes pass; the same impact replaces the earlier entry. */
+    @Synchronized
+    internal fun addPending(a: ActAsk) {
+        pending.removeAll { it.impT == a.impT }
+        pending.add(a)
+        if (pending.size > ASKED_MAX) pending.removeAt(0)
+    }
+
+    /** After [done] was answered: drops it and every expired question, returns the newest one left (null if none). */
+    @Synchronized
+    internal fun nextPending(done: Long, nowEl: Long): ActAsk? {
+        pending.removeAll { it.impT == done || actExpired(it.posted, nowEl) }
+        return pending.lastOrNull()
+    }
 
     /** The card for [a] (the notification's intent, and the next card after an older one is answered). */
     fun actIntent(ctx: Context, a: ActAsk): Intent = Intent(ctx, JudgeActActivity::class.java)
@@ -112,17 +125,28 @@ object JudgeQuestion {
         return true
     }
 
+    /**
+     * An impact happened (impT = elapsed time of the candidate): ask what it was. One notification id showing the newest
+     * question; an unanswered earlier one is kept ([addPending]) and its card opens after an answer. Equipment phones
+     * (forklift / EPJ, not carts) get it silently, others one short vibration.
+     */
     fun postAct(ctx: Context, me: String, role: String, impT: Long, why: String) {
         if (!firstAsk(impT)) return
         runCatching {
-            val impWall = wallOf(impT)
-            val equipment = (role == "FORKLIFT" || role == "EPJ") &&
+            val ask = ActAsk(me, role, impT, wallOf(impT), SystemClock.elapsedRealtime(), why)
+            addPending(ask)
+            show(ctx, ask, quiet = false)
+        }
+    }
+
+    /** Shows [a] in the one impact notification, for the rest of its 5 minutes; [quiet] = shown again after an answer, no new sound or vibration. */
+    fun show(ctx: Context, a: ActAsk, quiet: Boolean) {
+        runCatching {
+            val equipment = (a.role == "FORKLIFT" || a.role == "EPJ") &&
                 !ctx.getSharedPreferences("safealert_prefs", Context.MODE_PRIVATE).getBoolean("running_cart", false)
             val chId = if (equipment) { channel(ctx); CHANNEL_ID } else { actChannel(ctx); ACT_CHANNEL_ID }
-            val ask = ActAsk(me, role, impT, impWall, SystemClock.elapsedRealtime(), why)
-            latestAct = ask
-            val pi = PendingIntent.getActivity(ctx, REQ_ACT, actIntent(ctx, ask), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-            val hms = SimpleDateFormat("HH:mm:ss", Locale.US).format(impWall)
+            val pi = PendingIntent.getActivity(ctx, REQ_ACT, actIntent(ctx, a), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+            val hms = SimpleDateFormat("HH:mm:ss", Locale.US).format(a.impWall)
             val b = NotificationCompat.Builder(ctx, chId)
                 .setSmallIcon(R.drawable.ic_shield)
                 .setContentTitle("방금 충격이 있었어요")
@@ -131,7 +155,8 @@ object JudgeQuestion {
                 .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
                 .setContentIntent(pi)
                 .addAction(0, "답하기", pi)
-                .setTimeoutAfter(ACT_WINDOW_MS)
+                .setOnlyAlertOnce(quiet)
+                .setTimeoutAfter((ACT_WINDOW_MS - (SystemClock.elapsedRealtime() - a.posted)).coerceAtLeast(1L))
             (ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).notify(ACT_ID, b.build())
         }
     }

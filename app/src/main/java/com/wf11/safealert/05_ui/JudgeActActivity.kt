@@ -19,8 +19,9 @@ import java.util.Locale
 
 /**
  * Impact question card: opened from the notification posted by JudgeQuestion.postAct. Seven equal answers; the answer is
- * recorded with JudgeLog.truth(act = ...) and nothing else changes (recording only). Tapping outside or back closes
- * without an answer; the notification stays so it can be reopened within the 5 minute window.
+ * recorded with JudgeLog.truth(act = ...) and nothing else changes (recording only); after an answer the next unanswered
+ * question (JudgeQuestion.nextPending) opens, if any. Tapping outside or back closes without an answer; the notification
+ * stays so it can be reopened within the 5 minute window.
  */
 class JudgeActActivity : AppCompatActivity() {
 
@@ -121,12 +122,12 @@ class JudgeActActivity : AppCompatActivity() {
             JudgeLog.truth(me, role, impT, JudgeQuestion.truthOf(code), "self", now - impWall, why, t = now, act = code, force = true)
             Toast.makeText(applicationContext, "기록했어요 · ${label}", Toast.LENGTH_SHORT).show()
         }
-        // A newer impact was asked while this card was open: show its card right away (its notification stays until answered)
-        val next = JudgeQuestion.latestAct
-        if (next != null && next.impT != impT && !JudgeQuestion.actExpired(next.posted, nowEl)) {
+        // Another impact is still unanswered: show it in the notification again and open its card right away; none left: remove the notification
+        val next = JudgeQuestion.nextPending(impT, nowEl)
+        if (next != null) {
+            JudgeQuestion.show(applicationContext, next, quiet = true)
             startActivity(JudgeQuestion.actIntent(this, next))
         } else {
-            if (next?.impT == impT) JudgeQuestion.latestAct = null
             (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).cancel(JudgeQuestion.ACT_ID)
         }
         finish()

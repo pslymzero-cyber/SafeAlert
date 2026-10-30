@@ -67,8 +67,8 @@ class LoneWorkerLogic(var myBleId: String) {
     sealed class JudgeEvent {
         /**
          * One FALL that reached onAccident: take = watch | shut | dropped. asks = this impact gets its own '방금 충격이 있었어요'
-         * question: watch - it started the watch or is a passed fall; shut - only outside an open check window and SOS (those
-         * close with their own question); dropped - always.
+         * question: watch - it started the watch or is a passed fall; shut - a passed fall always, a not-a-fall impact only
+         * outside an open check window and SOS (those close with their own question); dropped - always.
          */
         data class Fall(val impT: Long, val take: String, val zoneIn: Boolean, val charging: Boolean,
                         val plugAgoMs: Long?, val unplugAgoMs: Long?, val pass: Boolean = true,
@@ -92,6 +92,12 @@ class LoneWorkerLogic(var myBleId: String) {
     private fun judge(e: JudgeEvent) { runCatching { onJudge(e) } }
 
     private fun fallImp(trig: String): Long? = impactAt.takeIf { trig == "fall" && it != Long.MIN_VALUE }
+
+    /**
+     * Read-only (recording only, never read by judgment): true when the open fall check window or fall SOS will ask this
+     * impact when it closes. WATCHING has no trigger, so false.
+     */
+    fun closeAsks(impT: Long): Boolean = fallImp(trigger) == impT
 
     private fun fallJudge(trigMs: Long, take: String, pass: Boolean, asks: Boolean = true) = judge(JudgeEvent.Fall(
         trigMs, take, zone.insideAtImpact(trigMs), charging,
@@ -455,13 +461,14 @@ class LoneWorkerLogic(var myBleId: String) {
      * it (EXIT_LAG_MS), it counts only if shape exceeds zoneFall.
      * pass = false is an impact the fall rule called not-a-fall: same watch and exclusions as a fall; the window texts differ,
      * and until a passed fall joins, phone motion (MOVED) also postpones the window (accidentOpenAt). The weak buzz and the
-     * impact question happen once per watch plus once per passed fall.
+     * impact question happen once per watch plus once per passed fall. Inside an open check window or SOS a passed fall is
+     * asked at once; a not-a-fall impact is left to the close question, which asks the impact that opened the window.
      */
     fun onAccident(trigMs: Long, shape: MotionAnalyzer.FallShape = MotionAnalyzer.FallShape.ANY, pass: Boolean = true) {
         if (order.keep { onAccident(trigMs, shape, pass) }) return
         if (fallShut()) {
-            if (pass && mode == Mode.CHECKING) { dropOnly = false; impactAt = trigMs } // a passed fall inside the open window: the stronger (fall) texts win and it is the close question's impact
-            fallJudge(trigMs, "shut", pass, asks = mode != Mode.SOS && mode != Mode.CHECKING); return
+            if (pass && mode == Mode.CHECKING) dropOnly = false // a passed fall inside the open window: the stronger (fall) texts win; the close question still asks the impact that opened the window
+            fallJudge(trigMs, "shut", pass, asks = pass || (mode != Mode.SOS && mode != Mode.CHECKING)); return
         }
         hold.zoneExpired(trigMs + ZoneHistory.EXIT_LAG_MS)?.let { leaveZone(it) } // FALL comes 12 s after impact; first apply a restart zone hold (exit) that ended
         if (fallDropped(trigMs, shape)) { fallJudge(trigMs, "dropped", pass); return }

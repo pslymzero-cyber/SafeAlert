@@ -460,12 +460,12 @@ class LoneWorkerAccidentTest {
         assertEquals(Mode.CHECKING, inWindow.seenAt(31_000))
         inWindow.onAccident(35_000)
         assertFalse(inWindow.dropWindow)
-        // inside an open window the impact asks nothing now: the window's close question covers it (its impact is this fall)
+        // inside an open window a passed fall is asked at once; the window's close question still asks the impact that opened it
         val inTake = iev.filterIsInstance<LoneWorkerLogic.JudgeEvent.Fall>().last()
-        assertEquals("shut", inTake.take); assertFalse(inTake.asks)
+        assertEquals("shut", inTake.take); assertTrue(inTake.asks)
         assertTrue(inWindow.ackWorking(36_000))
         val inClose = iev.last() as LoneWorkerLogic.JudgeEvent.ModeChange
-        assertEquals(35_000L, inClose.impT); assertTrue(inClose.asksFall)
+        assertEquals(1_000L, inClose.impT); assertTrue(inClose.asksFall)
         // a new watch is decided by its own opening impact
         val n = fallRuleOnly()
         n.onAccident(1_000)
