@@ -4,6 +4,7 @@ import android.app.Application
 import com.wf11.safealert.firebase.FirebaseConfig
 import com.wf11.safealert.firebase.FirebaseManager
 import com.wf11.safealert.firebase.JudgeLog
+import com.wf11.safealert.utils.AiJudge
 import com.wf11.safealert.utils.BeaconRegistry
 import com.wf11.safealert.utils.DevSettings
 import com.wf11.safealert.utils.UwbCalibrator
@@ -15,6 +16,7 @@ class SafeAlertApp : Application() {
         super.onCreate()
         DevSettings.init(this)
         JudgeLog.sync()
+        AiJudge.load(this)
         BeaconRegistry.init(this)
         UwbCalibrator.init(this)
         CalibrationEngine.init(this)

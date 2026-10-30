@@ -1785,7 +1785,7 @@ class BleService : LifecycleService() {
      *      structurally preventing state mismatches (Sync) such as the alarm sounding while the list shows no detection.
      *
      * Sort     : level descending → for equal level, stronger (nearer) RSSI first. Max 10 rows in total.
-     * Serialize: record = "level\u001Frssi\u001Fname\u001Fdist" (dist may be empty), record separator = "\u001E"
+     * Serialize: record = "level\u001Frssi\u001Fname\u001Fdist\u001Fai" (dist and ai may be empty), record separator = "\u001E"
      *            (names never contain newlines/separators).
      * An empty list (count=0) ignores the throttle and is sent at once → 'no detection' shows without delay when the last device leaves.
      *
@@ -1816,8 +1816,10 @@ class BleService : LifecycleService() {
             val name  = suddenLabelMap[id] ?: makeApproachLabel(id)
             // 4th field = distance string (may be empty) — backward compatible, since older parsers only check f.size>=3.
             val dist  = UwbCalibrator.distanceTextFor(uwbPairKeyFor(id), rssi, uwbDist.freshUwbDistM(id))
+            // 5th field = on-phone AI distance line (empty unless the AI display setting is on) — display only.
+            val ai    = if (JudgeLog.aiShow) JudgeLog.aiText(id, now) else ""
             if (sb.isNotEmpty()) sb.append('\u001E')
-            sb.append(level).append('\u001F').append(rssi).append('\u001F').append(name).append('\u001F').append(dist)
+            sb.append(level).append('\u001F').append(rssi).append('\u001F').append(name).append('\u001F').append(dist).append('\u001F').append(ai)
         }
 
         // Merge gate-pending devices — devices not in alertState (no alert fired yet) are added as SAFE-level rows.
@@ -1833,8 +1835,9 @@ class BleService : LifecycleService() {
                 val rssi = deviceRssiMap[id] ?: -99
                 val name = suddenLabelMap[id] ?: makeApproachLabel(id)
                 val dist = UwbCalibrator.distanceTextFor(uwbPairKeyFor(id), rssi, uwbDist.freshUwbDistM(id))
+                val ai   = if (JudgeLog.aiShow) JudgeLog.aiText(id, now) else ""
                 if (sb.isNotEmpty()) sb.append(30.toChar())
-                sb.append(BleConstants.LEVEL_SAFE).append(31.toChar()).append(rssi).append(31.toChar()).append(name).append(31.toChar()).append(dist)
+                sb.append(BleConstants.LEVEL_SAFE).append(31.toChar()).append(rssi).append(31.toChar()).append(name).append(31.toChar()).append(dist).append(31.toChar()).append(ai)
                 mergedCount++
             }
 

@@ -717,6 +717,13 @@
                             <TextView style="@style/SA.Hint"
                                 android:text="평소는 field. 실험 때만 test:fall:mat1 · test:3m:aisle2 처럼 바꾸고 끝나면 비우십시오(영문 · 숫자 · : . _ - 40자까지, 비우면 field)." />
 
+                            <LinearLayout style="@style/SA.Row">
+                                <TextView style="@style/SA.RowLabel" android:text="AI 판단 표시" />
+                                <Switch android:id="@+id/sw_ai_show" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+                            </LinearLayout>
+                            <TextView style="@style/SA.Hint"
+                                android:text="폰 안 모델이 추정한 거리 · 넘어짐 확률을 기기 목록 · 경보 사이드바 · 확인 창에 보여 줍니다(시연용). 경보 · 구조 요청은 그대로입니다. 기본 꺼짐." />
+
                             <View style="@style/SA.Divider" />
 
                             <TextView style="@style/SA.SubHeader" android:text="UWB 승격·해제 (실측 개입)" />

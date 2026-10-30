@@ -689,6 +689,13 @@ object DevSettings {
             else if (JUDGE_SESSION.matches(s)) prefs.edit().putString(KEY_JUDGE_LOG_SESSION, s).apply()
         }
 
+    // AI judgment display (demo) - shows the on-phone model's distance / fall probability next to the rule judgment.
+    //   Display and recording only, never changes an alert. Default OFF.
+    private const val KEY_AI_SHOW = "ai_show"
+    var aiShow: Boolean
+        get() = prefs.getBoolean(KEY_AI_SHOW, false)
+        set(v) = prefs.edit().putBoolean(KEY_AI_SHOW, v).apply()
+
     // Distance display mode — signal label in the detection list and floating widget.
     //   0 = dBm only (default) / 1 = meters for UWB-measured pairs only /
     //   2 = meters for all (non-UWB shows the RSSI estimate "약 X m").

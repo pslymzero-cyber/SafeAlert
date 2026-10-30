@@ -41,6 +41,7 @@ import com.wf11.safealert.ble.BleConstants
 import com.wf11.safealert.ble.LocalState
 import com.wf11.safealert.model.PitType
 import com.wf11.safealert.utils.AdminPin
+import com.wf11.safealert.utils.AiJudge
 import com.wf11.safealert.utils.BeaconRegistry
 import com.wf11.safealert.utils.DevSettings
 import com.wf11.safealert.utils.OverlayManager
@@ -79,7 +80,7 @@ class MainActivity : AppCompatActivity() {
     // Detected-device list — replaced wholesale with each BleService.alertState snapshot.
     // Sorted list of (displayName, alertLevel, rssi, dist). Single source of truth: no partial add/remove, so it cannot drift.
     // dist = distance string computed by the service (4th field, may be empty); when empty, rendering falls back to dBm.
-    private data class DetectedRow(val name: String, val level: Int, val rssi: Int, val dist: String)
+    private data class DetectedRow(val name: String, val level: Int, val rssi: Int, val dist: String, val ai: String)
     private val detectedDevices = mutableListOf<DetectedRow>()
 
     // Last-applied snapshot shared by the broadcast receiver and the polling fallback.
@@ -417,7 +418,9 @@ class MainActivity : AppCompatActivity() {
                 val name  = f[2]
                 // 4th field = distance string (optional) — still compatible with old 3-field snapshots.
                 val dist  = if (f.size >= 4) f[3] else ""
-                detectedDevices.add(DetectedRow(name, level, rssi, dist))
+                // 5th field = on-phone AI distance line (optional, empty unless the AI display setting is on).
+                val ai    = if (f.size >= 5) f[4] else ""
+                detectedDevices.add(DetectedRow(name, level, rssi, dist, ai))
             }
         }
     }
@@ -516,7 +519,7 @@ class MainActivity : AppCompatActivity() {
             sb.setSpan(ForegroundColorSpan(0xFF9FB8C8.toInt()), hStart, sb.length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
             sb.setSpan(RelativeSizeSpan(0.78f), hStart, sb.length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
-        sorted.forEachIndexed { idx, (name, level, rssi, dist) ->
+        sorted.forEachIndexed { idx, (name, level, rssi, dist, ai) ->
             if (idx > 0) sb.append("\n")
             val prefix = when (level) {
                 BleConstants.LEVEL_DANGER  -> "위험"
@@ -543,6 +546,13 @@ class MainActivity : AppCompatActivity() {
             sb.setSpan(RelativeSizeSpan(sizeMul),     start, end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
             if (level == BleConstants.LEVEL_DANGER)
                 sb.setSpan(StyleSpan(Typeface.BOLD),  start, end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+            // AI distance line under the device line (display only; its colors are never alarm colors)
+            if (ai.isNotEmpty()) {
+                sb.append('\n')
+                val aStart = sb.length
+                sb.append(AiJudge.proxSpan(ai))
+                sb.setSpan(RelativeSizeSpan(sizeMul * 0.82f), aStart, sb.length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
         }
 
         // Write the list to the bottom tv_ble_status — yellow/light blue get lost on the light default background,

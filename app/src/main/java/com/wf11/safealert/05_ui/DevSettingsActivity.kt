@@ -145,6 +145,7 @@ class DevSettingsActivity : AppCompatActivity() {
         binding.swUwbProbeUpload.isChecked = DevSettings.uwbProbeUploadEnabled
         binding.swJudgeLog.isChecked = DevSettings.judgeLogEnabled
         binding.swJudgeLogAcc.isChecked = DevSettings.judgeLogAcc
+        binding.swAiShow.isChecked = DevSettings.aiShow
         binding.etJudgeLogSession.setText(DevSettings.judgeLogSession)
         refreshUwbDiag()
         // "협력·교환" — mutual RSSI exchange + cooperative acceptance relaxation (0~20 dB)
@@ -379,6 +380,7 @@ class DevSettingsActivity : AppCompatActivity() {
         binding.swUwbProbeUpload.setOnCheckedChangeListener { _, c -> DevSettings.uwbProbeUploadEnabled = c; updateSectionSummaries() }
         binding.swJudgeLog.setOnCheckedChangeListener { _, c -> DevSettings.judgeLogEnabled = c; JudgeLog.sync() }
         binding.swJudgeLogAcc.setOnCheckedChangeListener { _, c -> DevSettings.judgeLogAcc = c; JudgeLog.sync() }
+        binding.swAiShow.setOnCheckedChangeListener { _, c -> DevSettings.aiShow = c; JudgeLog.sync() }
         // Judge-record session name: an invalid name is refused by the setter and shown back as the stored one
         run {
             val et = binding.etJudgeLogSession

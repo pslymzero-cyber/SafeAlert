@@ -4,6 +4,7 @@ import android.util.Log
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.database.FirebaseDatabase
 import com.wf11.safealert.BuildConfig
+import com.wf11.safealert.utils.AiJudge
 import com.wf11.safealert.utils.BeaconRegistry
 import com.wf11.safealert.utils.DevSettings
 import com.wf11.safealert.utils.SiteScope
@@ -34,6 +35,8 @@ object JudgeLog {
     @Volatile var on = false
     @Volatile var accOn = false
     @Volatile var session = "field"
+    /** AI display switch (DevSettings.aiShow): keeps the P1 memory running for the on-phone AI distance even when recording is off. */
+    @Volatile var aiShow = false
 
     /** The Android-side snapshot one record needs. */
     data class Env(
@@ -66,6 +69,7 @@ object JudgeLog {
             on = DevSettings.judgeLogEnabled
             accOn = DevSettings.judgeLogAcc
             session = DevSettings.judgeLogSession
+            aiShow = DevSettings.aiShow
         }
     }
 
@@ -110,6 +114,7 @@ object JudgeLog {
         var uwbM = 0f; var uwbMAt = Long.MIN_VALUE
         var frameAt = Long.MIN_VALUE   // time of the last P1 frame — a record's age against it tells how stale the frame values are
         var uwbUse = ""                // use of the last uwb sample (judge | measure)
+        var aiM = 0f; var aiAt = Long.MIN_VALUE   // on-phone AI distance and when it was computed
         val ring = ArrayDeque<Sec>()
     }
 
@@ -123,7 +128,7 @@ object JudgeLog {
         peer: String, myRole: String, peerRole: String, t: Long, rssi: Int, med: Int, pre: Int, kf: Int, kfVel: Double,
         ema: Int, avg1s: Int, offPl: Int, offBc: Int, offGg: Int, echo: Int, effW: Int, effD: Int,
     ) {
-        if (!on) return
+        if (!on && !aiShow) return
         runCatching {
             synchronized(this) {
                 val p = peers.getOrPut(peer) { Peer() }
@@ -140,9 +145,25 @@ object JudgeLog {
                 } else {
                     p.ring.addLast(Sec(sec, ema, kfVel))
                 }
+                // AI distance at most once per peer per second (scan callback thread); !in also covers the first call and a clock step back
+                if (AiJudge.prox != null && t - p.aiAt !in 0 until 1_000L) {
+                    val n = p.ring.size
+                    val ringEma = IntArray(n); val ringVel = DoubleArray(n)
+                    p.ring.forEachIndexed { i, s -> ringEma[i] = s.ema; ringVel[i] = s.vel }
+                    AiJudge.proxMeters(AiJudge.proxFeatures(rssi, med, pre, kf, ema, avg1s, kfVel, ringEma, ringVel))?.let { p.aiM = it; p.aiAt = t }
+                }
             }
         }
     }
+
+    /** The AI distance line ("약 2.6m · 위험") for one peer, empty when there is no AI value at most 2 s old. */
+    fun aiText(peer: String, now: Long): String = runCatching {
+        synchronized(this) {
+            val p = peers[peer] ?: return@synchronized ""
+            if (now - p.aiAt !in 0..2_000L) return@synchronized ""
+            AiJudge.proxText(p.aiM, AiJudge.level(p.aiM, p.myRole == "FORKLIFT" || p.peerRole == "FORKLIFT"))
+        }
+    }.getOrDefault("")
 
     private fun proxBody(p: Peer): LinkedHashMap<String, Any?> = linkedMapOf<String, Any?>(
         "peer_role" to p.peerRole,
