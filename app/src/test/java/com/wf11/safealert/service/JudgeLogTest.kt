@@ -182,9 +182,11 @@ class JudgeLogTest {
         assertEquals("fall", open.trig); assertEquals(6_000L, open.impT); assertEquals(true, open.pass)
         l.onAccident(40_000)
         assertEquals("shut", (ev.last() as JudgeEvent.Fall).take)
+        assertFalse((ev.last() as JudgeEvent.Fall).asks) // inside the open window: the close question covers it
         assertTrue(l.ackWorking(45_000))
         val ack = ev.last() as JudgeEvent.ModeChange
-        assertEquals(JudgeEvent.ModeChange(Mode.CHECKING, Mode.WATCHING, "fall", "ack", 9_000, 6_000, true), ack)
+        // the passed fall inside the open window is the close question's impact
+        assertEquals(JudgeEvent.ModeChange(Mode.CHECKING, Mode.WATCHING, "fall", "ack", 9_000, 40_000, true), ack)
         // A not-a-fall impact (pass = false) reports the rule result on its take and on the window's mode changes
         val dev = mutableListOf<JudgeEvent>()
         val dl = fallRuleOnly().apply { onJudge = { dev += it } }

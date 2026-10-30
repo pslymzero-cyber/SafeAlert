@@ -43,11 +43,14 @@ class LoneWorkerAccidentTest {
         assertEquals("fall", l.trigger)
         assertEquals(LoneWorkerLogic.Countdown(LoneWorkerLogic.CountdownKind.SOS, 0L, null), l.countdown(96_000))
 
-        // a second impact inside the same suspicion is a new count: a new buzz key
+        // a second passed fall inside the same suspicion is a new count: a new buzz key; a not-a-fall impact in the same
+        // watch keeps the key (one buzz per watch)
         val twice = fallRuleOnly()
         twice.onAccident(6_000)
         twice.onAccident(10_000)
         assertEquals(10_000L, twice.countdown(10_000)!!.buzzKey)
+        twice.onAccident(14_000, pass = false)
+        assertEquals(10_000L, twice.countdown(14_000)!!.buzzKey)
     }
 
     /**
@@ -373,9 +376,13 @@ class LoneWorkerAccidentTest {
         assertEquals(LoneWorkerLogic.CountdownKind.STILL, still.countdown(130_000)!!.kind)
         assertEquals(LoneWorkerLogic.Countdown(fall, 25_000L, 125_000L), still.countdown(130_000, 125_000, s))
 
-        val off = fallRuleOnly().apply { setEnabled(false, 1_000) }
+        val offEv = mutableListOf<LoneWorkerLogic.JudgeEvent>()
+        val off = fallRuleOnly().apply { setEnabled(false, 1_000); onJudge = { offEv += it } }
         assertFalse(off.previewFall(6_000, s))
         assertNull(off.countdown(6_000, 6_000, s))
+        off.onAccident(6_000)
+        val offTake = offEv.single() as LoneWorkerLogic.JudgeEvent.Fall
+        assertEquals("shut", offTake.take); assertTrue(offTake.asks)
     }
 
     /** A second fall while a fall check is open neither reopens nor moves that check: SOS stays due 60 s after it opened. */
@@ -420,7 +427,7 @@ class LoneWorkerAccidentTest {
         val z = fallRuleOnly(charging = true, zoneInside = true).apply { onJudge = { ev += it } }
         z.onAccident(1_000, pass = false)
         val took = ev.single() as LoneWorkerLogic.JudgeEvent.Fall
-        assertEquals("dropped", took.take); assertFalse(took.pass)
+        assertEquals("dropped", took.take); assertFalse(took.pass); assertTrue(took.asks)
         assertEquals(Mode.WATCHING, z.seenAt(31_000))
 
         // a deferred impact (power change pending) keeps its rule result
@@ -436,18 +443,29 @@ class LoneWorkerAccidentTest {
 
         // mixed watch: a passed fall in either order brings the fall texts (fall wins); only not-a-fall impacts keep the drop texts
         for ((first, second, drop) in listOf(Triple(true, false, false), Triple(false, true, false), Triple(false, false, true))) {
-            val m = fallRuleOnly()
+            val mev = mutableListOf<LoneWorkerLogic.JudgeEvent>()
+            val m = fallRuleOnly().apply { onJudge = { mev += it } }
             m.onAccident(1_000, pass = first)
             m.onAccident(5_000, pass = second)
+            // question and weak buzz once per watch: the opening impact, plus a passed fall
+            assertEquals("$first/$second", listOf(true, second), mev.filterIsInstance<LoneWorkerLogic.JudgeEvent.Fall>().map { it.asks })
+            assertEquals("$first/$second", if (second) 5_000L else 1_000L, m.countdown(5_000)!!.buzzKey)
             assertEquals(Mode.CHECKING, m.seenAt(40_000))
             assertEquals("$first/$second", drop, m.dropWindow)
         }
         // a passed fall inside the open drop window also brings the fall texts
-        val inWindow = fallRuleOnly()
+        val iev = mutableListOf<LoneWorkerLogic.JudgeEvent>()
+        val inWindow = fallRuleOnly().apply { onJudge = { iev += it } }
         inWindow.onAccident(1_000, pass = false)
         assertEquals(Mode.CHECKING, inWindow.seenAt(31_000))
         inWindow.onAccident(35_000)
         assertFalse(inWindow.dropWindow)
+        // inside an open window the impact asks nothing now: the window's close question covers it (its impact is this fall)
+        val inTake = iev.filterIsInstance<LoneWorkerLogic.JudgeEvent.Fall>().last()
+        assertEquals("shut", inTake.take); assertFalse(inTake.asks)
+        assertTrue(inWindow.ackWorking(36_000))
+        val inClose = iev.last() as LoneWorkerLogic.JudgeEvent.ModeChange
+        assertEquals(35_000L, inClose.impT); assertTrue(inClose.asksFall)
         // a new watch is decided by its own opening impact
         val n = fallRuleOnly()
         n.onAccident(1_000)

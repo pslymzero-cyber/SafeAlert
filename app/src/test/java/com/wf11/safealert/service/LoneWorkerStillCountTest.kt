@@ -215,6 +215,8 @@ class LoneWorkerStillCountTest {
         val banner = monitor.substring(monitor.indexOf("val banner"), monitor.indexOf("private var buzzedFall"))
         assertTrue(banner.indexOf("sensors.noSensor") < banner.indexOf("countdownBanner(it)"))
         assertTrue(banner.indexOf("countdownBanner(it)") < banner.indexOf("logic.rest.banner"))
+        // the impact question is asked only for an impact that asks (once per watch plus each passed fall): immediate and delayed paths
+        assertEquals(2, Regex("""e\.asks\b""").findAll(sourceBlock(monitor, "private fun judge(")).count())
         val render = sourceBlock(monitor, "private fun renderOnce()")
         assertTrue(render.indexOf("DevSettings.vibrationEnabled") in 0 until render.indexOf("VibrationHelper.vibrateCountdown"))
         assertTrue(noComments(serviceSource("LoneWorkerWakeLock.kt")).contains("stillCueAt()"))

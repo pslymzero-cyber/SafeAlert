@@ -65,9 +65,14 @@ class LoneWorkerLogic(var myBleId: String) {
 
     /** Pure-value events for the judge-data record (recording only; see JudgeLog). */
     sealed class JudgeEvent {
-        /** One FALL that reached onAccident: take = watch | shut | dropped. */
+        /**
+         * One FALL that reached onAccident: take = watch | shut | dropped. asks = this impact gets its own '방금 충격이 있었어요'
+         * question: watch - it started the watch or is a passed fall; shut - only outside an open check window and SOS (those
+         * close with their own question); dropped - always.
+         */
         data class Fall(val impT: Long, val take: String, val zoneIn: Boolean, val charging: Boolean,
-                        val plugAgoMs: Long?, val unplugAgoMs: Long?, val pass: Boolean = true) : JudgeEvent()
+                        val plugAgoMs: Long?, val unplugAgoMs: Long?, val pass: Boolean = true,
+                        val asks: Boolean = true) : JudgeEvent()
 
         /**
          * A mode change. trig is the trigger before the change when closing; why is the close reason (to WATCHING)
@@ -88,10 +93,10 @@ class LoneWorkerLogic(var myBleId: String) {
 
     private fun fallImp(trig: String): Long? = impactAt.takeIf { trig == "fall" && it != Long.MIN_VALUE }
 
-    private fun fallJudge(trigMs: Long, take: String, pass: Boolean) = judge(JudgeEvent.Fall(
+    private fun fallJudge(trigMs: Long, take: String, pass: Boolean, asks: Boolean = true) = judge(JudgeEvent.Fall(
         trigMs, take, zone.insideAtImpact(trigMs), charging,
         lastPlugAt.takeIf { it != Long.MIN_VALUE }?.let { trigMs - it },
-        lastUnplugAt.takeIf { it != Long.MIN_VALUE }?.let { trigMs - it }, pass))
+        lastUnplugAt.takeIf { it != Long.MIN_VALUE }?.let { trigMs - it }, pass, asks))
 
     /** Rule result carried by a mode change record: only for a fall trigger (a window opened by not-a-fall impacts only = false). */
     private fun passFor(trig: String): Boolean? = if (trig == "fall") !dropOnly else null
@@ -226,7 +231,10 @@ class LoneWorkerLogic(var myBleId: String) {
     // Accident suspicion
     private var accidentFrom = Long.MIN_VALUE
     private var accidentUntil = Long.MIN_VALUE
-    /** Time of the last accepted impact — read only by countdown (screen / weak vibration), never by judgment. Not saved. */
+    /**
+     * Time of the impact that started the current watch, or of the latest passed fall in it (watch or open fall window) -
+     * read only by countdown (weak vibration key) and fallImp (close question), never by judgment. Not saved.
+     */
     private var impactAt = Long.MIN_VALUE
     /** Time of the last MOVED; read only by accidentOpenAt while dropOnly. Never saved (after a restart the window falls back to base + 30 s, the earlier time). */
     private var movedAt = Long.MIN_VALUE
@@ -442,19 +450,22 @@ class LoneWorkerLogic(var myBleId: String) {
      * other ignore conditions are in rule 1 (class KDoc). A new trigger during suspicion only extends
      * the suspicion end. If inside the safe zone at impact and no exit was confirmed within 12 s after
      * it (EXIT_LAG_MS), it counts only if shape exceeds zoneFall.
-     * pass = false is an impact the fall rule called not-a-fall: same watch, exclusions and timings, only the window texts differ.
+     * pass = false is an impact the fall rule called not-a-fall: same watch and exclusions as a fall; the window texts differ,
+     * and until a passed fall joins, phone motion (MOVED) also postpones the window (accidentOpenAt). The weak buzz and the
+     * impact question happen once per watch plus once per passed fall.
      */
     fun onAccident(trigMs: Long, shape: MotionAnalyzer.FallShape = MotionAnalyzer.FallShape.ANY, pass: Boolean = true) {
         if (order.keep { onAccident(trigMs, shape, pass) }) return
         if (fallShut()) {
-            if (pass && mode == Mode.CHECKING) dropOnly = false // a passed fall inside the open drop window: the stronger (fall) texts win
-            fallJudge(trigMs, "shut", pass); return
+            if (pass && mode == Mode.CHECKING) { dropOnly = false; impactAt = trigMs } // a passed fall inside the open window: the stronger (fall) texts win and it is the close question's impact
+            fallJudge(trigMs, "shut", pass, asks = mode != Mode.SOS && mode != Mode.CHECKING); return
         }
         hold.zoneExpired(trigMs + ZoneHistory.EXIT_LAG_MS)?.let { leaveZone(it) } // FALL comes 12 s after impact; first apply a restart zone hold (exit) that ended
         if (fallDropped(trigMs, shape)) { fallJudge(trigMs, "dropped", pass); return }
-        dropOnly = if (accidentUntil == Long.MIN_VALUE) !pass else dropOnly && !pass
-        if (accidentUntil == Long.MIN_VALUE) accidentFrom = trigMs
-        impactAt = trigMs
+        val fresh = accidentUntil == Long.MIN_VALUE
+        dropOnly = if (fresh) !pass else dropOnly && !pass
+        if (fresh) accidentFrom = trigMs
+        if (fresh || pass) impactAt = trigMs
         accidentUntil = maxOf(accidentUntil, trigMs + ACCIDENT_WATCH_MS)
         // Recount clear movement from post-impact records only — movement that relied on pre-impact
         // steps is excluded from the accident baseline; closed windows stay closed
@@ -462,7 +473,7 @@ class LoneWorkerLogic(var myBleId: String) {
         while (true) base = firstDistinct(base) ?: break
         lastDistinctAt = if (base > trigMs) base else minOf(lastDistinctAt, trigMs)
         if (mode != Mode.CHECKING || floorAt <= trigMs) floorAt = base
-        fallJudge(trigMs, "watch", pass)
+        fallJudge(trigMs, "watch", pass, asks = fresh || pass)
     }
 
     /**
@@ -649,7 +660,8 @@ class LoneWorkerLogic(var myBleId: String) {
 
     /**
      * Read-only: one count in priority order SOS > response > fall > fall candidate (30 s from the impact, key = impact time
-     * = buzzKey of the confirmed fall) > last minute of no-motion, or null. pendingAt/pendingShape = analyzer's candidate.
+     * = buzzKey of the confirmed fall; the confirmed fall's key is the watch's impactAt: one buzz per watch plus each passed
+     * fall) > last minute of no-motion, or null. pendingAt/pendingShape = analyzer's candidate.
      */
     fun countdown(nowMs: Long, pendingAt: Long? = null, pendingShape: MotionAnalyzer.FallShape = MotionAnalyzer.FallShape.ANY): Countdown? {
         if (mode == Mode.SOS) return Countdown(CountdownKind.SOS, 0L, null)

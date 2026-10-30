@@ -103,10 +103,12 @@ class LoneWorkerMonitor(
         when (e) {
             is LoneWorkerLogic.JudgeEvent.Fall -> {
                 JudgeLog.fallTake(name, roleName, e.impT, e.take, e.zoneIn, e.charging, e.plugAgoMs, e.unplugAgoMs, e.pass)
-                // No check window opened (shut | dropped): ask what the impact was now. A watch fall is asked after the window closes,
-                // or - if the person moved so no window opened by then (still WATCHING) - shortly after the 30 s stillness check
-                if (JudgeLog.on && e.take != "watch") JudgeQuestion.postAct(ctx, name, roleName, e.impT, e.take)
-                if (JudgeLog.on && e.take == "watch") {
+                // Asked once per watch (the impact that started it) plus each passed fall (e.asks); an impact inside an open check
+                // window or SOS is covered by that window's / SOS's close question. No check window opened (shut | dropped): ask
+                // what the impact was now. A watch fall is asked after the window closes, or - if the person moved so no window
+                // opened by then (still WATCHING) - shortly after the 30 s stillness check
+                if (JudgeLog.on && e.asks && e.take != "watch") JudgeQuestion.postAct(ctx, name, roleName, e.impT, e.take)
+                if (JudgeLog.on && e.asks && e.take == "watch") {
                     val impT = e.impT
                     handler.postDelayed({
                         if (started && JudgeLog.on && logic.mode == LoneWorkerLogic.Mode.WATCHING)
@@ -579,7 +581,8 @@ class LoneWorkerMonitor(
         if (p != null) alarm.play(p, vibrates) else alarm.stop(vibrate = vibrates)
         sensors.gyroLog(audible.isNotEmpty(), vibrates)
         // Weak double buzz once per count: a fall count (from the impact moment as a candidate — its key equals the confirmed
-        // fall's key, so confirming does not buzz again) or the last minute of a no-motion count.
+        // fall's key, so confirming does not buzz again) or the last minute of a no-motion count. The fall key changes once per
+        // watch plus each passed fall (LoneWorkerLogic.impactAt), so shaking a phone does not buzz again and again.
         // The key is kept even with the vibration switch off, so switching it on later does not buzz for an old count.
         if (logic.stopAt == null && !sensors.noSensor) {
             count(t)?.let { c ->
