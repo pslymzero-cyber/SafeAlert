@@ -554,5 +554,13 @@ class LoneWorkerAccidentTest {
         g.onMoved(25_000)
         g.sensed(46_000)
         assertEquals("g after late MOVED", Mode.CHECKING, g.modeAt(46_000))
+
+        // (h) MOVED before the not-a-fall judgment is pre-impact motion: not counted (window 30 s after the impact)
+        val h = fallRuleOnly()
+        h.onMoved(5_000)
+        h.onAccident(1_000, pass = false)
+        assertEquals("h 30.999s", Mode.WATCHING, h.seenAt(30_999))
+        assertEquals("h 31s", Mode.CHECKING, h.seenAt(31_000))
+        assertTrue("h drop", h.dropWindow)
     }
 }

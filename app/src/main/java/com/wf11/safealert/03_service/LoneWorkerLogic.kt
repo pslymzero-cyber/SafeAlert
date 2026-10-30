@@ -236,7 +236,10 @@ class LoneWorkerLogic(var myBleId: String) {
      * read only by countdown (weak vibration key) and fallImp (close question), never by judgment. Not saved.
      */
     private var impactAt = Long.MIN_VALUE
-    /** Time of the last MOVED; read only by accidentOpenAt while dropOnly. Never saved (after a restart the window falls back to base + 30 s, the earlier time). */
+    /**
+     * Time of the last MOVED since the current watch opened (reset when a new watch opens, so only MOVED after the
+     * not-a-fall judgment counts); read only by accidentOpenAt while dropOnly. Never saved (after a restart the window falls back to base + 30 s, the earlier time).
+     */
     private var movedAt = Long.MIN_VALUE
     /**
      * The current accident watch was opened only by not-a-fall impacts (window texts '폰을 떨어뜨렸나요?'); a passed fall
@@ -399,7 +402,7 @@ class LoneWorkerLogic(var myBleId: String) {
 
     /**
      * Movement (MOVED) refreshes the no-motion timer and, in a not-a-fall-only watch, postpones the accident window
-     * (accidentOpenAt). It never closes an open check window.
+     * (accidentOpenAt) - only MOVED that arrives after the watch opened. It never closes an open check window.
      */
     fun onMoved(nowMs: Long) {
         if (!order.keep { onMoved(nowMs) }) {
@@ -464,7 +467,12 @@ class LoneWorkerLogic(var myBleId: String) {
         if (fallDropped(trigMs, shape)) { fallJudge(trigMs, "dropped", pass); return }
         val fresh = accidentUntil == Long.MIN_VALUE
         dropOnly = if (fresh) !pass else dropOnly && !pass
-        if (fresh) accidentFrom = trigMs
+        if (fresh) {
+            accidentFrom = trigMs
+            // MOVED and IMPACT come from the same accelerometer callback in sample order (LoneWorkerSensors) and JudgeOrder replays
+            // held input in arrival order, so every MOVED before this judgment was applied before onAccident: pre-impact motion
+            movedAt = Long.MIN_VALUE
+        }
         if (fresh || pass) impactAt = trigMs
         accidentUntil = maxOf(accidentUntil, trigMs + ACCIDENT_WATCH_MS)
         // Recount clear movement from post-impact records only — movement that relied on pre-impact
@@ -699,7 +707,7 @@ class LoneWorkerLogic(var myBleId: String) {
 
     /**
      * Deadline to open the accident check window. Fall watch: 30 s after the last clear movement (or the trigger if none).
-     * Not-a-fall-only watch: also 30 s after the last MOVED, capped at base + DROP_MOVE_CAP_MS unless mounted. None beyond
+     * Not-a-fall-only watch: also 30 s after the last MOVED since the watch opened, capped at base + DROP_MOVE_CAP_MS unless mounted. None beyond
      * the 5-minute suspicion.
      */
     private fun accidentOpenAt(): Long? {
