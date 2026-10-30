@@ -35,7 +35,8 @@ class MotionAnalyzer(
     private val onWindow: (Window) -> Unit = {}
 ) {
 
-    enum class Signal { NONE, MOVED, FALL }
+    /** IMPACT = a decided impact candidate the rule calls not-a-fall (post_none / post_active / posture); eventMs and fallShape are set for it. */
+    enum class Signal { NONE, MOVED, FALL, IMPACT }
 
     /** A closed 1 s window: endMs (sensor time), and whether it had samples and shook at walking level (walk-like). */
     data class Window(val endMs: Long, val strong: Boolean)
@@ -118,11 +119,11 @@ class MotionAnalyzer(
         fun freeFallMsFor(cm: Int): Long = Math.round(1000 * sqrt(2 * cm / 100.0 / G))
     }
 
-    /** Sensor time (ms) of the impact sample of the last FALL signal. */
+    /** Sensor time (ms) of the impact sample of the last FALL or IMPACT signal. */
     var eventMs = 0L
         private set
 
-    /** Fall shape of the last FALL signal. ANY before the first FALL. */
+    /** Fall shape of the last FALL or IMPACT signal. ANY before the first one. */
     var fallShape = FallShape.ANY
         private set
 
@@ -185,12 +186,15 @@ class MotionAnalyzer(
     private var candImpactEnd = 0L
     private var candPeakG = 0.0
 
+    /** A not-a-fall decision waiting to be reported as IMPACT (kept one sample when that sample closes a MOVED window). */
+    private var impactDue = false
+
     fun reset() {
         curIdx = -1L; n = 0; sumM = 0.0; sumM2 = 0.0; sx = 0.0; sy = 0.0; sz = 0.0
         lastClosedIdx = -1L; hasPrev = false; activeMask = 0L
         ffStart = -1L; ffPreValid = false; armedEnd = -1L; armedPreValid = false
         candidate = false; postN = 0; postX = 0.0; postY = 0.0; postZ = 0.0; postActive = 0
-        lowRuns.clear()
+        lowRuns.clear(); impactDue = false
     }
 
     fun add(tMs: Long, x: Float, y: Float, z: Float, masked: Boolean = false): Signal {
@@ -212,7 +216,10 @@ class MotionAnalyzer(
             eventMs = impactT
             return Signal.FALL
         }
-        return if (moved) Signal.MOVED else Signal.NONE
+        // IMPACT never replaces MOVED (no-motion detection keeps every movement): it waits one sample when both fall on one sample
+        if (moved) return Signal.MOVED
+        if (impactDue) { impactDue = false; return Signal.IMPACT }
+        return Signal.NONE
     }
 
     /**
@@ -299,12 +306,14 @@ class MotionAnalyzer(
         // Decision point
         candidate = false
         if (postN == 0 || postActive >= POST_MAX_ACTIVE) {
+            fallShape = FallShape(candFfMs, candPeakG, null); eventMs = impactT; impactDue = true
             cand(null, if (postN == 0) "post_none" else "post_active")
             return false
         }
         // If the pre-fall posture is unknown (right after service start), treat it as a posture change — missing a fall is worse
         val deg = if (candPreValid) angleDeg(postX / postN, postY / postN, postZ / postN, candPreX, candPreY, candPreZ) else null
         if (deg != null && !(deg >= POSTURE_DEG)) { // A NaN angle is not a tip-over
+            fallShape = FallShape(candFfMs, candPeakG, deg); eventMs = impactT; impactDue = true
             cand(deg, "posture")
             return false
         }

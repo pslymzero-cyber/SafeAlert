@@ -65,14 +65,14 @@ class LoneWorkerLogic(var myBleId: String) {
     sealed class JudgeEvent {
         /** One FALL that reached onAccident: take = watch | shut | dropped. */
         data class Fall(val impT: Long, val take: String, val zoneIn: Boolean, val charging: Boolean,
-                        val plugAgoMs: Long?, val unplugAgoMs: Long?) : JudgeEvent()
+                        val plugAgoMs: Long?, val unplugAgoMs: Long?, val pass: Boolean = true) : JudgeEvent()
 
         /**
          * A mode change. trig is the trigger before the change when closing; why is the close reason (to WATCHING)
          * or restore on a restored SOS (since 0, not a new SOS).
          */
         data class ModeChange(val from: Mode, val to: Mode, val trig: String, val why: String,
-                              val sinceMs: Long, val impT: Long?) : JudgeEvent() {
+                              val sinceMs: Long, val impT: Long?, val pass: Boolean? = null) : JudgeEvent() {
             /** Fall question: a fall check or fall SOS closed on this phone - not a restore, not the feature turned off. */
             val asksFall: Boolean
                 get() = to == Mode.WATCHING && trig == "fall" && why != "restore" && why != "off" && impT != null
@@ -86,10 +86,13 @@ class LoneWorkerLogic(var myBleId: String) {
 
     private fun fallImp(trig: String): Long? = impactAt.takeIf { trig == "fall" && it != Long.MIN_VALUE }
 
-    private fun fallJudge(trigMs: Long, take: String) = judge(JudgeEvent.Fall(
+    private fun fallJudge(trigMs: Long, take: String, pass: Boolean) = judge(JudgeEvent.Fall(
         trigMs, take, zone.insideAtImpact(trigMs), charging,
         lastPlugAt.takeIf { it != Long.MIN_VALUE }?.let { trigMs - it },
-        lastUnplugAt.takeIf { it != Long.MIN_VALUE }?.let { trigMs - it }))
+        lastUnplugAt.takeIf { it != Long.MIN_VALUE }?.let { trigMs - it }, pass))
+
+    /** Rule result carried by a mode change record: only for a fall trigger (a window opened by not-a-fall impacts only = false). */
+    private fun passFor(trig: String): Boolean? = if (trig == "fall") !dropOnly else null
 
     /**
      * Why no-motion checking is paused, with its notice text (main screen banner,
@@ -221,6 +224,14 @@ class LoneWorkerLogic(var myBleId: String) {
     private var accidentUntil = Long.MIN_VALUE
     /** Time of the last accepted impact — read only by countdown (screen / weak vibration), never by judgment. Not saved. */
     private var impactAt = Long.MIN_VALUE
+    /**
+     * The current accident watch was opened only by not-a-fall impacts (window texts '폰을 떨어뜨렸나요?'); a passed fall
+     * in the same watch wins. Re-derived by every new watch, not saved (a restored window shows the fall texts).
+     */
+    var dropOnly = false
+        private set
+    /** The open accident check window was opened by not-a-fall impacts only (drop texts). */
+    val dropWindow: Boolean get() = mode == Mode.CHECKING && trigger == "fall" && dropOnly
     private var lastPlugAt = Long.MIN_VALUE
     private var lastUnplugAt = Long.MIN_VALUE
     /**
@@ -417,12 +428,17 @@ class LoneWorkerLogic(var myBleId: String) {
      * other ignore conditions are in rule 1 (class KDoc). A new trigger during suspicion only extends
      * the suspicion end. If inside the safe zone at impact and no exit was confirmed within 12 s after
      * it (EXIT_LAG_MS), it counts only if shape exceeds zoneFall.
+     * pass = false is an impact the fall rule called not-a-fall: same watch, exclusions and timings, only the window texts differ.
      */
-    fun onAccident(trigMs: Long, shape: MotionAnalyzer.FallShape = MotionAnalyzer.FallShape.ANY) {
-        if (order.keep { onAccident(trigMs, shape) }) return
-        if (fallShut()) { fallJudge(trigMs, "shut"); return }
+    fun onAccident(trigMs: Long, shape: MotionAnalyzer.FallShape = MotionAnalyzer.FallShape.ANY, pass: Boolean = true) {
+        if (order.keep { onAccident(trigMs, shape, pass) }) return
+        if (fallShut()) {
+            if (pass && mode == Mode.CHECKING) dropOnly = false // a passed fall inside the open drop window: the stronger (fall) texts win
+            fallJudge(trigMs, "shut", pass); return
+        }
         hold.zoneExpired(trigMs + ZoneHistory.EXIT_LAG_MS)?.let { leaveZone(it) } // FALL comes 12 s after impact; first apply a restart zone hold (exit) that ended
-        if (fallDropped(trigMs, shape)) { fallJudge(trigMs, "dropped"); return }
+        if (fallDropped(trigMs, shape)) { fallJudge(trigMs, "dropped", pass); return }
+        dropOnly = if (accidentUntil == Long.MIN_VALUE) !pass else dropOnly && !pass
         if (accidentUntil == Long.MIN_VALUE) accidentFrom = trigMs
         impactAt = trigMs
         accidentUntil = maxOf(accidentUntil, trigMs + ACCIDENT_WATCH_MS)
@@ -432,7 +448,7 @@ class LoneWorkerLogic(var myBleId: String) {
         while (true) base = firstDistinct(base) ?: break
         lastDistinctAt = if (base > trigMs) base else minOf(lastDistinctAt, trigMs)
         if (mode != Mode.CHECKING || floorAt <= trigMs) floorAt = base
-        fallJudge(trigMs, "watch")
+        fallJudge(trigMs, "watch", pass)
     }
 
     /**
@@ -612,9 +628,10 @@ class LoneWorkerLogic(var myBleId: String) {
 
     /**
      * My own phone's count toward an SOS, for the status text and the weak vibration only (judgment never reads it).
-     * buzzKey identifies one weak-vibration event (FALL / STILL only, otherwise null).
+     * buzzKey identifies one weak-vibration event (FALL / STILL only, otherwise null). drop = the accident watch was opened
+     * by not-a-fall impacts only (RESPONSE / confirmed FALL count texts).
      */
-    data class Countdown(val kind: CountdownKind, val leftMs: Long, val buzzKey: Long?)
+    data class Countdown(val kind: CountdownKind, val leftMs: Long, val buzzKey: Long?, val drop: Boolean = false)
 
     /**
      * Read-only: one count in priority order SOS > response > fall > fall candidate (30 s from the impact, key = impact time
@@ -622,9 +639,9 @@ class LoneWorkerLogic(var myBleId: String) {
      */
     fun countdown(nowMs: Long, pendingAt: Long? = null, pendingShape: MotionAnalyzer.FallShape = MotionAnalyzer.FallShape.ANY): Countdown? {
         if (mode == Mode.SOS) return Countdown(CountdownKind.SOS, 0L, null)
-        if (sosAt() != null) return Countdown(CountdownKind.RESPONSE, responseLeftMs(nowMs), null)
+        if (sosAt() != null) return Countdown(CountdownKind.RESPONSE, responseLeftMs(nowMs), null, trigger == "fall" && dropOnly)
         fallOpenAt(nowMs)?.let {
-            return Countdown(CountdownKind.FALL, (it - nowMs).coerceAtLeast(0L), maxOf(accidentFrom, impactAt))
+            return Countdown(CountdownKind.FALL, (it - nowMs).coerceAtLeast(0L), maxOf(accidentFrom, impactAt), dropOnly)
         }
         if (pendingAt != null && nowMs < pendingAt + ACCIDENT_STILL_MS && previewFall(pendingAt, pendingShape)) {
             return Countdown(CountdownKind.FALL, (pendingAt + ACCIDENT_STILL_MS - nowMs).coerceIn(0L, ACCIDENT_STILL_MS), pendingAt)
@@ -756,7 +773,7 @@ class LoneWorkerLogic(var myBleId: String) {
     }
 
     private fun toWatching(nowMs: Long, why: String) {
-        val ev = JudgeEvent.ModeChange(mode, Mode.WATCHING, trigger, why, nowMs - modeSinceMs, fallImp(trigger))
+        val ev = JudgeEvent.ModeChange(mode, Mode.WATCHING, trigger, why, nowMs - modeSinceMs, fallImp(trigger), passFor(trigger))
         raiseStillBase(nowMs)
         mode = Mode.WATCHING
         trigger = ""
@@ -766,7 +783,7 @@ class LoneWorkerLogic(var myBleId: String) {
 
     /** floor = step-count floor (the deadline in sensor time), nowMs = actual open time (start of the response time). */
     private fun toChecking(trig: String, floor: Long, nowMs: Long) {
-        val ev = JudgeEvent.ModeChange(mode, Mode.CHECKING, trig, "", nowMs - modeSinceMs, fallImp(trig))
+        val ev = JudgeEvent.ModeChange(mode, Mode.CHECKING, trig, "", nowMs - modeSinceMs, fallImp(trig), passFor(trig))
         mode = Mode.CHECKING
         trigger = trig
         modeSinceMs = nowMs
@@ -776,7 +793,7 @@ class LoneWorkerLogic(var myBleId: String) {
     }
 
     private fun toSos(nowMs: Long, why: String = "") {
-        val ev = JudgeEvent.ModeChange(mode, Mode.SOS, trigger, why, if (why.isEmpty()) nowMs - modeSinceMs else 0L, fallImp(trigger))
+        val ev = JudgeEvent.ModeChange(mode, Mode.SOS, trigger, why, if (why.isEmpty()) nowMs - modeSinceMs else 0L, fallImp(trigger), passFor(trigger))
         mode = Mode.SOS
         modeSinceMs = nowMs
         clearAccident()

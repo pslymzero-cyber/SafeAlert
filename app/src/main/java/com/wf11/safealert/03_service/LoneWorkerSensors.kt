@@ -96,8 +96,6 @@ class LoneWorkerSensors(
         val who = judgeWho()
         JudgeLog.fallCand(who.first, who.second, c.impactT + accelSkew, c.ffMs, c.peakG, c.impactG, c.deg, c.postN,
             c.postActive, c.preValid, c.pass, c.why, acc, accT0, accDt, aiP = aiP)
-        // Not a fall by the rule: ask what the impact was (recording only, the judgment above is untouched)
-        if (!c.pass) JudgeQuestion.postAct(ctx, who.first, who.second, c.impactT + accelSkew, "cand")
     }
 
     private var sm: SensorManager? = null
@@ -125,7 +123,7 @@ class LoneWorkerSensors(
     val stalled: Boolean get() = stall.stalled
     /**
      * Impact time (elapsed) of a fall candidate waiting for the 12 s decision, else null. Same conversion as the one passed
-     * to onAccident (analyzer.eventMs + accelSkew), so it equals the buzz key of the confirmed FALL. accelSkew is re-fitted
+     * to onAccident (analyzer.eventMs + accelSkew), so it equals the buzz key of the confirmed FALL or IMPACT. accelSkew is re-fitted
      * only when sensor time drifts over 60 s.
      */
     val pendingImpactAt: Long? get() = analyzer.pendingImpactMs?.plus(accelSkew)
@@ -304,6 +302,7 @@ class LoneWorkerSensors(
                 when (analyzer.add(rawMs, v[0], v[1], v[2], masked = VibrationHelper.window.covers(rawMs + accelSkew))) {
                     MotionAnalyzer.Signal.MOVED -> logic().onMoved(rawMs + accelSkew)
                     MotionAnalyzer.Signal.FALL -> logic().onAccident(analyzer.eventMs + accelSkew, analyzer.fallShape)
+                    MotionAnalyzer.Signal.IMPACT -> logic().onAccident(analyzer.eventMs + accelSkew, analyzer.fallShape, pass = false)
                     MotionAnalyzer.Signal.NONE -> {}
                 }
             }

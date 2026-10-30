@@ -388,4 +388,73 @@ class LoneWorkerAccidentTest {
         assertEquals(50_000L, l.responseLeftMs(50_000))
         assertEquals(Mode.SOS, l.seenAt(100_000))
     }
+
+    /**
+     * An impact the fall rule calls not-a-fall (pass = false) runs the same watch, exclusions and timings as a fall; only the
+     * window texts differ ("충격 감지" / "폰을 떨어뜨렸나요?"), and a passed fall in the same watch brings the fall texts.
+     */
+    @Test fun not_a_fall_impact_asks_drop_then_sos() {
+        val fall = LoneWorkerLogic.CountdownKind.FALL
+        val l = fallRuleOnly()
+        l.onAccident(1_000, pass = false)
+        assertEquals(LoneWorkerLogic.Countdown(fall, 30_000L, 1_000L, true), l.countdown(1_000))
+        assertEquals("충격 감지 — 30초 동안 움직임이 없으면 '폰을 떨어뜨렸나요?' 창", countdownBanner(l.countdown(1_000)!!))
+        assertFalse(l.dropWindow)
+        assertEquals(Mode.CHECKING, l.seenAt(31_000))
+        assertEquals("fall", l.trigger)
+        assertTrue(l.dropWindow)
+        val resp = l.countdown(31_000)!!
+        assertEquals(LoneWorkerLogic.Countdown(LoneWorkerLogic.CountdownKind.RESPONSE, 60_000L, null, true), resp)
+        assertEquals("'폰을 떨어뜨렸나요?' 응답 대기 — 60초 뒤 구조 요청", countdownBanner(resp))
+        assertEquals(Mode.SOS, l.seenAt(91_000))
+        assertEquals("fall", l.trigger)
+
+        // walking after the impact keeps watching: no window
+        val w = fallRuleOnly()
+        w.onAccident(1_000, pass = false)
+        w.walk(20_000, 20)
+        assertEquals(Mode.WATCHING, w.seenAt(31_000))
+
+        // safe zone + charging: dropped, with the rule result kept in the record, no window
+        val ev = mutableListOf<LoneWorkerLogic.JudgeEvent>()
+        val z = fallRuleOnly(charging = true, zoneInside = true).apply { onJudge = { ev += it } }
+        z.onAccident(1_000, pass = false)
+        val took = ev.single() as LoneWorkerLogic.JudgeEvent.Fall
+        assertEquals("dropped", took.take); assertFalse(took.pass)
+        assertEquals(Mode.WATCHING, z.seenAt(31_000))
+
+        // a deferred impact (power change pending) keeps its rule result
+        ev.clear()
+        val d = newLogic(carried = true).apply { stillMs = 180_000L; onJudge = { ev += it } }
+        d.powerRaw(true, 179_500)   // a still deadline at 180 s waits for this power change: input is held meanwhile
+        d.seenAt(181_000)
+        d.onAccident(175_000, pass = false)
+        assertTrue(ev.none { it is LoneWorkerLogic.JudgeEvent.Fall })
+        d.tick(179_500 + PowerDebounce.CONFIRM_MS)
+        val late = ev.filterIsInstance<LoneWorkerLogic.JudgeEvent.Fall>().single()
+        assertEquals("dropped", late.take); assertFalse(late.pass)
+
+        // mixed watch: a passed fall in either order brings the fall texts (fall wins); only not-a-fall impacts keep the drop texts
+        for ((first, second, drop) in listOf(Triple(true, false, false), Triple(false, true, false), Triple(false, false, true))) {
+            val m = fallRuleOnly()
+            m.onAccident(1_000, pass = first)
+            m.onAccident(5_000, pass = second)
+            assertEquals(Mode.CHECKING, m.seenAt(40_000))
+            assertEquals("$first/$second", drop, m.dropWindow)
+        }
+        // a passed fall inside the open drop window also brings the fall texts
+        val inWindow = fallRuleOnly()
+        inWindow.onAccident(1_000, pass = false)
+        assertEquals(Mode.CHECKING, inWindow.seenAt(31_000))
+        inWindow.onAccident(35_000)
+        assertFalse(inWindow.dropWindow)
+        // a new watch is decided by its own opening impact
+        val n = fallRuleOnly()
+        n.onAccident(1_000)
+        assertEquals(Mode.CHECKING, n.seenAt(31_000))
+        assertTrue(n.ackWorking(35_000))
+        n.onAccident(100_000, pass = false)
+        assertEquals(Mode.CHECKING, n.seenAt(130_000))
+        assertTrue(n.dropWindow)
+    }
 }

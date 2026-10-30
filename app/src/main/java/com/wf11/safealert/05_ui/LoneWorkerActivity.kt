@@ -207,9 +207,9 @@ class LoneWorkerActivity : AppCompatActivity() {
                 ALERT
             }
             LoneWorkerLogic.Mode.CHECKING -> {
-                chip(if (st.trigger == "fall") "넘어짐 감지" else "${st.stillMin}분 동안 움직임 없음")
-                b.tvLwTitle.text = "괜찮으세요?"
-                b.tvLwBody.text = (listOf("응답이 없으면 ${audience()}에 구조 요청이 나가요\n" +
+                chip(if (st.drop) "충격 감지" else if (st.trigger == "fall") "넘어짐 감지" else "${st.stillMin}분 동안 움직임 없음")
+                b.tvLwTitle.text = if (st.drop) "폰을 떨어뜨렸나요?" else "괜찮으세요?"
+                b.tvLwBody.text = (listOf((if (st.drop) "괜찮으면 눌러 주세요. 응답이 없으면 1분 뒤 구조 요청이 나갑니다." else "응답이 없으면 ${audience()}에 구조 요청이 나가요") + "\n" +
                     (if (st.closesByTurn) LoneWorkerNotifier.TURN_CLOSE_HINT else walkHint(st.stepsAvailable))) + peerLines)
                     .joinToString("\n\n")
                 b.btnLwPrimary.text = "괜찮아요"

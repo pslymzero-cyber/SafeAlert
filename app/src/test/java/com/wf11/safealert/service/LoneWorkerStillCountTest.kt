@@ -205,6 +205,10 @@ class LoneWorkerStillCountTest {
         assertEquals("'괜찮으세요?' 응답 대기 — 60초 뒤 구조 요청", text(k[1], 59_001))
         assertEquals("넘어짐 감지 — 1초 동안 움직임이 없으면 '괜찮으세요?' 창", text(k[2], 1))
         assertEquals("움직임 없음 — 0초 뒤 '괜찮으세요?' 창 (움직이면 취소)", text(k[3], 0))
+        // a watch opened by not-a-fall impacts only (drop = true): the other texts
+        fun drop(kind: LoneWorkerLogic.CountdownKind, left: Long) = countdownBanner(LoneWorkerLogic.Countdown(kind, left, null, true))
+        assertEquals("'폰을 떨어뜨렸나요?' 응답 대기 — 60초 뒤 구조 요청", drop(k[1], 59_001))
+        assertEquals("충격 감지 — 1초 동안 움직임이 없으면 '폰을 떨어뜨렸나요?' 창", drop(k[2], 1))
         assertEquals("움직임 없음 — 30초 뒤 '괜찮으세요?' 창 (움직이면 취소)", text(k[3], 30_000))
 
         val monitor = noComments(serviceSource("LoneWorkerMonitor.kt"))
@@ -223,6 +227,9 @@ class LoneWorkerStillCountTest {
         val sensors = noComments(serviceSource("LoneWorkerSensors.kt"))
         assertTrue(sensors.contains("analyzer.pendingImpactMs?.plus(accelSkew)"))
         assertTrue(sensors.contains("analyzer.eventMs + accelSkew"))
+        // a not-a-fall impact comes through the signal path; judgeCand records only and asks nothing
+        assertTrue(sensors.contains("MotionAnalyzer.Signal.IMPACT -> logic().onAccident(analyzer.eventMs + accelSkew, analyzer.fallShape, pass = false)"))
+        assertFalse(sensors.contains("JudgeQuestion.postAct("))
     }
 
     /**

@@ -45,7 +45,8 @@ class LoneWorkerMonitor(
         val responseLeftMs: Long = 0L,  // Remaining response time (ms); the screen redraws on second boundaries
         val stepsAvailable: Boolean = true, // Counted by step sensor (else by walk-like runs), for the step hint text
         val closesByTurn: Boolean = false,  // Mounted no-motion window: closes by turn, 3 s shake or "괜찮아요"
-        val rescuerButton: Boolean = false  // Own SOS older than RESCUER_BUTTON_MS: the exit button reads "구조자 확인"
+        val rescuerButton: Boolean = false, // Own SOS older than RESCUER_BUTTON_MS: the exit button reads "구조자 확인"
+        val drop: Boolean = false           // Fall check window opened only by not-a-fall impacts: texts "폰을 떨어뜨렸나요?"
     ) {
         val peerActive: Boolean get() = peers.any { it.active }
         /** Every row shown ended by the one-hour limit, not by its worker. */
@@ -101,7 +102,7 @@ class LoneWorkerMonitor(
     private fun judge(e: LoneWorkerLogic.JudgeEvent) {
         when (e) {
             is LoneWorkerLogic.JudgeEvent.Fall -> {
-                JudgeLog.fallTake(name, roleName, e.impT, e.take, e.zoneIn, e.charging, e.plugAgoMs, e.unplugAgoMs)
+                JudgeLog.fallTake(name, roleName, e.impT, e.take, e.zoneIn, e.charging, e.plugAgoMs, e.unplugAgoMs, e.pass)
                 // No check window opened (shut | dropped): ask what the impact was now. A watch fall is asked after the window closes,
                 // or - if the person moved so no window opened by then (still WATCHING) - shortly after the 30 s stillness check
                 if (JudgeLog.on && e.take != "watch") JudgeQuestion.postAct(ctx, name, roleName, e.impT, e.take)
@@ -114,7 +115,7 @@ class LoneWorkerMonitor(
                 }
             }
             is LoneWorkerLogic.JudgeEvent.ModeChange -> {
-                JudgeLog.mode(name, roleName, e.from.name, e.to.name, e.trig, e.why, e.sinceMs, e.impT)
+                JudgeLog.mode(name, roleName, e.from.name, e.to.name, e.trig, e.why, e.sinceMs, e.impT, pass = e.pass)
                 // postFall measures after_ms from the close (wall clock; this monitor's now() is elapsedRealtime), postAct from the impact wall time.
                 // A rescuer close keeps the 3-button question; every other close asks what the impact was.
                 e.impT?.let {
@@ -500,7 +501,8 @@ class LoneWorkerMonitor(
             left,
             logic.stepsAvailable,
             logic.closesByTurn,
-            logic.rescuerButton(t)
+            logic.rescuerButton(t),
+            logic.dropWindow
         )
     }
 
@@ -593,7 +595,7 @@ class LoneWorkerMonitor(
 
         // A phone with a monitoring stop pending shows no ended rows either: LoneWorkerNotifier.update drops the quiet notice when ended rows exist, which would hide the stop notice
         val resolved = if (logic.stopAt != null) emptyList() else logic.peers.filter { !it.active && !it.silenced }
-        notifier.update(mode, logic.closesByTurn, audible, resolved, notice(), showScreen, logic.rescuerButton(t))
+        notifier.update(mode, logic.closesByTurn, logic.dropWindow, audible, resolved, notice(), showScreen, logic.rescuerButton(t))
         if (showScreen) notifier.openScreen()
         updateWakeLock(false)
         scheduleLoop()
@@ -638,9 +640,12 @@ internal fun countdownBanner(c: LoneWorkerLogic.Countdown): String {
     val s = (c.leftMs.coerceAtLeast(0L) + 999L) / 1000L
     return when (c.kind) {
         LoneWorkerLogic.CountdownKind.SOS -> "구조 요청 중 — 해제는 구조 요청 화면에서"
-        LoneWorkerLogic.CountdownKind.RESPONSE -> "'괜찮으세요?' 응답 대기 — ${s}초 뒤 구조 요청"
+        LoneWorkerLogic.CountdownKind.RESPONSE ->
+            if (c.drop) "'폰을 떨어뜨렸나요?' 응답 대기 — ${s}초 뒤 구조 요청" else "'괜찮으세요?' 응답 대기 — ${s}초 뒤 구조 요청"
         // Moving does not cancel a fall watch (it lasts 5 min); it only restarts the 30 s, so say what opens the window
-        LoneWorkerLogic.CountdownKind.FALL -> "넘어짐 감지 — ${s}초 동안 움직임이 없으면 '괜찮으세요?' 창"
+        LoneWorkerLogic.CountdownKind.FALL ->
+            if (c.drop) "충격 감지 — ${s}초 동안 움직임이 없으면 '폰을 떨어뜨렸나요?' 창"
+            else "넘어짐 감지 — ${s}초 동안 움직임이 없으면 '괜찮으세요?' 창"
         LoneWorkerLogic.CountdownKind.STILL -> "움직임 없음 — ${s}초 뒤 '괜찮으세요?' 창 (움직이면 취소)"
     }
 }

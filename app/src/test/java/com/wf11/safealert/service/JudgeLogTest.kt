@@ -98,7 +98,12 @@ class JudgeLogTest {
             assertFalse(c.containsKey("acc") || c.containsKey("acc_t0") || c.containsKey("acc_dt") || c.containsKey("deg"))
             JudgeLog.mode("ME", "WALKER", "WATCHING", "CHECKING", "fall", "", 7, null, t = 9L)
             val m = out.last().second
-            assertFalse(m.containsKey("why") || m.containsKey("imp_t") || m.containsKey("truth"))
+            assertFalse(m.containsKey("why") || m.containsKey("imp_t") || m.containsKey("truth") || m.containsKey("pass"))
+            // The fall rule's result rides on F2 (always) and on F3 when given
+            JudgeLog.fallTake("ME", "WALKER", 5_000, "watch", false, false, null, null, false, t = 10L)
+            assertEquals(false, out.last().second["pass"])
+            JudgeLog.mode("ME", "WALKER", "WATCHING", "CHECKING", "fall", "", 7, null, pass = true, t = 11L)
+            assertEquals(true, out.last().second["pass"])
 
             // Site code: valid kept, otherwise NOSITE
             assertEquals("WF11", JudgeLog.scOf("WF11"))
@@ -170,15 +175,25 @@ class JudgeLogTest {
         val l = fallRuleOnly().apply { onJudge = { ev += it } }
         l.onAccident(6_000)
         assertEquals(JudgeEvent.Fall(6_000, "watch", false, false, null, null), ev.single())
+        assertTrue((ev.single() as JudgeEvent.Fall).pass)
         assertEquals(Mode.CHECKING, l.seenAt(36_000))
         val open = ev.last() as JudgeEvent.ModeChange
         assertEquals(Mode.WATCHING, open.from); assertEquals(Mode.CHECKING, open.to)
-        assertEquals("fall", open.trig); assertEquals(6_000L, open.impT)
+        assertEquals("fall", open.trig); assertEquals(6_000L, open.impT); assertEquals(true, open.pass)
         l.onAccident(40_000)
         assertEquals("shut", (ev.last() as JudgeEvent.Fall).take)
         assertTrue(l.ackWorking(45_000))
         val ack = ev.last() as JudgeEvent.ModeChange
-        assertEquals(JudgeEvent.ModeChange(Mode.CHECKING, Mode.WATCHING, "fall", "ack", 9_000, 6_000), ack)
+        assertEquals(JudgeEvent.ModeChange(Mode.CHECKING, Mode.WATCHING, "fall", "ack", 9_000, 6_000, true), ack)
+        // A not-a-fall impact (pass = false) reports the rule result on its take and on the window's mode changes
+        val dev = mutableListOf<JudgeEvent>()
+        val dl = fallRuleOnly().apply { onJudge = { dev += it } }
+        dl.onAccident(6_000, pass = false)
+        assertEquals(JudgeEvent.Fall(6_000, "watch", false, false, null, null, false), dev.single())
+        assertEquals(Mode.CHECKING, dl.seenAt(36_000))
+        assertEquals(false, (dev.last() as JudgeEvent.ModeChange).pass)
+        assertTrue(dl.ackWorking(45_000))
+        assertEquals(false, (dev.last() as JudgeEvent.ModeChange).pass)
         // Which closes ask the fall question: ack yes; a walk close (no impact time) and the feature turned off no
         assertTrue(ack.asksFall)
         assertFalse(JudgeEvent.ModeChange(Mode.CHECKING, Mode.WATCHING, "fall", "off", 1, 6_000).asksFall)
@@ -213,13 +228,18 @@ class JudgeLogTest {
         for ((after, pass, why) in listOf(Triple(LYING_STILL, true, ""), Triple(UPRIGHT_STILL, false, "posture"))) {
             val cands = mutableListOf<MotionAnalyzer.Candidate>()
             val a = MotionAnalyzer(onCandidate = { cands += it })
-            val falls = a.feed(0, 3_000) { UPRIGHT_STILL }.size + a.feed(3_000, 3_260) { FREE_FALL_SAMPLE }.size +
-                a.feed(3_260, 3_320) { IMPACT_SAMPLE }.size + a.feed(3_320, 18_320) { after }.count { it.second == MotionAnalyzer.Signal.FALL }
-            assertEquals(if (pass) 1 else 0, falls)
+            val before = a.feed(0, 3_000) { UPRIGHT_STILL }.size + a.feed(3_000, 3_260) { FREE_FALL_SAMPLE }.size +
+                a.feed(3_260, 3_320) { IMPACT_SAMPLE }.size
+            val tail = a.feed(3_320, 18_320) { after }
+            assertEquals(0, before)
+            // A rejected candidate is reported once as IMPACT (never FALL); both carry the impact time and shape
+            assertEquals(if (pass) 1 else 0, tail.count { it.second == MotionAnalyzer.Signal.FALL })
+            assertEquals(if (pass) 0 else 1, tail.count { it.second == MotionAnalyzer.Signal.IMPACT })
             val c = cands.single()
             assertEquals(pass, c.pass); assertEquals(why, c.why)
             assertTrue(c.ffMs >= 200); assertTrue(c.peakG > 2.5); assertTrue(c.postN > 0)
-            if (pass) assertEquals(a.eventMs, c.impactT)
+            assertEquals(a.eventMs, c.impactT)
+            assertEquals(c.ffMs, a.fallShape.freeFallMs)
         }
     }
 

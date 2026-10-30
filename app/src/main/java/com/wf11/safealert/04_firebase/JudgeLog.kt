@@ -293,16 +293,16 @@ object JudgeLog {
         }
     }
 
-    /** F2 — what onAccident did with one FALL: watch (suspicion opened) | shut | dropped. */
+    /** F2 — what onAccident did with one FALL or not-a-fall impact: watch (suspicion opened) | shut | dropped. pass = the fall rule's result. */
     fun fallTake(
         me: String, role: String, impT: Long, take: String, zoneIn: Boolean, charging: Boolean,
-        plugAgoMs: Long?, unplugAgoMs: Long?, t: Long = System.currentTimeMillis(),
+        plugAgoMs: Long?, unplugAgoMs: Long?, pass: Boolean = true, t: Long = System.currentTimeMillis(),
     ) {
         if (!on) return
         runCatching {
             emit("fall", "fall", t, me, role) {
                 linkedMapOf(
-                    "imp_t" to impT, "take" to take, "zone_in" to zoneIn, "charging" to charging,
+                    "imp_t" to impT, "take" to take, "pass" to pass, "zone_in" to zoneIn, "charging" to charging,
                     "plug_ago_ms" to plugAgoMs, "unplug_ago_ms" to unplugAgoMs,
                 )
             }
@@ -312,13 +312,13 @@ object JudgeLog {
     /** F3 — a monitoring mode change. why only when closing (or restore on a restored SOS). The answer is a separate [truth] record. */
     fun mode(
         me: String, role: String, from: String, to: String, trig: String, why: String, sinceMs: Long, impT: Long?,
-        t: Long = System.currentTimeMillis(),
+        pass: Boolean? = null, t: Long = System.currentTimeMillis(),
     ) {
         if (!on) return
         runCatching {
             emit("fall", "mode", t, me, role) {
                 linkedMapOf(
-                    "from" to from, "to" to to, "trig" to trig, "why" to why.ifEmpty { null },
+                    "from" to from, "to" to to, "trig" to trig, "pass" to pass, "why" to why.ifEmpty { null },
                     "since_ms" to sinceMs, "imp_t" to impT,
                 )
             }

@@ -174,6 +174,7 @@ class LoneWorkerNotifier(
     fun update(
         mode: LoneWorkerLogic.Mode,
         closesByTurn: Boolean,
+        drop: Boolean,
         audible: List<LoneWorkerPeers.Peer>,
         resolved: List<LoneWorkerPeers.Peer>,
         notice: Pair<String, String>?,
@@ -187,7 +188,7 @@ class LoneWorkerNotifier(
             if (lastKey != null) { nm.cancel(NOTIF_ID); lastKey = null }
             return
         }
-        val key = "${quiet?.first}|${quiet?.second}|$mode|$closesByTurn|$rescuer|${audible.joinToString(",") { it.id + (if (it.ringOver) "~" else "") }}|${resolved.joinToString(",") { it.id }}"
+        val key = "${quiet?.first}|${quiet?.second}|$mode|$closesByTurn|$drop|$rescuer|${audible.joinToString(",") { it.id + (if (it.ringOver) "~" else "") }}|${resolved.joinToString(",") { it.id }}"
         val again = loud && alertAgain
         if (key == lastKey && !again) return
         lastKey = key
@@ -195,7 +196,7 @@ class LoneWorkerNotifier(
             mode == LoneWorkerLogic.Mode.SOS ->
                 Triple("구조 요청 중", sosExitHint(rescuer), sosExitLabel(rescuer) to activityPi(REQ_CONFIRM, true))
             mode == LoneWorkerLogic.Mode.CHECKING ->
-                Triple("괜찮으세요?", "응답이 없으면 ${SiteScope.audience(DevSettings.floor, DevSettings.proc, DevSettings.zone)}에 구조 요청이 나가요. " + (if (closesByTurn) TURN_CLOSE_HINT else "걸으면 자동으로 닫혀요"), "괜찮아요" to servicePi(REQ_ACK, BleService.ACTION_LW_ACK))
+                Triple(if (drop) "폰을 떨어뜨렸나요?" else "괜찮으세요?", "응답이 없으면 ${SiteScope.audience(DevSettings.floor, DevSettings.proc, DevSettings.zone)}에 구조 요청이 나가요. " + (if (closesByTurn) TURN_CLOSE_HINT else "걸으면 자동으로 닫혀요"), "괜찮아요" to servicePi(REQ_ACK, BleService.ACTION_LW_ACK))
             audible.isNotEmpty() ->
                 Triple(if (audible.all { it.ringOver }) "구조 요청 · ${RING_OVER}" else "구조 요청", audible.joinToString(", ") { it.nameWithScope() }, "확인" to servicePi(REQ_SILENCE, BleService.ACTION_LW_SILENCE, audible))
             quiet != null -> Triple(quiet.first, quiet.second, null)
