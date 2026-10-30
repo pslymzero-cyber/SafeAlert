@@ -99,7 +99,21 @@ object JudgeQuestion {
         .putExtra(EXTRA_IMP_WALL, a.impWall).putExtra(EXTRA_POSTED, a.posted).putExtra(EXTRA_WHY, a.why)
         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
 
+    /** Impact times (elapsed) already asked, newest last; process memory only (an app restart clears it). */
+    private val asked = ArrayDeque<Long>()
+    private const val ASKED_MAX = 16
+
+    /** True the first time an impact is asked (and remembers it), false when it was already asked: one question per impact. */
+    @Synchronized
+    internal fun firstAsk(impT: Long): Boolean {
+        if (impT in asked) return false
+        asked.addLast(impT)
+        if (asked.size > ASKED_MAX) asked.removeFirst()
+        return true
+    }
+
     fun postAct(ctx: Context, me: String, role: String, impT: Long, why: String) {
+        if (!firstAsk(impT)) return
         runCatching {
             val impWall = wallOf(impT)
             val equipment = (role == "FORKLIFT" || role == "EPJ") &&

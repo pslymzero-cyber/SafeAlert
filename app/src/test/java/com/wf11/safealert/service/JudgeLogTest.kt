@@ -302,5 +302,10 @@ class JudgeLogTest {
         assertEquals("fall", JudgeQuestion.truthOf("fall")); assertEquals("unknown", JudgeQuestion.truthOf("unknown"))
         for (a in listOf("walk", "run", "put_down", "drop", "charge")) assertEquals("no", JudgeQuestion.truthOf(a))
         assertFalse(JudgeQuestion.actExpired(0, 300_000)); assertTrue(JudgeQuestion.actExpired(0, 300_001))
+        // One question per impact: the first ask of an impact time wins, the same time is not asked again, the 16 most recent are kept
+        assertTrue(JudgeQuestion.firstAsk(9_000_001L)); assertFalse(JudgeQuestion.firstAsk(9_000_001L))
+        for (i in 2L..17L) assertTrue(JudgeQuestion.firstAsk(9_000_000L + i))
+        assertTrue(JudgeQuestion.firstAsk(9_000_001L))   // evicted by then: asked once more
+        assertFalse(JudgeQuestion.firstAsk(9_000_017L))
     }
 }
