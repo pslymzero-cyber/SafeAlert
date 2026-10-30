@@ -13,6 +13,7 @@ mean/std (std 0 -> 1, missing -> fill), then dense layers h = act(W h + b), W as
 import argparse
 import json
 import math
+import os
 import sys
 import tempfile
 import warnings
@@ -327,6 +328,102 @@ def train(export, out):
     return done
 
 
+# ── compare: the current rule · the phone model · the company AI on the same records ─
+
+def scores(truth, pred, kind):
+    """Agreement with the truth on the rows the method answered. catch = the top class (danger / fall) kept as
+    such, false = a safe / no-fall row called danger / fall."""
+    t, p = np.asarray(truth, float), np.asarray(pred, float)
+    ok = ~np.isnan(t) & ~np.isnan(p)
+    if not ok.any():
+        return None
+    t, p, hi = t[ok].astype(int), p[ok].astype(int), 2 if kind == "prox" else 1
+    out = {"n": int(ok.sum()), "acc": float(np.mean(t == p))}
+    if (t == hi).any():
+        out["catch"] = float(np.mean(p[t == hi] == hi))
+    if (t == 0).any():
+        out["false"] = float(np.mean(p[t == 0] == hi))
+    return out
+
+
+def model_file(models, kind):
+    f = models / f"{kind}.json"
+    return json.loads(f.read_text(encoding="utf-8")) if f.exists() else None
+
+
+def ai_answers(kind, rows, out, max_usd, dry):
+    """Company AI levels for rows (judge_ml.run_ai: rules file, batches, cost cap, resume), id -> label."""
+    ans = jm.run_ai(kind, rows, out, out / f"ai_{kind}.csv", "compare", max_usd, 0, dry)
+    if ans.empty or "ai_label" not in ans:
+        return {}
+    return dict(zip(ans["id"].astype(str), pd.to_numeric(ans["ai_label"], errors="coerce")))
+
+
+def compare(export, out, models, per_level=30, max_usd=5.0, dry=False, no_ai=False):
+    df = load(export)
+    out.mkdir(parents=True, exist_ok=True)
+    pm, fm = model_file(models, "prox"), model_file(models, "fall")
+    res = {}
+
+    p, Xp, _ = prox_rows(df)
+    warn = pd.to_numeric(p["warn_m"], errors="coerce").to_numpy(float)
+    dang = pd.to_numeric(p["dang_m"], errors="coerce").to_numpy(float)
+    ok = ~np.isnan(warn) & ~np.isnan(dang)
+    p, Xp, warn, dang = p[ok].reset_index(drop=True), Xp[ok], warn[ok], dang[ok]
+    if len(p):
+        p["truth"] = level(p["uwb_m"].to_numpy(float), warn, dang)
+        e, w, d = (pd.to_numeric(p[c], errors="coerce").to_numpy(float) for c in ("ema", "eff_w", "eff_d"))
+        p["rule"] = np.where(np.isnan(e) | np.isnan(w) | np.isnan(d), np.nan, np.where(e >= d, 2, np.where(e >= w, 1, 0)))
+        p["phone_m"] = [meters(pm, x) for x in Xp] if pm else np.nan
+        p["phone"] = level(p["phone_m"].to_numpy(float), warn, dang) if pm else np.nan
+        whole = {"rule": scores(p["truth"], p["rule"], "prox"), "phone": scores(p["truth"], p["phone"], "prox")}
+        # The same rows for all three: per_level per UWB level, so the paid AI sees each level evenly
+        p = pd.concat([g.sample(min(len(g), per_level), random_state=0) for _, g in p.groupby("truth")])
+        p["ai"] = np.nan if no_ai else p["id"].astype(str).map(ai_answers("prox", p, out, max_usd, dry))
+        res["prox"] = (p, whole)
+        jm.write(p[["id", "t", "dev", "peer", "uwb_m", "warn_m", "dang_m", "truth", "rule", "phone_m", "phone", "ai"]]
+                 if "peer" in p else p, out / "compare_prox.csv")
+
+    c, Xf, yf = fall_rows(df)
+    if len(c):
+        c["truth"] = yf.astype(int)
+        c["rule"] = c["pass"].map(jm.yes).astype(float)
+        c["phone_p"] = [run(fm, x) for x in Xf] if fm else np.nan
+        c["phone"] = (c["phone_p"] >= 0.5).astype(float) if fm else np.nan
+        c["ai"] = np.nan
+        if not no_ai:
+            g = df[df["grp"] == "fall"].copy()   # the analysis AI's own inputs (acc shape etc.), as judge_ml.load builds them
+            g["t"], g["imp_t"], g["dev"] = pd.to_numeric(g["t"], errors="coerce"), pd.to_numeric(g["imp_t"], errors="coerce"), g["dev"].astype(str)
+            feats = jm.build_fall(g)
+            got = ai_answers("fall", feats[feats["id"].astype(str).isin(set(c["id"].astype(str)))], out, max_usd, dry)
+            c["ai"] = c["id"].astype(str).map(got)
+        res["fall"] = (c, {})
+        jm.write(c[["id", "t", "dev", "sess", "imp_t", "truth", "rule", "phone_p", "phone", "ai"]], out / "compare_fall.csv")
+
+    title = {"prox": ("접근 — 정답 = UWB 로 잰 거리의 단계", "위험을 위험으로", "안전을 위험으로"),
+             "fall": ("넘어짐 — 정답 = 실험 세션(넘어짐 / 아님) · 넘어짐 질문 답", "넘어짐을 넘어짐으로", "아님을 넘어짐으로")}
+    pct = lambda v: "-" if v is None else f"{v * 100:.0f}%"
+    lines = ["# 같은 기록에서 지금 규칙 · 폰 모델 · 회사 AI 비교", "", f"- 기록 파일: {Path(export).name}",
+             f"- 폰 모델: prox {pm['made'] if pm else '없음'} · fall {fm['made'] if fm else '없음'}",
+             "- 회사 AI: " + ("부르지 않음(--no-ai)" if no_ai else "ai_rules 지시문, 예시 없이(처음 보는 상태)"), ""]
+    for kind, (d, whole) in res.items():
+        t, a, b = title[kind]
+        lines += [f"## {t}", "", f"| 방법 | 건수 | 맞힘 | {a} | {b} |", "|---|---:|---:|---:|---:|"]
+        for name, col in (("지금 규칙", "rule"), ("폰 모델", "phone"), ("회사 AI", "ai")):
+            s = scores(d["truth"], d[col], kind)
+            lines.append(f"| {name} | {s['n'] if s else 0} | {pct(s and s['acc'])} | {pct(s and s.get('catch'))} | {pct(s and s.get('false'))} |"
+                         if s else f"| {name} | 0 | - | - | - |")
+        if whole:
+            lines += ["", "전체 기록(표본 전): " + " · ".join(
+                f"{n} 맞힘 {pct(s and s['acc'])}({s['n'] if s else 0}건)" for n, s in (("지금 규칙", whole["rule"]), ("폰 모델", whole["phone"])))]
+        lines.append("")
+    rep = out / "compare_report.md"
+    rep.write_text("\n".join(lines), encoding="utf-8")
+    print("\n".join(lines))
+    print(f"-> {rep}")
+    return rep
+
+
 # ── selftest ─────────────────────────────────────────────────────────────
 
 def fake_export(rng):
@@ -376,6 +473,21 @@ def selftest():
         x = prox_x({"rssi": -70, "med": -70, "pre": -70, "kf": -70, "ema": -70, "avg1s": -70, "kf_vel": 0.0,
                     "seq": "-72,0.1;-70,0.2;-68,0.3"})
         assert np.allclose(x[7:], [-70.0, float(np.std([-72, -70, -68])), -72.0, -68.0, 2.0, 0.2]), x
+        before = os.environ.get("JUDGE_AI_STYLE")
+        os.environ["JUDGE_AI_STYLE"] = "fake"   # judge_ml's offline stand-in: no network, no cost
+        try:
+            rep = compare(exp, Path(tmp) / "cmp", out, per_level=10)
+        finally:
+            if before is None:
+                os.environ.pop("JUDGE_AI_STYLE", None)
+            else:
+                os.environ["JUDGE_AI_STYLE"] = before
+        text = rep.read_text(encoding="utf-8")
+        assert "| 회사 AI |" in text and "| 폰 모델 |" in text and "| 지금 규칙 |" in text, text
+        cp = jm.read(Path(tmp) / "cmp" / "compare_prox.csv")
+        assert len(cp) == 30 and cp["phone"].notna().all() and pd.to_numeric(cp["ai"], errors="coerce").notna().any(), cp
+        cf = jm.read(Path(tmp) / "cmp" / "compare_fall.csv")
+        assert len(cf) == 40 and pd.to_numeric(cf["ai"], errors="coerce").notna().any(), cf
     print("selftest ok")
 
 
@@ -388,10 +500,20 @@ def main():
     t.add_argument("--out", default=str(ASSETS))
     pr = sub.add_parser("prior", help="학습 전 자리표시 모델을 씁니다")
     pr.add_argument("--out", default=str(ASSETS))
+    cp = sub.add_parser("compare", help="같은 기록에서 지금 규칙 · 폰 모델 · 회사 AI 비교표")
+    cp.add_argument("export")
+    cp.add_argument("--out", default=str(HERE / "data" / "compare"))
+    cp.add_argument("--models", default=str(ASSETS), help="폰 모델 폴더(prox.json · fall.json)")
+    cp.add_argument("--per-level", type=int, default=30, help="접근 단계(안전 · 경고 · 위험)마다 비교할 기록 수")
+    cp.add_argument("--max-usd", type=float, default=5.0, help="회사 AI 비용 상한(접근 · 넘어짐 각각, 달러)")
+    cp.add_argument("--dry-run", action="store_true", help="회사 AI 를 부르지 않고 건수 · 대략 비용만 보기")
+    cp.add_argument("--no-ai", action="store_true", help="회사 AI 없이 지금 규칙 · 폰 모델만")
     sub.add_parser("selftest")
     a = ap.parse_args()
     if a.cmd == "train":
         train(a.export, Path(a.out))
+    elif a.cmd == "compare":
+        compare(a.export, Path(a.out), Path(a.models), a.per_level, a.max_usd, a.dry_run, a.no_ai)
     elif a.cmd == "prior":
         for m in prior_models():
             print(save(m, Path(a.out)))

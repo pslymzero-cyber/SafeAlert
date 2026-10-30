@@ -160,6 +160,7 @@ Claude API 키(`anthropic`)로 부르면, 답을 거절당한 요청은 서버�
 ```
 python app_model.py train <내보낸 judge.json>
 python app_model.py prior
+python app_model.py compare <내보낸 judge.json> [--no-ai | --dry-run]
 python app_model.py selftest
 ```
 
@@ -167,3 +168,4 @@ python app_model.py selftest
 - `fall.json`: 충격 후보 요약 → 넘어짐 확률. 정답 = 실험 세션 `test:fall:…` / `test:no:…`(한 폰에서 15초 안 첫 후보만), 또는 넘어짐 질문 답.
 - 기록이 모자라면(접근 100건 · 넘어짐 각 8건 미만) 그 모델은 바꾸지 않는다. `prior` 는 학습 전 자리표시로 되돌린다.
 - 결과의 `cv` 는 5분 묶음 · 층화 교차검증 값이다. 모델 파일을 바꾸면 앱 테스트(AiJudgeTest)가 계산 일치를 확인하고, 앱에 반영하려면 새 버전을 배포한다.
+- `compare`: 같은 기록에서 **지금 규칙 · 폰 모델 · 회사 AI** 를 정답(접근 = UWB 거리 단계, 넘어짐 = 실험 세션 · 질문 답)과 견준다. 결과는 `data/compare/compare_report.md`(표) · `compare_prox.csv` · `compare_fall.csv`. 회사 AI 는 위 AI 설정(환경 변수)과 `ai_rules_*.md` 를 그대로 쓰고, 접근은 단계마다 `--per-level`(기본 30)건만 묻는다. 비용 상한 `--max-usd`(접근 · 넘어짐 각각), 먼저 `--dry-run` 으로 건수 · 비용을 본다. 회사 AI 없이 보려면 `--no-ai`.
