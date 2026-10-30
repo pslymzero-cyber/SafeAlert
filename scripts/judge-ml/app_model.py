@@ -307,18 +307,31 @@ def train_fall(c, X, y):
     return m
 
 
+HELD_NOTE = "기록 시각 1분 묶음 셋 중 하나(t // 60000 % 3 == 2)"
+
+
+def held(t):
+    """Rows kept out of training so `compare` can score the phone model on records it never saw.
+    Interleaved 1-minute blocks, because an experiment walks through the distances in order."""
+    return (pd.to_numeric(pd.Series(t), errors="coerce").fillna(0).to_numpy(float) // 60_000).astype(np.int64) % 3 == 2
+
+
 def train(export, out):
     df = load(export)
     p, Xp, yp = prox_rows(df)
     c, Xf, yf = fall_rows(df)
+    hp = held(p["t"]) if len(p) else np.zeros(0, bool)
+    hf = held(c["t"]) if len(c) else np.zeros(0, bool)
+    p, Xp, yp = p[~hp].reset_index(drop=True), Xp[~hp], yp[~hp]
+    c, Xf, yf = c[~hf], Xf[~hf], yf[~hf]
     done = []
     if len(yp) >= MIN_PROX:
-        done.append(save(train_prox(p, Xp, yp), out))
+        done.append(save(dict(train_prox(p, Xp, yp), held=HELD_NOTE, n_held=int(hp.sum())), out))
     else:
         print(f"접근: UWB 거리가 붙은 기록 {len(yp)}건 — {MIN_PROX}건이 안 돼 모델을 바꾸지 않습니다.")
     counts = np.bincount(yf.astype(int), minlength=2) if len(yf) else np.zeros(2, int)
     if counts.min() >= MIN_FALL:
-        done.append(save(train_fall(c, Xf, yf), out))
+        done.append(save(dict(train_fall(c, Xf, yf), held=HELD_NOTE, n_held=int(hf.sum())), out))
     else:
         print(f"넘어짐: 넘어짐 {counts[1]}건 · 아님 {counts[0]}건 — 둘 다 {MIN_FALL}건이 안 돼 모델을 바꾸지 않습니다.")
     for f in done:
@@ -376,6 +389,8 @@ def compare(export, out, models, per_level=30, max_usd=5.0, dry=False, no_ai=Fal
         p["rule"] = np.where(np.isnan(e) | np.isnan(w) | np.isnan(d), np.nan, np.where(e >= d, 2, np.where(e >= w, 1, 0)))
         p["phone_m"] = [meters(pm, x) for x in Xp] if pm else np.nan
         p["phone"] = level(p["phone_m"].to_numpy(float), warn, dang) if pm else np.nan
+        if pm and pm.get("held"):
+            p = p[held(p["t"])]   # only records the phone model never trained on
         whole = {"rule": scores(p["truth"], p["rule"], "prox"), "phone": scores(p["truth"], p["phone"], "prox")}
         # The same rows for all three: per_level per UWB level, so the paid AI sees each level evenly
         p = pd.concat([g.sample(min(len(g), per_level), random_state=0) for _, g in p.groupby("truth")])
@@ -390,6 +405,8 @@ def compare(export, out, models, per_level=30, max_usd=5.0, dry=False, no_ai=Fal
         c["rule"] = c["pass"].map(jm.yes).astype(float)
         c["phone_p"] = [run(fm, x) for x in Xf] if fm else np.nan
         c["phone"] = (c["phone_p"] >= 0.5).astype(float) if fm else np.nan
+        if fm and fm.get("held"):
+            c = c[held(c["t"])].copy()   # only candidates the phone model never trained on
         c["ai"] = np.nan
         if not no_ai:
             g = df[df["grp"] == "fall"].copy()   # the analysis AI's own inputs (acc shape etc.), as judge_ml.load builds them
@@ -405,11 +422,16 @@ def compare(export, out, models, per_level=30, max_usd=5.0, dry=False, no_ai=Fal
     pct = lambda v: "-" if v is None else f"{v * 100:.0f}%"
     lines = ["# 같은 기록에서 지금 규칙 · 폰 모델 · 회사 AI 비교", "", f"- 기록 파일: {Path(export).name}",
              f"- 폰 모델: prox {pm['made'] if pm else '없음'} · fall {fm['made'] if fm else '없음'}",
-             "- 회사 AI: " + ("부르지 않음(--no-ai)" if no_ai else "ai_rules 지시문, 예시 없이(처음 보는 상태)"), ""]
+             "- 회사 AI: " + ("부르지 않음(--no-ai)" if no_ai else "부르지 않음(--dry-run)" if dry
+                             else "ai_rules 지시문, 예시 없이(처음 보는 상태)"),
+             "- 평가 기록: " + (f"폰 모델 학습에 쓰지 않은 기록만({HELD_NOTE}). 같은 실험의 다른 시간이라 현장보다 좋게 나올 수 있음"
+                              if (pm and pm.get("held")) or (fm and fm.get("held"))
+                              else "전부 — 폰 모델이 이 기록으로 학습했다면 폰 모델 수치가 부풀려짐"), ""]
     for kind, (d, whole) in res.items():
         t, a, b = title[kind]
         lines += [f"## {t}", "", f"| 방법 | 건수 | 맞힘 | {a} | {b} |", "|---|---:|---:|---:|---:|"]
-        for name, col in (("지금 규칙", "rule"), ("폰 모델", "phone"), ("회사 AI", "ai")):
+        rule = "지금 규칙(블루투스 신호)" if kind == "prox" else "지금 규칙"
+        for name, col in ((rule, "rule"), ("폰 모델", "phone"), ("회사 AI", "ai")):
             s = scores(d["truth"], d[col], kind)
             lines.append(f"| {name} | {s['n'] if s else 0} | {pct(s and s['acc'])} | {pct(s and s.get('catch'))} | {pct(s and s.get('false'))} |"
                          if s else f"| {name} | 0 | - | - | - |")
@@ -483,11 +505,11 @@ def selftest():
             else:
                 os.environ["JUDGE_AI_STYLE"] = before
         text = rep.read_text(encoding="utf-8")
-        assert "| 회사 AI |" in text and "| 폰 모델 |" in text and "| 지금 규칙 |" in text, text
+        assert "| 회사 AI |" in text and "| 폰 모델 |" in text and "| 지금 규칙 |" in text and "학습에 쓰지 않은" in text, text
         cp = jm.read(Path(tmp) / "cmp" / "compare_prox.csv")
-        assert len(cp) == 30 and cp["phone"].notna().all() and pd.to_numeric(cp["ai"], errors="coerce").notna().any(), cp
+        assert 0 < len(cp) <= 30 and cp["phone"].notna().all() and pd.to_numeric(cp["ai"], errors="coerce").notna().any(), cp
         cf = jm.read(Path(tmp) / "cmp" / "compare_fall.csv")
-        assert len(cf) == 40 and pd.to_numeric(cf["ai"], errors="coerce").notna().any(), cf
+        assert 0 < len(cf) < 40 and pd.to_numeric(cf["ai"], errors="coerce").notna().any(), cf
     print("selftest ok")
 
 
