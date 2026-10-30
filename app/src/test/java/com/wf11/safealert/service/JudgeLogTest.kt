@@ -183,7 +183,7 @@ class JudgeLogTest {
         l.onAccident(40_000)
         assertEquals("shut", (ev.last() as JudgeEvent.Fall).take)
         assertTrue((ev.last() as JudgeEvent.Fall).asks) // a passed fall is asked at once even inside an open window
-        // the close question asks the impact that opened the window, not the later fall (which goes out late as 'open')
+        // the close question asks the impact that opened the window, not the later fall (asked at once above as 'shut', never late)
         assertNull(l.lateAskWhy(6_000)); assertEquals("open", l.lateAskWhy(40_000))
         assertTrue(l.ackWorking(45_000))
         val ack = ev.last() as JudgeEvent.ModeChange

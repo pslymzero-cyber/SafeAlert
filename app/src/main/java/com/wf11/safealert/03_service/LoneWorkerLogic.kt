@@ -470,9 +470,10 @@ class LoneWorkerLogic(var myBleId: String) {
      * the suspicion end. If inside the safe zone at impact and no exit was confirmed within 12 s after
      * it (EXIT_LAG_MS), it counts only if shape exceeds zoneFall.
      * pass = false is an impact the fall rule called not-a-fall: same watch and exclusions as a fall; the window texts differ,
-     * and until a passed fall joins, phone motion after the judgment (MOVED, at the time the phone last moved) also postpones the window (accidentOpenAt). The weak buzz and the
-     * impact question happen once per watch plus once per passed fall. Inside an open check window or SOS a passed fall is
-     * asked at once; a not-a-fall impact is left to the close question, which asks the impact that opened the window.
+     * and until a passed fall joins, phone motion after the judgment (MOVED, at the time the phone last moved) also
+     * postpones the window (accidentOpenAt). The weak buzz and the impact question happen once per watch plus once per
+     * passed fall. Inside an open check window or SOS a passed fall is asked at once; a not-a-fall impact is left to the
+     * close question, which asks the impact that opened the window.
      */
     fun onAccident(trigMs: Long, shape: MotionAnalyzer.FallShape = MotionAnalyzer.FallShape.ANY, pass: Boolean = true) {
         if (order.keep { onAccident(trigMs, shape, pass) }) return
