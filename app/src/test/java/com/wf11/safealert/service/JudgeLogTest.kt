@@ -114,6 +114,14 @@ class JudgeLogTest {
             JudgeLog.truth("ME", "WALKER", 6_000, "no", "self", 9_000, "cand", t = 51_000, act = "put_down")
             val tr2 = out.last().second
             assertEquals("put_down", tr2["act"]); assertEquals("no", tr2["truth"]); assertEquals("cand", tr2["close_why"])
+            // Recording turned off after the question was posted: a plain call records nothing, the answer (force) still does
+            out.clear()
+            JudgeLog.on = false
+            JudgeLog.truth("ME", "WALKER", 6_000, "no", "self", 9_000, "cand", t = 52_000, act = "walk")
+            assertTrue(out.isEmpty())
+            JudgeLog.truth("ME", "WALKER", 6_000, "no", "self", 9_000, "cand", t = 52_000, act = "walk", force = true)
+            assertEquals("walk", out.single().second["act"])
+            JudgeLog.on = true
             out.clear()
 
             // Distance answer, DANGER-start values: markDanger returns four keys (uwb only when at most 1 s old) and emits nothing

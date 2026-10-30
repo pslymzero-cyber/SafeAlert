@@ -328,12 +328,14 @@ object JudgeLog {
     /**
      * F4 — the fall question / impact question answer (fall | no | unknown) for one impact or closed fall episode.
      * act = what the impact was (walk | run | put_down | drop | charge | fall | unknown); null for the rescuer 3-button answer.
+     * force = an answer to a question that was posted while recording was on: recorded even if recording was turned off
+     * in between, so "기록했어요" is always true (user decision 2026-10-30).
      */
     fun truth(
         me: String, role: String, impT: Long, truth: String, by: String, afterMs: Long, closeWhy: String,
-        t: Long = System.currentTimeMillis(), act: String? = null,
+        t: Long = System.currentTimeMillis(), act: String? = null, force: Boolean = false,
     ) {
-        if (!on) return
+        if (!on && !force) return
         runCatching {
             emit("fall", "truth", t, me, role) {
                 linkedMapOf(

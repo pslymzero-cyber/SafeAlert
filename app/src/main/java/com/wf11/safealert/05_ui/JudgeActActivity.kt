@@ -112,15 +112,23 @@ class JudgeActActivity : AppCompatActivity() {
     }
 
     private fun answer(label: String, code: String) {
-        if (JudgeQuestion.actExpired(posted, SystemClock.elapsedRealtime())) {
+        val nowEl = SystemClock.elapsedRealtime()
+        if (JudgeQuestion.actExpired(posted, nowEl)) {
             Toast.makeText(applicationContext, "시간이 지나 기록하지 않았어요", Toast.LENGTH_SHORT).show()
-            finish()
-            return
+        } else {
+            val now = System.currentTimeMillis()
+            // force: the question was posted while recording was on, so the answer is kept even if it was turned off since
+            JudgeLog.truth(me, role, impT, JudgeQuestion.truthOf(code), "self", now - impWall, why, t = now, act = code, force = true)
+            Toast.makeText(applicationContext, "기록했어요 · ${label}", Toast.LENGTH_SHORT).show()
         }
-        val now = System.currentTimeMillis()
-        JudgeLog.truth(me, role, impT, JudgeQuestion.truthOf(code), "self", now - impWall, why, t = now, act = code)
-        Toast.makeText(applicationContext, "기록했어요 · ${label}", Toast.LENGTH_SHORT).show()
-        (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).cancel(JudgeQuestion.ACT_ID)
+        // A newer impact was asked while this card was open: show its card right away (its notification stays until answered)
+        val next = JudgeQuestion.latestAct
+        if (next != null && next.impT != impT && !JudgeQuestion.actExpired(next.posted, nowEl)) {
+            startActivity(JudgeQuestion.actIntent(this, next))
+        } else {
+            if (next?.impT == impT) JudgeQuestion.latestAct = null
+            (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).cancel(JudgeQuestion.ACT_ID)
+        }
         finish()
     }
 }

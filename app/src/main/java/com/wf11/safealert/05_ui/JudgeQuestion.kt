@@ -88,18 +88,26 @@ object JudgeQuestion {
      * An impact happened (impT = elapsed time of the candidate): ask what it was. One notification id, so a new question
      * replaces the previous one. Equipment phones (forklift / EPJ, not carts) get it silently, others one short vibration.
      */
+    /** One posted impact question; [latestAct] is the newest, so a card answered meanwhile can open it right after. */
+    data class ActAsk(val me: String, val role: String, val impT: Long, val impWall: Long, val posted: Long, val why: String)
+
+    @Volatile var latestAct: ActAsk? = null
+
+    /** The card for [a] (the notification's intent, and the next card after an older one is answered). */
+    fun actIntent(ctx: Context, a: ActAsk): Intent = Intent(ctx, JudgeActActivity::class.java)
+        .putExtra(EXTRA_ME, a.me).putExtra(EXTRA_ROLE, a.role).putExtra(EXTRA_IMP_T, a.impT)
+        .putExtra(EXTRA_IMP_WALL, a.impWall).putExtra(EXTRA_POSTED, a.posted).putExtra(EXTRA_WHY, a.why)
+        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+
     fun postAct(ctx: Context, me: String, role: String, impT: Long, why: String) {
         runCatching {
             val impWall = wallOf(impT)
             val equipment = (role == "FORKLIFT" || role == "EPJ") &&
                 !ctx.getSharedPreferences("safealert_prefs", Context.MODE_PRIVATE).getBoolean("running_cart", false)
             val chId = if (equipment) { channel(ctx); CHANNEL_ID } else { actChannel(ctx); ACT_CHANNEL_ID }
-            val intent = Intent(ctx, JudgeActActivity::class.java)
-                .putExtra(EXTRA_ME, me).putExtra(EXTRA_ROLE, role).putExtra(EXTRA_IMP_T, impT)
-                .putExtra(EXTRA_IMP_WALL, impWall).putExtra(EXTRA_POSTED, SystemClock.elapsedRealtime())
-                .putExtra(EXTRA_WHY, why)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-            val pi = PendingIntent.getActivity(ctx, REQ_ACT, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+            val ask = ActAsk(me, role, impT, impWall, SystemClock.elapsedRealtime(), why)
+            latestAct = ask
+            val pi = PendingIntent.getActivity(ctx, REQ_ACT, actIntent(ctx, ask), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
             val hms = SimpleDateFormat("HH:mm:ss", Locale.US).format(impWall)
             val b = NotificationCompat.Builder(ctx, chId)
                 .setSmallIcon(R.drawable.ic_shield)
@@ -156,6 +164,7 @@ class JudgeAnswerReceiver : BroadcastReceiver() {
                 afterMs = now - intent.getLongExtra(JudgeQuestion.EXTRA_CLOSE_T, now),
                 closeWhy = why,
                 t = now,
+                force = true,   // the question was posted while recording was on
             )
             (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).cancel(JudgeQuestion.FALL_ID)
         }
