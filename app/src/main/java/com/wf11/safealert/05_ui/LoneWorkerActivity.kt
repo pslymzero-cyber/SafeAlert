@@ -3,6 +3,7 @@ package com.wf11.safealert.ui
 import android.content.Intent
 import android.content.res.ColorStateList
 import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
@@ -13,11 +14,13 @@ import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.graphics.ColorUtils
 import com.wf11.safealert.databinding.ActivityLoneWorkerBinding
 import com.wf11.safealert.service.LoneWorkerLogic
 import com.wf11.safealert.service.LoneWorkerMonitor
 import com.wf11.safealert.service.LoneWorkerNotifier
 import com.wf11.safealert.service.PeerRow
+import com.wf11.safealert.utils.AiJudge
 import com.wf11.safealert.utils.DevSettings
 import com.wf11.safealert.utils.SiteScope
 
@@ -171,6 +174,7 @@ class LoneWorkerActivity : AppCompatActivity() {
                 b.lwRingBox.visibility = View.GONE
                 b.tvLwTitle.text = "구조 요청 복원 중"
                 b.tvLwBody.text = ""
+                b.tvLwAi.visibility = View.GONE
                 b.btnLwPeer.visibility = View.GONE
                 b.btnLwPrimary.visibility = View.INVISIBLE
                 b.root.removeCallbacks(retry)
@@ -218,6 +222,15 @@ class LoneWorkerActivity : AppCompatActivity() {
                 b.btnLwPrimary.text = if (st.peerActive) "확인" else "닫기"
                 if (st.peerActive) ALERT else DONE
             }
+        }
+        // On-phone AI fall probability (display only): a fall check window, within 3 min of the decision, setting on
+        val aiLine = if (st.mode == LoneWorkerLogic.Mode.CHECKING && st.trigger == "fall" && DevSettings.aiShow)
+            AiJudge.checkLine(System.currentTimeMillis()) else null
+        if (aiLine != null) {
+            b.tvLwAi.text = AiJudge.mark(aiLine, null)
+            b.tvLwAi.visibility = View.VISIBLE
+        } else {
+            b.tvLwAi.visibility = View.GONE
         }
         ring(st)
         if (own && st.peerActive) {
@@ -290,6 +303,11 @@ class LoneWorkerActivity : AppCompatActivity() {
         b.lwRoot.setBackgroundColor(look.bg)
         b.tvLwTitle.setTextColor(look.title)
         b.tvLwBody.setTextColor(look.body)
+        b.tvLwAi.setTextColor(look.title)
+        b.tvLwAi.background = GradientDrawable().apply {
+            cornerRadius = 10 * resources.displayMetrics.density
+            setColor(ColorUtils.setAlphaComponent(look.title, 20))   // title color at about 8%
+        }
         b.tvLwChip.setTextColor(look.body)
         b.tvLwChip.backgroundTintList = ColorStateList.valueOf(look.chip)
         b.btnLwPrimary.backgroundTintList = ColorStateList.valueOf(look.btnBg)

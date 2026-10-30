@@ -71,6 +71,7 @@ class JudgeLogTest {
             assertEquals(1, r["prev"]); assertEquals(2, r["level"])
             assertEquals(-61, r["rssi"]); assertEquals(-62, r["med"]); assertEquals(1.26, r["kf_vel"])
             assertEquals(-59, r["ema"]); assertEquals(8, r["off_pl"]); assertEquals(-74, r["eff_d"])
+            assertTrue("no AI model loaded: no ai_* keys", r.keys.none { it.startsWith("ai_") })
             // Ring keeps the last 10 one-second summaries (ema -68 .. -59), kf_vel with one decimal
             assertEquals((-68..-59).joinToString(";") { "$it,1.3" }, r["seq"])
 

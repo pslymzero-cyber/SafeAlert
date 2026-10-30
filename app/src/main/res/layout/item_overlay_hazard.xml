@@ -45,5 +45,15 @@
             android:textColor="@color/sa_text_secondary"
             android:maxLines="1"
             android:ellipsize="end" />
+
+        <!-- On-phone AI distance line; shown only when the AI display setting is on -->
+        <TextView
+            android:id="@+id/row_ai"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textSize="12sp"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:visibility="gone" />
     </LinearLayout>
 </LinearLayout>

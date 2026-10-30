@@ -98,6 +98,20 @@
                 android:gravity="center_horizontal"
                 android:lineSpacingMultiplier="1.25"
                 android:textSize="18sp" />
+
+            <!-- On-phone AI fall probability; shown only in a fall check window with the AI display setting on -->
+            <TextView
+                android:id="@+id/tv_lw_ai"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:gravity="center_horizontal"
+                android:paddingStart="12dp"
+                android:paddingTop="8dp"
+                android:paddingEnd="12dp"
+                android:paddingBottom="8dp"
+                android:textSize="14sp"
+                android:visibility="gone" />
         </LinearLayout>
     </ScrollView>
 

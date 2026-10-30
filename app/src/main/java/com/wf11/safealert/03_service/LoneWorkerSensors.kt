@@ -14,6 +14,7 @@ import android.os.SystemClock
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.wf11.safealert.firebase.JudgeLog
+import com.wf11.safealert.utils.AiJudge
 import java.util.Locale
 import kotlin.math.sqrt
 
@@ -61,6 +62,9 @@ class LoneWorkerSensors(
 
     /** Judge-data (recording only): the candidate's decision plus, if kept, its raw acceleration slice. */
     private fun judgeCand(c: MotionAnalyzer.Candidate) {
+        // On-phone AI fall probability (display + record only): kept for the status line / check window even when recording is off
+        val aiP = if (JudgeLog.on || JudgeLog.aiShow) AiJudge.fallP(c) else null
+        if (aiP != null) AiJudge.lastFall = AiJudge.FallAi(c.impactT + accelSkew, aiP, c.pass, System.currentTimeMillis())
         if (!JudgeLog.on) return
         var acc: String? = null
         var accT0: Long? = null
@@ -90,7 +94,7 @@ class LoneWorkerSensors(
         }
         val who = judgeWho()
         JudgeLog.fallCand(who.first, who.second, c.impactT + accelSkew, c.ffMs, c.peakG, c.impactG, c.deg, c.postN,
-            c.postActive, c.preValid, c.pass, c.why, acc, accT0, accDt)
+            c.postActive, c.preValid, c.pass, c.why, acc, accT0, accDt, aiP = aiP)
     }
 
     private var sm: SensorManager? = null

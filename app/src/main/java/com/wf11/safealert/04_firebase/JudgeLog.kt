@@ -165,13 +165,20 @@ object JudgeLog {
         }
     }.getOrDefault("")
 
-    private fun proxBody(p: Peer): LinkedHashMap<String, Any?> = linkedMapOf<String, Any?>(
+    private fun proxBody(p: Peer, t: Long): LinkedHashMap<String, Any?> = linkedMapOf<String, Any?>(
         "peer_role" to p.peerRole,
         "rssi" to p.rssi, "med" to p.med, "pre" to p.pre, "kf" to p.kf, "kf_vel" to r2(p.kfVel),
         "ema" to p.ema, "avg1s" to p.avg1s, "off_pl" to p.offPl, "off_bc" to p.offBc, "off_gg" to p.offGg,
         "echo" to p.echo, "eff_w" to p.effW, "eff_d" to p.effD,
         "seq" to p.ring.joinToString(";") { "${it.ema},${String.format(Locale.US, "%.1f", it.vel)}" },
-    )
+    ).apply {
+        // On-phone AI distance (display model) when one at most 2 s old exists — recorded next to the rule values
+        if (t - p.aiAt in 0..2_000L) {
+            put("ai_m", r2(p.aiM.toDouble()))
+            put("ai_lv", AiJudge.level(p.aiM, p.myRole == "FORKLIFT" || p.peerRole == "FORKLIFT"))
+            put("ai_ver", AiJudge.prox?.made)
+        }
+    }
 
     /** Sends one proximity record. Runs OUTSIDE the lock: the peer id needs the site, which comes from [env]. */
     private fun emitProx(
@@ -191,7 +198,7 @@ object JudgeLog {
                 val p = peers[peer] ?: return
                 if (p.levelAt != Long.MIN_VALUE && t - p.levelAt < LEVEL_GAP_MS) return
                 p.levelAt = t
-                p.myRole to proxBody(p).apply { put("prev", prev); put("level", level) }
+                p.myRole to proxBody(p, t).apply { put("prev", prev); put("level", level) }
             }
             emitProx("level", t, me, role, peer, body)
         }
@@ -213,7 +220,7 @@ object JudgeLog {
                 p.uwbAt = t
                 // Same pair rule as AlertStateMachine.judgeUwbOnly
                 val fk = p.myRole == "FORKLIFT" || p.peerRole == "FORKLIFT"
-                Triple(p.myRole, fk, proxBody(p).apply { put("uwb_m", r2(uwbM.toDouble())); put("level", level); put("use", use); put("frame_age_ms", t - p.frameAt) })
+                Triple(p.myRole, fk, proxBody(p, t).apply { put("uwb_m", r2(uwbM.toDouble())); put("level", level); put("use", use); put("frame_age_ms", t - p.frameAt) })
             }
             emitProx("uwb", t, me, role, peer, body) { e ->
                 mapOf("warn_m" to r2(if (fk) e.fkWarn else e.pairWarn), "dang_m" to r2(if (fk) e.fkDang else e.pairDang))
@@ -253,7 +260,7 @@ object JudgeLog {
         runCatching {
             val now = synchronized(this) {
                 val p = peers[peer] ?: return@synchronized emptyMap<String, Any?>()
-                proxBody(p).apply {
+                proxBody(p, t).apply {
                     put("frame_age_ms", t - p.frameAt)
                     if (p.uwbMAt != Long.MIN_VALUE && t - p.uwbMAt in 0..UWB_FRESH_MS) { put("uwb_m", r2(p.uwbM.toDouble())); put("uwb_use", p.uwbUse) }
                 }
@@ -271,7 +278,7 @@ object JudgeLog {
     fun fallCand(
         me: String, role: String, impT: Long, ffMs: Long, peakG: Double, impG: Double, deg: Double?, postN: Int,
         postAct: Int, preOk: Boolean, pass: Boolean, why: String, acc: String?, accT0: Long?, accDt: Double?,
-        t: Long = System.currentTimeMillis(),
+        aiP: Double? = null, t: Long = System.currentTimeMillis(),
     ) {
         if (!on) return
         runCatching {
@@ -280,6 +287,7 @@ object JudgeLog {
                     "imp_t" to impT, "ff_ms" to ffMs, "peak_g" to r2(peakG), "imp_g" to r2(impG), "deg" to deg?.let(::r2),
                     "post_n" to postN, "post_act" to postAct, "pre_ok" to preOk, "pass" to pass, "why" to why,
                     "acc" to acc, "acc_t0" to accT0, "acc_dt" to accDt?.let(::r2),
+                    "ai_p" to aiP?.let(::r2), "ai_ver" to (if (aiP != null) AiJudge.fall?.made else null),
                 )
             }
         }

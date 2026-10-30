@@ -21,6 +21,7 @@ import com.wf11.safealert.service.LoneWorkerMonitor
 import com.wf11.safealert.service.LoneWorkerNotifier
 import com.wf11.safealert.service.LoneWorkerSosSync
 import com.wf11.safealert.service.ServiceStartGate
+import com.wf11.safealert.utils.AiJudge
 import com.wf11.safealert.utils.DevSettings
 
 /**
@@ -221,10 +222,12 @@ object LoneWorkerUi {
         }
         val off = DevSettings.safetyOff().takeIf { it.isNotEmpty() }?.joinToString(" · ", prefix = "꺼짐: ", postfix = " (개발자 설정)")
         val banner = if (DevSettings.lwEnabled) LoneWorkerMonitor.current?.banner else null
-        val text = listOfNotNull(off, banner).joinToString("\n").ifEmpty { null }
+        // On-phone AI fall probability line (display only; gone 60 s after the decision because onPoll is periodic)
+        val ai = if (DevSettings.aiShow) AiJudge.fallLine(System.currentTimeMillis()) else null
+        val text = listOfNotNull(off, banner, ai).joinToString("\n").ifEmpty { null }
         val vis = if (text != null) View.VISIBLE else View.GONE
         if (status.visibility != vis) status.visibility = vis
-        if (text != null && status.text.toString() != text) status.text = text
+        if (text != null && status.text.toString() != text) status.text = if (ai != null) AiJudge.mark(text, AiJudge.SKY) else text
         status.setTextColor(ContextCompat.getColor(activity, if (off != null) R.color.sa_warning else R.color.sa_text_tertiary))
     }
 }

@@ -1587,7 +1587,8 @@ class BleService : LifecycleService() {
                     name     = suddenLabelMap[id] ?: makeApproachLabel(id),
                     rssi     = rssi,
                     danger   = e.value.first >= BleConstants.LEVEL_DANGER,
-                    distText = UwbCalibrator.distanceTextFor(uwbPairKeyFor(id), rssi, uwbDist.freshUwbDistM(id))
+                    distText = UwbCalibrator.distanceTextFor(uwbPairKeyFor(id), rssi, uwbDist.freshUwbDistM(id)),
+                    aiText   = if (JudgeLog.aiShow) JudgeLog.aiText(id, System.currentTimeMillis()) else ""
                 )
             }
 

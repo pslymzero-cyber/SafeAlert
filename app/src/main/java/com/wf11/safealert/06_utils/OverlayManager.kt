@@ -158,7 +158,9 @@ object OverlayManager {
         val name: String,
         val rssi: Int,
         val danger: Boolean,
-        val distText: String = ""
+        val distText: String = "",
+        /** On-phone AI distance line ("약 2.6m · 위험"), empty unless the AI display setting is on. */
+        val aiText: String = ""
     )
 
     /**
@@ -679,6 +681,12 @@ object OverlayManager {
             holder.name.setTextColor(lvColor)
             val meas = if (item.distText.isNotEmpty()) item.distText else "${item.rssi}dBm"
             holder.meas.text = "${meas} · 탭하면 30초 확인"
+            if (item.aiText.isNotEmpty()) {
+                holder.ai.text = AiJudge.proxSpan(item.aiText)
+                holder.ai.visibility = View.VISIBLE
+            } else {
+                holder.ai.visibility = View.GONE
+            }
             // shape_overlay_row is an opaque plate; the danger/warning tint set here replaces its color (default SRC_IN).
             holder.itemView.backgroundTintList = ColorStateList.valueOf(
                 ContextCompat.getColor(ctx, if (item.danger) R.color.sa_tint_rose else R.color.sa_tint_amber)
@@ -698,6 +706,7 @@ object OverlayManager {
             val icon: TextView = view.findViewById(R.id.row_icon)
             val name: TextView = view.findViewById(R.id.row_name)
             val meas: TextView = view.findViewById(R.id.row_meas)
+            val ai: TextView = view.findViewById(R.id.row_ai)
         }
     }
 }
