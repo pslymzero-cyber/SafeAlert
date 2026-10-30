@@ -98,12 +98,21 @@ class LoneWorkerMonitor(
 
     private fun judge(e: LoneWorkerLogic.JudgeEvent) {
         when (e) {
-            is LoneWorkerLogic.JudgeEvent.Fall ->
+            is LoneWorkerLogic.JudgeEvent.Fall -> {
                 JudgeLog.fallTake(name, roleName, e.impT, e.take, e.zoneIn, e.charging, e.plugAgoMs, e.unplugAgoMs)
+                // No check window opened (shut | dropped): ask what the impact was now. A watch fall is asked after the window closes.
+                if (JudgeLog.on && e.take != "watch") JudgeQuestion.postAct(ctx, name, roleName, e.impT, e.take)
+            }
             is LoneWorkerLogic.JudgeEvent.ModeChange -> {
                 JudgeLog.mode(name, roleName, e.from.name, e.to.name, e.trig, e.why, e.sinceMs, e.impT)
-                // Wall clock: the answer receiver measures after_ms with it (this monitor's now() is elapsedRealtime)
-                e.impT?.let { if (JudgeLog.on && e.asksFall) JudgeQuestion.postFall(ctx, name, roleName, it, System.currentTimeMillis(), e.why) }
+                // postFall measures after_ms from the close (wall clock; this monitor's now() is elapsedRealtime), postAct from the impact wall time.
+                // A rescuer close keeps the 3-button question; every other close asks what the impact was.
+                e.impT?.let {
+                    if (JudgeLog.on && e.asksFall) {
+                        if (e.why == "rescuer") JudgeQuestion.postFall(ctx, name, roleName, it, System.currentTimeMillis(), e.why)
+                        else JudgeQuestion.postAct(ctx, name, roleName, it, e.why)
+                    }
+                }
             }
         }
     }

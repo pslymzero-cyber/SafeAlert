@@ -3,6 +3,7 @@ package com.wf11.safealert.service
 import com.wf11.safealert.ble.BleConstants
 import com.wf11.safealert.firebase.JudgeLog
 import com.wf11.safealert.service.LoneWorkerLogic.JudgeEvent
+import com.wf11.safealert.ui.JudgeQuestion
 import com.wf11.safealert.service.LoneWorkerLogic.Mode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -109,6 +110,11 @@ class JudgeLogTest {
             val (tk, tr) = out.single()
             assertEquals("fall", tk); assertEquals("truth", tr["k"]); assertEquals(6_000L, tr["imp_t"]); assertEquals("fall", tr["truth"])
             assertEquals("self", tr["by"]); assertEquals(4_000L, tr["after_ms"]); assertEquals("ack", tr["close_why"]); assertEquals("WF11-ME", tr["dev"])
+            assertFalse(tr.containsKey("act"))
+            JudgeLog.truth("ME", "WALKER", 6_000, "no", "self", 9_000, "cand", t = 51_000, act = "put_down")
+            val tr2 = out.last().second
+            assertEquals("put_down", tr2["act"]); assertEquals("no", tr2["truth"]); assertEquals("cand", tr2["close_why"])
+            out.clear()
 
             // Distance answer, DANGER-start values: markDanger returns four keys (uwb only when at most 1 s old) and emits nothing
             frame("JL3", "FORKLIFT", 60_000, -55)
@@ -260,5 +266,13 @@ class JudgeLogTest {
         assertEquals(45_000L, f.visible(47_000, true)!!.shownAt)
         assertEquals(40_000L, f.answer(50_000)!!.alertT)
         assertTrue(f.start("F", "F", 100_000, null))   // the same peer's next alert is asked again
+    }
+
+    @Test
+    fun act_answers_map_to_truth_and_close_after_five_minutes() {
+        assertEquals(listOf("walk", "run", "put_down", "drop", "charge", "fall", "unknown"), JudgeQuestion.ACTS.map { it.second })
+        assertEquals("fall", JudgeQuestion.truthOf("fall")); assertEquals("unknown", JudgeQuestion.truthOf("unknown"))
+        for (a in listOf("walk", "run", "put_down", "drop", "charge")) assertEquals("no", JudgeQuestion.truthOf(a))
+        assertFalse(JudgeQuestion.actExpired(0, 300_000)); assertTrue(JudgeQuestion.actExpired(0, 300_001))
     }
 }
