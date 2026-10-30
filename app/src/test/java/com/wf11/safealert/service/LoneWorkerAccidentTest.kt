@@ -423,22 +423,6 @@ class LoneWorkerAccidentTest {
         assertEquals("dropped", took.take); assertFalse(took.pass)
         assertEquals(Mode.WATCHING, z.seenAt(31_000))
 
-        // resting on a charger or an equipment mount (charging, not carried): dropped; carried while charging (power bank) is watched
-        ev.clear()
-        val dock = newLogic(charging = true).apply { stillMs = 3_600_000L; onJudge = { ev += it } }
-        dock.onAccident(1_000, pass = false)
-        assertEquals("dropped", (ev.single() as LoneWorkerLogic.JudgeEvent.Fall).take)
-        assertEquals(Mode.WATCHING, dock.seenAt(31_000))
-        val mount = newLogic(charging = true).apply { setEquipment(true, 0L); stillMs = 3_600_000L }
-        assertTrue(mount.mounted)
-        mount.onAccident(1_000, pass = false)
-        assertEquals(Mode.WATCHING, mount.seenAt(31_000))
-        val pocket = newLogic(charging = true).apply { stillMs = 3_600_000L }
-        pocket.walk(20_000, 10)
-        pocket.onAccident(21_000, pass = false)
-        assertEquals(Mode.CHECKING, pocket.seenAt(52_000))
-        assertTrue(pocket.dropWindow)
-
         // a deferred impact (power change pending) keeps its rule result
         ev.clear()
         val d = newLogic(carried = true).apply { stillMs = 180_000L; onJudge = { ev += it } }

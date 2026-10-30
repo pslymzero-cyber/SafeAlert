@@ -305,14 +305,13 @@ class MotionAnalyzer(
 
         // Decision point
         candidate = false
-        // If the pre-fall posture is unknown (right after service start), treat it as a posture change — missing a fall is worse
-        val deg = if (candPreValid && postN > 0) angleDeg(postX / postN, postY / postN, postZ / postN, candPreX, candPreY, candPreZ) else null
         if (postN == 0 || postActive >= POST_MAX_ACTIVE) {
-            // The IMPACT shape keeps the posture so the safe-zone fall criteria (zoneFall) still apply; the record keeps deg null as before
-            fallShape = FallShape(candFfMs, candPeakG, deg); eventMs = impactT; impactDue = true
+            fallShape = FallShape(candFfMs, candPeakG, null); eventMs = impactT; impactDue = true
             cand(null, if (postN == 0) "post_none" else "post_active")
             return false
         }
+        // If the pre-fall posture is unknown (right after service start), treat it as a posture change — missing a fall is worse
+        val deg = if (candPreValid) angleDeg(postX / postN, postY / postN, postZ / postN, candPreX, candPreY, candPreZ) else null
         if (deg != null && !(deg >= POSTURE_DEG)) { // A NaN angle is not a tip-over
             fallShape = FallShape(candFfMs, candPeakG, deg); eventMs = impactT; impactDue = true
             cand(deg, "posture")

@@ -133,7 +133,7 @@
 | 필드 | 뜻 |
 |---|---|
 | `imp_t` | `trigMs` |
-| `take` | `watch`(의심을 열었다) · `shut`(`fallShut`) · `dropped`(`fallDropped`, 1.2.25부터 넘어짐 아님 충격은 충전 중이면서 몸에 지니지 않은 폰 — 충전기 · 장비 거치 — 도) |
+| `take` | `watch`(의심을 열었다) · `shut`(`fallShut`) · `dropped`(`fallDropped`) |
 | `pass` | 규칙 결과: `true` 넘어짐 · `false` 넘어짐 아님 충격(1.2.25부터 이것도 `take` 를 가진다). 예전 기록에는 없다 |
 | `zone_in` · `charging` | 충격 때 세이프존 안 · 충전 중 |
 | `plug_ago_ms` · `unplug_ago_ms` | 마지막으로 꽂은 · 뽑은 뒤 지난 시간(없으면 뺌) |
