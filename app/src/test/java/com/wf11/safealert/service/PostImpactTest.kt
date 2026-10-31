@@ -68,6 +68,18 @@ class PostImpactTest {
         val (phone, _) = judge(10_000, trace(ffMs = 400) { LYING_STILL })
         assertEquals(listOf("phone@5000"), phone.map(::name))
         assertTrue(phone[0].ffMs >= 300L)
+        // a person falling after a phone-only drop still gets the quick alert: the new impact takes over (the dropped one is reported as phone)
+        val (afterDrop, _) = judge(12_500) { t ->
+            when {
+                t <= imp -> trace(ffMs = 400) { UPRIGHT_STILL }(t)
+                t < 6_000 -> UPRIGHT_STILL
+                t < 6_200 -> FREE_FALL_SAMPLE
+                t == 6_200L -> IMPACT_SAMPLE
+                else -> LYING_STILL
+            }
+        }
+        assertEquals(listOf("phone@3000", "post5@5000"), afterDrop.map(::name))
+        assertEquals(listOf(imp, 6_200L), afterDrop.map { it.impT })
         // a second impact while the judgment runs starts nothing: the first impact's judgment (its own posture base) goes on
         val (second, _) = judge(14_000) { t ->
             when {

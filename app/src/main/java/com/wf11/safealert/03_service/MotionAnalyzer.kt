@@ -34,7 +34,8 @@ import kotlin.math.sqrt
  * of stillness ("still10"); then every second 2 s of stillness ("still"), at 30 s "cap30". Alerts after a free fall of 300 ms
  * or more become "phone" (the phone alone fell). Values come from the simulation on field data (not settings). The result
  * decides when the accident window opens (LoneWorkerLogic.onPost); the FALL / IMPACT signals and candidates are unchanged.
- * Impacts that come while a judgment is still running do not start another one; the first impact's judgment goes on.
+ * Impacts that come while a judgment is still running do not start another one; the first impact's judgment goes on (except after a
+ * phone-only drop: the new impact takes over, and the dropped one is reported as "phone" without a result for the window).
  */
 class MotionAnalyzer(
     private val impactG: Double = IMPACT_G,
@@ -380,8 +381,10 @@ class MotionAnalyzer(
                 armedEnd = -1L
             } else if (mag > impactG * G) {
                 // The after-impact judgment follows an impact (also while a candidate waits). A running one is never replaced: it keeps
-                // the first impact's pre-fall posture and its 30 s limit; only an impact after it has ended starts a new one
-                if (trackImp < 0 && armedEnd != trackArmedEnd) {
+                // the first impact's pre-fall posture and its 30 s limit; only an impact after it has ended starts a new one. Exception:
+                // a phone-only drop (long free fall) gives way, so a person falling after it still gets the quick alert
+                if ((trackImp < 0 || trackFf >= PHONE_FF_MS) && armedEnd != trackArmedEnd) {
+                    if (trackImp >= 0) runCatching { onPost(Post(trackImp, "phone", t - trackImp, null, null, 0, trackFf, trackPeak)) }
                     trackArmedEnd = armedEnd
                     trackImp = t
                     trackFf = lowGMsBefore(t)
