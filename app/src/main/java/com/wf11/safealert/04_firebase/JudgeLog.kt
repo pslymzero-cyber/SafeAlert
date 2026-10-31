@@ -355,7 +355,7 @@ object JudgeLog {
 
     /**
      * F5 — the after-impact judgment of one impact, once when it ends (MotionAnalyzer.Post): out = post5 | post10 | still10 | still |
-     * cap30 | phone30 (alerts) | walk | lift | screen (someone has the phone, no window) | mounted (a mounted phone keeps the 30 s rule).
+     * cap30 | phone30 | walkstill (alerts) | walk | lift | screen (someone has the phone, no window) | mounted (a mounted phone keeps the 30 s rule).
      * sup = true when the end was quiet while a later impact waited (its own post record follows). atMs = judged moment after the impact; tilt = posture
      * change (degrees) over the last 1 s, stdMg = |a| standard deviation (mg) over the last 2 s, run = longest run of walking-step gaps.
      */

@@ -223,7 +223,7 @@ class LoneWorkerStillCountTest {
         // the fall candidate: one countdown call (the screen and the buzz share it), redrawn on a candidate change before the
         // 1 s throttle, same time conversion as the fall passed to onAccident (same buzz key)
         assertEquals(1, Regex("""logic\.countdown\(""").findAll(monitor).count())
-        // 1.2.28: the count goes on after the 12 s decision while the after-impact judgment runs (pendingPostAt / pendingPostShape)
+        // The count goes on after the 12 s decision while the after-impact judgment runs (pendingPostAt / pendingPostShape)
         assertTrue(monitor.contains("logic.countdown(t, sensors.pendingImpactAt, sensors.pendingShape, sensors.pendingPostAt, sensors.pendingPostShape)"))
         val sensorEvent = sourceBlock(monitor, "private fun onSensorEvent(")
         assertTrue(sensorEvent.indexOf("sensors.pendingImpactAt ?: sensors.pendingPostAt") in 0 until sensorEvent.indexOf("TICK_MIN_MS"))

@@ -72,6 +72,7 @@ class LoneWorkerSensors(
     private val accY = FloatArray(ACC_RING)
     private val accZ = FloatArray(ACC_RING)
     private var accN = 0L
+    private var accRecording = false
 
     private class AccSlice(val acc: String, val t0: Long, val dt: Double?)
 
@@ -216,8 +217,10 @@ class LoneWorkerSensors(
     private fun registerScreen() {
         if (screenRegistered) return
         screenRegistered = runCatching {
+            // EXPORTED on purpose: ACTION_USER_PRESENT is a protected system broadcast (no other app can send it), and on API 26-32
+            // NOT_EXPORTED adds an app-only permission that SystemUI's broadcast does not hold, so it would never arrive
             ContextCompat.registerReceiver(ctx, screenReceiver, IntentFilter(Intent.ACTION_USER_PRESENT), null, handler,
-                ContextCompat.RECEIVER_NOT_EXPORTED)
+                ContextCompat.RECEIVER_EXPORTED)
         }.isSuccess
     }
 
@@ -369,7 +372,10 @@ class LoneWorkerSensors(
                 stall.onEvent(t)
                 accelSkew = skewFor(rawMs, t, accelSkew)
                 val v = event.values
-                if (JudgeLog.on && JudgeLog.accOn) { // Raw ring for the judge-data record (before add: the decision sample is already in)
+                val recording = JudgeLog.on && JudgeLog.accOn
+                if (recording && !accRecording) accN = 0 // recording just turned on: the ring must not hold older samples (a gap would pass for a stop)
+                accRecording = recording
+                if (recording) { // Raw ring for the judge-data record (before add: the decision sample is already in)
                     val j = (accN % ACC_RING).toInt()
                     accT[j] = rawMs; accX[j] = v[0]; accY[j] = v[1]; accZ[j] = v[2]
                     accN++

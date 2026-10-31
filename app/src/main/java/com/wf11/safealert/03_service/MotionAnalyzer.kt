@@ -28,7 +28,7 @@ import kotlin.math.sqrt
  * A fall candidate waiting for the 12 s decision can be read (pendingImpactMs, pendingShape) for the on-screen count only;
  * the judgment uses the FALL signal alone.
  *
- * After-impact judgment (onPost, 1.2.28): from every impact right after free fall (candidate or not) it follows the phone
+ * After-impact judgment (onPost): from every impact right after free fall (candidate or not) it follows the phone
  * for up to 30 s. Walking (acceleration peaks 0.3-1.0 s apart, 4 in a row) ends it quietly ("walk"); no walking and a posture
  * 30 degrees or more off the pre-fall one with 3-5 s of stillness reports "post5"; at 10 s a changed posture ("post10") or 8-10 s
  * of stillness ("still10"); then every second 2 s of stillness ("still"), at 30 s "cap30". After a free fall of 300 ms or more
@@ -286,6 +286,15 @@ class MotionAnalyzer(
     private var trackImpactEnd = 0L
     private var trackNext = POST_T1_MS
     private var trackArmedEnd = -1L // free fall (armedEnd) the running or last track started from; one track per free fall
+    // After a walk end (short free fall, nothing waiting) the same impact is watched on until walkEnd: walking, then lying still
+    // in a changed posture reports "walkstill" (a second Post for it). A new impact ends the watch.
+    private var watchImp = -1L
+    private var watchFf = 0L
+    private var watchPeak = 0.0
+    private var watchNext = 0L
+    private var watchEnd = 0L
+    /** The impact the helpers (tilt, std, walk) measure from: the running judgment's, else the watched one. */
+    private val refImp: Long get() = if (trackImp >= 0) trackImp else watchImp
     // The earliest impact that came while a (short free fall) judgment was running; judged when that one ends without an alert
     private var deferImp = -1L
     private var deferFf = 0L
@@ -299,7 +308,7 @@ class MotionAnalyzer(
         candidate = false; postN = 0; postX = 0.0; postY = 0.0; postZ = 0.0; postActive = 0
         lowRuns.clear(); impactDue = false
         lastActiveMs = 0L; quietIdx = -1L
-        ring.clear(); trackImp = -1L; trackArmedEnd = -1L; deferImp = -1L; stopTaken = 0L
+        ring.clear(); trackImp = -1L; watchImp = -1L; trackArmedEnd = -1L; deferImp = -1L; stopTaken = 0L
     }
 
     fun add(tMs: Long, x: Float, y: Float, z: Float, masked: Boolean = false): Signal {
@@ -316,7 +325,7 @@ class MotionAnalyzer(
         }
         if (!masked) { n++; sumM += mag; sumM2 += mag * mag; sx += ax; sy += ay; sz += az }
 
-        ring.dropBefore((if (trackImp >= 0) trackImp else tMs) - POST_BASE_FROM_MS)
+        ring.dropBefore((if (refImp >= 0) refImp else tMs) - POST_BASE_FROM_MS)
         ring.push(tMs, ax / G, ay / G, az / G, mag / G)
 
         val fell = detectFall(tMs, ax, ay, az, mag)
@@ -325,6 +334,7 @@ class MotionAnalyzer(
             if (tMs <= trackImpactEnd) trackPeak = maxOf(trackPeak, mag / G)
             checkPost(tMs)
         }
+        if (watchImp >= 0) checkWatch(tMs)
         if (fell) {
             eventMs = impactT
             return Signal.FALL
@@ -403,6 +413,7 @@ class MotionAnalyzer(
                 if (armedEnd != trackArmedEnd) {
                     if (trackImp < 0 || trackFf >= PHONE_FF_MS) {
                         trackArmedEnd = armedEnd
+                        watchImp = -1L
                         trackImp = t
                         trackFf = lowGMsBefore(t)
                         trackImpactEnd = armedEnd + IMPACT_WINDOW_MS
@@ -494,6 +505,7 @@ class MotionAnalyzer(
         val std = stdG(d - POST_STILL_SPAN_MS, d)
         val post = Post(trackImp, out, d, tiltDeg(d - POST_TILT_SPAN_MS, d)?.let { Math.round(it * 10) / 10.0 },
             std?.let { Math.round(it * 1000).toInt() }, run, trackFf, trackPeak, sup)
+        val ended = trackImp
         trackImp = -1L
         runCatching { onPost(post) }
         if (sup) {
@@ -502,8 +514,35 @@ class MotionAnalyzer(
             trackImpactEnd = deferImpactEnd
             trackPeak = deferPeak
             trackNext = POST_T1_MS
+        } else if (out == "walk" && trackFf < PHONE_FF_MS) {
+            watchImp = ended
+            watchFf = trackFf
+            watchPeak = trackPeak
+            watchNext = d + POST_STILL_SPAN_MS
+            watchEnd = d + POST_T3_MS
         }
         deferImp = -1L
+    }
+
+    /**
+     * Checks of the watched impact after a walk end (every second from walk + 2 s to walk + 30 s): 2 s of stillness (|a| std 0.02 G
+     * or less) in a posture 30 degrees or more off the pre-fall one - got up and walked, then lay down - reports "walkstill".
+     */
+    private fun checkWatch(tMs: Long) {
+        while (watchImp >= 0 && tMs >= watchImp + watchNext + POST_DELAY_MS) {
+            val e = watchNext
+            val std = stdG(e - POST_STILL_SPAN_MS, e)
+            val tilt = tiltDeg(e - POST_TILT_SPAN_MS, e)
+            if (std != null && std <= POST_STILL_STD_G && tilt != null && tilt >= POST_TILT_DEG) {
+                val post = Post(watchImp, "walkstill", e, Math.round(tilt * 10) / 10.0, Math.round(std * 1000).toInt(), walkRun(e),
+                    watchFf, watchPeak)
+                watchImp = -1L
+                runCatching { onPost(post) }
+                return
+            }
+            watchNext += POST_STEP_MS
+            if (watchNext > watchEnd) watchImp = -1L
+        }
     }
 
     /**
@@ -573,8 +612,8 @@ class MotionAnalyzer(
 
     /** Angle (degrees) between the pre-fall posture and the mean posture of impact+lo .. impact+hi; null if either has no samples. */
     private fun tiltDeg(lo: Long, hi: Long): Double? {
-        val b0 = idxFrom(trackImp - POST_BASE_FROM_MS); val b1 = idxFrom(trackImp - POST_BASE_TO_MS)
-        val v0 = idxFrom(trackImp + lo); val v1 = idxFrom(trackImp + hi)
+        val b0 = idxFrom(refImp - POST_BASE_FROM_MS); val b1 = idxFrom(refImp - POST_BASE_TO_MS)
+        val v0 = idxFrom(refImp + lo); val v1 = idxFrom(refImp + hi)
         if (b1 <= b0 || v1 <= v0) return null
         var bx = 0.0; var by = 0.0; var bz = 0.0; var vx = 0.0; var vy = 0.0; var vz = 0.0
         for (i in b0 until b1) { bx += ring.x(i); by += ring.y(i); bz += ring.z(i) }
@@ -583,7 +622,7 @@ class MotionAnalyzer(
     }
 
     /** Population standard deviation (g) of |a| over impact+lo .. impact+hi; null under 2 samples. */
-    private fun stdG(lo: Long, hi: Long): Double? = stdAbs(trackImp + lo, trackImp + hi)
+    private fun stdG(lo: Long, hi: Long): Double? = stdAbs(refImp + lo, refImp + hi)
 
     /** Population standard deviation (g) of |a| over sensor time from .. to; null under 2 samples. */
     private fun stdAbs(from: Long, to: Long): Double? {
@@ -607,11 +646,15 @@ class MotionAnalyzer(
     private fun walkRun(hi: Long): Int {
         val n = ring.size
         if (n < 3) return 0
-        val i0 = idxFrom(trackImp + POST_WALK_FROM_MS); val i1 = idxFrom(trackImp + hi)
+        val i0 = idxFrom(refImp + POST_WALK_FROM_MS); val i1 = idxFrom(refImp + hi)
         if (i1 - i0 < 3) return 0
         val avgDt = (ring.t(n - 1) - ring.t(0)).toDouble() / (n - 1)
         val h = maxOf(1, (POST_PEAK_HALF_MS / avgDt).toInt())
-        val sm = DoubleArray(n) { i ->
+        // smoothed values only where the peaks and their lows are looked at: i0-h .. i1+h
+        val lo = maxOf(0, i0 - h - POST_SMOOTH)
+        val hiEnd = minOf(n, i1 + h + POST_SMOOTH)
+        val sm = DoubleArray(hiEnd - lo) { k ->
+            val i = lo + k
             var s = 0.0
             for (j in i - POST_SMOOTH / 2..i + POST_SMOOTH / 2) if (j in 0 until n) s += ring.m(j)
             s / POST_SMOOTH
@@ -620,10 +663,11 @@ class MotionAnalyzer(
         var run = 0
         var best = 0
         for (i in i0 + 1 until i1 - 1) {
-            if (!(sm[i] > POST_PEAK_G && sm[i] >= sm[i - 1] && sm[i] >= sm[i + 1])) continue
+            val v = sm[i - lo]
+            if (!(v > POST_PEAK_G && v >= sm[i - 1 - lo] && v >= sm[i + 1 - lo])) continue
             var low = Double.MAX_VALUE
-            for (j in maxOf(0, i - h) until minOf(n, i + h)) low = minOf(low, sm[j])
-            if (!(sm[i] - low > POST_RISE_G)) continue
+            for (j in maxOf(0, i - h) until minOf(n, i + h)) low = minOf(low, sm[j - lo])
+            if (!(v - low > POST_RISE_G)) continue
             val t = ring.t(i)
             if (prevT != Long.MIN_VALUE) {
                 run = if (t - prevT in POST_GAP_MIN_MS..POST_GAP_MAX_MS) run + 1 else 0

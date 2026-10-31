@@ -372,7 +372,7 @@ class LoneWorkerAccidentTest {
         assertEquals(LoneWorkerLogic.CountdownKind.SOS, l.countdown(96_000, 95_000, s)!!.kind)
         assertFalse(l.previewFall(96_000, s))
 
-        // 1.2.28: not mounted, the count goes on after the 12 s decision until the after-impact judgment ends (30 s from the impact
+        // Not mounted, the count goes on after the 12 s decision until the after-impact judgment ends (30 s from the impact
         // at the latest); walking hides it, an alert continues it as the window's count with the same buzz key; a mount has no such count
         val any = MotionAnalyzer.FallShape.ANY
         val post = fallRuleOnly()

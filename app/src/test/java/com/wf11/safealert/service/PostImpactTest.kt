@@ -11,7 +11,7 @@ import kotlin.math.PI
 import kotlin.math.sin
 
 /**
- * The after-impact judgment (1.2.28): the analyzer's result table on synthetic 50 Hz traces (impact at 3.2 s after a free
+ * The after-impact judgment: the analyzer's result table on synthetic 50 Hz traces (impact at 3.2 s after a free
  * fall), and the whole line analyzer -> LoneWorkerLogic -> accident window wired in LoneWorkerSensors' order.
  */
 class PostImpactTest {
@@ -62,6 +62,16 @@ class PostImpactTest {
         val (walk, _) = judge(10_000, trace { walking(it) })
         assertEquals(listOf("walk@5000"), walk.map(::name))
         assertTrue(walk[0].run >= 3)
+        // walking, then lying down still (here the walk is seen at 5 s, the watch goes on): a second result for the same impact
+        val (down, _) = judge(14_000) { t ->
+            when {
+                t <= imp -> trace { UPRIGHT_STILL }(t)
+                t < 8_200 -> walking(t)
+                else -> LYING_STILL
+            }
+        }
+        assertEquals(listOf("walk@5000", "walkstill@7000"), down.map(::name))
+        assertEquals(listOf(imp, imp), down.map { it.impT })
         // upright and still without walking: no posture change, still at 10 s
         assertEquals(listOf("still10@10000"), judge(14_000, trace { UPRIGHT_STILL }).first.map(::name))
         // upright, moving about without steps: 30 s at the latest
@@ -189,12 +199,24 @@ class PostImpactTest {
         assertFalse(a.logic.dropWindow)
         assertTrue(a.logic.modeSinceMs in 8_200L..10_200L)
         // the 12 s decision (FALL, 15.2 s) lands inside the window of the same impact: shut, and it does not ask
-        assertEquals(listOf("shut"), a.falls.map { it.take })
+        assertEquals(listOf("watch"), a.falls.map { it.take }) // the impact that opened the window is recorded as the watch it is
         assertFalse(a.falls.single().asks)
         assertEquals(1, a.checks.size)
         assertTrue(a.logic.ackWorking(a.now))
         assertEquals(1, a.events.filterIsInstance<JudgeEvent.ModeChange>().count { it.asksFall })
         assertEquals(imp, a.events.filterIsInstance<JudgeEvent.ModeChange>().single { it.asksFall }.impT)
+
+        // answered '괜찮아요' before its 12 s decision: that decision starts no watch and asks nothing again
+        val ok = Rig(fallRuleOnly())
+        ok.seconds(0, 12_000, lying)
+        assertEquals(Mode.CHECKING, ok.logic.mode)
+        assertTrue(ok.logic.ackWorking(ok.now))
+        ok.seconds(12_000, 70_000, lying)
+        assertEquals(Mode.WATCHING, ok.logic.mode)
+        assertEquals(1, ok.checks.size)
+        assertEquals(listOf("watch"), ok.falls.map { it.take })
+        assertFalse(ok.falls.single().asks)
+        assertEquals(1, ok.events.filterIsInstance<JudgeEvent.ModeChange>().count { it.asksFall })
 
         // everything in one callback: the window opens at the end of that callback, the FALL took the watch first
         val b = Rig(fallRuleOnly())
@@ -248,6 +270,20 @@ class PostImpactTest {
         val stayed = fallRuleOnly(zoneInside = true).apply { onPost(6_000, "post5", 11_000, weak) }
         assertEquals(Mode.WATCHING, stayed.seenAt(19_000))
         assertEquals(Mode.WATCHING, stayed.seenAt(60_000))
+        // one verdict per impact: the 12 s decision's (counts: the held alert goes on, at 12 s after the impact at the earliest;
+        // ignored: it is dropped, and a later alert of the same impact follows it even with a shape that would pass)
+        val strong = MotionAnalyzer.FallShape(250, 3.0, 90.0)
+        val counts = fallRuleOnly(zoneInside = true).apply { onPost(6_000, "post5", 11_000, weak); onAccident(6_000, strong, byPost = true) }
+        assertEquals(Mode.WATCHING, counts.seenAt(17_000))
+        assertEquals(Mode.CHECKING, counts.seenAt(19_000))
+        val ignored = fallRuleOnly(zoneInside = true).apply { onPost(6_000, "post5", 11_000, weak); onAccident(6_000, weak, byPost = true) }
+        assertEquals(Mode.WATCHING, ignored.seenAt(60_000))
+        ignored.onPost(6_000, "phone30", 36_000, strong)
+        assertEquals(Mode.WATCHING, ignored.seenAt(70_000))
+        // walking ended it quietly, then lying still in a changed posture 'walkstill' comes for the same impact: a window at that time
+        val later = fallRuleOnly().apply { onPost(6_000, "walk", 11_000, shape); onPost(6_000, "walkstill", 14_000, shape) }
+        assertEquals(Mode.WATCHING, later.seenAt(13_000))
+        assertEquals(Mode.CHECKING, later.seenAt(15_000))
     }
 
     @Test fun mounted_phone_keeps_the_30_second_rule() {
