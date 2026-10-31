@@ -219,3 +219,20 @@ GitHub Actions '판정 데이터 내보내기'(`.github/workflows/judge-export.y
 - 그날 기록이 다음 날 새벽 3시 반(매일 내보내는 때)보다 늦게 올라오면(폰이 오프라인이었다가 나중에 보낸 것) 파일에서 빠질 수 있다.
 - 키를 바꾸면 다음 실행이 지난번 파일을 못 풀어 처음부터 다시 읽는다(이때 Firebase 에서 이미 지운 날은 빠진다). 회사 PC 의 키도 같이 바꾼다.
 - 회사 보안 장비가 HTTPS 를 검사하는 PC 에서도 받도록 파이썬 3.13+ 의 인증서 엄격 검사만 끈다(인증서 체인 · 주소 검사는 그대로). 그래도 막히면 `Invoke-WebRequest <주소> -OutFile judge.json.gz.enc -UseBasicParsing` 로 받고 `python judge_ml.py fetch --url file:///C:/…/judge.json.gz.enc` 로 푼다.
+
+## 딥러닝 (deep_ml.py)
+
+넘어짐은 원본 가속도 파형(충격 3초 전 ~ 12초 뒤)을 보는 작은 1차원 CNN, 거리는 블루투스 값 + 직전 10초를 보는 작은 신경망으로, 지금 규칙(과 거리는 app_model 의 Ridge · MLP)과 **같은 기록에서** 비교하는 참고용 보고서를 만든다. 읽기 · 정답은 app_model 을 그대로 쓰므로 `--marks` 표시 파일도 같다.
+
+설치(CPU 판, 한 번만): `python -m pip install torch --index-url https://download.pytorch.org/whl/cpu` — 회사 망 SSL 오류면 `--use-feature=truststore` 를 붙여 다시.
+
+```
+python deep_ml.py selftest
+python deep_ml.py fall judge.json --fall-dev X1234567 --marks marks.txt --out out_deep
+python deep_ml.py prox judge.json --days 2026-10-30,2026-10-31 --out out_deep
+```
+
+- `--fall-dev` 는 넘어짐 실험 폰 ID 끝 부분(쉼표로 여럿). 없으면 모든 기기의 후보. `--epochs` · `--seed` 로 학습 횟수 · 재현 값을 바꾼다.
+- 결과: `out_deep/fall_report.md`(넘어짐을 넘어짐으로 · 아님을 넘어짐으로, 기준 0.5 와 "넘어짐 모두 잡는 기준", 아님은 표시 파일의 `# 설명`별), `prox_report.md`(역할 조합별 맞힘 · 위험을 위험으로 · 안전을 위험으로), 학습한 모델 `fall_cnn.pt` · `prox_net.pt`.
+- 점수는 학습에 안 쓴 기록에서만 낸다 — 넘어짐은 하나씩 빼는 교차검증, 거리는 5분 단위 시간 묶음 교차검증. **넘어짐이 십여 건뿐이라 참고용**이다.
+- 앱에 탑재하지 않는다: 앱의 실행 부분(AiJudge)은 dense 층만 읽어서, 파형 CNN 은 앱 쪽 실행 부분을 새로 만들어야 하기 때문이다. 보고서로 방향이 맞는지만 본다.
