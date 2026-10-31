@@ -68,8 +68,8 @@ class PostImpactTest {
         val (phone, _) = judge(10_000, trace(ffMs = 400) { LYING_STILL })
         assertEquals(listOf("phone@5000"), phone.map(::name))
         assertTrue(phone[0].ffMs >= 300L)
-        // a second impact replaces the running judgment (only one result, for the second impact)
-        val (second, _) = judge(13_000) { t ->
+        // a second impact while the judgment runs starts nothing: the first impact's judgment (its own posture base) goes on
+        val (second, _) = judge(14_000) { t ->
             when {
                 t <= imp -> trace { UPRIGHT_STILL }(t)
                 t < 6_000 -> UPRIGHT_STILL
@@ -78,8 +78,20 @@ class PostImpactTest {
                 else -> LYING_STILL
             }
         }
-        assertEquals(listOf("post5@5000"), second.map(::name))
-        assertEquals(6_200L, second[0].impT)
+        assertEquals(listOf("post10@10000"), second.map(::name)) // the 6.2 s spike is inside its 3-5 s window, so 10 s by posture
+        assertEquals(imp, second[0].impT)
+        // an impact after the first judgment has ended starts a new one (posture base = the lying posture before it)
+        val (later, _) = judge(20_000) { t ->
+            when {
+                t <= imp -> trace { UPRIGHT_STILL }(t)
+                t < 8_800 -> LYING_STILL
+                t < 9_000 -> FREE_FALL_SAMPLE
+                t == 9_000L -> IMPACT_SAMPLE
+                else -> LYING_STILL
+            }
+        }
+        assertEquals(listOf("post5@5000", "still10@10000"), later.map(::name))
+        assertEquals(listOf(imp, 9_000L), later.map { it.impT })
     }
 
     /** The analyzer and the logic wired like LoneWorkerSensors (no time conversion); callbacks end with sensorEventEnd and a due tick. */
