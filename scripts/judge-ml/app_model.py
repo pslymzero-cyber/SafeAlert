@@ -216,8 +216,12 @@ def prox_rows(df, inputs=None):
     return (p,) + prox_matrix(p, inputs or PROX_IN)
 
 
+CAND_LAG_MS = 12_000   # the candidate record is written when the 12 s decision is made
+
+
 def read_marks(path):
-    """Time-window fall marks (--marks), compared with the candidate record's wall-clock `t`: one line '<device id> <YYYY-MM-DD> <HH:MM>-<HH:MM> <넘어짐|아님>' (Korea time, the end
+    """Time-window fall marks (--marks), compared with the impact time = the candidate record's wall-clock `t` minus 12 s (the record is
+    written when the 12 s decision is made, so `t` itself can fall in the next minute): one line '<device id> <YYYY-MM-DD> <HH:MM>-<HH:MM> <넘어짐|아님>' (Korea time, the end
     minute included; fall / no also work; '#' starts a comment). Returns [(device id, start ms, end ms, label)]; a bad line is
     reported and skipped."""
     marks = []
@@ -253,7 +257,7 @@ def fall_rows(df, marks=None):
     # One trial can leave several candidates (the fall, then getting up / picking the phone up): in an experiment
     # session (or a marked window) only the first candidate of each 15 s cluster on a phone carries the label
     c["imp_t"] = pd.to_numeric(c["imp_t"], errors="coerce")   # the judge time axis (not a wall clock): clustering and answer key
-    c["t"] = pd.to_numeric(c["t"], errors="coerce")           # wall clock of the record (about 10 s after the impact): marks
+    c["t"] = pd.to_numeric(c["t"], errors="coerce") - CAND_LAG_MS   # wall clock of the record is written 12 s after the impact: marks compare the impact time
     c = c.sort_values(["dev", "imp_t"])
     gap = c.groupby("dev")["imp_t"].diff()
     first = gap.isna() | (gap > 15_000)
@@ -730,7 +734,7 @@ def fake_export(rng):
     # boot), t the wall clock 12 s later; m0 / m1 5 s apart, m2 has a question answer
     m_fall = {"ff_ms": 300, "peak_g": 3.8, "deg": 70, "post_act": 0, "pass": True}
     m_no = {"ff_ms": 50, "peak_g": 2.8, "deg": 10, "post_act": 5, "pass": False}
-    for name, imp, wall, vals in (("m0", 266_000_000, 1_761_800_410_000, m_fall), ("m1", 266_005_000, 1_761_800_415_000, m_fall),
+    for name, imp, wall, vals in (("m0", 266_000_000, 1_761_800_453_000, m_fall), ("m1", 266_005_000, 1_761_800_458_000, m_fall),
                                   ("m2", 266_200_000, 1_761_800_610_000, m_no), ("m3", 266_300_000, 1_761_800_710_000, m_no)):
         fall[name] = {"v": 1, "k": "cand", "dev": "WF11-X1234567", "uid": "u", "imp_g": 2.5, "post_n": 10, "pre_ok": True,
                       "t": wall + 12_000, "imp_t": imp, **vals}
@@ -757,7 +761,8 @@ def selftest():
         assert {f.name for f in files} == {"prox.json", "fall.json"}, files
         cov = shown.getvalue()
         assert "지게차 낀 짝: 전체" in cov and "보행자끼리: 전체" in cov and "sig 정답: 자기 UWB 5건 · 묶음 78건" in cov, cov
-        # Marks: lines 5-8 are bad and skipped, lines 1-4 are fine; two candidates get a mark label (m1 is inside m0's 15 s)
+        # Marks: lines 5-8 are bad and skipped, lines 1-4 are fine; two candidates get a mark label (m1 is inside m0's 15 s).
+        # m0 / m1 are impacts at 14:00:53 / 14:00:58 whose records (12 s later) fall in 14:01: the minute is that of the impact
         assert all((f"표시 파일 {n}번째 줄을 건너뜁니다" in cov) == (n >= 5) for n in range(1, 9)), cov
         assert "시간대 표시: 후보 2건 (넘어짐 1 · 아님 1)" in cov, cov
         with contextlib.redirect_stdout(io.StringIO()):
