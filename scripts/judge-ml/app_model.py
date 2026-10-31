@@ -1,13 +1,14 @@
 """Train the two small on-device models the SafeAlert app ships in app/src/main/assets/ai/.
 
-    python app_model.py train <export.json>   judge records -> assets/ai/prox.json, fall.json + report
+    python app_model.py train <export.json> [--marks <file>]   judge records -> assets/ai/prox.json, fall.json + report
     python app_model.py prior                 placeholder models (path-loss prior, impact prior)
     python app_model.py selftest              synthetic data end to end
 
-prox: BLE values of one peer (latest frame + last 10 s) + both roles + this phone's model -> log10(distance m),
+prox: BLE values of one peer (latest frame + last 10 s) + this phone's model -> log10(distance m),
       labelled by the UWB distance in `uwb` records (judge and measure) and, for `sig` rows of a phone without UWB
       (session test:sweep:<place>:<bundle>), by the UWB distance a phone of the other bundle measured within 1 s. fall: impact candidate summary -> fall probability, labelled by the
-      experiment session (test:fall / test:no) or the fall question answer.
+      experiment session (test:fall / test:no), a time-window marks file (--marks, first candidate of each 15 s cluster) or the
+      fall question answer — in that order.
 The model JSON format and the inputs must match AiJudge.kt (SPEC_ai.md sections 1-2): standardize with
 mean/std (std 0 -> 1, missing -> fill), then dense layers h = act(W h + b), W as [out][in].
 """
@@ -33,8 +34,8 @@ import judge_ml as jm  # noqa: E402  (find_judge / flatten — the same export r
 HERE = Path(__file__).resolve().parent
 ASSETS = HERE.parent.parent / "app" / "src" / "main" / "assets" / "ai"
 PROX_IN = ["rssi", "med", "pre", "kf", "ema", "avg1s", "kf_vel",
-           "seq_mean", "seq_std", "seq_min", "seq_max", "seq_slope", "seq_vel",
-           "me_epj", "me_fk", "peer_epj", "peer_fk"]   # + "mdl:<model>" columns (AiJudge.proxFeatures: same names)
+           "seq_mean", "seq_std", "seq_min", "seq_max", "seq_slope", "seq_vel"]
+# + "mdl:<model>" columns (AiJudge.proxFeatures: same names)
 FALL_IN = ["ff_ms", "peak_g", "imp_g", "deg", "post_n", "post_act", "pre_ok"]
 CLAMP = (0.3, 30.0)
 FRESH_MS = 2000          # rows whose BLE frame is older than this are not the same moment as the UWB distance
@@ -95,15 +96,13 @@ def seq_stats(seq, ema, kf_vel):
 
 
 def prox_f(r):
-    """Named inputs of one row — the same names and values as AiJudge.proxFeatures (a cart is an EPJ, a walker has both
-    role flags 0). The phone model column "mdl:<model>" exists only when the row has one."""
+    """Named inputs of one row — the same names and values as AiJudge.proxFeatures. The phone model column
+    "mdl:<model>" exists only when the row has one. Roles are not inputs: every role advertises at the same power,
+    so the role only picks the warning / danger metres (truth levels, pair tables)."""
     base = [jm.fnum(r.get(c)) for c in ("rssi", "med", "pre", "kf", "ema", "avg1s", "kf_vel")]
     base = [np.nan if b is None else b for b in base]
     vals = base + seq_stats(r.get("seq"), base[4], 0.0 if np.isnan(base[6]) else base[6])
     f = dict(zip(PROX_IN, vals))
-    role, peer = str(r.get("role")), str(r.get("peer_role"))
-    f.update(me_epj=float(role == "EPJ"), me_fk=float(role == "FORKLIFT"),
-             peer_epj=float(peer == "EPJ"), peer_fk=float(peer == "FORKLIFT"))
     mdl = r.get("mdl")
     if isinstance(mdl, str) and mdl:
         f["mdl:" + mdl] = 1.0
@@ -217,19 +216,62 @@ def prox_rows(df, inputs=None):
     return (p,) + prox_matrix(p, inputs or PROX_IN)
 
 
-def fall_rows(df):
+def read_marks(path):
+    """Time-window fall marks (--marks), compared with the candidate record's wall-clock `t`: one line '<device id> <YYYY-MM-DD> <HH:MM>-<HH:MM> <넘어짐|아님>' (Korea time, the end
+    minute included; fall / no also work; '#' starts a comment). Returns [(device id, start ms, end ms, label)]; a bad line is
+    reported and skipped."""
+    marks = []
+    for n, raw in enumerate(Path(path).read_text(encoding="utf-8-sig").splitlines(), 1):   # utf-8-sig: Notepad's BOM
+        parts = raw.split("#", 1)[0].split()
+        if not parts:
+            continue
+        try:
+            if len(parts) != 4:
+                raise ValueError("칸이 4개가 아닙니다")
+            win = parts[2].split("-")
+            if len(win) != 2:
+                raise ValueError("시간대 형식이 아닙니다")
+            try:
+                a, b = (pd.Timestamp(datetime.strptime(f"{parts[1]} {w}", "%Y-%m-%d %H:%M")) for w in win)
+            except ValueError:
+                raise ValueError("날짜나 시각을 읽을 수 없습니다")
+            lab = {"넘어짐": 1.0, "fall": 1.0, "아님": 0.0, "no": 0.0}.get(parts[3])
+            if lab is None:
+                raise ValueError("정답이 넘어짐 · 아님이 아닙니다")
+            if b < a:
+                raise ValueError("끝이 시작보다 앞입니다")
+        except ValueError as e:
+            print(f"표시 파일 {n}번째 줄을 건너뜁니다: {e}")
+            continue
+        ms = lambda t: (t - jm.KST).value // 1_000_000
+        marks.append((parts[0], ms(a), ms(b) + 59_999, lab))
+    return marks
+
+
+def fall_rows(df, marks=None):
     c = df[df["k"] == "cand"].copy()
     # One trial can leave several candidates (the fall, then getting up / picking the phone up): in an experiment
-    # session only the first candidate of each 15 s cluster on a phone carries the session label
-    c["imp_t"] = pd.to_numeric(c["imp_t"], errors="coerce")
+    # session (or a marked window) only the first candidate of each 15 s cluster on a phone carries the label
+    c["imp_t"] = pd.to_numeric(c["imp_t"], errors="coerce")   # the judge time axis (not a wall clock): clustering and answer key
+    c["t"] = pd.to_numeric(c["t"], errors="coerce")           # wall clock of the record (about 10 s after the impact): marks
     c = c.sort_values(["dev", "imp_t"])
     gap = c.groupby("dev")["imp_t"].diff()
     first = gap.isna() | (gap > 15_000)
-    c = c[first | ~c["sess"].astype(str).str.startswith("test:")]
+    mk = pd.Series(np.nan, index=c.index)   # label from the marks file; the first line that covers a candidate wins
+    if marks:
+        dev = c["dev"].astype(str)
+        for who, a, b, lab in read_marks(marks):
+            mk[mk.isna() & dev.str.endswith(who) & c["t"].between(a, b)] = lab
+    c = c[first | ~(c["sess"].astype(str).str.startswith("test:") | mk.notna())]
+    mk = mk[c.index]
     sess = c["sess"].astype(str)
     lab = pd.Series(np.nan, index=c.index)
     lab[sess.str.startswith("test:fall")] = 1.0
     lab[sess.str.startswith("test:no")] = 0.0
+    if marks:
+        from_marks = lab.isna() & mk.notna()
+        print(f"시간대 표시: 후보 {int(from_marks.sum())}건 (넘어짐 {int((mk[from_marks] == 1).sum())} · 아님 {int((mk[from_marks] == 0).sum())})")
+    lab = lab.fillna(mk)   # session > marks > answer
     tr = df[(df["k"] == "truth") & df["imp_t"].notna()][["dev", "imp_t", "truth"]].dropna()
     if len(tr) and len(c):
         keyed = {(str(d), str(i)): t for d, i, t in tr.itertuples(index=False)}
@@ -268,14 +310,14 @@ def save(m, out):
 
 
 def prior_models():
-    w = [0.0] * len(PROX_IN)   # the role / model inputs start at weight 0
+    w = [0.0] * len(PROX_IN)   # every input but ema starts at weight 0
     w[PROX_IN.index("ema")] = round(-1.0 / (10 * PRIOR_N), 7)
     prox = {"v": 1, "kind": "prox", "made": "prior-20261031", "note": "prior: path-loss A=-59 n=2.2 (학습 전 자리표시)",
             "inputs": PROX_IN, "fill": [0] * len(PROX_IN), "mean": [0] * len(PROX_IN), "std": [1] * len(PROX_IN),
             "layers": [{"w": [w], "b": [round(PRIOR_A / (10 * PRIOR_N), 7)], "act": "linear"}],
             "out": "log10_m", "clamp": list(CLAMP),
-            "checks": [{"x": [-60, -60, -60, -60, -59, -60, 0, -59, 0, -59, -59, 0, 0, 0, 0, 0, 0], "y": -0.0000027},
-                       {"x": [-80, -80, -80, -80, -80, -80, 0, -80, 0, -80, -80, 0, 0, 0, 0, 0, 0], "y": 0.9545418}]}
+            "checks": [{"x": [-60, -60, -60, -60, -59, -60, 0, -59, 0, -59, -59, 0, 0], "y": -0.0000027},
+                       {"x": [-80, -80, -80, -80, -80, -80, 0, -80, 0, -80, -80, 0, 0], "y": 0.9545418}]}
     fall = {"v": 1, "kind": "fall", "made": "prior-20261030", "note": "prior: peak_g · deg · ff_ms (학습 전 자리표시)",
             "inputs": FALL_IN, "fill": [0] * 7, "mean": [0] * 7, "std": [1] * 7,
             "layers": [{"w": [[0.004, 1.2, 0, 0.03, 0, 0, 0]], "b": [-5.0], "act": "sigmoid"}], "out": "p",
@@ -434,10 +476,10 @@ def coverage(p, c):
               + (" — 3시간 넘게 이어짐: 실험 뒤 세션 이름을 비웠는지 확인" if ms.max() - ms.min() > 3 * 3_600_000 else ""))
 
 
-def train(export, out):
+def train(export, out, marks=None):
     df = load(export)
     p, _, _ = prox_rows(df)
-    c, Xf, yf = fall_rows(df)
+    c, Xf, yf = fall_rows(df, marks)
     coverage(p, c)
     hp = held(p["t"]) if len(p) else np.zeros(0, bool)
     hf = held(c["t"]) if len(c) else np.zeros(0, bool)
@@ -542,7 +584,7 @@ def group_report(d, has_phone):
     return lines
 
 
-def compare(export, out, models, per_level=30, max_usd=5.0, dry=False, no_ai=False):
+def compare(export, out, models, per_level=30, max_usd=5.0, dry=False, no_ai=False, marks=None):
     df = load(export)
     out.mkdir(parents=True, exist_ok=True)
     pm, fm = model_file(models, "prox"), model_file(models, "fall")
@@ -571,7 +613,7 @@ def compare(export, out, models, per_level=30, max_usd=5.0, dry=False, no_ai=Fal
         jm.write(p[["id", "t", "dev", "peer", "pair", "mdl", "src", "uwb_m", "warn_m", "dang_m", "truth", "rule", "phone_m", "phone", "ai"]],
                  out / "compare_prox.csv")
 
-    c, Xf, yf = fall_rows(df)
+    c, Xf, yf = fall_rows(df, marks)
     if len(c):
         c["truth"] = yf.astype(int)
         c["rule"] = c["pass"].map(jm.yes).astype(float)
@@ -684,6 +726,16 @@ def fake_export(rng):
         prox[f"uD{s}"] = rec("uwb", "WF-11-D", "test:sweep:dock:a", "WF-11-SAFEALERT_DEVICE_E", "WALKER", "EPJ", s, 3.0, uwb_m=3.0, use="judge", frame_age_ms=100)
         prox[f"sF{s}"] = rec("sig", "WF-11-F", "test:sweep:dock:a", "WF-11-SAFEALERT_DEVICE_E", "WALKER", "EPJ", s, 3.0, frame_age_ms=0)
         prox[f"sE{s}"] = rec("sig", "WF-11-E", "test:sweep:dock:b", "WF-11-SAFEALERT_DEVICE_D", "EPJ", "WALKER", s, 3.0, frame_age_ms=0)
+    # Marked-window scene (fake device id X1234567, Korea 14:00-14:05 on 2025-10-30): imp_t is the judge time axis (ms since
+    # boot), t the wall clock 12 s later; m0 / m1 5 s apart, m2 has a question answer
+    m_fall = {"ff_ms": 300, "peak_g": 3.8, "deg": 70, "post_act": 0, "pass": True}
+    m_no = {"ff_ms": 50, "peak_g": 2.8, "deg": 10, "post_act": 5, "pass": False}
+    for name, imp, wall, vals in (("m0", 266_000_000, 1_761_800_410_000, m_fall), ("m1", 266_005_000, 1_761_800_415_000, m_fall),
+                                  ("m2", 266_200_000, 1_761_800_610_000, m_no), ("m3", 266_300_000, 1_761_800_710_000, m_no)):
+        fall[name] = {"v": 1, "k": "cand", "dev": "WF11-X1234567", "uid": "u", "imp_g": 2.5, "post_n": 10, "pre_ok": True,
+                      "t": wall + 12_000, "imp_t": imp, **vals}
+    fall["mt"] = {"v": 1, "k": "truth", "dev": "WF11-X1234567", "uid": "u", "imp_t": 266_200_000, "truth": "fall",
+                  "t": 1_761_800_670_000}
     return {"wf11": {"judge": {"prox": {"WF11": {"20261030": prox}}, "fall": {"WF11": {"20261030": fall}}}}}
 
 
@@ -697,12 +749,22 @@ def selftest():
         exp.write_text(json.dumps(fake_export(rng)), encoding="utf-8")
         out = Path(tmp) / "ai"
         shown = io.StringIO()
+        mk = Path(tmp) / "marks.txt"
+        mk.write_text("# fake device id\nX1234567 2025-10-30 14:00-14:00 넘어짐   # m0, m1\nX1234567 2025-10-30 14:02-14:03 no\n\nX1234567 2025-10-30 14:05-14:04 넘어짐\nX1234567 2025-10-30 14:05 아님\nX1234567 2025-10-30 14:05-14:06 maybe\nX1234567 2025-02-30 14:05-14:06 fall\n", encoding="utf-8")
         with contextlib.redirect_stdout(shown):
-            files = train(exp, out)
+            files = train(exp, out, marks=mk)
         print(shown.getvalue(), end="")
         assert {f.name for f in files} == {"prox.json", "fall.json"}, files
         cov = shown.getvalue()
         assert "지게차 낀 짝: 전체" in cov and "보행자끼리: 전체" in cov and "sig 정답: 자기 UWB 5건 · 묶음 78건" in cov, cov
+        # Marks: lines 5-8 are bad and skipped, lines 1-4 are fine; two candidates get a mark label (m1 is inside m0's 15 s)
+        assert all((f"표시 파일 {n}번째 줄을 건너뜁니다" in cov) == (n >= 5) for n in range(1, 9)), cov
+        assert "시간대 표시: 후보 2건 (넘어짐 1 · 아님 1)" in cov, cov
+        with contextlib.redirect_stdout(io.StringIO()):
+            with_marks, without = fall_rows(load(exp), mk)[0], fall_rows(load(exp))[0]
+        for rows, want in ((with_marks, {266_000_000: 1.0, 266_200_000: 0.0}), (without, {266_200_000: 1.0})):
+            got = rows[rows["dev"] == "WF11-X1234567"]   # the mark wins over the answer; m1 (15 s) and m3 (no mark) have no label
+            assert {int(t): v for t, v in zip(got["imp_t"], got["label"])} == want, got[["imp_t", "label"]]
         # Bundle truth: B's sig rows (and A's where C measured) get the pair's UWB distance; same bundle / unmeasured get none;
         # a sig row within 1 s of a uwb row of the same phone and peer is dropped; no uwb row is lost
         p_all, _, _ = prox_rows(load(exp))
@@ -721,9 +783,9 @@ def selftest():
         fall = json.loads((out / "fall.json").read_text(encoding="utf-8"))
         assert prox["cv"]["median_abs_m"][prox["cv"]["chosen"]] < 1.5, prox["cv"]
         assert fall["cv"]["ai"]["acc"] >= 0.8, fall["cv"]
-        assert len(PROX_IN) == 17 and prox["inputs"][:17] == PROX_IN
-        assert set(prox["inputs"][17:]) == {"mdl:google Pixel", "mdl:samsung SM-A"}, prox["inputs"]   # lg X is under MIN_MDL
-        assert all(prox["fill"][i] == 0 for i in range(17, len(prox["inputs"]))), prox["fill"]
+        assert len(PROX_IN) == 13 and prox["inputs"][:13] == PROX_IN
+        assert set(prox["inputs"][13:]) == {"mdl:google Pixel", "mdl:samsung SM-A"}, prox["inputs"]   # lg X is under MIN_MDL
+        assert all(prox["fill"][i] == 0 for i in range(13, len(prox["inputs"]))), prox["fill"]
         assert set(prox_f(p_all.to_dict("records")[0])) - {"mdl:lg X", "mdl:samsung SM-A", "mdl:google Pixel"} == set(PROX_IN)
         for m in (prox, fall):
             assert len(m["inputs"]) == len(m["mean"]) == len(m["std"]) == len(m["fill"])
@@ -732,9 +794,10 @@ def selftest():
         x = prox_x({"rssi": -70, "med": -70, "pre": -70, "kf": -70, "ema": -70, "avg1s": -70, "kf_vel": 0.0,
                     "seq": "-72,0.1;-70,0.2;-68,0.3"})
         assert np.allclose(x[7:13], [-70.0, float(np.std([-72, -70, -68])), -72.0, -68.0, 2.0, 0.2]), x
-        assert x[13:] == [0.0, 0.0, 0.0, 0.0], x   # no roles: walker both ways
+        assert len(x) == 13, x
         r = {"role": "EPJ", "peer_role": "FORKLIFT", "mdl": "a b", "ema": -70}
-        assert prox_x(r, PROX_IN + ["mdl:a b", "mdl:z"])[13:] == [1.0, 0.0, 0.0, 1.0, 1.0, 0.0]
+        assert prox_x(r, PROX_IN + ["mdl:a b", "mdl:z"])[13:] == [1.0, 0.0]
+        assert set(prox_f(r)) == set(PROX_IN) | {"mdl:a b"}, prox_f(r)   # a row with roles has no role names in its inputs
         assert np.isnan(prox_x({}, ["rssi"])[0]) and prox_x({}, ["mdl:z"]) == [0.0]
         assert cross_dist([1, 2, 3] * 6, [0] * 18, 2, step=1.0, min_n=3) is None   # never at the level: no drop to place
         near = np.repeat([0.75, 1.25, 1.75, 2.25], 6)   # danger-share 100%, 100%, 0%, 0%: crosses between cells 1.25 and 1.75
@@ -759,13 +822,19 @@ def selftest():
     print("selftest ok")
 
 
+MARKS_HELP = "넘어짐 시간대 표시 파일 — 한 줄에 '<기기 ID> <YYYY-MM-DD> <HH:MM>-<HH:MM> <넘어짐|아님>', 한국 시간"
+
+
 def main():
+    for s in (sys.stdout, sys.stderr):   # a console / file that cannot write Korean (cp949) gets '?', not a crash
+        getattr(s, "reconfigure", lambda **_: None)(errors="replace")
     warnings.filterwarnings("ignore", module="sklearn")   # small data: convergence notes are noise here
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
     t = sub.add_parser("train", help="내보낸 JSON -> assets/ai/prox.json, fall.json")
     t.add_argument("export")
     t.add_argument("--out", default=str(ASSETS))
+    t.add_argument("--marks", default=None, help=MARKS_HELP)
     pr = sub.add_parser("prior", help="학습 전 자리표시 모델을 씁니다")
     pr.add_argument("--out", default=str(ASSETS))
     cp = sub.add_parser("compare", help="같은 기록에서 지금 규칙 · 폰 모델 · 회사 AI 비교표")
@@ -776,12 +845,13 @@ def main():
     cp.add_argument("--max-usd", type=float, default=5.0, help="회사 AI 비용 상한(접근 · 넘어짐 각각, 달러)")
     cp.add_argument("--dry-run", action="store_true", help="회사 AI 를 부르지 않고 건수 · 대략 비용만 보기")
     cp.add_argument("--no-ai", action="store_true", help="회사 AI 없이 지금 규칙 · 폰 모델만")
+    cp.add_argument("--marks", default=None, help=MARKS_HELP)
     sub.add_parser("selftest")
     a = ap.parse_args()
     if a.cmd == "train":
-        train(a.export, Path(a.out))
+        train(a.export, Path(a.out), a.marks)
     elif a.cmd == "compare":
-        compare(a.export, Path(a.out), Path(a.models), a.per_level, a.max_usd, a.dry_run, a.no_ai)
+        compare(a.export, Path(a.out), Path(a.models), a.per_level, a.max_usd, a.dry_run, a.no_ai, a.marks)
     elif a.cmd == "prior":
         for m in prior_models():
             print(save(m, Path(a.out)))

@@ -45,14 +45,13 @@ class AiJudgeTest {
         val e = AiJudge.proxFeatures(-60, -61, -62, -63, -64, -65, 0.5, IntArray(0), DoubleArray(0))
         assertEquals(-64.0, e["seq_mean"]!!, 1e-9); assertEquals(-64.0, e["seq_min"]!!, 1e-9); assertEquals(-64.0, e["seq_max"]!!, 1e-9)
         assertEquals(0.0, e["seq_std"]!!, 1e-9); assertEquals(0.0, e["seq_slope"]!!, 1e-9); assertEquals(0.5, e["seq_vel"]!!, 1e-9)
-        // Roles and phone model: no roles = all four flags 0 and no model column (also with an empty ring); the names equal the shipped prox model's inputs (model columns aside)
+        // Phone model and no roles: no model column without [mdl] (also with an empty ring), no role names (roles do not change the signal); the names equal the shipped prox model's inputs (model columns aside)
         for (x in listOf(f, e)) {
-            assertEquals(listOf(0.0, 0.0, 0.0, 0.0), listOf("me_epj", "me_fk", "peer_epj", "peer_fk").map { x[it] })
+            assertTrue(x.keys.none { it.startsWith("me_") || it.startsWith("peer_") })
             assertTrue(x.keys.none { it.startsWith("mdl:") })
         }
         assertEquals(e.keys, AiJudge.parse(repoFile("app/src/main/assets/ai/prox.json"))!!.inputs.filterNot { it.startsWith("mdl:") }.toSet())
-        val r = AiJudge.proxFeatures(-60, -61, -62, -63, -64, -65, 0.5, IntArray(0), DoubleArray(0), "EPJ", "FORKLIFT", "samsung SM-S918N")
-        assertEquals(listOf(1.0, 0.0, 0.0, 1.0), listOf("me_epj", "me_fk", "peer_epj", "peer_fk").map { r[it] })
+        val r = AiJudge.proxFeatures(-60, -61, -62, -63, -64, -65, 0.5, IntArray(0), DoubleArray(0), mdl = "samsung SM-S918N")
         assertEquals(1.0, r["mdl:samsung SM-S918N"]!!, 1e-9)
 
         DevSettings.init(RuntimeEnvironment.getApplication())

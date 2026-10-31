@@ -125,20 +125,18 @@ object AiJudge {
     // ── Proximity ────────────────────────────────────────────────────────────────────────────
 
     /**
-     * The prox model inputs from one peer's latest P1 frame and its ring (1 s summaries, oldest first), both roles
-     * (names as BleConstants.categoryName; a cart is an EPJ, a walker sets neither flag: me_epj · me_fk · peer_epj ·
-     * peer_fk) and this phone's model ("mdl:<model>" = 1.0 when [mdl] is not empty; a model column the shipped model
-     * does not have is simply unused — [vec] leaves it out). Same names and values as scripts/judge-ml app_model.prox_f.
+     * The prox model inputs from one peer's latest P1 frame and its ring (1 s summaries, oldest first) and this phone's
+     * model ("mdl:<model>" = 1.0 when [mdl] is not empty; a model column the shipped model does not have is simply
+     * unused — [vec] leaves it out). Roles are not inputs: every role advertises at the same power, so the role only
+     * picks the metres in [level]. Same names and values as scripts/judge-ml app_model.prox_f.
      */
     fun proxFeatures(
         rssi: Int, med: Int, pre: Int, kf: Int, ema: Int, avg1s: Int, kfVel: Double, ringEma: IntArray, ringVel: DoubleArray,
-        myRole: String = "", peerRole: String = "", mdl: String = "",
+        mdl: String = "",
     ): Map<String, Double> {
         val f = linkedMapOf(
             "rssi" to rssi.toDouble(), "med" to med.toDouble(), "pre" to pre.toDouble(), "kf" to kf.toDouble(),
             "ema" to ema.toDouble(), "avg1s" to avg1s.toDouble(), "kf_vel" to kfVel,
-            "me_epj" to (if (myRole == "EPJ") 1.0 else 0.0), "me_fk" to (if (myRole == "FORKLIFT") 1.0 else 0.0),
-            "peer_epj" to (if (peerRole == "EPJ") 1.0 else 0.0), "peer_fk" to (if (peerRole == "FORKLIFT") 1.0 else 0.0),
         )
         if (mdl.isNotEmpty()) f["mdl:$mdl"] = 1.0
         val n = ringEma.size
