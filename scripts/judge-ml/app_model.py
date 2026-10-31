@@ -146,16 +146,17 @@ def pair_group(role, peer_role):
 
 
 def peer_dev(peer):
-    """A record's `peer` ("WF11-SAFEALERT_DEVICE_<id>") -> the other phone's own `dev` ("WF11-<id>")."""
-    return re.sub(r"^([^-]+)-SAFEALERT_[A-Z]+_", r"\1-", str(peer))
+    """A record's `peer` -> the other phone's own `dev` (app withSite = "<site>-<id>", the site code may hold '-'):
+    "WF11-SAFEALERT_DEVICE_<id>" -> "WF11-<id>", "WF-11-SAFEALERT_DEVICE_<id>" -> "WF-11-<id>"."""
+    return re.sub(r"-SAFEALERT_[A-Z]+_", "-", str(peer), count=1)
 
 
 def bundle_truth(df):
     """`uwb` rows plus `sig` rows (src column: uwb | sig_own | bundle) with a UWB distance as the truth.
     A sig row of a phone in session test:sweep:<place>:<bundle> that has no UWB distance of its own takes the UWB
     distance measured between the same two bundles at that place — by whichever phone, nearest in time within 1 s.
-    Phones of the same bundle have no truth for each other. A sig row in the same second as a uwb row of the same
-    phone and peer is dropped (the uwb row is the same moment); no uwb row is ever dropped."""
+    Phones of the same bundle have no truth for each other. A sig row with a uwb row of the same phone and peer within
+    1 s (either side, 1000 ms inclusive) is dropped (the uwb row covers that moment); no uwb row is ever dropped."""
     a = df[df["k"].isin(["uwb", "sig"])].copy()
     for c in ("t", "uwb_m", "frame_age_ms"):
         a[c] = pd.to_numeric(a[c], errors="coerce")
@@ -169,12 +170,13 @@ def bundle_truth(df):
     hit = allsw[0].notna() & allt.notna()
     if hit.any() and sess[0].notna().any():
         # bundle of each phone at each time (any record of a sweep session), then the bundle of each row's peer
+        # (nearest within 60 s; none -> no bundle, no truth)
         bt = pd.DataFrame({"key": (allsw[0][hit] + "|" + df["dev"][hit].astype(str)).astype(str),
                            "t": allt[hit].astype("int64"), "bundle": allsw[1][hit].astype(str)}).sort_values("t")
         sw = sess[0].notna() & a["t"].notna()
         left = pd.DataFrame({"idx": a.index[sw], "t": a["t"][sw].astype("int64"),
                              "key": (sess[0][sw] + "|" + a["peer"][sw].map(peer_dev)).astype(str)}).sort_values("t")
-        got = pd.merge_asof(left, bt, on="t", by="key", direction="nearest")
+        got = pd.merge_asof(left, bt, on="t", by="key", direction="nearest", tolerance=60_000)
         peerb = pd.Series(got["bundle"].to_numpy(), index=got["idx"].to_numpy())
         own, place = sess[1], sess[0]
         pk = pd.Series(np.nan, index=a.index, dtype=object)
@@ -191,9 +193,14 @@ def bundle_truth(df):
             got = pd.merge_asof(ask, truth, on="t", by="pk", direction="nearest", tolerance=1000).dropna(subset=["truth_m"])
             a.loc[got["idx"].to_numpy(), "uwb_m"] = got["truth_m"].to_numpy()
             a.loc[got["idx"].to_numpy(), "src"] = "bundle"
-    sec = a["dev"].astype(str) + "|" + a["peer"].astype(str) + "|" + (a["t"] // 1000).astype("Int64").astype(str)
-    have = set(sec[a["k"] == "uwb"])
-    return a[~((a["k"] == "sig") & sec.isin(have))]
+    dp = a["dev"].astype(str) + "|" + a["peer"].astype(str)
+    s, u = a[(a["k"] == "sig") & a["t"].notna()], a[(a["k"] == "uwb") & a["t"].notna()]
+    if len(s) and len(u):
+        ask = pd.DataFrame({"idx": s.index, "t": s["t"].astype("int64").to_numpy(), "dp": dp[s.index].to_numpy()}).sort_values("t")
+        cover = pd.DataFrame({"t": u["t"].astype("int64").to_numpy(), "dp": dp[u.index].to_numpy(), "u": 1}).sort_values("t")
+        near = pd.merge_asof(ask, cover, on="t", by="dp", direction="nearest", tolerance=1000)
+        a = a.drop(index=near.loc[near["u"].notna(), "idx"].to_numpy())
+    return a
 
 
 def prox_matrix(p, inputs):
@@ -263,7 +270,7 @@ def save(m, out):
 def prior_models():
     w = [0.0] * len(PROX_IN)   # the role / model inputs start at weight 0
     w[PROX_IN.index("ema")] = round(-1.0 / (10 * PRIOR_N), 7)
-    prox = {"v": 1, "kind": "prox", "made": "prior-20261030", "note": "prior: path-loss A=-59 n=2.2 (학습 전 자리표시)",
+    prox = {"v": 1, "kind": "prox", "made": "prior-20261031", "note": "prior: path-loss A=-59 n=2.2 (학습 전 자리표시)",
             "inputs": PROX_IN, "fill": [0] * len(PROX_IN), "mean": [0] * len(PROX_IN), "std": [1] * len(PROX_IN),
             "layers": [{"w": [w], "b": [round(PRIOR_A / (10 * PRIOR_N), 7)], "act": "linear"}],
             "out": "log10_m", "clamp": list(CLAMP),
@@ -672,6 +679,11 @@ def fake_export(rng):
                          "imp_g": 2.5, "deg": round(float(rng.uniform(45, 90) if f else rng.uniform(0, 30)), 1),
                          "post_n": 10, "post_act": int(rng.integers(0, 2) if f else rng.integers(3, 8)),
                          "pre_ok": True, "pass": f}
+    # site code with '-' (WF-11, place dock): F (bundle a, no UWB) and E get D's UWB distance to E
+    for s in range(45, 50):
+        prox[f"uD{s}"] = rec("uwb", "WF-11-D", "test:sweep:dock:a", "WF-11-SAFEALERT_DEVICE_E", "WALKER", "EPJ", s, 3.0, uwb_m=3.0, use="judge", frame_age_ms=100)
+        prox[f"sF{s}"] = rec("sig", "WF-11-F", "test:sweep:dock:a", "WF-11-SAFEALERT_DEVICE_E", "WALKER", "EPJ", s, 3.0, frame_age_ms=0)
+        prox[f"sE{s}"] = rec("sig", "WF-11-E", "test:sweep:dock:b", "WF-11-SAFEALERT_DEVICE_D", "EPJ", "WALKER", s, 3.0, frame_age_ms=0)
     return {"wf11": {"judge": {"prox": {"WF11": {"20261030": prox}}, "fall": {"WF11": {"20261030": fall}}}}}
 
 
@@ -690,16 +702,19 @@ def selftest():
         print(shown.getvalue(), end="")
         assert {f.name for f in files} == {"prox.json", "fall.json"}, files
         cov = shown.getvalue()
-        assert "지게차 낀 짝: 전체" in cov and "보행자끼리: 전체" in cov and "sig 정답: 자기 UWB 5건 · 묶음 70건" in cov, cov
+        assert "지게차 낀 짝: 전체" in cov and "보행자끼리: 전체" in cov and "sig 정답: 자기 UWB 5건 · 묶음 78건" in cov, cov
         # Bundle truth: B's sig rows (and A's where C measured) get the pair's UWB distance; same bundle / unmeasured get none;
-        # a sig row in the second of its own uwb row is dropped; no uwb row is lost
+        # a sig row within 1 s of a uwb row of the same phone and peer is dropped; no uwb row is lost
         p_all, _, _ = prox_rows(load(exp))
-        assert p_all["src"].value_counts().to_dict() == {"uwb": 1560, "bundle": 70, "sig_own": 5}, p_all["src"].value_counts()
+        assert p_all["src"].value_counts().to_dict() == {"uwb": 1565, "bundle": 78, "sig_own": 5}, p_all["src"].value_counts()
         bun = p_all[p_all["src"] == "bundle"]
-        assert set(bun["dev"]) == {"WF11-A", "WF11-B"} and (bun["peer"] == "WF11-SAFEALERT_DEVICE_C").all(), bun[["dev", "peer"]]
+        hb = bun[bun["dev"].str.startswith("WF11-")]
+        assert set(hb["dev"]) == {"WF11-A", "WF11-B"} and (hb["peer"] == "WF11-SAFEALERT_DEVICE_C").all(), hb[["dev", "peer"]]
+        wb = bun[bun["dev"].str.startswith("WF-11-")]   # a site code with '-' still finds the peer's bundle
+        assert set(wb["dev"]) == {"WF-11-E", "WF-11-F"} and len(wb) == 10 and np.allclose(wb["uwb_m"], 3.0), wb[["dev", "uwb_m"]]
         bb = bun[bun["dev"] == "WF11-B"]
         assert len(bb) == 60 and np.allclose(bb["uwb_m"], 2.0 + 0.1 * ((bb["t"] - SWEEP_T1) / 1000)), bb[["t", "uwb_m"]]
-        assert ((p_all["dev"] == "WF11-A") & (p_all["k"] == "sig")).sum() == 10   # the other 50 sit in a uwb row's second
+        assert ((p_all["dev"] == "WF11-A") & (p_all["k"] == "sig")).sum() == 8   # the other 52 sit within 1 s of a uwb row
         assert not ((p_all["dev"] == "WF11-B") & (p_all["peer"] == "WF11-SAFEALERT_DEVICE_A")).any()
         assert not (p_all["t"] > SWEEP_T1 + 65_000).any()
         prox = json.loads((out / "prox.json").read_text(encoding="utf-8"))

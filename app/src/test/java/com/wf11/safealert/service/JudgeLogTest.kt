@@ -184,6 +184,7 @@ class JudgeLogTest {
             frame("SG2", "WALKER", 103_100, -60); assertEquals(3, out.size)   // each peer has its own second
             assertEquals(5.0, out.last().second["warn_m"]); assertEquals(3.0, out.last().second["dang_m"])
             JudgeLog.uwb("ME", "SG2", 2.5f, 1, 104_000, use = "measure"); assertEquals(4, out.size)
+            assertEquals("test:sweep:hall:a", out.last().second["sess"])   // the uwb record carries the experiment session too
             frame("SG2", "WALKER", 104_100, -60); assertEquals(5, out.size)
             val s2 = out.last().second
             assertEquals("sig", s2["k"]); assertEquals(2.5, s2["uwb_m"]); assertEquals("measure", s2["uwb_use"])

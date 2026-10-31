@@ -726,8 +726,8 @@ def prox_truth(r):
 
 
 def dist_bucket(m):
-    return ("lt1" if m < 1 else "1to3" if m < 3 else "3to5" if m < 5 else "5to8" if m < 8
-            else "8to12" if m < 12 else "12to15" if m < 15 else "gt15")
+    return ("lt1" if m <= 1 else "1to3" if m <= 3 else "3to5" if m <= 5 else "5to8" if m <= 8
+            else "8to12" if m <= 12 else "12to15" if m <= 15 else "gt15")
 
 
 def dist_check(data):
@@ -1182,7 +1182,7 @@ def selftest():
                 for pair, want in (("WALKER", walk), ("FORKLIFT", fork)):
                     got = rule_prox({"k": "dist", "ans": ans, "role": "WALKER", "peer_role": pair, "after_ms": 3_000})[0]
                     assert got == want, (ans, pair, got, want)
-            assert [dist_bucket(m) for m in (0.5, 2, 4.9, 7.9, 11, 14.9, 15.0)] == ["lt1", "1to3", "3to5", "5to8", "8to12", "12to15", "gt15"]
+            assert [dist_bucket(m) for m in (0.5, 2, 4.9, 7.9, 11, 14.9, 3.0, 5.0, 8.0, 15.0, 15.1)] == ["lt1", "1to3", "3to5", "5to8", "8to12", "12to15", "1to3", "3to5", "5to8", "12to15", "gt15"]
             for kind in CLASSES:   # the AI never sees truth or the app's decisions
                 row = read(data / "train" / f"{kind}.csv").to_dict("records")[0]
                 assert not set(ai_input(kind, row)) & {"pass", "opened", "sos", "close_why", "truth", "uwb_m",
