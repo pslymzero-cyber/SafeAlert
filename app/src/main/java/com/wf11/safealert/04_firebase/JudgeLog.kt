@@ -355,18 +355,20 @@ object JudgeLog {
 
     /**
      * F5 — the after-impact judgment of one impact, once when it ends (MotionAnalyzer.Post): out = post5 | post10 | still10 | still |
-     * cap30 (quick alerts) | walk | phone | mounted (a mounted phone keeps the 30 s rule). atMs = judged moment after the impact; tilt = posture
+     * cap30 | phone30 (alerts) | walk | lift | screen (someone has the phone, no window) | mounted (a mounted phone keeps the 30 s rule).
+     * sup = true when the end was quiet while a later impact waited (its own post record follows). atMs = judged moment after the impact; tilt = posture
      * change (degrees) over the last 1 s, stdMg = |a| standard deviation (mg) over the last 2 s, run = longest run of walking-step gaps.
      */
     fun post(
         me: String, role: String, impT: Long, out: String, atMs: Long, tilt: Double?, stdMg: Int?, run: Int, ffMs: Long,
-        t: Long = System.currentTimeMillis(),
+        t: Long = System.currentTimeMillis(), sup: Boolean = false,
     ) {
         if (!on) return
         runCatching {
             emit("fall", "post", t, me, role) {
                 linkedMapOf(
                     "imp_t" to impT, "out" to out, "at_ms" to atMs, "tilt" to tilt?.let(::r1), "std_mg" to stdMg, "run" to run, "ff_ms" to ffMs,
+                    "sup" to (if (sup) true else null),
                 )
             }
         }

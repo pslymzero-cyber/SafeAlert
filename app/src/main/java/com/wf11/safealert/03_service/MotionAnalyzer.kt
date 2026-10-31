@@ -31,11 +31,16 @@ import kotlin.math.sqrt
  * After-impact judgment (onPost, 1.2.28): from every impact right after free fall (candidate or not) it follows the phone
  * for up to 30 s. Walking (acceleration peaks 0.3-1.0 s apart, 4 in a row) ends it quietly ("walk"); no walking and a posture
  * 30 degrees or more off the pre-fall one with 3-5 s of stillness reports "post5"; at 10 s a changed posture ("post10") or 8-10 s
- * of stillness ("still10"); then every second 2 s of stillness ("still"), at 30 s "cap30". Alerts after a free fall of 300 ms
- * or more become "phone" (the phone alone fell). Values come from the simulation on field data (not settings). The result
- * decides when the accident window opens (LoneWorkerLogic.onPost); the FALL / IMPACT signals and candidates are unchanged.
- * Impacts that come while a judgment is still running do not start another one; the first impact's judgment goes on (except after a
- * phone-only drop: the new impact takes over, and the dropped one is reported as "phone" without a result for the window).
+ * of stillness ("still10"); then every second 2 s of stillness ("still"), at 30 s "cap30". After a free fall of 300 ms or more
+ * (a dropped phone, or a person from a height - the length cannot tell them apart) there is no quick alert: only signs that
+ * someone has the phone again end it quietly - walking ("walk"), the phone lifted 0.5 m or more ("lift"), the screen unlocked
+ * after the phone was moving ("screen", onScreen) - and without one the alert comes at 30 s ("phone30"). Values come from the
+ * simulation on field data (not settings). The result decides when the accident window opens (LoneWorkerLogic.onPost); the
+ * FALL / IMPACT signals and candidates are unchanged.
+ * Impacts that come while a judgment is still running do not start another one; the first judgment goes on, and the earliest
+ * later impact is kept: when the running one ends without an alert (the result is marked superseded) the kept one is judged next
+ * from the stored samples, catching up on the checks already past; an alert drops it (the window covers it). After a long free
+ * fall the new impact simply takes over.
  */
 class MotionAnalyzer(
     private val impactG: Double = IMPACT_G,
@@ -71,12 +76,13 @@ class MotionAnalyzer(
 
     /**
      * The after-impact judgment of one impact (see class KDoc), reported once when it ends. out = post5 | post10 | still10 |
-     * still | cap30 (alerts) | walk | phone. atMs = the judged moment after the impact; tiltDeg / stdMg = posture change over
-     * the last 1 s and |a| standard deviation (mg) over the last 2 s at that moment; run = longest walking-step run; ffMs = free fall.
+     * still | cap30 | phone30 (alerts) | walk | lift | screen (quiet ends). atMs = the judged moment after the impact; tiltDeg /
+     * stdMg = posture change over the last 1 s and |a| standard deviation (mg) over the last 2 s at that moment; run = longest
+     * walking-step run; ffMs = free fall. superseded = a quiet end while a later impact was waiting (its judgment follows at once).
      */
     data class Post(
         val impT: Long, val out: String, val atMs: Long, val tiltDeg: Double?, val stdMg: Int?, val run: Int,
-        val ffMs: Long, val peakG: Double
+        val ffMs: Long, val peakG: Double, val superseded: Boolean = false
     )
 
     private fun cand(deg: Double?, why: String) {
@@ -140,8 +146,13 @@ class MotionAnalyzer(
         const val POST_GAP_MAX_MS = 1000L
         const val POST_WALK_RUN = 3
         const val POST_SMOOTH = 5
-        /** Free fall of this length or more: the phone alone fell, so no quick alert (the no-motion flow decides). */
+        /** Free fall of this length or more: a dropped phone or a person from a height - no quick alert, only signs of someone (walk, lift, screen). */
         const val PHONE_FF_MS = 300L
+        /** Lift sign: look from this long after the impact; a still second (|a| std 0.02 G or less), then 1.5 s of movement rising 0.5 m or more. */
+        const val POST_LIFT_FROM_MS = 1000L
+        const val POST_LIFT_SPAN_MS = 1500L
+        const val POST_LIFT_REST_G = 0.05
+        const val POST_LIFT_M = 0.5
         /** Judge-data only: how long the phone must stay still after its last active window before its stop is reported (takeStop). */
         const val STOP_AFTER_MS = 30_000L
         /** Samples kept for the after-impact judgment: baseline 3 s + 30 s + delay is about 1,700 at 50 Hz. */
@@ -187,10 +198,10 @@ class MotionAnalyzer(
     val pendingShape: FallShape get() = FallShape(candFfMs, candPeakG, null)
 
     /**
-     * Sensor time (ms) of the impact while its after-impact judgment is still running (up to 30 s), else null; null too when
-     * the free fall was long enough to be a phone-only drop. Read-only, for the on-screen count (the judgment never uses it).
+     * Sensor time (ms) of the impact while its after-impact judgment is still running (up to 30 s), else null. Read-only, for
+     * the on-screen count (the judgment never uses it).
      */
-    val pendingPostMs: Long? get() = if (trackImp >= 0 && trackFf < PHONE_FF_MS) trackImp else null
+    val pendingPostMs: Long? get() = if (trackImp >= 0) trackImp else null
 
     /** Shape of the impact whose after-impact judgment is running (posture unknown). Meaningful only while pendingPostMs is not null. */
     val pendingPostShape: FallShape get() = FallShape(trackFf, trackPeak, null)
@@ -275,6 +286,11 @@ class MotionAnalyzer(
     private var trackImpactEnd = 0L
     private var trackNext = POST_T1_MS
     private var trackArmedEnd = -1L // free fall (armedEnd) the running or last track started from; one track per free fall
+    // The earliest impact that came while a (short free fall) judgment was running; judged when that one ends without an alert
+    private var deferImp = -1L
+    private var deferFf = 0L
+    private var deferPeak = 0.0
+    private var deferImpactEnd = 0L
 
     fun reset() {
         curIdx = -1L; n = 0; sumM = 0.0; sumM2 = 0.0; sx = 0.0; sy = 0.0; sz = 0.0
@@ -283,7 +299,7 @@ class MotionAnalyzer(
         candidate = false; postN = 0; postX = 0.0; postY = 0.0; postZ = 0.0; postActive = 0
         lowRuns.clear(); impactDue = false
         lastActiveMs = 0L; quietIdx = -1L
-        ring.clear(); trackImp = -1L; trackArmedEnd = -1L; stopTaken = 0L
+        ring.clear(); trackImp = -1L; trackArmedEnd = -1L; deferImp = -1L; stopTaken = 0L
     }
 
     fun add(tMs: Long, x: Float, y: Float, z: Float, masked: Boolean = false): Signal {
@@ -304,6 +320,7 @@ class MotionAnalyzer(
         ring.push(tMs, ax / G, ay / G, az / G, mag / G)
 
         val fell = detectFall(tMs, ax, ay, az, mag)
+        if (deferImp >= 0 && tMs <= deferImpactEnd) deferPeak = maxOf(deferPeak, mag / G)
         if (trackImp >= 0) {
             if (tMs <= trackImpactEnd) trackPeak = maxOf(trackPeak, mag / G)
             checkPost(tMs)
@@ -380,17 +397,25 @@ class MotionAnalyzer(
             if (t - armedEnd > IMPACT_WINDOW_MS) {
                 armedEnd = -1L
             } else if (mag > impactG * G) {
-                // The after-impact judgment follows an impact (also while a candidate waits). A running one is never replaced: it keeps
-                // the first impact's pre-fall posture and its 30 s limit; only an impact after it has ended starts a new one. Exception:
-                // a phone-only drop (long free fall) gives way, so a person falling after it still gets the quick alert
-                if ((trackImp < 0 || trackFf >= PHONE_FF_MS) && armedEnd != trackArmedEnd) {
-                    if (trackImp >= 0) runCatching { onPost(Post(trackImp, "phone", t - trackImp, null, null, 0, trackFf, trackPeak)) }
-                    trackArmedEnd = armedEnd
-                    trackImp = t
-                    trackFf = lowGMsBefore(t)
-                    trackImpactEnd = armedEnd + IMPACT_WINDOW_MS
-                    trackPeak = mag / G
-                    trackNext = POST_T1_MS
+                // The after-impact judgment follows an impact (also while a candidate waits). A running one is not replaced: it keeps the
+                // first impact's pre-fall posture and its 30 s limit; a later impact is kept (the earliest) and judged when it ends
+                // without an alert. After a long free fall (dropped phone or a person from a height) the new impact takes over.
+                if (armedEnd != trackArmedEnd) {
+                    if (trackImp < 0 || trackFf >= PHONE_FF_MS) {
+                        trackArmedEnd = armedEnd
+                        trackImp = t
+                        trackFf = lowGMsBefore(t)
+                        trackImpactEnd = armedEnd + IMPACT_WINDOW_MS
+                        trackPeak = mag / G
+                        trackNext = POST_T1_MS
+                        deferImp = -1L
+                    } else if (deferImp < 0) {
+                        trackArmedEnd = armedEnd
+                        deferImp = t
+                        deferFf = lowGMsBefore(t)
+                        deferImpactEnd = armedEnd + IMPACT_WINDOW_MS
+                        deferPeak = mag / G
+                    }
                 }
                 if (!candidate) {
                     candidate = true
@@ -442,24 +467,100 @@ class MotionAnalyzer(
         while (trackImp >= 0 && tMs >= trackImp + trackNext + POST_DELAY_MS) {
             val d = trackNext
             val run = walkRun(d)
-            val tilt = tiltDeg(d - POST_TILT_SPAN_MS, d)
-            val std = stdG(d - POST_STILL_SPAN_MS, d)
-            val still = std != null && std <= POST_STILL_STD_G
-            val tilted = tilt != null && tilt >= POST_TILT_DEG
-            var out: String? = when {
-                run >= POST_WALK_RUN -> "walk"
-                d == POST_T1_MS -> if (tilted && still) "post5" else null
-                d == POST_T2_MS -> if (tilted) "post10" else if (still) "still10" else null
-                d > POST_T2_MS -> if (still) "still" else if (d >= POST_T3_MS) "cap30" else null
-                else -> null
+            val out: String? = if (run >= POST_WALK_RUN) "walk"
+            else if (trackFf >= PHONE_FF_MS) {
+                // dropped phone or a person from a height: only signs of someone with the phone end it; else the alert at 30 s
+                if (lifted()) "lift" else if (d >= POST_T3_MS) "phone30" else null
+            } else {
+                val tilted = (tiltDeg(d - POST_TILT_SPAN_MS, d) ?: 0.0) >= POST_TILT_DEG
+                val std = stdG(d - POST_STILL_SPAN_MS, d)
+                val still = std != null && std <= POST_STILL_STD_G
+                when {
+                    d == POST_T1_MS -> if (tilted && still) "post5" else null
+                    d == POST_T2_MS -> if (tilted) "post10" else if (still) "still10" else null
+                    d > POST_T2_MS -> if (still) "still" else if (d >= POST_T3_MS) "cap30" else null
+                    else -> null
+                }
             }
             if (out == null) { trackNext += POST_STEP_MS; continue }
-            if (out != "walk" && trackFf >= PHONE_FF_MS) out = "phone"
-            val post = Post(trackImp, out, d, tilt?.let { Math.round(it * 10) / 10.0 }, std?.let { Math.round(it * 1000).toInt() },
-                run, trackFf, trackPeak)
-            trackImp = -1L
-            runCatching { onPost(post) }
+            endTrack(out, d, run)
         }
+    }
+
+    /** Reports the running judgment's result and ends it; a waiting impact is judged next after a quiet end, dropped after an alert. */
+    private fun endTrack(out: String, d: Long, run: Int) {
+        val alert = out != "walk" && out != "lift" && out != "screen"
+        val sup = !alert && deferImp >= 0
+        val std = stdG(d - POST_STILL_SPAN_MS, d)
+        val post = Post(trackImp, out, d, tiltDeg(d - POST_TILT_SPAN_MS, d)?.let { Math.round(it * 10) / 10.0 },
+            std?.let { Math.round(it * 1000).toInt() }, run, trackFf, trackPeak, sup)
+        trackImp = -1L
+        runCatching { onPost(post) }
+        if (sup) {
+            trackImp = deferImp
+            trackFf = deferFf
+            trackImpactEnd = deferImpactEnd
+            trackPeak = deferPeak
+            trackNext = POST_T1_MS
+        }
+        deferImp = -1L
+    }
+
+    /**
+     * The screen was unlocked (a secure device; the caller checks). Counts as someone with the phone only after a long free fall
+     * and when the phone was moving in the 2 s before (not lying still).
+     */
+    fun onScreen() {
+        if (trackImp < 0 || trackFf < PHONE_FF_MS || ring.size < 2) return
+        val now = ring.t(ring.size - 1)
+        if (now < trackImp + POST_LIFT_FROM_MS) return
+        val sd = stdAbs(now - POST_STILL_SPAN_MS, now) ?: return
+        if (sd <= POST_STILL_STD_G) return
+        endTrack("screen", now - trackImp, walkRun(now - trackImp))
+        checkPost(now)
+    }
+
+    /**
+     * Lift sign (simulation rise()): from impact+1 s, scanning in half-second steps, a second of stillness (|a| std 0.02 G or less) sets
+     * the rest level g0; from the first sample after it that leaves g0 by more than 0.05 G, 1.5 s of integrating (|a| - g0) twice gives the
+     * rise in metres; 0.5 m or more is a lift (field: falls up to 0.09 m, a phone picked up at once 1.0-1.7 m).
+     */
+    private fun lifted(): Boolean {
+        val n = ring.size
+        if (n < 12) return false
+        val dtMs = (ring.t(n - 1) - ring.t(0)).toDouble() / (n - 1)
+        val step = maxOf(1, Math.round(1000 / dtMs / 2).toInt())
+        var i = idxFrom(trackImp + POST_LIFT_FROM_MS)
+        while (i < n) {
+            val t0 = ring.t(i)
+            var e = i
+            var sum = 0.0
+            while (e < n && ring.t(e) < t0 + 1000) { sum += ring.m(e); e++ }
+            val cnt = e - i
+            var still = false
+            if (cnt > 10) {
+                val mean = sum / cnt
+                var sq = 0.0
+                for (j in i until e) { val x = ring.m(j) - mean; sq += x * x }
+                still = sqrt(sq / cnt) <= POST_STILL_STD_G
+            }
+            if (still) {
+                val g0 = sum / cnt
+                var k = e - 1
+                while (k < n - 1 && Math.abs(ring.m(k) - g0) <= POST_LIFT_REST_G) k++
+                val k0 = k
+                var v = 0.0
+                var h = 0.0
+                for (q in k0 until n) {
+                    if (ring.t(q) - ring.t(k0) > POST_LIFT_SPAN_MS) break
+                    v += (ring.m(q) - g0) * G * dtMs / 1000
+                    h += v * dtMs / 1000
+                    if (h >= POST_LIFT_M) return true
+                }
+                i = k0 + step
+            } else i += step
+        }
+        return false
     }
 
     /** Index of the first stored sample at or after sensor time tMs. */
@@ -482,8 +583,11 @@ class MotionAnalyzer(
     }
 
     /** Population standard deviation (g) of |a| over impact+lo .. impact+hi; null under 2 samples. */
-    private fun stdG(lo: Long, hi: Long): Double? {
-        val i0 = idxFrom(trackImp + lo); val i1 = idxFrom(trackImp + hi)
+    private fun stdG(lo: Long, hi: Long): Double? = stdAbs(trackImp + lo, trackImp + hi)
+
+    /** Population standard deviation (g) of |a| over sensor time from .. to; null under 2 samples. */
+    private fun stdAbs(from: Long, to: Long): Double? {
+        val i0 = idxFrom(from); val i1 = idxFrom(to)
         val n = i1 - i0
         if (n < 2) return null
         var sum = 0.0

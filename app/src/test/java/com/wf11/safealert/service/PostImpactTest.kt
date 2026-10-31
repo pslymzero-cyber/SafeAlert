@@ -44,6 +44,8 @@ class PostImpactTest {
 
     private fun name(p: MotionAnalyzer.Post) = "${p.out}@${p.atMs}"
 
+    private val lift2 = ArrayList<MotionAnalyzer.Post>()
+
     @Test fun analyzer_reports_one_judgment_per_impact() {
         // lying still at once: posture 90 degrees, 3-5 s still -> post5; the FALL signal is the same as before
         val (lying, sig) = judge(16_000, trace { LYING_STILL })
@@ -64,11 +66,27 @@ class PostImpactTest {
         assertEquals(listOf("still10@10000"), judge(14_000, trace { UPRIGHT_STILL }).first.map(::name))
         // upright, moving about without steps: 30 s at the latest
         assertEquals(listOf("cap30@30000"), judge(35_000, trace { wobble(it, UPRIGHT_STILL) }).first.map(::name))
-        // the phone alone fell (free fall 400 ms): no quick alert, the no-motion flow decides
-        val (phone, _) = judge(10_000, trace(ffMs = 400) { LYING_STILL })
-        assertEquals(listOf("phone@5000"), phone.map(::name))
+        // a long free fall (400 ms: a dropped phone, or a person from a height) has no quick alert: only a sign of someone with
+        // the phone ends it, otherwise the alert comes at 30 s
+        val (phone, _) = judge(36_000, trace(ffMs = 400) { LYING_STILL })
+        assertEquals(listOf("phone30@30000"), phone.map(::name))
         assertTrue(phone[0].ffMs >= 300L)
-        // a person falling after a phone-only drop still gets the quick alert: the new impact takes over (the dropped one is reported as phone)
+        // sign 1: walking
+        assertEquals(listOf("walk@5000"), judge(10_000, trace(ffMs = 400) { walking(it) }).first.map(::name))
+        // sign 2: the phone is lifted 0.5 m or more (a still second, then a 1.5 s pull of 0.5 G)
+        val (lift, _) = judge(10_000, trace(ffMs = 400) { t -> if (t in 6_000L until 6_500L) floatArrayOf(9.81f * 1.5f, 0f, 0f) else LYING_STILL })
+        assertEquals(listOf("lift@5000"), lift.map(::name))
+        // sign 3: the screen is unlocked while the phone was moving (not when it lay still); the alert stays for the still phone
+        val moving = MotionAnalyzer(onPost = { lift2 += it })
+        moving.feed(0, 6_000, f = trace(ffMs = 400) { wobble(it, LYING_STILL) })
+        moving.onScreen()
+        assertEquals(listOf("screen@2780"), lift2.map(::name))
+        lift2.clear()
+        val lying2 = MotionAnalyzer(onPost = { lift2 += it })
+        lying2.feed(0, 6_000, f = trace(ffMs = 400) { LYING_STILL })
+        lying2.onScreen()
+        assertTrue(lift2.isEmpty())
+        // a person falling after a phone-only drop still gets the quick alert: the new impact takes over
         val (afterDrop, _) = judge(12_500) { t ->
             when {
                 t <= imp -> trace(ffMs = 400) { UPRIGHT_STILL }(t)
@@ -78,8 +96,24 @@ class PostImpactTest {
                 else -> LYING_STILL
             }
         }
-        assertEquals(listOf("phone@3000", "post5@5000"), afterDrop.map(::name))
-        assertEquals(listOf(imp, 6_200L), afterDrop.map { it.impT })
+        assertEquals(listOf("post5@5000"), afterDrop.map(::name))
+        assertEquals(6_200L, afterDrop[0].impT)
+        // an impact while a (short free fall) judgment runs is kept: the running one ends quietly (superseded) and the kept one is
+        // judged at once from the stored samples, the checks already past included (here: walking starts at 6.7 s, the first
+        // judgment sees it at 6 s = 9.6 s, the second impact at 4.2 s is 5.4 s old then)
+        val (chain, _) = judge(10_500) { t ->
+            when {
+                t <= imp -> trace { UPRIGHT_STILL }(t)
+                t < 4_000 -> UPRIGHT_STILL
+                t < 4_200 -> FREE_FALL_SAMPLE
+                t == 4_200L -> IMPACT_SAMPLE
+                t < 6_700 -> UPRIGHT_STILL
+                else -> floatArrayOf(0f, 0f, 9.81f + 3f * sin(2 * PI * 2 * (t - 6_700) / 1000).toFloat())
+            }
+        }
+        assertEquals(listOf("walk@6000", "walk@5000"), chain.map(::name))
+        assertEquals(listOf(imp, 4_200L), chain.map { it.impT })
+        assertEquals(listOf(true, false), chain.map { it.superseded })
         // a second impact while the judgment runs starts nothing: the first impact's judgment (its own posture base) goes on
         val (second, _) = judge(14_000) { t ->
             when {
@@ -180,12 +214,40 @@ class PostImpactTest {
         assertEquals(Mode.WATCHING, walked.logic.mode)
         assertTrue(walked.checks.isEmpty())
 
-        // the phone alone fell (free fall 400 ms) and lies still, no-motion limit 60 s: no 'fall' window, the 'still' one opens
-        val dropped = Rig(newLogic(carried = true).apply { stillMs = 60_000L })
-        dropped.seconds(0, 80_000, trace(ffMs = 400) { LYING_STILL })
-        assertEquals(listOf("still"), dropped.checks.map { it.trig })
-        assertTrue(dropped.logic.modeSinceMs in 60_000L..75_000L)
+        // a long free fall and lying still: no sign of someone, so the 'fall' window opens at 30 s (alert deadline 33.2 s), not the no-motion one
+        val dropped = Rig(newLogic(carried = true).apply { stillMs = 3_600_000L })
+        dropped.seconds(0, 40_000, trace(ffMs = 400) { LYING_STILL })
+        assertEquals(listOf("fall"), dropped.checks.map { it.trig })
+        assertTrue(dropped.logic.modeSinceMs in 33_200L..36_000L)
         assertEquals(Mode.CHECKING, dropped.logic.mode)
+        assertFalse(dropped.logic.dropWindow)
+
+        // the safety net: the watch of an impact whose judgment never reported opens at impact + 32 s; a sign of someone with the phone
+        // switches it off (a superseded end does not); an alert holds it as its own deadline, and once that window has been closed by walking
+        // the 30 s rule re-arms (a second fall after the window opens one again)
+        val shape = MotionAnalyzer.FallShape(200, 3.0, 90.0)
+        val net = fallRuleOnly().apply { onAccident(6_000, shape, byPost = true) }
+        assertEquals(Mode.WATCHING, net.seenAt(37_000))
+        assertEquals(Mode.CHECKING, net.seenAt(38_000))
+        val sure = fallRuleOnly().apply { onAccident(6_000, shape, byPost = true); onPost(6_000, "lift", 11_000, shape) }
+        assertEquals(Mode.WATCHING, sure.seenAt(60_000))
+        val sup = fallRuleOnly().apply { onAccident(6_000, shape, byPost = true); onPost(6_000, "walk", 11_000, shape, superseded = true) }
+        assertEquals(Mode.CHECKING, sup.seenAt(38_000))
+        val again = fallRuleOnly().apply { onAccident(6_000, shape, byPost = true); onPost(6_000, "post5", 11_000, shape) }
+        assertEquals(Mode.CHECKING, again.seenAt(12_000))
+        again.walk(20_000, 6) // clear movement closes the window; the 30 s rule counts from it
+        assertEquals(Mode.WATCHING, again.seenAt(21_000))
+        assertEquals(Mode.WATCHING, again.seenAt(49_000))
+        assertEquals(Mode.CHECKING, again.seenAt(51_000))
+
+        // the safe zone is looked at again once its state at the impact is final (12 s): leaving within 12 s lifts the exclusion
+        val weak = MotionAnalyzer.FallShape(200, 3.0, 40.0)
+        val left = fallRuleOnly(zoneInside = true).apply { onPost(6_000, "post5", 11_000, weak); onZone(false, 9_000) }
+        assertEquals(Mode.WATCHING, left.seenAt(17_000))
+        assertEquals(Mode.CHECKING, left.seenAt(19_000))
+        val stayed = fallRuleOnly(zoneInside = true).apply { onPost(6_000, "post5", 11_000, weak) }
+        assertEquals(Mode.WATCHING, stayed.seenAt(19_000))
+        assertEquals(Mode.WATCHING, stayed.seenAt(60_000))
     }
 
     @Test fun mounted_phone_keeps_the_30_second_rule() {

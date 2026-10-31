@@ -377,10 +377,11 @@ class LoneWorkerAccidentTest {
         val any = MotionAnalyzer.FallShape.ANY
         val post = fallRuleOnly()
         assertEquals(LoneWorkerLogic.Countdown(fall, 18_000L, 6_000L), post.countdown(18_000, null, any, 6_000, s))
-        post.onAccident(6_000, s, byPost = true) // the 12 s decision: a watch owned by the judgment, no window time of its own
-        assertEquals(LoneWorkerLogic.Countdown(fall, 12_000L, 6_000L), post.countdown(24_000, null, any, 6_000, s))
+        post.onAccident(6_000, s, byPost = true) // the 12 s decision: a watch owned by the judgment; no result yet, so the safety net (impact + 32 s) times it
+        assertEquals(LoneWorkerLogic.Countdown(fall, 14_000L, 6_000L), post.countdown(24_000, null, any, 6_000, s))
+        post.onPost(6_000, "walk", 11_000, s) // someone with the phone: no window, nothing shown
+        assertNull(post.countdown(24_000))
         assertNull(post.countdown(36_000, null, any, 6_000, s))
-        assertNull(post.countdown(24_000)) // the judgment ended with walking: nothing is shown
         post.onPost(6_000, "post10", 16_000, s)
         assertEquals(LoneWorkerLogic.Countdown(fall, 6_000L, 6_000L), post.countdown(10_000))
         val mount = newLogic(charging = true).apply { setEquipment(true, 0) }

@@ -1,7 +1,11 @@
 package com.wf11.safealert.service
 
 import android.Manifest
+import android.app.KeyguardManager
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.hardware.Sensor
 import android.hardware.SensorEvent
@@ -129,10 +133,11 @@ class LoneWorkerSensors(
     /** After-impact judgment: the accident window time (inside analyzer.add, before the callback's end judgment). */
     private fun judgePost(p: MotionAnalyzer.Post) {
         val l = logic()
-        l.onPost(p.impT + accelSkew, p.out, p.impT + p.atMs + accelSkew, MotionAnalyzer.FallShape(p.ffMs, p.peakG, p.tiltDeg))
+        l.onPost(p.impT + accelSkew, p.out, p.impT + p.atMs + accelSkew, MotionAnalyzer.FallShape(p.ffMs, p.peakG, p.tiltDeg), p.superseded)
         if (JudgeLog.on) {
             val who = judgeWho()
-            JudgeLog.post(who.first, who.second, p.impT + accelSkew, if (l.mounted) "mounted" else p.out, p.atMs, p.tiltDeg, p.stdMg, p.run, p.ffMs)
+            JudgeLog.post(who.first, who.second, p.impT + accelSkew, if (l.mounted) "mounted" else p.out, p.atMs, p.tiltDeg, p.stdMg, p.run, p.ffMs,
+                sup = p.superseded)
         }
     }
 
@@ -184,12 +189,42 @@ class LoneWorkerSensors(
         on = true
         registerAccel()
         refreshSteps()
+        registerScreen()
     }
 
     fun unregister() {
         on = false
         unregisterAccel()
         refreshSteps()
+        unregisterScreen()
+    }
+
+    /**
+     * Screen unlock (ACTION_USER_PRESENT) is a sign that someone has a dropped phone again (MotionAnalyzer.onScreen). Only on a device
+     * with a screen lock: without one the screen also lights up for calls and notifications. Delivered on the sensor handler.
+     */
+    private val screenReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val secure = runCatching { (ctx.getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager).isDeviceSecure }.getOrDefault(false)
+            if (!secure) return
+            analyzer.onScreen()
+            onEvent(now())
+        }
+    }
+    private var screenRegistered = false
+
+    private fun registerScreen() {
+        if (screenRegistered) return
+        screenRegistered = runCatching {
+            ContextCompat.registerReceiver(ctx, screenReceiver, IntentFilter(Intent.ACTION_USER_PRESENT), null, handler,
+                ContextCompat.RECEIVER_NOT_EXPORTED)
+        }.isSuccess
+    }
+
+    private fun unregisterScreen() {
+        if (!screenRegistered) return
+        runCatching { ctx.unregisterReceiver(screenReceiver) }
+        screenRegistered = false
     }
 
     private fun manager(): SensorManager? =
