@@ -4,8 +4,9 @@
     python app_model.py prior                 placeholder models (path-loss prior, impact prior)
     python app_model.py selftest              synthetic data end to end
 
-prox: BLE values of one peer (latest frame + last 10 s) -> log10(distance m), labelled by the UWB distance
-      in `uwb` records (judge and measure). fall: impact candidate summary -> fall probability, labelled by the
+prox: BLE values of one peer (latest frame + last 10 s) + both roles + this phone's model -> log10(distance m),
+      labelled by the UWB distance in `uwb` records (judge and measure) and, for `sig` rows of a phone without UWB
+      (session test:sweep:<place>:<bundle>), by the UWB distance a phone of the other bundle measured within 1 s. fall: impact candidate summary -> fall probability, labelled by the
       experiment session (test:fall / test:no) or the fall question answer.
 The model JSON format and the inputs must match AiJudge.kt (SPEC_ai.md sections 1-2): standardize with
 mean/std (std 0 -> 1, missing -> fill), then dense layers h = act(W h + b), W as [out][in].
@@ -13,7 +14,10 @@ mean/std (std 0 -> 1, missing -> fill), then dense layers h = act(W h + b), W as
 import argparse
 import json
 import math
+import contextlib
+import io
 import os
+import re
 import sys
 import tempfile
 import warnings
@@ -29,12 +33,18 @@ import judge_ml as jm  # noqa: E402  (find_judge / flatten — the same export r
 HERE = Path(__file__).resolve().parent
 ASSETS = HERE.parent.parent / "app" / "src" / "main" / "assets" / "ai"
 PROX_IN = ["rssi", "med", "pre", "kf", "ema", "avg1s", "kf_vel",
-           "seq_mean", "seq_std", "seq_min", "seq_max", "seq_slope", "seq_vel"]
+           "seq_mean", "seq_std", "seq_min", "seq_max", "seq_slope", "seq_vel",
+           "me_epj", "me_fk", "peer_epj", "peer_fk"]   # + "mdl:<model>" columns (AiJudge.proxFeatures: same names)
 FALL_IN = ["ff_ms", "peak_g", "imp_g", "deg", "post_n", "post_act", "pre_ok"]
 CLAMP = (0.3, 30.0)
 FRESH_MS = 2000          # rows whose BLE frame is older than this are not the same moment as the UWB distance
 PRIOR_A, PRIOR_N = -59.0, 2.2
 MIN_PROX, MIN_FALL = 100, 8   # fewer rows (or fewer of either fall class) -> that model is not replaced
+MIN_MDL = 50                  # a phone model gets its own input column only with this many training rows
+MIN_GROUP = 20                # compare: fewer rows in a pair group / phone model -> "기록 부족"
+SWEEP_RE = r"^test:sweep:([^:]+):([^:]+)$"   # place, bundle
+EMPTY_MDL = "기종 없음(1.2.27 전 기록)"
+PAIRS = ["보행자↔EPJ·카트", "EPJ·카트끼리", "보행자끼리", "지게차 낀 짝"]
 
 
 # ── forward pass (mirror of AiJudge.kt) ──────────────────────────────────
@@ -84,10 +94,27 @@ def seq_stats(seq, ema, kf_vel):
     return [float(e.mean()), float(e.std()), float(e.min()), float(e.max()), float(slope), float(np.mean(v))]
 
 
-def prox_x(r):
+def prox_f(r):
+    """Named inputs of one row — the same names and values as AiJudge.proxFeatures (a cart is an EPJ, a walker has both
+    role flags 0). The phone model column "mdl:<model>" exists only when the row has one."""
     base = [jm.fnum(r.get(c)) for c in ("rssi", "med", "pre", "kf", "ema", "avg1s", "kf_vel")]
     base = [np.nan if b is None else b for b in base]
-    return base + seq_stats(r.get("seq"), base[4], 0.0 if np.isnan(base[6]) else base[6])
+    vals = base + seq_stats(r.get("seq"), base[4], 0.0 if np.isnan(base[6]) else base[6])
+    f = dict(zip(PROX_IN, vals))
+    role, peer = str(r.get("role")), str(r.get("peer_role"))
+    f.update(me_epj=float(role == "EPJ"), me_fk=float(role == "FORKLIFT"),
+             peer_epj=float(peer == "EPJ"), peer_fk=float(peer == "FORKLIFT"))
+    mdl = r.get("mdl")
+    if isinstance(mdl, str) and mdl:
+        f["mdl:" + mdl] = 1.0
+    return f
+
+
+def prox_x(r, inputs=None):
+    """Values in the model's input order. A name the row does not have: a model column -> 0, anything else -> NaN
+    (the app's vec -> fill)."""
+    f = prox_f(r)
+    return [f.get(n, 0.0 if n.startswith("mdl:") else np.nan) for n in (inputs or PROX_IN)]
 
 
 def fall_x(r):
@@ -107,18 +134,80 @@ def load(export):
     if df.empty:
         sys.exit("judge 노드에 기록이 없습니다.")
     return jm.need(df, ["k", "t", "dev", "sess", "uwb_m", "frame_age_ms", "imp_t", "truth", "warn_m", "dang_m",
-                        "eff_w", "eff_d", "ema", "peer_role", "role"])
+                        "eff_w", "eff_d", "ema", "peer_role", "role", "peer", "mdl", "uwb_use"])
 
 
-def prox_rows(df):
-    p = df[df["k"] == "uwb"].copy()
-    p["uwb_m"] = pd.to_numeric(p["uwb_m"], errors="coerce")
+def pair_group(role, peer_role):
+    """The pair kind compare reports by (a cart is an EPJ)."""
+    if jm.fork_pair(role, peer_role):
+        return PAIRS[3]
+    kinds = {str(role), str(peer_role)}
+    return PAIRS[0] if kinds == {"WALKER", "EPJ"} else PAIRS[1] if kinds == {"EPJ"} else PAIRS[2] if kinds == {"WALKER"} else "그 밖"
+
+
+def peer_dev(peer):
+    """A record's `peer` ("WF11-SAFEALERT_DEVICE_<id>") -> the other phone's own `dev` ("WF11-<id>")."""
+    return re.sub(r"^([^-]+)-SAFEALERT_[A-Z]+_", r"\1-", str(peer))
+
+
+def bundle_truth(df):
+    """`uwb` rows plus `sig` rows (src column: uwb | sig_own | bundle) with a UWB distance as the truth.
+    A sig row of a phone in session test:sweep:<place>:<bundle> that has no UWB distance of its own takes the UWB
+    distance measured between the same two bundles at that place — by whichever phone, nearest in time within 1 s.
+    Phones of the same bundle have no truth for each other. A sig row in the same second as a uwb row of the same
+    phone and peer is dropped (the uwb row is the same moment); no uwb row is ever dropped."""
+    a = df[df["k"].isin(["uwb", "sig"])].copy()
+    for c in ("t", "uwb_m", "frame_age_ms"):
+        a[c] = pd.to_numeric(a[c], errors="coerce")
+    a["src"] = np.where(a["k"] == "uwb", "uwb", "sig_own")
+    a["pair"] = [pair_group(r, q) for r, q in zip(a["role"], a["peer_role"])]
+    if a.empty:
+        return a
+    sess = a["sess"].astype(str).str.extract(SWEEP_RE)
+    allsw = df["sess"].astype(str).str.extract(SWEEP_RE)
+    allt = pd.to_numeric(df["t"], errors="coerce")
+    hit = allsw[0].notna() & allt.notna()
+    if hit.any() and sess[0].notna().any():
+        # bundle of each phone at each time (any record of a sweep session), then the bundle of each row's peer
+        bt = pd.DataFrame({"key": (allsw[0][hit] + "|" + df["dev"][hit].astype(str)).astype(str),
+                           "t": allt[hit].astype("int64"), "bundle": allsw[1][hit].astype(str)}).sort_values("t")
+        sw = sess[0].notna() & a["t"].notna()
+        left = pd.DataFrame({"idx": a.index[sw], "t": a["t"][sw].astype("int64"),
+                             "key": (sess[0][sw] + "|" + a["peer"][sw].map(peer_dev)).astype(str)}).sort_values("t")
+        got = pd.merge_asof(left, bt, on="t", by="key", direction="nearest")
+        peerb = pd.Series(got["bundle"].to_numpy(), index=got["idx"].to_numpy())
+        own, place = sess[1], sess[0]
+        pk = pd.Series(np.nan, index=a.index, dtype=object)
+        for i, b in peerb.items():
+            if isinstance(b, str) and b != own[i]:
+                pk[i] = place[i] + "|" + "|".join(sorted([own[i], b]))
+        smp = a[(a["k"] == "uwb") & (a["uwb_m"] > 0) & pk.notna() & a["t"].notna()]
+        want = a[(a["k"] == "sig") & ~(a["uwb_m"] > 0) & pk.notna() & a["t"].notna()]
+        if len(smp) and len(want):
+            truth = pd.DataFrame({"pk": pk[smp.index].astype(str).to_numpy(), "t": smp["t"].astype("int64").to_numpy(),
+                                  "truth_m": smp["uwb_m"].to_numpy()}).sort_values("t")
+            ask = pd.DataFrame({"idx": want.index, "t": want["t"].astype("int64").to_numpy(),
+                                "pk": pk[want.index].astype(str).to_numpy()}).sort_values("t")
+            got = pd.merge_asof(ask, truth, on="t", by="pk", direction="nearest", tolerance=1000).dropna(subset=["truth_m"])
+            a.loc[got["idx"].to_numpy(), "uwb_m"] = got["truth_m"].to_numpy()
+            a.loc[got["idx"].to_numpy(), "src"] = "bundle"
+    sec = a["dev"].astype(str) + "|" + a["peer"].astype(str) + "|" + (a["t"] // 1000).astype("Int64").astype(str)
+    have = set(sec[a["k"] == "uwb"])
+    return a[~((a["k"] == "sig") & sec.isin(have))]
+
+
+def prox_matrix(p, inputs):
+    X = np.array([prox_x(r, inputs) for r in p.to_dict("records")], dtype=float) if len(p) else np.zeros((0, len(inputs)))
+    y = np.log10(np.clip(p["uwb_m"].to_numpy(float), *CLAMP)) if len(p) else np.zeros(0)
+    return X, y
+
+
+def prox_rows(df, inputs=None):
+    p = bundle_truth(df)
     age = pd.to_numeric(p["frame_age_ms"], errors="coerce")
     p = p[(p["uwb_m"] > 0) & (age.isna() | (age <= FRESH_MS)) & pd.to_numeric(p["ema"], errors="coerce").notna()]
     p = p.sort_values("t").reset_index(drop=True)
-    X = np.array([prox_x(r) for r in p.to_dict("records")], dtype=float) if len(p) else np.zeros((0, len(PROX_IN)))
-    y = np.log10(np.clip(p["uwb_m"].to_numpy(float), *CLAMP)) if len(p) else np.zeros(0)
-    return p, X, y
+    return (p,) + prox_matrix(p, inputs or PROX_IN)
 
 
 def fall_rows(df):
@@ -172,14 +261,14 @@ def save(m, out):
 
 
 def prior_models():
-    w = [0.0] * len(PROX_IN)
+    w = [0.0] * len(PROX_IN)   # the role / model inputs start at weight 0
     w[PROX_IN.index("ema")] = round(-1.0 / (10 * PRIOR_N), 7)
     prox = {"v": 1, "kind": "prox", "made": "prior-20261030", "note": "prior: path-loss A=-59 n=2.2 (학습 전 자리표시)",
-            "inputs": PROX_IN, "fill": [0] * 13, "mean": [0] * 13, "std": [1] * 13,
+            "inputs": PROX_IN, "fill": [0] * len(PROX_IN), "mean": [0] * len(PROX_IN), "std": [1] * len(PROX_IN),
             "layers": [{"w": [w], "b": [round(PRIOR_A / (10 * PRIOR_N), 7)], "act": "linear"}],
             "out": "log10_m", "clamp": list(CLAMP),
-            "checks": [{"x": [-60, -60, -60, -60, -59, -60, 0, -59, 0, -59, -59, 0, 0], "y": -0.0000027},
-                       {"x": [-80, -80, -80, -80, -80, -80, 0, -80, 0, -80, -80, 0, 0], "y": 0.9545418}]}
+            "checks": [{"x": [-60, -60, -60, -60, -59, -60, 0, -59, 0, -59, -59, 0, 0, 0, 0, 0, 0], "y": -0.0000027},
+                       {"x": [-80, -80, -80, -80, -80, -80, 0, -80, 0, -80, -80, 0, 0, 0, 0, 0, 0], "y": 0.9545418}]}
     fall = {"v": 1, "kind": "fall", "made": "prior-20261030", "note": "prior: peak_g · deg · ff_ms (학습 전 자리표시)",
             "inputs": FALL_IN, "fill": [0] * 7, "mean": [0] * 7, "std": [1] * 7,
             "layers": [{"w": [[0.004, 1.2, 0, 0.03, 0, 0, 0]], "b": [-5.0], "act": "sigmoid"}], "out": "p",
@@ -199,13 +288,14 @@ def blocks(t, size_ms=300_000):   # 5 min: one 2-3 min hold at a distance stays 
     return (t // size_ms).astype(np.int64)
 
 
-def train_prox(p, X, y):
+def train_prox(p, X, y, inputs):
     from sklearn.linear_model import Ridge
     from sklearn.model_selection import GroupKFold
     from sklearn.neural_network import MLPRegressor
 
     fill = np.nanmedian(X, axis=0)
     fill = np.where(np.isnan(fill), 0.0, fill)
+    fill[[i for i, n in enumerate(inputs) if n.startswith("mdl:")]] = 0.0   # a model the network has no column for -> 0
     Xf = np.where(np.isnan(X), fill, X)
     mean, std = Xf.mean(axis=0), Xf.std(axis=0)
     std = np.where(std < 1e-9, 1.0, std)
@@ -256,7 +346,7 @@ def train_prox(p, X, y):
                 lv["ai"] = float(np.mean(ai_lv[rule_ok] == uwb_lv[rule_ok]))
     note = (f"학습 {len(y)}건 · {best} · 교차검증 거리 오차 중앙값 {err[best]:.2f}m (경로손실 식 {err['prior']:.2f}m)"
             if best in err and best in cv else f"학습 {len(y)}건 · {best} · 기록이 5분이 안 돼 교차검증 못 함")
-    m = model_json("prox", PROX_IN, fill, mean, std, layers, note,
+    m = model_json("prox", inputs, fill, mean, std, layers, note,
                    {"out": "log10_m", "clamp": list(CLAMP), "n": int(len(y)),
                     "cv": {"median_abs_m": {k: round(v, 3) for k, v in err.items()}, "level_agree_uwb": {k: round(v, 3) for k, v in lv.items()},
                            "chosen": best}})
@@ -316,17 +406,42 @@ def held(t):
     return (pd.to_numeric(pd.Series(t), errors="coerce").fillna(0).to_numpy(float) // 60_000).astype(np.int64) % 3 == 2
 
 
+def coverage(p, c):
+    """What the labels cover, before training: UWB distances (a model trained only up close says little about the far
+    levels) and each fall experiment session per phone (first candidate of each 15 s cluster), so a trial the phone did not
+    record and a session name left on after the experiment both show."""
+    if len(p):
+        cut = pd.cut(p["uwb_m"].astype(float), [0, 1, 3, 5, 8, 12, 15, np.inf],
+                     labels=["~1m", "1~3m", "3~5m", "5~8m", "8~12m", "12~15m", "15m~"])
+        print("접근 기록 거리별(UWB): " + " · ".join(f"{k} {v}" for k, v in cut.value_counts(sort=False).items()))
+        for g in PAIRS + ["그 밖"]:   # per pair kind: how many rows are far (past 3 m) and near each distance that decides a level
+            d = p[p["pair"] == g]["uwb_m"].astype(float)
+            if len(d) or g != "그 밖":
+                near = " · ".join(f"{x}m 근처 {int(((d - x).abs() <= 1).sum())}" for x in (3, 5, 8, 15))
+                print(f"  {g}: 전체 {len(d)} · 3m 밖 {int((d > 3).sum())} · {near}")
+        n = p["src"].value_counts()
+        print(f"  sig 정답: 자기 UWB {int(n.get('sig_own', 0))}건 · 묶음 {int(n.get('bundle', 0))}건")
+    for (s, d), g in c[c["sess"].astype(str).str.startswith("test:")].groupby(["sess", "dev"]):
+        ms, at = pd.to_numeric(g["t"], errors="coerce"), jm.kst(g["t"])
+        print(f"실험 {s} · 폰 {d} · 시도 {len(g)}건 · {at.min()[5:16]} ~ {at.max()[5:16]}"
+              + (" — 3시간 넘게 이어짐: 실험 뒤 세션 이름을 비웠는지 확인" if ms.max() - ms.min() > 3 * 3_600_000 else ""))
+
+
 def train(export, out):
     df = load(export)
-    p, Xp, yp = prox_rows(df)
+    p, _, _ = prox_rows(df)
     c, Xf, yf = fall_rows(df)
+    coverage(p, c)
     hp = held(p["t"]) if len(p) else np.zeros(0, bool)
     hf = held(c["t"]) if len(c) else np.zeros(0, bool)
-    p, Xp, yp = p[~hp].reset_index(drop=True), Xp[~hp], yp[~hp]
+    p = p[~hp].reset_index(drop=True)
     c, Xf, yf = c[~hf], Xf[~hf], yf[~hf]
+    seen = p["mdl"].map(lambda v: v if isinstance(v, str) else "").value_counts()
+    inputs = PROX_IN + [f"mdl:{m}" for m in sorted(seen.index) if m and seen[m] >= MIN_MDL]   # only phone models with enough rows
+    Xp, yp = prox_matrix(p, inputs)
     done = []
     if len(yp) >= MIN_PROX:
-        done.append(save(dict(train_prox(p, Xp, yp), held=HELD_NOTE, n_held=int(hp.sum())), out))
+        done.append(save(dict(train_prox(p, Xp, yp, inputs), held=HELD_NOTE, n_held=int(hp.sum())), out))
     else:
         print(f"접근: UWB 거리가 붙은 기록 {len(yp)}건 — {MIN_PROX}건이 안 돼 모델을 바꾸지 않습니다.")
     counts = np.bincount(yf.astype(int), minlength=2) if len(yf) else np.zeros(2, int)
@@ -372,13 +487,62 @@ def ai_answers(kind, rows, out, max_usd, dry):
     return dict(zip(ans["id"].astype(str), pd.to_numeric(ans["ai_label"], errors="coerce")))
 
 
+def cross_dist(m, lv, thr, step=0.5, min_n=5):
+    """Where a method's level stops reaching thr: UWB distance in 0.5 m cells, the share of rows at level >= thr per cell
+    (cells with fewer than 5 rows dropped), nearest first; the first drop from >= 50% to < 50% is placed by straight
+    interpolation between the two cell centres. None when there is no such drop."""
+    # ponytail: first crossing only, so a noisy curve that dips and recovers reads early; upgrade = a logistic fit
+    m, lv = np.asarray(m, float), np.asarray(lv, float)
+    ok = ~np.isnan(m) & ~np.isnan(lv)
+    m, lv = m[ok], lv[ok]
+    cell = np.floor(m / step).astype(int)
+    pts = [((k + 0.5) * step, float(np.mean(lv[cell == k] >= thr))) for k in np.unique(cell) if (cell == k).sum() >= min_n]
+    for (xa, fa), (xb, fb) in zip(pts, pts[1:]):
+        if fa >= 0.5 > fb:
+            return xa + (fa - 0.5) / (fa - fb) * (xb - xa)
+    return None
+
+
+def group_report(d, has_phone):
+    """compare tables per pair kind and per receiving phone model: counts, agreement, the distance where the current
+    rule (BLE dB) and the phone model switch to warning / danger, next to the set distances."""
+    pct = lambda v: "-" if v is None else f"{v * 100:.0f}%"
+    far = lambda v: "기록 부족" if v is None else f"{v:.1f}m"
+    d = d.assign(mdl_g=d["mdl"].map(lambda v: v if isinstance(v, str) and v else EMPTY_MDL))
+    head = "| {} | 방법 | 건수 | 맞힘 | 위험을 위험으로 | 안전을 위험으로 | 경고로 바뀌는 거리 | 위험으로 바뀌는 거리 | 설정 거리(경고 · 위험) |"
+    lines = []
+    for title, col, label, names in (
+            ("접근 — 짝별", "pair", "짝", PAIRS + (["그 밖"] if (d["pair"] == "그 밖").any() else [])),
+            ("접근 — 받는 기종별", "mdl_g", "받는 기종", sorted(d["mdl_g"].unique()))):
+        lines += [f"## {title}", "", head.format(label), "|---|---|---:|---:|---:|---:|---:|---:|---|"]
+        for name in names:
+            g = d[d[col] == name]
+            if len(g) < MIN_GROUP:
+                lines.append(f"| {name} | 기록 부족({len(g)}건) | | | | | | | |")
+                continue
+            setting = f"{g['warn_m'].median():g} · {g['dang_m'].median():g}m"
+            for method, col_m in (("지금 규칙", "rule"), ("폰 모델", "phone")):
+                sc = scores(g["truth"], g[col_m], "prox") if col_m == "rule" or has_phone else None
+                if not sc:
+                    lines.append(f"| {name} | {method} | 0 | - | - | - | - | - | {setting} |")
+                    continue
+                lv = g[col_m].to_numpy(float)
+                lines.append(f"| {name} | {method} | {sc['n']} | {pct(sc['acc'])} | {pct(sc.get('catch'))} | {pct(sc.get('false'))} |"
+                             f" {far(cross_dist(g['uwb_m'], lv, 1))} | {far(cross_dist(g['uwb_m'], lv, 2))} | {setting} |")
+        lines.append("")
+    lines += ["- 바뀌는 거리 = UWB 거리 0.5m 칸마다 그 방법이 경고(위험) 이상으로 본 비율이 처음 50% 아래로 내려가는 곳. 설정 거리에 가까울수록 좋다.",
+              f"- 기록이 {MIN_GROUP}건 미만인 짝 · 기종은 비교하지 않는다.", ""]
+    return lines
+
+
 def compare(export, out, models, per_level=30, max_usd=5.0, dry=False, no_ai=False):
     df = load(export)
     out.mkdir(parents=True, exist_ok=True)
     pm, fm = model_file(models, "prox"), model_file(models, "fall")
     res = {}
 
-    p, Xp, _ = prox_rows(df)
+    p, Xp, _ = prox_rows(df, pm["inputs"] if pm else PROX_IN)
+    groups = None
     warn = pd.to_numeric(p["warn_m"], errors="coerce").to_numpy(float)
     dang = pd.to_numeric(p["dang_m"], errors="coerce").to_numpy(float)
     ok = ~np.isnan(warn) & ~np.isnan(dang)
@@ -392,12 +556,13 @@ def compare(export, out, models, per_level=30, max_usd=5.0, dry=False, no_ai=Fal
         if pm and pm.get("held"):
             p = p[held(p["t"])]   # only records the phone model never trained on
         whole = {"rule": scores(p["truth"], p["rule"], "prox"), "phone": scores(p["truth"], p["phone"], "prox")}
+        groups = p.copy()   # every held row, for the per-pair / per-model tables
         # The same rows for all three: per_level per UWB level, so the paid AI sees each level evenly
         p = pd.concat([g.sample(min(len(g), per_level), random_state=0) for _, g in p.groupby("truth")])
         p["ai"] = np.nan if no_ai else p["id"].astype(str).map(ai_answers("prox", p, out, max_usd, dry))
         res["prox"] = (p, whole)
-        jm.write(p[["id", "t", "dev", "peer", "uwb_m", "warn_m", "dang_m", "truth", "rule", "phone_m", "phone", "ai"]]
-                 if "peer" in p else p, out / "compare_prox.csv")
+        jm.write(p[["id", "t", "dev", "peer", "pair", "mdl", "src", "uwb_m", "warn_m", "dang_m", "truth", "rule", "phone_m", "phone", "ai"]],
+                 out / "compare_prox.csv")
 
     c, Xf, yf = fall_rows(df)
     if len(c):
@@ -439,6 +604,8 @@ def compare(export, out, models, per_level=30, max_usd=5.0, dry=False, no_ai=Fal
             lines += ["", "전체 기록(표본 전): " + " · ".join(
                 f"{n} 맞힘 {pct(s and s['acc'])}({s['n'] if s else 0}건)" for n, s in (("지금 규칙", whole["rule"]), ("폰 모델", whole["phone"])))]
         lines.append("")
+        if kind == "prox" and groups is not None:
+            lines += group_report(groups, pm is not None)
     rep = out / "compare_report.md"
     rep.write_text("\n".join(lines), encoding="utf-8")
     print("\n".join(lines))
@@ -448,19 +615,54 @@ def compare(export, out, models, per_level=30, max_usd=5.0, dry=False, no_ai=Fal
 
 # ── selftest ─────────────────────────────────────────────────────────────
 
+def fake_frame(rng, d):
+    """BLE values of one frame at distance d (path loss + noise)."""
+    base = -59.0 - 22.0 * math.log10(d) + rng.normal(0, 3.0)
+    ring = [int(round(base + rng.normal(0, 2.0))) for _ in range(10)]
+    ema = ring[-1]
+    return {"rssi": ema + int(rng.integers(-3, 4)), "med": ema, "pre": ema, "kf": ema, "kf_vel": 0.1,
+            "ema": ema, "avg1s": ema, "eff_w": -78, "eff_d": -65, "seq": ";".join(f"{e},0.1" for e in ring)}
+
+
+SWEEP_T1 = 1_761_800_000_000 + 3_000_000   # the sweep scene starts here (after the field-like rows)
+
+
 def fake_export(rng):
     prox, fall = {}, {}
     t0 = 1_761_800_000_000
+    pairs = [("WALKER", "EPJ"), ("EPJ", "EPJ"), ("WALKER", "WALKER"), ("EPJ", "FORKLIFT")]
     for i in range(1500):
         d = float(rng.uniform(0.5, 12.0))
-        base = -59.0 - 22.0 * math.log10(d) + rng.normal(0, 3.0)
-        ring = [int(round(base + rng.normal(0, 2.0))) for _ in range(10)]
-        ema = ring[-1]
+        role, peer_role = pairs[i % 4]
+        fk = peer_role == "FORKLIFT"
+        mdl = "lg X" if i % 75 == 0 else "samsung SM-A" if i % 2 == 0 else "google Pixel"   # lg X stays under MIN_MDL
         prox[f"p{i}"] = {"v": 1, "k": "uwb", "t": t0 + i * 1000, "dev": "A", "uid": "u", "sess": "test:uwb:s1",
-                         "rssi": ema + int(rng.integers(-3, 4)), "med": ema, "pre": ema, "kf": ema, "kf_vel": 0.1,
-                         "ema": ema, "avg1s": ema, "eff_w": -78, "eff_d": -65,
-                         "seq": ";".join(f"{e},0.1" for e in ring), "uwb_m": round(d, 2), "use": "measure",
-                         "frame_age_ms": int(rng.integers(0, 1500)), "warn_m": 5.0, "dang_m": 3.0}
+                         **fake_frame(rng, d), "uwb_m": round(d, 2), "use": "measure", "mdl": mdl,
+                         "role": role, "peer_role": peer_role, "peer": f"WF11-SAFEALERT_DEVICE_P{i % 5}",
+                         "frame_age_ms": int(rng.integers(0, 1500)), "warn_m": 15.0 if fk else 5.0, "dang_m": 8.0 if fk else 3.0}
+    # Sweep scene (real id forms): A = UWB phone, B = phone without UWB carried with A (bundle a), C = UWB phone (bundle b).
+    # A measures C except s 20-29, where C measures A; B's sig rows get the pair's UWB distance whoever measured it.
+    def rec(k, dev, sess, peer, role, prole, s, d, mdl=None, **more):
+        r = {"v": 1, "k": k, "t": SWEEP_T1 + s * 1000, "dev": dev, "uid": "u", "sess": sess, "role": role, "peer_role": prole,
+             "peer": peer, "warn_m": 5.0, "dang_m": 3.0, **fake_frame(rng, d), **more}
+        if mdl:
+            r["mdl"] = mdl
+        return r
+    cs, as_ = "WF11-SAFEALERT_DEVICE_C", "WF11-SAFEALERT_DEVICE_A"
+    for s in range(60):
+        d = round(2.0 + 0.1 * s, 2)
+        if 20 <= s < 30:
+            prox[f"uC{s}"] = rec("uwb", "WF11-C", "test:sweep:hall:b", as_, "EPJ", "WALKER", s, d, uwb_m=d, use="measure", frame_age_ms=100)
+        else:
+            prox[f"uA{s}"] = rec("uwb", "WF11-A", "test:sweep:hall:a", cs, "WALKER", "EPJ", s, d, uwb_m=d, use="judge", frame_age_ms=100)
+        prox[f"sA{s}"] = rec("sig", "WF11-A", "test:sweep:hall:a", cs, "WALKER", "EPJ", s, d, frame_age_ms=0)
+        prox[f"sB{s}"] = rec("sig", "WF11-B", "test:sweep:hall:a", cs, "WALKER", "EPJ", s, d, "samsung SM-A", frame_age_ms=0)
+    for s in range(70, 75):   # nobody measured: no truth
+        prox[f"sB{s}"] = rec("sig", "WF11-B", "test:sweep:hall:a", cs, "WALKER", "EPJ", s, 5.0, "samsung SM-A", frame_age_ms=0)
+    for s in range(10):   # B next to A (same bundle): no truth
+        prox[f"sBA{s}"] = rec("sig", "WF11-B", "test:sweep:hall:a", as_, "WALKER", "WALKER", s, 1.0, "samsung SM-A", frame_age_ms=0)
+    for s in range(40, 45):   # a sig row that carries its own UWB distance
+        prox[f"sC{s}"] = rec("sig", "WF11-C", "test:sweep:hall:b", as_, "EPJ", "WALKER", s, 6.0, uwb_m=6.0, uwb_use="judge", frame_age_ms=0)
     for i in range(40):
         f = i % 2 == 0
         fall[f"c{i}"] = {"v": 1, "k": "cand", "t": t0 + i * 20000, "dev": "A", "uid": "u",
@@ -482,19 +684,46 @@ def selftest():
         exp = Path(tmp) / "export.json"
         exp.write_text(json.dumps(fake_export(rng)), encoding="utf-8")
         out = Path(tmp) / "ai"
-        files = train(exp, out)
+        shown = io.StringIO()
+        with contextlib.redirect_stdout(shown):
+            files = train(exp, out)
+        print(shown.getvalue(), end="")
         assert {f.name for f in files} == {"prox.json", "fall.json"}, files
+        cov = shown.getvalue()
+        assert "지게차 낀 짝: 전체" in cov and "보행자끼리: 전체" in cov and "sig 정답: 자기 UWB 5건 · 묶음 70건" in cov, cov
+        # Bundle truth: B's sig rows (and A's where C measured) get the pair's UWB distance; same bundle / unmeasured get none;
+        # a sig row in the second of its own uwb row is dropped; no uwb row is lost
+        p_all, _, _ = prox_rows(load(exp))
+        assert p_all["src"].value_counts().to_dict() == {"uwb": 1560, "bundle": 70, "sig_own": 5}, p_all["src"].value_counts()
+        bun = p_all[p_all["src"] == "bundle"]
+        assert set(bun["dev"]) == {"WF11-A", "WF11-B"} and (bun["peer"] == "WF11-SAFEALERT_DEVICE_C").all(), bun[["dev", "peer"]]
+        bb = bun[bun["dev"] == "WF11-B"]
+        assert len(bb) == 60 and np.allclose(bb["uwb_m"], 2.0 + 0.1 * ((bb["t"] - SWEEP_T1) / 1000)), bb[["t", "uwb_m"]]
+        assert ((p_all["dev"] == "WF11-A") & (p_all["k"] == "sig")).sum() == 10   # the other 50 sit in a uwb row's second
+        assert not ((p_all["dev"] == "WF11-B") & (p_all["peer"] == "WF11-SAFEALERT_DEVICE_A")).any()
+        assert not (p_all["t"] > SWEEP_T1 + 65_000).any()
         prox = json.loads((out / "prox.json").read_text(encoding="utf-8"))
         fall = json.loads((out / "fall.json").read_text(encoding="utf-8"))
         assert prox["cv"]["median_abs_m"][prox["cv"]["chosen"]] < 1.5, prox["cv"]
         assert fall["cv"]["ai"]["acc"] >= 0.8, fall["cv"]
+        assert len(PROX_IN) == 17 and prox["inputs"][:17] == PROX_IN
+        assert set(prox["inputs"][17:]) == {"mdl:google Pixel", "mdl:samsung SM-A"}, prox["inputs"]   # lg X is under MIN_MDL
+        assert all(prox["fill"][i] == 0 for i in range(17, len(prox["inputs"]))), prox["fill"]
+        assert set(prox_f(p_all.to_dict("records")[0])) - {"mdl:lg X", "mdl:samsung SM-A", "mdl:google Pixel"} == set(PROX_IN)
         for m in (prox, fall):
             assert len(m["inputs"]) == len(m["mean"]) == len(m["std"]) == len(m["fill"])
             for chk in m["checks"]:
                 assert abs(run(m, chk["x"]) - chk["y"]) < 1e-4
         x = prox_x({"rssi": -70, "med": -70, "pre": -70, "kf": -70, "ema": -70, "avg1s": -70, "kf_vel": 0.0,
                     "seq": "-72,0.1;-70,0.2;-68,0.3"})
-        assert np.allclose(x[7:], [-70.0, float(np.std([-72, -70, -68])), -72.0, -68.0, 2.0, 0.2]), x
+        assert np.allclose(x[7:13], [-70.0, float(np.std([-72, -70, -68])), -72.0, -68.0, 2.0, 0.2]), x
+        assert x[13:] == [0.0, 0.0, 0.0, 0.0], x   # no roles: walker both ways
+        r = {"role": "EPJ", "peer_role": "FORKLIFT", "mdl": "a b", "ema": -70}
+        assert prox_x(r, PROX_IN + ["mdl:a b", "mdl:z"])[13:] == [1.0, 0.0, 0.0, 1.0, 1.0, 0.0]
+        assert np.isnan(prox_x({}, ["rssi"])[0]) and prox_x({}, ["mdl:z"]) == [0.0]
+        assert cross_dist([1, 2, 3] * 6, [0] * 18, 2, step=1.0, min_n=3) is None   # never at the level: no drop to place
+        near = np.repeat([0.75, 1.25, 1.75, 2.25], 6)   # danger-share 100%, 100%, 0%, 0%: crosses between cells 1.25 and 1.75
+        assert abs(cross_dist(near, np.repeat([2, 2, 0, 0], 6), 2) - 1.5) < 1e-9
         before = os.environ.get("JUDGE_AI_STYLE")
         os.environ["JUDGE_AI_STYLE"] = "fake"   # judge_ml's offline stand-in: no network, no cost
         try:
@@ -506,6 +735,8 @@ def selftest():
                 os.environ["JUDGE_AI_STYLE"] = before
         text = rep.read_text(encoding="utf-8")
         assert "| 회사 AI |" in text and "| 폰 모델 |" in text and "| 지금 규칙 |" in text and "학습에 쓰지 않은" in text, text
+        assert "## 접근 — 짝별" in text and "## 접근 — 받는 기종별" in text and "바뀌는 거리" in text, text
+        assert all(f"| {g} | 지금 규칙 |" in text for g in PAIRS) and "| lg X | 기록 부족(" in text, text
         cp = jm.read(Path(tmp) / "cmp" / "compare_prox.csv")
         assert 0 < len(cp) <= 30 and cp["phone"].notna().all() and pd.to_numeric(cp["ai"], errors="coerce").notna().any(), cp
         cf = jm.read(Path(tmp) / "cmp" / "compare_fall.csv")

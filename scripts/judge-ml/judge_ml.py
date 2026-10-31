@@ -48,8 +48,10 @@ UWB_PAIR = (5.0, 3.0)    # (warn, danger) m - DevSettings DEFAULT_UWB_PAIR_WARN/
 UWB_FORK = (15.0, 8.0)   # forklift pairs - DevSettings DEFAULT_UWB_FORKLIFT_WARN/DANGER_METERS
 WATCH_MS = 300_000       # LoneWorkerLogic.ACCIDENT_WATCH_MS: one accident suspicion
 # A person's answer after a danger alert (k=dist): metre bucket -> level by pair type. A missing bucket straddles
-# a threshold for that pair (forklift pairs warn at 15 m and danger at 8 m, so "over 5 m" says nothing).
-DIST_LEVEL = {False: {"lt1": 2, "1to3": 2, "3to5": 1, "gt5": 0}, True: {"lt1": 2, "1to3": 2, "3to5": 2}}
+# a threshold for that pair (gt5 = the single "over 5 m" answer before 1.2.27: for forklift pairs, which warn at
+# 15 m and danger at 8 m, it says nothing, so it is not listed there).
+DIST_LEVEL = {False: {"lt1": 2, "1to3": 2, "3to5": 1, "5to8": 0, "8to12": 0, "12to15": 0, "gt15": 0, "gt5": 0},
+              True: {"lt1": 2, "1to3": 2, "3to5": 2, "5to8": 2, "8to12": 1, "12to15": 1, "gt15": 0}}
 DIST_FRESH_MS = (30_000, 120_000)   # tapped within 30 s -> high (the app asks only that long), 2 min -> mid, later -> low
 ROLES = {"WALKER": 0, "EPJ": 1, "FORKLIFT": 2}   # BleConstants.categoryName; anything else -> -1
 ACC_X = ["acc_min_g", "acc_max_g", "acc_pre_std", "acc_post_std", "acc_post_tilt"]
@@ -724,7 +726,8 @@ def prox_truth(r):
 
 
 def dist_bucket(m):
-    return "lt1" if m < 1 else "1to3" if m < 3 else "3to5" if m < 5 else "gt5"
+    return ("lt1" if m < 1 else "1to3" if m < 3 else "3to5" if m < 5 else "5to8" if m < 8
+            else "8to12" if m < 12 else "12to15" if m < 15 else "gt15")
 
 
 def dist_check(data):
@@ -742,10 +745,11 @@ def dist_check(data):
                  fork=[fork_pair(a, b) for a, b in zip(d["role"], d["peer_role"])])
     d["late"] = pd.cut(d["after_s"], [-1, 5, 10, 20, 30, float("inf")],
                        labels=["5초 안", "5~10초", "10~20초", "20~30초", "30초 넘음"])
-    names = {"lt1": "1m 안", "1to3": "1~3m", "3to5": "3~5m", "gt5": "5m 넘음", "unknown": "모름"}
+    names = {"lt1": "1m 안", "1to3": "1~3m", "3to5": "3~5m", "5to8": "5~8m", "8to12": "8~12m", "12to15": "12~15m",
+             "gt15": "15m 넘음", "gt5": "5m 넘음(1.2.27 전)", "unknown": "모름"}
     lines = ["# 거리 답 점검 (학습 데이터)", "", f"거리 답 {len(d)}건, 그중 누른 순간 UWB 거리도 있는 것 {int(d['uwb'].notna().sum())}건", "",
              "## 누른 시간별: 사람 답 vs 누른 순간의 UWB 거리", "", "| 경보 뒤 누른 시간 | 건수 | 같은 구간 | 한 구간 차이 |", "|---|---:|---:|---:|"]
-    order = ["lt1", "1to3", "3to5", "gt5"]
+    order = ["lt1", "1to3", "3to5", "5to8", "8to12", "12to15", "gt15"]
     u = d[d["uwb"].notna() & d["ans"].isin(order)]
     for late, g in u.groupby("late", observed=False):
         if g.empty:
@@ -755,14 +759,14 @@ def dist_check(data):
         lines.append(f"| {late} | {len(g)} | {(gap == 0).mean():.0%} | {(gap == 1).mean():.0%} |")
     lines += ["", "## 답한 구간별 누른 순간 신호 세기 (ema, dBm)", "", "| 짝 | 답 | 건수 | 가운데 | 중간 50% |", "|---|---|---:|---:|---|"]
     for fork, gf in d.groupby("fork"):
-        for a in order + ["unknown"]:
+        for a in order + ["gt5", "unknown"]:
             g = gf[gf["ans"] == a]["ema_n"].dropna()
             if len(g):
                 lines.append(f"| {'지게차가 낀 짝' if fork else '그 밖'} | {names[a]} | {len(g)} | {g.median():.0f} |"
                              f" {g.quantile(0.25):.0f} ~ {g.quantile(0.75):.0f} |")
     lines += ["", "## 경보 순간 → 누른 순간 신호 변화 (답한 구간별 가운데 값)", "",
               "| 답 | 건수 | 경보 순간 ema | 누른 순간 ema | 변화 | 누르기까지 |", "|---|---:|---:|---:|---:|---:|"]
-    for a in order + ["unknown"]:
+    for a in order + ["gt5", "unknown"]:
         g = d[(d["ans"] == a) & d["ema_n"].notna() & d["start_n"].notna()]
         if len(g):
             lines.append(f"| {names[a]} | {len(g)} | {g['start_n'].median():.0f} | {g['ema_n'].median():.0f} |"
@@ -1135,8 +1139,10 @@ def fake_export(seed=7):
                 put("prox", day, {**com, "k": "level", "t": base + i * 90_000, "peer": "Q9", "peer_role": "FORKLIFT",
                                   "prev": 0, "level": 1, "ema": -70.0, "eff_w": -72.0, "eff_d": -60.0})
             for i in range(6):   # distance answers tapped during a danger alert: values of the tap moment + alert start
-                dist, after = rnd.uniform(0.5, 7.0), rnd.choice([3_000, 8_000, 15_000, 25_000])
-                ans = dist_bucket(dist) if rnd.random() > after / 100_000 else rnd.choice(["lt1", "1to3", "3to5", "gt5"])
+                dist, after = rnd.uniform(0.5, 18.0), rnd.choice([3_000, 8_000, 15_000, 25_000])
+                ans = dist_bucket(dist) if rnd.random() > after / 100_000 else rnd.choice(["lt1", "1to3", "3to5", "5to8", "8to12", "12to15", "gt15"])
+                if i == 5:
+                    ans = "gt5"   # one old-code answer a day: still read (non-forklift pairs: danger-free), never offered any more
                 ema = -45 - 25 * math.log10(dist) + rnd.gauss(0, 3)
                 start = ema - rnd.uniform(0, 6)   # the peer kept closing in after the alert started
                 rec = {**com, "k": "dist", "t": base + i * 120_000 + after, "peer": f"Q{i % 5}", "peer_role": "WALKER",
@@ -1171,6 +1177,12 @@ def selftest():
             blocked_rows = [l for l in (data / "rssi_check.md").read_text(encoding="utf-8").splitlines() if "1F · R1" in l]
             assert blocked_rows and int(blocked_rows[0].split("|")[3].strip().rstrip("%")) >= 50, blocked_rows
             assert any(rule_prox(r)[1] == "human_dist" for r in read(data / "train" / "prox.csv").to_dict("records"))
+            # distance answer codes: levels by pair type, buckets, old gt5 read for walkers only
+            for ans, walk, fork in (("3to5", 1, 2), ("5to8", 0, 2), ("8to12", 0, 1), ("12to15", 0, 1), ("gt15", 0, 0), ("gt5", 0, None)):
+                for pair, want in (("WALKER", walk), ("FORKLIFT", fork)):
+                    got = rule_prox({"k": "dist", "ans": ans, "role": "WALKER", "peer_role": pair, "after_ms": 3_000})[0]
+                    assert got == want, (ans, pair, got, want)
+            assert [dist_bucket(m) for m in (0.5, 2, 4.9, 7.9, 11, 14.9, 15.0)] == ["lt1", "1to3", "3to5", "5to8", "8to12", "12to15", "gt15"]
             for kind in CLASSES:   # the AI never sees truth or the app's decisions
                 row = read(data / "train" / f"{kind}.csv").to_dict("records")[0]
                 assert not set(ai_input(kind, row)) & {"pass", "opened", "sos", "close_why", "truth", "uwb_m",

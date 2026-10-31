@@ -163,7 +163,7 @@ object JudgeLog {
                     val n = p.ring.size
                     val ringEma = IntArray(n); val ringVel = DoubleArray(n)
                     p.ring.forEachIndexed { i, s -> ringEma[i] = s.ema; ringVel[i] = s.vel }
-                    AiJudge.proxMeters(AiJudge.proxFeatures(rssi, med, pre, kf, ema, avg1s, kfVel, ringEma, ringVel))?.let { p.aiM = it; p.aiAt = t }
+                    AiJudge.proxMeters(AiJudge.proxFeatures(rssi, med, pre, kf, ema, avg1s, kfVel, ringEma, ringVel, p.myRole, p.peerRole, model))?.let { p.aiM = it; p.aiAt = t }
                 }
                 // P5 sig: experiment sessions only, at most once per peer per second (no allocation otherwise)
                 if (!on || !session.startsWith("test:") || (p.sigAt != Long.MIN_VALUE && t - p.sigAt < SIG_GAP_MS)) return@synchronized null
