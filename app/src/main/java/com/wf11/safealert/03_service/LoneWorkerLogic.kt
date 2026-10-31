@@ -10,6 +10,10 @@ package com.wf11.safealert.service
  *   (the SOS exit button reads "구조자 확인" once the SOS is RESCUER_BUTTON_MS old)
  *
  * Rule 1 (accident): a single fall signal raises accident suspicion for 5 min from its impact time (no prior-movement condition).
+ * On a phone that is not mounted the window time comes from the after-impact judgment (MotionAnalyzer.Post via onPost): walking
+ * after the impact opens nothing, a changed posture without walking opens it at 5 or 10 s, stillness at 10 s or after, and 30 s
+ * is the latest; a phone-only drop (free fall 300 ms or more) leaves it to the no-motion flow. On a mounted phone (and a restored
+ * watch) the 30 s rule below stays.
  * If there is no clear movement for 30 s within that time, the accident check window ("fall", 1 min) opens. A watch opened
  * only by not-a-fall impacts also counts phone motion (MOVED): its window opens 30 s after the last MOVED, at most 60 s
  * after the watch base unless equipment-mounted. It does not depend
@@ -262,6 +266,13 @@ class LoneWorkerLogic(var myBleId: String) {
      */
     var dropOnly = false
         private set
+    /**
+     * The window time of this watch belongs to the after-impact judgment (onPost) instead of the 30 s rule: set by an impact on
+     * a phone that is not mounted (byPost) or by an onPost alert; postAt = the alert's deadline (impact + judged moment), empty
+     * until an alert comes and again once the window has opened. Neither is saved: a restored watch uses the 30 s rule.
+     */
+    private var postOwned = false
+    private var postAt = Long.MIN_VALUE
     /** The open accident check window was opened by not-a-fall impacts only (drop texts). */
     val dropWindow: Boolean get() = mode == Mode.CHECKING && trigger == "fall" && dropOnly
     private var lastPlugAt = Long.MIN_VALUE
@@ -451,6 +462,26 @@ class LoneWorkerLogic(var myBleId: String) {
     /** Shared by onAccident and previewFall: disabled, in SOS, or an accident check already open. */
     private fun fallShut(): Boolean = !enabled || mode == Mode.SOS || (mode == Mode.CHECKING && trigger == "fall")
 
+    /**
+     * After-impact judgment of one impact (MotionAnalyzer.Post), already converted to this time base: impMs = impact, out =
+     * post5 | post10 | still10 | still | cap30 (alerts) | walk | phone, atMs = the alert's deadline (impact + judged moment),
+     * shape = free fall / peak / posture at that moment. An alert starts or continues the accident watch and sets its window
+     * time to atMs (an earlier alert is never delayed); the window then opens like any accident window ('괜찮으세요?', 1 min to
+     * SOS). walk and phone open nothing (phone leaves it to the no-motion flow). A mounted phone keeps the 30 s rule, and the
+     * same exclusions as a fall apply (open window or SOS, disabled, safe zone, charging).
+     */
+    fun onPost(impMs: Long, out: String, atMs: Long, shape: MotionAnalyzer.FallShape) {
+        if (order.keep { onPost(impMs, out, atMs, shape) }) return
+        if (mounted || out == "walk" || out == "phone") return
+        if (fallShut() || fallDropped(impMs, shape)) return
+        if (accidentUntil == Long.MIN_VALUE) accidentFrom = impMs
+        accidentUntil = maxOf(accidentUntil, impMs + ACCIDENT_WATCH_MS)
+        impactAt = impMs // the window's close question asks this impact
+        dropOnly = false
+        postOwned = true
+        postAt = if (postAt == Long.MIN_VALUE) atMs else minOf(postAt, atMs)
+    }
+
     /** Shared by onAccident and previewFall: safe-zone and power ignore conditions for an impact at trigMs. */
     private fun fallDropped(trigMs: Long, shape: MotionAnalyzer.FallShape): Boolean =
         (zone.insideAtImpact(trigMs) && (charging || !zoneFall.passes(shape) ||
@@ -475,17 +506,19 @@ class LoneWorkerLogic(var myBleId: String) {
      * passed fall. Inside an open check window or SOS a passed fall is asked at once; a not-a-fall impact is left to the
      * close question, which asks the impact that opened the window.
      */
-    fun onAccident(trigMs: Long, shape: MotionAnalyzer.FallShape = MotionAnalyzer.FallShape.ANY, pass: Boolean = true) {
-        if (order.keep { onAccident(trigMs, shape, pass) }) return
+    fun onAccident(trigMs: Long, shape: MotionAnalyzer.FallShape = MotionAnalyzer.FallShape.ANY, pass: Boolean = true, byPost: Boolean = false) {
+        if (order.keep { onAccident(trigMs, shape, pass, byPost) }) return
+        val own = impactAt == trigMs // the after-impact judgment already took this impact: its window asks at close
         val first = impactAt == Long.MIN_VALUE // impactAt is not saved: after a restart the first impact takes the place of the impact that opened the watch
         if (fallShut()) {
             if (pass && mode == Mode.CHECKING) dropOnly = false // a passed fall inside the open window: the stronger (fall) texts win; the close question still asks the impact that opened the window
             if (first && mode == Mode.CHECKING) impactAt = trigMs // restored open window: this impact stands in for the one that opened it
-            fallJudge(trigMs, "shut", pass, asks = pass || (mode != Mode.SOS && mode != Mode.CHECKING)); return
+            fallJudge(trigMs, "shut", pass, asks = (pass && !own) || (mode != Mode.SOS && mode != Mode.CHECKING)); return
         }
         hold.zoneExpired(trigMs + ZoneHistory.EXIT_LAG_MS)?.let { leaveZone(it) } // FALL comes 12 s after impact; first apply a restart zone hold (exit) that ended
         if (fallDropped(trigMs, shape)) { fallJudge(trigMs, "dropped", pass); return }
         val fresh = accidentUntil == Long.MIN_VALUE
+        if (byPost && !mounted) postOwned = true // not mounted: the after-impact judgment (onPost) decides when the window opens
         dropOnly = if (fresh) !pass else dropOnly && !pass
         if (fresh) accidentFrom = trigMs
         // Motion up to this judgment counts only to the impact, in a continuing watch too: MOVED before it was applied first (same
@@ -688,9 +721,13 @@ class LoneWorkerLogic(var myBleId: String) {
     /**
      * Read-only: one count in priority order SOS > response > fall > fall candidate (30 s from the impact, key = impact time
      * = buzzKey of the confirmed fall; the confirmed fall's key is the watch's impactAt: one buzz per watch plus each passed
-     * fall) > last minute of no-motion, or null. pendingAt/pendingShape = analyzer's candidate.
+     * fall) > fall candidate or an impact still in its after-impact judgment on a phone that is not mounted (same count: 30 s
+     * from the impact, the latest a window can open, so the count does not go blank after the 12 s decision; it ends when the
+     * judgment ends — walking hides it, an alert continues as the window's count) > last minute of no-motion, or null.
+     * pendingAt/pendingShape = analyzer's candidate, pendingPostAt/pendingPostShape = analyzer's after-impact judgment.
      */
-    fun countdown(nowMs: Long, pendingAt: Long? = null, pendingShape: MotionAnalyzer.FallShape = MotionAnalyzer.FallShape.ANY): Countdown? {
+    fun countdown(nowMs: Long, pendingAt: Long? = null, pendingShape: MotionAnalyzer.FallShape = MotionAnalyzer.FallShape.ANY,
+                  pendingPostAt: Long? = null, pendingPostShape: MotionAnalyzer.FallShape = MotionAnalyzer.FallShape.ANY): Countdown? {
         if (mode == Mode.SOS) return Countdown(CountdownKind.SOS, 0L, null)
         if (sosAt() != null) return Countdown(CountdownKind.RESPONSE, responseLeftMs(nowMs), null, trigger == "fall" && dropOnly)
         fallOpenAt(nowMs)?.let {
@@ -698,6 +735,9 @@ class LoneWorkerLogic(var myBleId: String) {
         }
         if (pendingAt != null && nowMs < pendingAt + ACCIDENT_STILL_MS && previewFall(pendingAt, pendingShape)) {
             return Countdown(CountdownKind.FALL, (pendingAt + ACCIDENT_STILL_MS - nowMs).coerceIn(0L, ACCIDENT_STILL_MS), pendingAt)
+        }
+        if (pendingPostAt != null && !mounted && nowMs < pendingPostAt + ACCIDENT_STILL_MS && previewFall(pendingPostAt, pendingPostShape)) {
+            return Countdown(CountdownKind.FALL, (pendingPostAt + ACCIDENT_STILL_MS - nowMs).coerceIn(0L, ACCIDENT_STILL_MS), pendingPostAt)
         }
         val still = stillOpenAt() ?: return null
         val left = (still - nowMs).coerceAtLeast(0L)
@@ -725,12 +765,14 @@ class LoneWorkerLogic(var myBleId: String) {
     private fun sensedTo(): Long = if (stepsAvailable) minOf(walk.closedTo, walk.stepSeenTo) else walk.closedTo
 
     /**
-     * Deadline to open the accident check window. Fall watch: 30 s after the last clear movement (or the trigger if none).
+     * Deadline to open the accident check window. Watch owned by the after-impact judgment (postOwned, not mounted): its alert's
+     * deadline (postAt), none before an alert. Otherwise (mounted, restored) fall watch: 30 s after the last clear movement (or the trigger if none).
      * Not-a-fall-only watch: also 30 s after the phone last moved after the latest judgment (movedAt), capped at base + DROP_MOVE_CAP_MS unless mounted. None beyond
      * the 5-minute suspicion.
      */
     private fun accidentOpenAt(): Long? {
         if (accidentUntil == Long.MIN_VALUE) return null
+        if (postOwned && !mounted) return postAt.takeIf { it != Long.MIN_VALUE && it <= accidentUntil }
         val base = maxOf(accidentFrom, lastDistinctAt)
         var at = base + ACCIDENT_STILL_MS
         if (dropOnly) {
@@ -779,7 +821,7 @@ class LoneWorkerLogic(var myBleId: String) {
             return
         }
         val openAt = fallOpenAt(nowMs) ?: return
-        if (order.due(openAt, nowMs)) toChecking("fall", openAt, nowMs)
+        if (order.due(openAt, nowMs)) { postAt = Long.MIN_VALUE; toChecking("fall", openAt, nowMs) }
     }
 
     /**
@@ -817,6 +859,8 @@ class LoneWorkerLogic(var myBleId: String) {
     private fun clearAccident() {
         accidentFrom = Long.MIN_VALUE
         accidentUntil = Long.MIN_VALUE
+        postOwned = false
+        postAt = Long.MIN_VALUE
     }
 
     /**

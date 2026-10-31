@@ -99,6 +99,11 @@ class LoneWorkerSensors(
             c.postActive, c.preValid, c.pass, c.why, acc, accT0, accDt, aiP = aiP)
     }
 
+    /** After-impact judgment: the accident window time (inside analyzer.add, before the callback's end judgment). */
+    private fun judgePost(p: MotionAnalyzer.Post) {
+        logic().onPost(p.impT + accelSkew, p.out, p.impT + p.atMs + accelSkew, MotionAnalyzer.FallShape(p.ffMs, p.peakG, p.tiltDeg))
+    }
+
     private var sm: SensorManager? = null
     private var accel: Sensor? = null
     private var stepSensor: Sensor? = null
@@ -129,6 +134,9 @@ class LoneWorkerSensors(
      */
     val pendingImpactAt: Long? get() = analyzer.pendingImpactMs?.plus(accelSkew)
     val pendingShape: MotionAnalyzer.FallShape get() = analyzer.pendingShape
+    /** Impact time (elapsed) while its after-impact judgment still runs (the count goes on after the 12 s decision), else null. */
+    val pendingPostAt: Long? get() = analyzer.pendingPostMs?.plus(accelSkew)
+    val pendingPostShape: MotionAnalyzer.FallShape get() = analyzer.pendingPostShape
     /** A registered sensor is non-wakeup, so the CPU must be kept awake while monitoring. */
     val needsWake: Boolean
         get() = sensorsNeedCpuWake(registered, accel?.isWakeUpSensor == true, stepRegistered, stepSensor?.isWakeUpSensor == true)
@@ -173,7 +181,7 @@ class LoneWorkerSensors(
         val impactG = MotionAnalyzer.impactGFor(rangeMs2)
         Log.i(TAG, "가속도 센서 wakeUp=${s.isWakeUpSensor} fifoMax=${s.fifoMaxEventCount} range=${s.maximumRange} impactG=$impactG")
         analyzer = MotionAnalyzer(impactG, onWindow = { w -> logic().onWindow(w.copy(endMs = w.endMs + accelSkew)) },
-            onCandidate = ::judgeCand)
+            onCandidate = ::judgeCand, onPost = ::judgePost)
         if (!m.registerListener(this, s, 20_000, MAX_BATCH_US, handler)) {
             Log.w(TAG, "가속도 센서 등록 실패 — 판정 유지, 다시 등록")
             return
@@ -302,8 +310,8 @@ class LoneWorkerSensors(
                 // Samples during this app's vibration are excluded from activity stats only; fall detection still gets them
                 when (analyzer.add(rawMs, v[0], v[1], v[2], masked = VibrationHelper.window.covers(rawMs + accelSkew))) {
                     MotionAnalyzer.Signal.MOVED -> logic().onMoved(rawMs + accelSkew, analyzer.lastActiveMs + accelSkew)
-                    MotionAnalyzer.Signal.FALL -> logic().onAccident(analyzer.eventMs + accelSkew, analyzer.fallShape)
-                    MotionAnalyzer.Signal.IMPACT -> logic().onAccident(analyzer.eventMs + accelSkew, analyzer.fallShape, pass = false)
+                    MotionAnalyzer.Signal.FALL -> logic().onAccident(analyzer.eventMs + accelSkew, analyzer.fallShape, byPost = true)
+                    MotionAnalyzer.Signal.IMPACT -> logic().onAccident(analyzer.eventMs + accelSkew, analyzer.fallShape, pass = false, byPost = true)
                     MotionAnalyzer.Signal.NONE -> {}
                 }
             }

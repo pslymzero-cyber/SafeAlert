@@ -183,7 +183,7 @@ class LoneWorkerMonitor(
     private fun now() = SystemClock.elapsedRealtime()
 
     /** My own count: the judgment's, or the fall candidate's count from the impact — the screen and the weak buzz both use this. */
-    private fun count(t: Long) = logic.countdown(t, sensors.pendingImpactAt, sensors.pendingShape)
+    private fun count(t: Long) = logic.countdown(t, sensors.pendingImpactAt, sensors.pendingShape, sensors.pendingPostAt, sensors.pendingPostShape)
 
     // ── Start / stop ───────────────────────────────────────────
 
@@ -306,7 +306,7 @@ class LoneWorkerMonitor(
         if (!started) return
         logic.sensorEventEnd(t)
         // A fall candidate appearing or ending is drawn at once, not after the 1 s throttle (impact-moment count and buzz); no tick, so the judgment schedule is unchanged
-        sensors.pendingImpactAt.let { if (it != shownPendingAt) { shownPendingAt = it; render() } }
+        (sensors.pendingImpactAt ?: sensors.pendingPostAt).let { if (it != shownPendingAt) { shownPendingAt = it; render() } }
         if (logic.mode == lastMode && logic.rest == lastRest && t - lastTickAt < TICK_MIN_MS &&
             !(t >= dueFrom && logic.dueNow(t))) return
         lastTickAt = t
