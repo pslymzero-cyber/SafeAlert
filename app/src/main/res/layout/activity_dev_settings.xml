@@ -349,7 +349,7 @@
                         <SeekBar android:id="@+id/seek_epj_epj_bias" android:layout_width="match_parent" android:layout_height="wrap_content"
                             android:layout_marginTop="@dimen/sa_space_xs" android:max="30" />
                         <TextView style="@style/SA.Hint" android:layout_marginTop="0dp"
-                            android:text="유효 -15~15 dB (기본 -2). EPJ·카트끼리는 5m 공존이 정상. 낮출수록(음수) 더 가까이 와야 울림." />
+                            android:text="유효 -15~15 dB (기본 -2). EPJ·카트끼리도 보행자와 같은 기준(경고 5m · 위험 3m)을 목표로 맞춘다. 낮출수록(음수) 더 가까이 와야 울림." />
 
                         <LinearLayout style="@style/SA.Row" android:layout_marginTop="10dp">
                             <TextView style="@style/SA.RowLabel" android:text="보행자 ↔ 보행자 (dB)" />

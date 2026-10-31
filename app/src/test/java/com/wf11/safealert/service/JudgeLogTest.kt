@@ -26,7 +26,7 @@ class JudgeLogTest {
         val oldEnv = JudgeLog.env; val oldSink = JudgeLog.sink
         val out = mutableListOf<Pair<String, Map<String, Any>>>()
         try {
-            JudgeLog.on = true; JudgeLog.accOn = true; JudgeLog.session = "test:fall:mat1"
+            JudgeLog.on = true; JudgeLog.accOn = true; JudgeLog.session = "field"
             JudgeLog.env = { if (signedIn) env else null }
             JudgeLog.sink = { kind, rec -> out += kind to rec }
             body(out)
@@ -37,7 +37,7 @@ class JudgeLogTest {
     }
 
     private fun frame(peer: String, peerRole: String, t: Long, ema: Int) =
-        JudgeLog.frame(peer, "WALKER", peerRole, t, -61, -62, -62, -62, 1.26, ema, -63, 8, 0, 0, 1, -87, -74)
+        JudgeLog.frame("ME", peer, "WALKER", peerRole, t, -61, -62, -62, -62, 1.26, ema, -63, 8, 0, 0, 1, -87, -74)
 
     @Test fun records_carry_the_format_fields_with_rate_limits() {
         withLog { out ->
@@ -67,12 +67,15 @@ class JudgeLogTest {
             assertEquals("prox", kind)
             assertEquals(1, r["v"]); assertEquals("level", r["k"]); assertEquals(12_000L, r["t"])
             assertEquals("WF11-ME", r["dev"]); assertEquals("WALKER", r["role"]); assertEquals("WF11", r["site"])
-            assertEquals("2F", r["floor"]); assertEquals("1.2.20", r["app"]); assertEquals("test:fall:mat1", r["sess"])
+            assertEquals("2F", r["floor"]); assertEquals("1.2.20", r["app"]); assertEquals("field", r["sess"])
             assertEquals("U1", r["uid"]); assertEquals("WF11-JL1", r["peer"]); assertEquals("FORKLIFT", r["peer_role"])
             assertEquals(1, r["prev"]); assertEquals(2, r["level"])
             assertEquals(-61, r["rssi"]); assertEquals(-62, r["med"]); assertEquals(1.26, r["kf_vel"])
             assertEquals(-59, r["ema"]); assertEquals(8, r["off_pl"]); assertEquals(-74, r["eff_d"])
             assertTrue("no AI model loaded: no ai_* keys", r.keys.none { it.startsWith("ai_") })
+            // mdl (phone model) only when the snapshot has one
+            assertFalse(r.containsKey("mdl"))
+            assertEquals("samsung SM-S918N", JudgeLog.rec("level", 1L, "ME", "WALKER", env.copy(mdl = "samsung SM-S918N"), emptyMap())["mdl"])
             // Ring keeps the last 10 one-second summaries (ema -68 .. -59), kf_vel with one decimal
             assertEquals((-68..-59).joinToString(";") { "$it,1.3" }, r["seq"])
 
@@ -166,6 +169,26 @@ class JudgeLogTest {
             JudgeLog.dist("ME", "WALKER", "JL3", 90_000, 90_000, "lt1", null, t = 91_000)
             assertTrue(out.isEmpty()); assertNull(JudgeLog.markDanger("JL3", 90_000))
             JudgeLog.on = true
+
+            // P5 sig: experiment sessions only, one per peer per second, pair warn_m / dang_m, uwb_m when a sample at most 1 s old exists
+            out.clear()
+            frame("SG1", "FORKLIFT", 100_000, -60); frame("SG1", "FORKLIFT", 101_000, -60)
+            assertTrue("field session: no sig", out.isEmpty())
+            JudgeLog.session = "test:sweep:hall:a"
+            frame("SG1", "FORKLIFT", 102_000, -60); frame("SG1", "FORKLIFT", 102_500, -60); assertEquals(1, out.size)
+            val s1 = out.single().second
+            assertEquals("sig", s1["k"]); assertEquals("test:sweep:hall:a", s1["sess"]); assertEquals("WF11-SG1", s1["peer"]); assertEquals("FORKLIFT", s1["peer_role"])
+            assertEquals(0L, s1["frame_age_ms"]); assertEquals(15.0, s1["warn_m"]); assertEquals(8.0, s1["dang_m"]); assertEquals(-60, s1["ema"]); assertTrue(s1.containsKey("seq"))
+            assertFalse(s1.containsKey("uwb_m") || s1.containsKey("uwb_use"))
+            frame("SG1", "FORKLIFT", 103_000, -60); assertEquals(2, out.size)
+            frame("SG2", "WALKER", 103_100, -60); assertEquals(3, out.size)   // each peer has its own second
+            assertEquals(5.0, out.last().second["warn_m"]); assertEquals(3.0, out.last().second["dang_m"])
+            JudgeLog.uwb("ME", "SG2", 2.5f, 1, 104_000, use = "measure"); assertEquals(4, out.size)
+            frame("SG2", "WALKER", 104_100, -60); assertEquals(5, out.size)
+            val s2 = out.last().second
+            assertEquals("sig", s2["k"]); assertEquals(2.5, s2["uwb_m"]); assertEquals("measure", s2["uwb_use"])
+            JudgeLog.session = "field"
+            frame("SG2", "WALKER", 106_000, -60); assertEquals(5, out.size)
         }
     }
 

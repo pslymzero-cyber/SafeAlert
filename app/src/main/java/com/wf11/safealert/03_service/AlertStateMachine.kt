@@ -944,7 +944,7 @@ class AlertStateMachine(
         val totalOffset = payloadOffset + beaconOffset + beaconGlobalGain + echoCalDb
         val effWarning = BleConstants.rssiWarning - totalOffset
         val effDanger  = BleConstants.rssiDanger  - totalOffset
-        JudgeLog.frame(deviceId, BleConstants.categoryName(fx.myCategory), BleConstants.categoryName(rCategory), now, inputRssi, medianValue, preFiltered, kalmanRssi, kfVel, pEma, avg1sec, payloadOffset, beaconOffset, beaconGlobalGain, echoCalDb, effWarning, effDanger) // judge data (memory only, recording)
+        JudgeLog.frame(fx.myId, deviceId, BleConstants.categoryName(fx.myCategory), BleConstants.categoryName(rCategory), now, inputRssi, medianValue, preFiltered, kalmanRssi, kfVel, pEma, avg1sec, payloadOffset, beaconOffset, beaconGlobalGain, echoCalDb, effWarning, effDanger) // judge data (memory only, recording)
 
         // ── Case A (UWB↔UWB) exclusive judgment: early branch ─────────────────────────────
         //   Only for pairs with a fresh UWB measurement (uwbJudgeModeExclusive) is this device's alert decision

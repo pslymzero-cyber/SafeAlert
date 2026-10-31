@@ -132,7 +132,7 @@ object OverlayManager {
     var onHeaderTap: (() -> Unit)? = null
 
     /**
-     * Called with the answer code (lt1 | 1to3 | 3to5 | gt5 | unknown) when an answer button is tapped.
+     * Called with the answer code (lt1 | 1to3 | 3to5 | 5to8 | 8to12 | 12to15 | gt15 | unknown) when an answer button is tapped.
      * Returns ms from the alert start to the tap once recorded, null if the question is already closed.
      */
     var onAskAnswer: ((String) -> Long?)? = null
@@ -316,7 +316,8 @@ object OverlayManager {
         // Answer buttons only; the block itself swallows stray touches and no drag listener is attached.
         listOf(
             R.id.overlay_ask_lt1 to "lt1", R.id.overlay_ask_1to3 to "1to3", R.id.overlay_ask_3to5 to "3to5",
-            R.id.overlay_ask_gt5 to "gt5", R.id.overlay_ask_unknown to "unknown"
+            R.id.overlay_ask_5to8 to "5to8", R.id.overlay_ask_8to12 to "8to12", R.id.overlay_ask_12to15 to "12to15",
+            R.id.overlay_ask_gt15 to "gt15", R.id.overlay_ask_unknown to "unknown"
         ).forEach { (id, code) ->
             root.findViewById<TextView>(id).setOnClickListener { answerAsk(code, (it as TextView).text.toString()) }
         }

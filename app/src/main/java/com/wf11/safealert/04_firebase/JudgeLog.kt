@@ -1,5 +1,6 @@
 package com.wf11.safealert.firebase
 
+import android.os.Build
 import android.util.Log
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.database.FirebaseDatabase
@@ -28,6 +29,7 @@ object JudgeLog {
     private const val PEERS_MAX = 256
     private const val LEVEL_GAP_MS = 2_000L
     private const val UWB_GAP_MS = 1_000L
+    private const val SIG_GAP_MS = 1_000L
     private const val UWB_FRESH_MS = 1_000L
     private const val RING = 10
 
@@ -42,7 +44,13 @@ object JudgeLog {
     data class Env(
         val site: String, val scope: Map<String, String>, val app: String, val uid: String,
         val fkWarn: Double, val fkDang: Double, val pairWarn: Double, val pairDang: Double,
+        val mdl: String = "",
     )
+
+    /** This phone's model ("samsung SM-S918N", at most 40 chars); empty when unknown (JVM tests). */
+    private val model: String by lazy {
+        runCatching { "${Build.MANUFACTURER.orEmpty()} ${Build.MODEL.orEmpty()}".trim().take(40) }.getOrDefault("")
+    }
 
     /** Null while not signed in: such a record is dropped (the rules require the uid). */
     internal var env: () -> Env? = {
@@ -51,7 +59,7 @@ object JudgeLog {
             DevSettings.siteCode, SiteScope.fields(DevSettings.floor, DevSettings.proc, DevSettings.zone),
             BuildConfig.VERSION_NAME, uid,
             DevSettings.uwbForkliftWarnMeters.toDouble(), DevSettings.uwbForkliftDangerMeters.toDouble(),
-            DevSettings.uwbPairWarnMeters.toDouble(), DevSettings.uwbPairDangerMeters.toDouble(),
+            DevSettings.uwbPairWarnMeters.toDouble(), DevSettings.uwbPairDangerMeters.toDouble(), model,
         )
     }
 
@@ -90,6 +98,7 @@ object JudgeLog {
         m["app"] = e.app
         m["sess"] = session
         m["uid"] = e.uid
+        if (e.mdl.isNotEmpty()) m["mdl"] = e.mdl
         for ((key, v) in body) if (v != null) m[key] = v
         return m
     }
@@ -114,6 +123,7 @@ object JudgeLog {
         var uwbM = 0f; var uwbMAt = Long.MIN_VALUE
         var frameAt = Long.MIN_VALUE   // time of the last P1 frame — a record's age against it tells how stale the frame values are
         var uwbUse = ""                // use of the last uwb sample (judge | measure)
+        var sigAt = Long.MIN_VALUE     // time of the last P5 sig record
         var aiM = 0f; var aiAt = Long.MIN_VALUE   // on-phone AI distance and when it was computed
         val ring = ArrayDeque<Sec>()
     }
@@ -123,14 +133,17 @@ object JudgeLog {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Peer>?) = size > PEERS_MAX
     }
 
-    /** P1 — called on every processAlert frame: keeps the latest values and a 10 s ring of 1 s summaries. Never emits. */
+    /**
+     * P1 — called on every processAlert frame: keeps the latest values and a 10 s ring of 1 s summaries. Emits only
+     * P5 sig (one per peer per second) while the experiment session starts with `test:`; in the field session it never emits.
+     */
     fun frame(
-        peer: String, myRole: String, peerRole: String, t: Long, rssi: Int, med: Int, pre: Int, kf: Int, kfVel: Double,
+        me: String, peer: String, myRole: String, peerRole: String, t: Long, rssi: Int, med: Int, pre: Int, kf: Int, kfVel: Double,
         ema: Int, avg1s: Int, offPl: Int, offBc: Int, offGg: Int, echo: Int, effW: Int, effD: Int,
     ) {
         if (!on && !aiShow) return
         runCatching {
-            synchronized(this) {
+            val sig = synchronized(this) {
                 val p = peers.getOrPut(peer) { Peer() }
                 p.myRole = myRole; p.peerRole = peerRole; p.frameAt = t
                 p.rssi = rssi; p.med = med; p.pre = pre; p.kf = kf; p.kfVel = kfVel; p.ema = ema; p.avg1s = avg1s
@@ -152,6 +165,18 @@ object JudgeLog {
                     p.ring.forEachIndexed { i, s -> ringEma[i] = s.ema; ringVel[i] = s.vel }
                     AiJudge.proxMeters(AiJudge.proxFeatures(rssi, med, pre, kf, ema, avg1s, kfVel, ringEma, ringVel))?.let { p.aiM = it; p.aiAt = t }
                 }
+                // P5 sig: experiment sessions only, at most once per peer per second (no allocation otherwise)
+                if (!on || !session.startsWith("test:") || (p.sigAt != Long.MIN_VALUE && t - p.sigAt < SIG_GAP_MS)) return@synchronized null
+                p.sigAt = t
+                val fk = p.myRole == "FORKLIFT" || p.peerRole == "FORKLIFT"
+                Triple(p.myRole, fk, proxBody(p, t).apply {
+                    put("frame_age_ms", 0L)
+                    if (p.uwbMAt != Long.MIN_VALUE && t - p.uwbMAt in 0..UWB_FRESH_MS) { put("uwb_m", r2(p.uwbM.toDouble())); put("uwb_use", p.uwbUse) }
+                })
+            }
+            // warn_m / dang_m are always attached (also without a UWB sample): the analysis grades bundle-truth rows with them
+            if (sig != null) emitProx("sig", t, me, sig.first, peer, sig.third) { e ->
+                mapOf("warn_m" to r2(if (sig.second) e.fkWarn else e.pairWarn), "dang_m" to r2(if (sig.second) e.fkDang else e.pairDang))
             }
         }
     }
@@ -247,7 +272,7 @@ object JudgeLog {
     }
 
     /**
-     * P4 - the distance answer (lt1 | 1to3 | 3to5 | gt5 | unknown) given on the alert sidebar block, as one record:
+     * P4 - the distance answer (lt1 | 1to3 | 3to5 | 5to8 | 8to12 | 12to15 | gt15 | unknown; gt5 = before 1.2.27, kept only for reading old records) given on the alert sidebar block, as one record:
      * the values of the tap moment (that peer's P1 memory incl. the 10 s seq, frame_age_ms, and uwb_m / uwb_use when a
      * sample at most 1 s old exists), the times (alert_t, shown_ms = first shown - alert_t, after_ms = tap - alert_t)
      * and the DANGER-start values ([markDanger]). Built under the lock, sent outside it.

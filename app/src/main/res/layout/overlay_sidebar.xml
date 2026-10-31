@@ -153,7 +153,7 @@
                     android:fontFeatureSettings="tnum"
                     android:maxLines="1" />
 
-                <!-- 3 + 2 grid: the wide button spans two columns so its left edge meets the second top button. -->
+                <!-- 3 + 3 + 2 grid: the wide button spans two columns so its left edge meets the second top button. -->
                 <GridLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
@@ -212,7 +212,7 @@
                         android:text="3~5m" />
 
                     <TextView
-                        android:id="@+id/overlay_ask_gt5"
+                        android:id="@+id/overlay_ask_5to8"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_margin="@dimen/sa_space_hairline"
@@ -226,7 +226,58 @@
                         android:maxLines="1"
                         android:clickable="true"
                         android:focusable="true"
-                        android:text="5m 넘음" />
+                        android:text="5~8m" />
+
+                    <TextView
+                        android:id="@+id/overlay_ask_8to12"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_margin="@dimen/sa_space_hairline"
+                        android:layout_columnWeight="1"
+                        android:minHeight="@dimen/sa_touch_min"
+                        android:gravity="center"
+                        android:background="@drawable/shape_overlay_ask_btn"
+                        android:textSize="@dimen/sa_type_value"
+                        android:textStyle="bold"
+                        android:textColor="@color/sa_text_primary"
+                        android:maxLines="1"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:text="8~12m" />
+
+                    <TextView
+                        android:id="@+id/overlay_ask_12to15"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_margin="@dimen/sa_space_hairline"
+                        android:layout_columnWeight="1"
+                        android:minHeight="@dimen/sa_touch_min"
+                        android:gravity="center"
+                        android:background="@drawable/shape_overlay_ask_btn"
+                        android:textSize="@dimen/sa_type_value"
+                        android:textStyle="bold"
+                        android:textColor="@color/sa_text_primary"
+                        android:maxLines="1"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:text="12~15m" />
+
+                    <TextView
+                        android:id="@+id/overlay_ask_gt15"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_margin="@dimen/sa_space_hairline"
+                        android:layout_columnWeight="1"
+                        android:minHeight="@dimen/sa_touch_min"
+                        android:gravity="center"
+                        android:background="@drawable/shape_overlay_ask_btn"
+                        android:textSize="@dimen/sa_type_value"
+                        android:textStyle="bold"
+                        android:textColor="@color/sa_text_primary"
+                        android:maxLines="1"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:text="15m 넘음" />
 
                     <TextView
                         android:id="@+id/overlay_ask_unknown"
