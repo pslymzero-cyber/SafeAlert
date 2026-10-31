@@ -50,10 +50,17 @@ class LoneWorkerSensors(
         private const val FLUSH_RETRY_MS = 2_000L
         /** Maximum sensor batch latency (us). */
         private const val MAX_BATCH_US = (LoneWorkerLogic.MAX_BATCH_MS * 1_000L).toInt()
-        /** Raw acceleration kept for the judge-data record: 1024 samples (about 20 s at 50 Hz), slice impact-3 s .. impact+12 s. */
-        private const val ACC_RING = 1024
+        /**
+         * Raw acceleration kept for the judge-data record: 4096 samples (about 80 s at 50 Hz). Cand slice = impact-3 s .. impact+12 s;
+         * stop slice = stop-10 s .. stop+30 s at about 25 Hz.
+         * ponytail: a sensor much faster than 50 Hz fills the ring sooner, so a stop 10 s before its 30 s wait is gone and that stop is skipped.
+         */
+        private const val ACC_RING = 4096
         private const val ACC_BEFORE_MS = 3_000L
         private const val ACC_AFTER_MS = 12_000L
+        private const val STOP_BEFORE_MS = 10_000L
+        private const val STOP_SPAN_MS = MotionAnalyzer.STOP_AFTER_MS
+        private const val STOP_MIN_GAP_MS = 36L
     }
 
     private val accT = LongArray(ACC_RING)
@@ -61,6 +68,46 @@ class LoneWorkerSensors(
     private val accY = FloatArray(ACC_RING)
     private val accZ = FloatArray(ACC_RING)
     private var accN = 0L
+
+    private class AccSlice(val acc: String, val t0: Long, val dt: Double?)
+
+    /**
+     * Raw ring samples with sensor time in from..to (at least minGapMs apart) as "x,y,z;..." mg, the first sample's elapsed time and the
+     * mean spacing (the sensor can run faster than 50 Hz); null when there is none or the text is over JudgeLog.ACC_MAX.
+     */
+    private fun accSlice(from: Long, to: Long, minGapMs: Long): AccSlice? {
+        val n = minOf(accN, ACC_RING.toLong()).toInt()
+        val start = if (accN > ACC_RING) (accN % ACC_RING).toInt() else 0
+        val sb = StringBuilder()
+        var first = Long.MIN_VALUE
+        var last = Long.MIN_VALUE
+        var count = 0
+        for (i in 0 until n) {
+            val j = (start + i) % ACC_RING
+            val ts = accT[j]
+            if (ts < from || ts > to) continue
+            if (count > 0 && ts - last < minGapMs) continue
+            if (count++ == 0) first = ts else sb.append(';')
+            last = ts
+            sb.append(Math.round(accX[j] / MotionAnalyzer.G * 1000)).append(',')
+                .append(Math.round(accY[j] / MotionAnalyzer.G * 1000)).append(',')
+                .append(Math.round(accZ[j] / MotionAnalyzer.G * 1000))
+        }
+        if (count == 0 || sb.length > JudgeLog.ACC_MAX) return null
+        return AccSlice(sb.toString(), first + accelSkew, if (count >= 2) (last - first).toDouble() / (count - 1) else null)
+    }
+
+    /** Judge-data (recording only): the phone stayed still for 30 s after stopping at s (sensor time) - its waveform around the stop. */
+    private fun judgeStop(s: Long) {
+        val n = minOf(accN, ACC_RING.toLong()).toInt()
+        if (n == 0) return
+        val start = if (accN > ACC_RING) (accN % ACC_RING).toInt() else 0
+        if (accT[start] > s - STOP_BEFORE_MS) return // recording just turned on, or the ring is shorter than 40 s
+        val sl = accSlice(s - STOP_BEFORE_MS, s + STOP_SPAN_MS, STOP_MIN_GAP_MS) ?: return
+        val who = judgeWho()
+        val l = logic()
+        JudgeLog.stop(who.first, who.second, s + accelSkew, sl.acc, sl.t0, sl.dt, l.charging, l.zoneInAt(s + accelSkew), l.mounted)
+    }
 
     /** Judge-data (recording only): the candidate's decision plus, if kept, its raw acceleration slice. */
     private fun judgeCand(c: MotionAnalyzer.Candidate) {
@@ -72,27 +119,7 @@ class LoneWorkerSensors(
         var accT0: Long? = null
         var accDt: Double? = null
         if (JudgeLog.accOn) {
-            val n = minOf(accN, ACC_RING.toLong()).toInt()
-            val start = if (accN > ACC_RING) (accN % ACC_RING).toInt() else 0
-            val sb = StringBuilder()
-            var first = Long.MIN_VALUE
-            var last = Long.MIN_VALUE
-            var count = 0
-            for (i in 0 until n) {
-                val j = (start + i) % ACC_RING
-                val ts = accT[j]
-                if (ts < c.impactT - ACC_BEFORE_MS || ts > c.impactT + ACC_AFTER_MS) continue
-                if (count++ == 0) first = ts else sb.append(';')
-                last = ts
-                sb.append(Math.round(accX[j] / MotionAnalyzer.G * 1000)).append(',')
-                    .append(Math.round(accY[j] / MotionAnalyzer.G * 1000)).append(',')
-                    .append(Math.round(accZ[j] / MotionAnalyzer.G * 1000))
-            }
-            if (count > 0 && sb.length <= JudgeLog.ACC_MAX) {
-                acc = sb.toString()
-                accT0 = first + accelSkew
-                if (count >= 2) accDt = (last - first).toDouble() / (count - 1) // The sensor can run faster than 50 Hz
-            }
+            accSlice(c.impactT - ACC_BEFORE_MS, c.impactT + ACC_AFTER_MS, 0L)?.let { acc = it.acc; accT0 = it.t0; accDt = it.dt }
         }
         val who = judgeWho()
         JudgeLog.fallCand(who.first, who.second, c.impactT + accelSkew, c.ffMs, c.peakG, c.impactG, c.deg, c.postN,
@@ -101,7 +128,12 @@ class LoneWorkerSensors(
 
     /** After-impact judgment: the accident window time (inside analyzer.add, before the callback's end judgment). */
     private fun judgePost(p: MotionAnalyzer.Post) {
-        logic().onPost(p.impT + accelSkew, p.out, p.impT + p.atMs + accelSkew, MotionAnalyzer.FallShape(p.ffMs, p.peakG, p.tiltDeg))
+        val l = logic()
+        l.onPost(p.impT + accelSkew, p.out, p.impT + p.atMs + accelSkew, MotionAnalyzer.FallShape(p.ffMs, p.peakG, p.tiltDeg))
+        if (JudgeLog.on) {
+            val who = judgeWho()
+            JudgeLog.post(who.first, who.second, p.impT + accelSkew, if (l.mounted) "mounted" else p.out, p.atMs, p.tiltDeg, p.stdMg, p.run, p.ffMs)
+        }
     }
 
     private var sm: SensorManager? = null
@@ -314,6 +346,7 @@ class LoneWorkerSensors(
                     MotionAnalyzer.Signal.IMPACT -> logic().onAccident(analyzer.eventMs + accelSkew, analyzer.fallShape, pass = false, byPost = true)
                     MotionAnalyzer.Signal.NONE -> {}
                 }
+                if (JudgeLog.on && JudgeLog.accOn) analyzer.takeStop(rawMs)?.let(::judgeStop)
             }
             Sensor.TYPE_STEP_DETECTOR -> {
                 stepSkew = skewFor(rawMs, t, stepSkew)

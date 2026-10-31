@@ -226,7 +226,9 @@ class LoneWorkerLogic(var myBleId: String) {
     private val zone = ZoneHistory() // Raw safe-zone in/out and entry time; falls use the state at impact
 
     // Carried: if not charging, the wait is over; if charging, steps confirmed carrying
-    private var charging = false // Applied power; differs from PowerDebounce.reported while JudgeOrder defers
+    /** Applied power; differs from PowerDebounce.reported while JudgeOrder defers. Read-only outside (judge-data record). */
+    var charging = false
+        private set
     private var chargeAt = 0L
     private var carried = false
     /**
@@ -487,6 +489,9 @@ class LoneWorkerLogic(var myBleId: String) {
         (zone.insideAtImpact(trigMs) && (charging || !zoneFall.passes(shape) ||
                 (lastUnplugAt != Long.MIN_VALUE && trigMs - lastUnplugAt <= UNPLUG_FALL_MS))) ||
             (lastPlugAt != Long.MIN_VALUE && trigMs - lastPlugAt <= PLUG_EXCEPT_MS)
+
+    /** Read-only (judge-data record only): was the phone inside the safe zone at t. */
+    fun zoneInAt(t: Long): Boolean = zone.insideAt(t)
 
     /**
      * Read-only: would onAccident accept an impact now (same conditions) — for the on-screen count only. Does not see the

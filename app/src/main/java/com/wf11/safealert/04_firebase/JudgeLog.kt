@@ -32,6 +32,8 @@ object JudgeLog {
     private const val SIG_GAP_MS = 1_000L
     private const val UWB_FRESH_MS = 1_000L
     private const val RING = 10
+    /** F6 stop records per phone and day. */
+    const val STOP_DAY_MAX = 100
 
     /** Recording switch, raw-acceleration switch and experiment session name. Off by default. */
     @Volatile var on = false
@@ -109,6 +111,7 @@ object JudgeLog {
     }
 
     private fun r2(d: Double) = Math.round(d * 100.0) / 100.0
+    private fun r1(d: Double) = Math.round(d * 10.0) / 10.0
 
     // ── P1: last frame per peer (memory only) ────────────────────────────────────────────────
 
@@ -345,6 +348,53 @@ object JudgeLog {
                 linkedMapOf(
                     "from" to from, "to" to to, "trig" to trig, "pass" to pass, "why" to why.ifEmpty { null },
                     "since_ms" to sinceMs, "imp_t" to impT,
+                )
+            }
+        }
+    }
+
+    /**
+     * F5 — the after-impact judgment of one impact, once when it ends (MotionAnalyzer.Post): out = post5 | post10 | still10 | still |
+     * cap30 (quick alerts) | walk | phone | mounted (a mounted phone keeps the 30 s rule). atMs = judged moment after the impact; tilt = posture
+     * change (degrees) over the last 1 s, stdMg = |a| standard deviation (mg) over the last 2 s, run = longest run of walking-step gaps.
+     */
+    fun post(
+        me: String, role: String, impT: Long, out: String, atMs: Long, tilt: Double?, stdMg: Int?, run: Int, ffMs: Long,
+        t: Long = System.currentTimeMillis(),
+    ) {
+        if (!on) return
+        runCatching {
+            emit("fall", "post", t, me, role) {
+                linkedMapOf(
+                    "imp_t" to impT, "out" to out, "at_ms" to atMs, "tilt" to tilt?.let(::r1), "std_mg" to stdMg, "run" to run, "ff_ms" to ffMs,
+                )
+            }
+        }
+    }
+
+    private var stopDay = ""
+    private var stopCount = 0
+
+    /**
+     * F6 — the waveform around the moment the phone stopped, once it has stayed still for 30 s (no-motion model data): acc = 25 Hz
+     * "x,y,z;..." mg from 10 s before the stop to 30 s after, acc_t0 / acc_dt as in the cand record, on_t = the stop moment (same
+     * clock as acc_t0). At most STOP_DAY_MAX per day.
+     */
+    fun stop(
+        me: String, role: String, onT: Long, acc: String, accT0: Long, accDt: Double?, charging: Boolean?, zoneIn: Boolean?,
+        mounted: Boolean?, t: Long = System.currentTimeMillis(),
+    ) {
+        if (!on) return
+        runCatching {
+            val day = SimpleDateFormat("yyyyMMdd", Locale.US).format(Date(t))
+            // ponytail: counted in memory, so an app restart starts the day's count again; persist it if the cap must hold across restarts
+            if (day != stopDay) { stopDay = day; stopCount = 0 }
+            if (stopCount >= STOP_DAY_MAX) return
+            stopCount++
+            emit("fall", "stop", t, me, role) {
+                linkedMapOf(
+                    "on_t" to onT, "acc" to acc, "acc_t0" to accT0, "acc_dt" to accDt?.let(::r2),
+                    "charging" to charging, "zone_in" to zoneIn, "mounted" to mounted,
                 )
             }
         }

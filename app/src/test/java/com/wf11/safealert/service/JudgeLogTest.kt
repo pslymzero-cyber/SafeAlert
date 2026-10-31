@@ -108,6 +108,31 @@ class JudgeLogTest {
             JudgeLog.mode("ME", "WALKER", "WATCHING", "CHECKING", "fall", "", 7, null, pass = true, t = 11L)
             assertEquals(true, out.last().second["pass"])
 
+            // F5 post / F6 stop: the fields, tilt to one decimal, absent values left out, off = nothing, stop at most 100 per day
+            out.clear()
+            JudgeLog.post("ME", "WALKER", 5_000, "post5", 5_000, 91.26, 3, 0, 212, t = 12L)
+            val ps = out.single().second
+            assertEquals("post", ps["k"]); assertEquals(5_000L, ps["imp_t"]); assertEquals("post5", ps["out"]); assertEquals(5_000L, ps["at_ms"])
+            assertEquals(91.3, ps["tilt"]); assertEquals(3, ps["std_mg"]); assertEquals(0, ps["run"]); assertEquals(212L, ps["ff_ms"])
+            JudgeLog.post("ME", "WALKER", 5_000, "still", 30_000, null, null, 1, 100, t = 13L)
+            assertFalse(out.last().second.containsKey("tilt") || out.last().second.containsKey("std_mg"))
+            out.clear()
+            JudgeLog.stop("ME", "WALKER", 9_000, "1,2,3;4,5,6", 1_000, 40.004, false, null, true, t = 1_700_000_000_000L)
+            val st = out.single().second
+            assertEquals("fall", out.single().first); assertEquals("stop", st["k"]); assertEquals(9_000L, st["on_t"]); assertEquals("1,2,3;4,5,6", st["acc"])
+            assertEquals(1_000L, st["acc_t0"]); assertEquals(40.0, st["acc_dt"]); assertEquals(false, st["charging"]); assertEquals(true, st["mounted"])
+            assertFalse(st.containsKey("zone_in"))
+            repeat(JudgeLog.STOP_DAY_MAX + 1) { JudgeLog.stop("ME", "WALKER", 9_000, "1,2,3", 1_000, null, null, null, null, t = 1_700_000_000_001L + it) }
+            assertEquals(JudgeLog.STOP_DAY_MAX, out.size) // the 101st of the day (counting the first above) is not sent
+            JudgeLog.stop("ME", "WALKER", 9_000, "1,2,3", 1_000, null, null, null, null, t = 1_700_000_000_000L + 2 * 86_400_000L)
+            assertEquals(JudgeLog.STOP_DAY_MAX + 1, out.size) // a new day counts again
+            out.clear()
+            JudgeLog.on = false
+            JudgeLog.post("ME", "WALKER", 5_000, "post5", 5_000, 91.26, 3, 0, 212)
+            JudgeLog.stop("ME", "WALKER", 9_000, "1,2,3", 1_000, null, null, null, null)
+            assertTrue(out.isEmpty())
+            JudgeLog.on = true
+
             // Site code: valid kept, otherwise NOSITE
             assertEquals("WF11", JudgeLog.scOf("WF11"))
             assertEquals("NOSITE", JudgeLog.scOf("wf11")); assertEquals("NOSITE", JudgeLog.scOf(""))

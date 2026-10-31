@@ -71,6 +71,15 @@ class MotionAnalyzerTest {
         assertTrue(three.times(Signal.MOVED).isNotEmpty())
         assertEquals("three: last motion", 8_000L, three.a.lastActiveMs)
         assertTrue("three: MOVED keeps coming after the stop", three.times(Signal.MOVED).last() >= 10_000)
+        // takeStop (judge-data only): the stop moment once, 30 s after the phone stopped; more movement and a new stop is a new one
+        assertNull(three.a.takeStop(12_000))
+        three.span(12_000, 38_000, still)
+        assertEquals(8_000L, three.a.takeStop(38_000))
+        assertNull(three.a.takeStop(38_020))
+        three.span(38_000, 41_000, walking(3.0, 2.0))
+        three.span(41_000, 75_000, still)
+        assertTrue(three.a.lastActiveMs > 8_000L)
+        assertEquals(three.a.lastActiveMs, three.a.takeStop(75_000))
     }
 
     /**

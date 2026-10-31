@@ -140,6 +140,8 @@ class MotionAnalyzer(
         const val POST_SMOOTH = 5
         /** Free fall of this length or more: the phone alone fell, so no quick alert (the no-motion flow decides). */
         const val PHONE_FF_MS = 300L
+        /** Judge-data only: how long the phone must stay still after its last active window before its stop is reported (takeStop). */
+        const val STOP_AFTER_MS = 30_000L
         /** Samples kept for the after-impact judgment: baseline 3 s + 30 s + delay is about 1,700 at 50 Hz. */
         private const val POST_RING = 8192
 
@@ -200,6 +202,18 @@ class MotionAnalyzer(
     var lastActiveMs = 0L
         private set
     private var quietIdx = -1L // last window index that cannot raise lastActiveMs (decision window + 1)
+    private var stopTaken = 0L // lastActiveMs value takeStop already returned
+
+    /**
+     * Judge-data recording only (never used by a judgment): the moment the phone stopped (lastActiveMs), once, when it has stayed
+     * still for STOP_AFTER_MS since — null otherwise. A new stop after more movement is returned again.
+     */
+    fun takeStop(tMs: Long): Long? {
+        val s = lastActiveMs
+        if (s <= 0L || tMs - s < STOP_AFTER_MS || s == stopTaken) return null
+        stopTaken = s
+        return s
+    }
 
     // 1-second window accumulators
     private var curIdx = -1L
@@ -267,7 +281,7 @@ class MotionAnalyzer(
         candidate = false; postN = 0; postX = 0.0; postY = 0.0; postZ = 0.0; postActive = 0
         lowRuns.clear(); impactDue = false
         lastActiveMs = 0L; quietIdx = -1L
-        ring.clear(); trackImp = -1L; trackArmedEnd = -1L
+        ring.clear(); trackImp = -1L; trackArmedEnd = -1L; stopTaken = 0L
     }
 
     fun add(tMs: Long, x: Float, y: Float, z: Float, masked: Boolean = false): Signal {
